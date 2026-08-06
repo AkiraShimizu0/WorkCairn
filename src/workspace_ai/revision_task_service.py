@@ -1,6 +1,7 @@
 from datetime import datetime
 import json
 import os
+from pathlib import Path
 import re
 import tempfile
 from zoneinfo import ZoneInfo
@@ -43,13 +44,13 @@ class RevisionTaskService:
             source_task_id,
         )
 
-        metadata_name = (
-            f"{source_task_id}.review.{review_version}.revision.md"
-            if review_version
-            else f"{source_task_id}.revision.md"
+        revisions_dir = project_dir / "Revisions"
+        existing_metadata = self._find_revision_for_source(
+            revisions_dir,
+            f"Reviews/{source_review.name}",
         )
-        metadata_path = project_dir / "Revisions" / metadata_name
-        if metadata_path.exists():
+        reservation_path = revisions_dir / f".{source_review.name}.revision.lock"
+        if existing_metadata is not None or reservation_path.exists():
             raise FileExistsError(
                 f"同じレビューから修正タスクが既に作成されています: {source_task_id}"
             )
@@ -66,10 +67,14 @@ class RevisionTaskService:
             raise ValueError(f"元タスクの担当社員が未割当です: {source_task_id}")
         title = f"{source_task_id}のレビュー指摘を反映する"
         next_task_id = self.project_manager.next_task_id(project_name)
+        metadata_path = revisions_dir / f"{next_task_id}.revision.md"
+        if metadata_path.exists():
+            raise FileExistsError(f"Revisionメタデータが既に存在します: {next_task_id}")
         plan = {
             "project_name": project_name,
             "source_task_id": source_task_id,
             "source_review": f"Reviews/{source_review.name}",
+            "source_review_path": f"Reviews/{source_review.name}",
             "review_verdict": review_result["verdict"],
             "issues": review_result["issues"],
             "assignee_id": assignee_id,
@@ -86,11 +91,15 @@ class RevisionTaskService:
         if review_format != "structured":
             raise ValueError("修正タスクの実作成には構造化レビューJSONが必要です。")
 
-        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        revisions_dir.mkdir(parents=True, exist_ok=True)
         created_at = datetime.now(self.JST)
+        tasks_path = project_dir / "Tasks.md"
+        tasks_before = tasks_path.read_text(encoding="utf-8")
+        task_created = False
+        metadata_created = False
         self._atomic_create(
-            metadata_path,
-            self._metadata_content(plan, "pending", created_at),
+            reservation_path,
+            created_at.strftime("%Y-%m-%d %H:%M:%S %Z") + "\n",
         )
         try:
             task = self.project_manager.add_task(
@@ -98,20 +107,59 @@ class RevisionTaskService:
                 title,
                 assignee_id,
             )
+            task_created = True
+            completed_metadata_path = revisions_dir / f"{task['id']}.revision.md"
+            if completed_metadata_path.exists():
+                raise FileExistsError(
+                    f"Revisionメタデータが既に存在します: {task['id']}"
+                )
+            completed_plan = {
+                **plan,
+                "next_task_id": task["id"],
+                "metadata_path": completed_metadata_path,
+            }
+            self._atomic_create(
+                completed_metadata_path,
+                self._metadata_content(completed_plan, "created", created_at),
+            )
+            metadata_created = True
+            self._append_audit(
+                project_dir / "Audit Log.md",
+                completed_plan,
+                created_at,
+            )
         except Exception:
-            metadata_path.unlink(missing_ok=True)
+            if metadata_created:
+                completed_metadata_path.unlink(missing_ok=True)
+            if task_created:
+                self._atomic_write(tasks_path, tasks_before)
             raise
+        finally:
+            reservation_path.unlink(missing_ok=True)
 
-        completed_plan = {**plan, "next_task_id": task["id"]}
-        self._atomic_write(
-            metadata_path,
-            self._metadata_content(completed_plan, "created", created_at),
-        )
         return {
             "status": "created",
             **completed_plan,
             "task": task,
         }
+
+    @staticmethod
+    def _find_revision_for_source(revisions_dir, source_review):
+        if not revisions_dir.is_dir():
+            return None
+        for path in sorted(revisions_dir.glob("TASK-*.revision.md")):
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for line in lines[1:]:
+                if line == "---":
+                    break
+                if line.startswith("source_review:"):
+                    stored_review = line.split(":", 1)[1].strip()
+                    if (
+                        stored_review == source_review
+                        or Path(stored_review).name == Path(source_review).name
+                    ):
+                        return path
+        return None
 
     @classmethod
     def _review_path(cls, project_dir, source_task_id, review_version):
@@ -240,6 +288,7 @@ class RevisionTaskService:
             f"project: {plan['project_name']}",
             f"source_task_id: {plan['source_task_id']}",
             f"source_review: {plan['source_review']}",
+            f"source_review_path: {plan['source_review_path']}",
             f"review_verdict: {plan['review_verdict']}",
             f"assignee_id: {plan['assignee_id']}",
             f"revision_task_id: {plan['next_task_id']}",
@@ -260,6 +309,41 @@ class RevisionTaskService:
                 f"- 修正案: {RevisionTaskService._single_line(issue['suggested_action'])}",
                 "",
             ])
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _append_audit(self, path, plan, created_at):
+        timestamp = created_at.strftime("%Y-%m-%d %H:%M:%S %Z")
+        if path.is_file():
+            content = path.read_text(encoding="utf-8").rstrip()
+        else:
+            content = (
+                "---\n"
+                "type: audit-log\n"
+                f"project: {plan['project_name']}\n"
+                f"updated_at: {timestamp}\n"
+                "---\n\n"
+                f"# {plan['project_name']} Audit Log"
+            )
+        entry = (
+            f"\n\n## {timestamp} Revision Task Created {plan['next_task_id']}\n\n"
+            "- event: Revision Task Created\n"
+            f"- revision_task_id: {plan['next_task_id']}\n"
+            f"- source_task_id: {plan['source_task_id']}\n"
+            f"- source_review: {plan['source_review_path']}\n"
+            f"- review_verdict: {plan['review_verdict']}\n"
+            f"- assignee_id: {plan['assignee_id']}\n"
+            f"- issue_count: {len(plan['issues'])}\n"
+        )
+        updated = self._updated_audit_timestamp(content + entry, timestamp)
+        self._atomic_write(path, updated)
+
+    @staticmethod
+    def _updated_audit_timestamp(content, timestamp):
+        lines = content.splitlines()
+        for index, line in enumerate(lines):
+            if line.startswith("updated_at:"):
+                lines[index] = f"updated_at: {timestamp}"
+                break
         return "\n".join(lines).rstrip() + "\n"
 
     @staticmethod

@@ -79,6 +79,7 @@ class RevisionTaskServiceTest(unittest.TestCase):
         self.assertEqual(plan["assignee_id"], "PLAN-001")
         self.assertEqual(plan["next_task_id"], "TASK-002")
         self.assertEqual(plan["source_review"], "Reviews/TASK-001.review.md")
+        self.assertEqual(plan["source_review_path"], "Reviews/TASK-001.review.md")
         self.assertEqual(plan["review_verdict"], "Request Changes")
         self.assertEqual(plan["review_format"], "structured")
         self.assertEqual(len(plan["issues"]), 1)
@@ -114,6 +115,7 @@ class RevisionTaskServiceTest(unittest.TestCase):
         for expected in (
             "source_task_id: TASK-001",
             "source_review: Reviews/TASK-001.review.md",
+            "source_review_path: Reviews/TASK-001.review.md",
             "review_verdict: Request Changes",
             "assignee_id: PLAN-001",
             "revision_task_id: TASK-002",
@@ -121,6 +123,11 @@ class RevisionTaskServiceTest(unittest.TestCase):
             "日付が矛盾しています",
         ):
             self.assertIn(expected, metadata)
+        self.assertEqual(result["metadata_path"].name, "TASK-002.revision.md")
+        audit = (self.project / "Audit Log.md").read_text(encoding="utf-8")
+        self.assertIn("event: Revision Task Created", audit)
+        self.assertIn("revision_task_id: TASK-002", audit)
+        self.assertIn("issue_count: 1", audit)
 
         with self.assertRaisesRegex(FileExistsError, "既に作成"):
             self.service.create_revision_task(
@@ -188,10 +195,14 @@ class RevisionTaskServiceTest(unittest.TestCase):
         )
 
         self.assertEqual(plan["source_review"], "Reviews/TASK-001.review.v2.md")
+        self.assertEqual(
+            plan["source_review_path"],
+            "Reviews/TASK-001.review.v2.md",
+        )
         self.assertEqual(plan["review_version"], "v2")
         self.assertEqual(
             plan["metadata_path"].name,
-            "TASK-001.review.v2.revision.md",
+            "TASK-002.revision.md",
         )
 
     def _write_result(self, verdict, issues):
