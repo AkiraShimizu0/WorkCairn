@@ -38,6 +38,12 @@ class WorkerTest(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.vault = Path(self.temporary_directory.name)
         (self.vault / "社員").mkdir()
+        project_dir = self.vault / "プロジェクト" / "ToDoアプリ"
+        project_dir.mkdir(parents=True)
+        (project_dir / "Project.md").write_text(
+            "# ToDoアプリ\n\n## 概要\n\n動作確認用アプリ\n",
+            encoding="utf-8",
+        )
         (self.vault / "社員" / "田中 美咲.md").write_text(
             "---\n"
             "id: PLAN-001\n"
@@ -53,9 +59,15 @@ class WorkerTest(unittest.TestCase):
             return_value=self.vault,
         )
         self.organization_patch.start()
+        self.projects_patch = patch(
+            "workspace_ai.prompt_builder.projects_path",
+            return_value=self.vault / "プロジェクト",
+        )
+        self.projects_patch.start()
         self.organization = Organization()
 
     def tearDown(self):
+        self.projects_patch.stop()
         self.organization_patch.stop()
         self.temporary_directory.cleanup()
 
@@ -103,6 +115,8 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(result["runner"], "ClaudeRunner")
         self.assertIn("担当タスク: 要件を整理する", runner.call["user_prompt"])
         self.assertIn("氏名: 田中 美咲", runner.call["system_prompt"])
+        self.assertIn("プロジェクト概要: 動作確認用アプリ", runner.call["system_prompt"])
+        self.assertIn("現在日時（JST）:", runner.call["system_prompt"])
 
     def test_worker_rejects_unknown_employee(self):
         with self.assertRaisesRegex(ValueError, "UNKNOWN-001"):

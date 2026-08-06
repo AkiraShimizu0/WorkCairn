@@ -1,6 +1,9 @@
+from datetime import datetime
 from inspect import Parameter, signature
+from zoneinfo import ZoneInfo
 
 from workspace_ai.organization import Organization
+from workspace_ai.prompt_builder import PromptBuilder
 
 
 class Worker:
@@ -12,6 +15,7 @@ class Worker:
         organization=None,
         router=None,
         runner=None,
+        prompt_builder=None,
     ):
         if (runner is None) == (router is None):
             raise ValueError("RunnerまたはRouterのどちらか一方だけを指定してください。")
@@ -20,26 +24,19 @@ class Worker:
         self.employee_id = employee_id
         self.router = router
         self.runner = runner
+        self.prompt_builder = prompt_builder or PromptBuilder()
         self.employee = self.organization.get_employee_by_id(employee_id)
         if self.employee is None:
             raise ValueError(f"社員IDが存在しません: {employee_id}")
 
-    def build_system_prompt(self):
-        """社員Markdownの情報から拡張可能なSystem Promptを生成する"""
-        sections = self._system_prompt_sections()
-        return "\n\n".join(
-            f"## {heading}\n{body}"
-            for heading, body in sections
-        )
+    def build_system_prompt(self, project=None, task=None, current_datetime=None):
+        """互換APIとしてPromptBuilderのSystem Promptを返す"""
+        prompts = self._build_prompts(project, task, current_datetime)
+        return prompts["system_prompt"]
 
     def build_user_prompt(self, project, task):
-        """担当プロジェクトとタスクからUser Promptを生成する"""
-        return (
-            f"プロジェクト: {project}\n"
-            f"タスクID: {task['id']}\n"
-            f"担当タスク: {task['title']}\n\n"
-            "この担当タスクの成果物を作成してください。"
-        )
+        """互換APIとしてPromptBuilderのUser Promptを返す"""
+        return self._build_prompts(project, task)["user_prompt"]
 
     def get_runner_name(self, task):
         """この社員・タスクに使用するRunner名を返す"""
@@ -55,8 +52,9 @@ class Worker:
                 f"{self.employee_id} != {employee.get('id')}"
             )
 
-        system_prompt = self.build_system_prompt()
-        user_prompt = self.build_user_prompt(project, task)
+        prompts = self._build_prompts(project, task)
+        system_prompt = prompts["system_prompt"]
+        user_prompt = prompts["user_prompt"]
         runner_name, runner = self._select_runner(task)
         output = self._invoke_runner(
             runner,
@@ -74,28 +72,20 @@ class Worker:
             "execution_log": self._runner_execution_log(runner),
         }
 
-    def _system_prompt_sections(self):
-        """将来、行動規範や部署固有ルールを追加できる構造を返す"""
-        return [
-            (
-                "所属",
-                "\n".join([
-                    "あなたはWorkspace社のAI社員です。",
-                    f"氏名: {self.employee['name']}",
-                    f"部署: {self.employee['department']}",
-                    f"役割: {self.employee['role']}",
-                    f"使用モデル: {self.employee['model']}",
-                ]),
-            ),
-            (
-                "実行方針",
-                "\n".join([
-                    "CEOの依頼ではなく担当タスクを遂行してください。",
-                    "成果物はMarkdownで出力してください。",
-                    "不明点は推測せずTODOとして残してください。",
-                ]),
-            ),
-        ]
+    def _build_prompts(self, project, task, current_datetime=None):
+        if task is None:
+            task = {
+                "id": "未指定",
+                "title": "未指定",
+                "assignee_id": self.employee_id,
+            }
+        current_datetime = current_datetime or datetime.now(ZoneInfo("Asia/Tokyo"))
+        return self.prompt_builder.build(
+            employee=self.employee,
+            project=project or "未指定",
+            task=task,
+            current_datetime=current_datetime,
+        )
 
     def _select_runner(self, task):
         if self.router is not None:
