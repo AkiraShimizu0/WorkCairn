@@ -33,11 +33,32 @@ class PromptBuilder:
         task,
         deliverable,
         current_datetime,
+        source_employee=None,
+        deliverable_frontmatter=None,
     ):
         """成果物レビュー用のSystem PromptとUser Promptを構築する"""
         prompts = self.build(employee, project, task, current_datetime)
+        source_employee = source_employee or {}
+        deliverable_frontmatter = deliverable_frontmatter or {}
+        source_context = "\n".join([
+            f"元タスクID: {task['id']}",
+            f"元タスクタイトル: {task['title']}",
+            f"元担当社員ID: {task.get('assignee_id') or '未割当'}",
+            f"元担当社員氏名: {source_employee.get('name') or '不明'}",
+            f"元担当社員部署: {source_employee.get('department') or '不明'}",
+            f"元担当社員役割: {source_employee.get('role') or '不明'}",
+            f"レビュー担当社員ID: {employee.get('id') or '不明'}",
+            f"レビュー担当社員氏名: {employee.get('name') or '不明'}",
+            f"レビュー担当社員部署: {employee.get('department') or '不明'}",
+            f"レビュー担当社員役割: {employee.get('role') or '不明'}",
+        ])
         review_rules = "\n".join([
             "あなたは成果物を客観的に確認するReviewerです。",
+            "作成者情報は、元担当社員情報と照合してください。",
+            "成果物本文だけを根拠に、作成者不明または推測と判定しないでください。",
+            "executed_atと本文の日付が矛盾する場合のみ、日付の不整合を指摘してください。",
+            "Project.mdに存在する既知情報が成果物へ反映されているか確認してください。",
+            "推測ではなく、与えられたコンテキストから確認できる矛盾だけを指摘してください。",
             "次の観点をすべて確認してください。",
             "- 要件漏れ",
             "- 不明点",
@@ -47,15 +68,28 @@ class PromptBuilder:
             "- TODO不足",
             "- MVPとして適切か",
             "指摘には理由と具体的な修正案を含めてください。",
-            "レビューの最終行はApproveまたはRequest Changesのどちらか一方だけにしてください。",
+            "人間向けMarkdownの後に、指定されたマーカーでJSONを1つだけ出力してください。",
+            "JSONのverdictはApproveまたはRequest Changesのみ使用してください。",
+            "Request Changesの場合はissuesを1件以上含めてください。",
+            "categoryはdate|format|requirements|context|todo|otherのみ使用してください。",
+            "severityはhigh|medium|lowのみ使用してください。",
+            "REVIEW_RESULT_JSON_START",
+            '{"verdict":"Approve または Request Changes","issues":[',
+            '{"category":"date|format|requirements|context|todo|other",',
+            '"severity":"high|medium|low","description":"指摘内容",',
+            '"suggested_action":"修正案"}]}',
+            "REVIEW_RESULT_JSON_END",
         ])
         prompts["system_prompt"] = (
-            f'{prompts["system_prompt"]}\n\n## レビュー方針\n{review_rules}'
+            f'{prompts["system_prompt"]}\n\n'
+            f"## レビューコンテキスト\n{source_context}\n\n"
+            f"## レビュー方針\n{review_rules}"
         )
         prompts["user_prompt"] = self._review_user_prompt(
             self._project_info(project)["name"],
             task,
             deliverable,
+            deliverable_frontmatter,
         )
         return prompts
 
@@ -121,11 +155,28 @@ class PromptBuilder:
         )
 
     @staticmethod
-    def _review_user_prompt(project_name, task, deliverable):
+    def _review_user_prompt(
+        project_name,
+        task,
+        deliverable,
+        deliverable_frontmatter,
+    ):
+        frontmatter = "\n".join(
+            f"- {key}: {deliverable_frontmatter.get(key) or '未設定'}"
+            for key in (
+                "project",
+                "task_id",
+                "assignee_id",
+                "runner",
+                "executed_at",
+            )
+        )
         return (
             f"プロジェクト: {project_name}\n"
             f"タスクID: {task['id']}\n"
             f"レビュー対象: {task['title']}\n\n"
+            "## 成果物Front Matter\n\n"
+            f"{frontmatter}\n\n"
             "## レビュー対象成果物\n\n"
             f"{deliverable.strip()}\n\n"
             "指定された観点でレビューしてください。"

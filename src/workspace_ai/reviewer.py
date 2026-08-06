@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 import os
 import re
 import tempfile
@@ -7,6 +8,7 @@ from zoneinfo import ZoneInfo
 from workspace_ai.organization import Organization
 from workspace_ai.project_manager import ProjectManager
 from workspace_ai.prompt_builder import PromptBuilder
+from workspace_ai.review_result import parse_review_output
 from workspace_ai.worker import Worker
 
 
@@ -14,7 +16,6 @@ class ReviewerWorker:
     """別のAI社員としてタスク成果物をレビューする"""
 
     TASK_ID_PATTERN = re.compile(r"TASK-\d+")
-    DECISIONS = ("Approve", "Request Changes")
     JST = ZoneInfo("Asia/Tokyo")
 
     def __init__(
@@ -55,12 +56,22 @@ class ReviewerWorker:
             raise ValueError(f"レビュー担当社員IDが存在しません: {reviewer_employee_id}")
         if task.get("assignee_id") == reviewer_employee_id:
             raise ValueError("成果物の担当社員は自分の成果物をレビューできません。")
+        source_employee_id = task.get("assignee_id")
+        if not source_employee_id:
+            raise ValueError(f"元タスクの担当社員が未割当です: {task_id}")
+        source_employee = self.organization.get_employee_by_id(source_employee_id)
+        if source_employee is None:
+            raise ValueError(f"元担当社員IDが存在しません: {source_employee_id}")
 
         review_path = project_dir / "Reviews" / f"{task_id}.review.md"
+        structured_review_path = project_dir / "Reviews" / f"{task_id}.review.json"
         if review_path.exists():
             raise FileExistsError(f"レビューが既に存在します: {task_id}")
+        if structured_review_path.exists():
+            raise FileExistsError(f"構造化レビューが既に存在します: {task_id}")
 
         deliverable = deliverable_path.read_text(encoding="utf-8")
+        deliverable_frontmatter = self._parse_frontmatter(deliverable)
         reviewed_at = datetime.now(self.JST)
         prompts = self.prompt_builder.build_review(
             employee=reviewer,
@@ -68,6 +79,8 @@ class ReviewerWorker:
             task=task,
             deliverable=deliverable,
             current_datetime=reviewed_at,
+            source_employee=source_employee,
+            deliverable_frontmatter=deliverable_frontmatter,
         )
         worker = Worker(
             employee_id=reviewer_employee_id,
@@ -83,20 +96,25 @@ class ReviewerWorker:
             "task_id": task_id,
             "task_title": task["title"],
             "assignee_id": task.get("assignee_id"),
+            "source_employee_name": source_employee["name"],
+            "source_employee_department": source_employee["department"],
+            "source_employee_role": source_employee["role"],
             "reviewer_employee_id": reviewer_employee_id,
             "reviewer_name": reviewer["name"],
             "model": reviewer["model"],
             "runner": runner_name,
             "deliverable_path": deliverable_path,
             "review_path": review_path,
+            "structured_review_path": structured_review_path,
             "audit_path": audit_path,
+            "deliverable_frontmatter": deliverable_frontmatter,
         }
         if dry_run:
             return {"status": "dry_run", **plan}
         if not approved:
             raise PermissionError("明示的な承認がないためレビューを実行しません。")
 
-        review_created = False
+        created_paths = []
         try:
             execution = worker.execute_with_prompts(
                 project_name,
@@ -105,10 +123,16 @@ class ReviewerWorker:
                 prompts,
             )
             output = execution["output"]
-            decision = self._decision(output)
+            human_markdown, review_result = parse_review_output(output)
+            decision = review_result["verdict"]
             execution_log = execution["execution_log"] or {}
 
             review_path.parent.mkdir(parents=True, exist_ok=True)
+            self._atomic_create(
+                structured_review_path,
+                json.dumps(review_result, ensure_ascii=False, indent=2) + "\n",
+            )
+            created_paths.append(structured_review_path)
             self._atomic_create(
                 review_path,
                 self._review_content(
@@ -118,10 +142,12 @@ class ReviewerWorker:
                     reviewed_at,
                     execution["runner"],
                     reviewer["model"],
-                    output,
+                    structured_review_path.name,
+                    human_markdown,
+                    decision,
                 ),
             )
-            review_created = True
+            created_paths.append(review_path)
             self._append_audit(
                 audit_path,
                 project_name=project_name,
@@ -135,8 +161,8 @@ class ReviewerWorker:
                 execution_log=execution_log,
             )
         except Exception as error:
-            if review_created:
-                review_path.unlink(missing_ok=True)
+            for created_path in reversed(created_paths):
+                created_path.unlink(missing_ok=True)
             execution_log = self._runner_execution_log(worker, task)
             self._append_audit(
                 audit_path,
@@ -158,23 +184,13 @@ class ReviewerWorker:
             "decision": decision,
             "runner": execution["runner"],
             "execution_log": execution_log,
+            "review_result": review_result,
         }
 
     @classmethod
     def _validate_task_id(cls, task_id):
         if not cls.TASK_ID_PATTERN.fullmatch(str(task_id)):
             raise ValueError(f"不正なタスクIDです: {task_id}")
-
-    @classmethod
-    def _decision(cls, output):
-        if not isinstance(output, str) or not output.strip():
-            raise ValueError("Runnerは空でないレビュー文字列を返す必要があります。")
-        final_line = output.rstrip().splitlines()[-1].strip()
-        if final_line not in cls.DECISIONS:
-            raise ValueError(
-                "レビューの最終行はApproveまたはRequest Changesにしてください。"
-            )
-        return final_line
 
     @staticmethod
     def _review_content(
@@ -184,7 +200,9 @@ class ReviewerWorker:
         reviewed_at,
         runner_name,
         model,
-        output,
+        result_file,
+        human_markdown,
+        decision,
     ):
         timestamp = reviewed_at.strftime("%Y-%m-%d %H:%M:%S %Z")
         return (
@@ -196,10 +214,39 @@ class ReviewerWorker:
             f"reviewed_at: {timestamp}\n"
             f"runner: {runner_name}\n"
             f"model: {model}\n"
+            f"result_file: {result_file}\n"
             "---\n\n"
             f"# {task_id} Review\n\n"
-            f"{output.strip()}\n"
+            f"{human_markdown.strip()}\n\n"
+            "## 判定\n\n"
+            f"{decision}\n"
         )
+
+    @staticmethod
+    def _parse_frontmatter(content):
+        lines = content.splitlines()
+        if not lines or lines[0].strip() != "---":
+            raise ValueError("成果物にFront Matterがありません。")
+        try:
+            end = lines.index("---", 1)
+        except ValueError as error:
+            raise ValueError("成果物のFront Matterが閉じられていません。") from error
+        data = {}
+        for line in lines[1:end]:
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            data[key.strip()] = value.strip()
+        return {
+            key: data.get(key)
+            for key in (
+                "project",
+                "task_id",
+                "assignee_id",
+                "runner",
+                "executed_at",
+            )
+        }
 
     def _runner_execution_log(self, worker, task):
         if worker.router is not None:

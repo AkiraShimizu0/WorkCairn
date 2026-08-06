@@ -97,6 +97,10 @@ class ProjectManager:
             raise ValueError(f"タスクIDが重複しています: {task_id}")
         return matches[0]
 
+    def next_task_id(self, project_name):
+        """Tasks.mdを変更せず、次に割り当てられるタスクIDを返す"""
+        return self._next_task_id(self.get_tasks(project_name))
+
     def get_project_path(self, project_name):
         """検証済みのプロジェクトフォルダを返す"""
         project_dir = self._project_dir(project_name)

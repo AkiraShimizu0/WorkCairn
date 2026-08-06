@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +7,16 @@ from unittest.mock import patch
 from workspace_ai.organization import Organization
 from workspace_ai.project_manager import ProjectManager
 from workspace_ai.reviewer import ReviewerWorker
+
+
+def structured_review_output(verdict, issues=None, markdown="## レビュー\n\n確認しました。"):
+    result = {"verdict": verdict, "issues": issues or []}
+    return (
+        f"{markdown}\n\n"
+        "REVIEW_RESULT_JSON_START\n"
+        f"{json.dumps(result, ensure_ascii=False)}\n"
+        "REVIEW_RESULT_JSON_END"
+    )
 
 
 class ReviewFakeRunner:
@@ -108,6 +119,14 @@ class ReviewerWorkerTest(unittest.TestCase):
         deliverables.mkdir()
         self.deliverable_path = deliverables / "TASK-001.md"
         self.deliverable_path.write_text(
+            "---\n"
+            "type: task-deliverable\n"
+            "project: ToDoアプリ\n"
+            "task_id: TASK-001\n"
+            "assignee_id: PLAN-001\n"
+            "runner: FakeRunner\n"
+            "executed_at: 2026-08-06 12:00:00\n"
+            "---\n\n"
             "# MVP要件\n\n- タスクを追加できる\n",
             encoding="utf-8",
         )
@@ -120,7 +139,10 @@ class ReviewerWorkerTest(unittest.TestCase):
 
     def test_generates_and_saves_approve_review_with_deliverable(self):
         runner = ReviewFakeRunner(
-            "## レビュー\n\n要件を満たしています。\n\nApprove"
+            structured_review_output(
+                "Approve",
+                markdown="## レビュー\n\n要件を満たしています。",
+            )
         )
         reviewer = self._reviewer(runner)
 
@@ -143,11 +165,40 @@ class ReviewerWorkerTest(unittest.TestCase):
             "reviewed_at:",
             "runner: ReviewFakeRunner",
             "model: Claude Sonnet 5",
+            "result_file: TASK-001.review.json",
             "Approve",
         ):
             self.assertIn(expected, saved)
         self.assertIn("タスクを追加できる", runner.call["user_prompt"])
         self.assertEqual(runner.call["employee"]["id"], "QA-001")
+        for expected_context in (
+            "元タスクID: TASK-001",
+            "元タスクタイトル: 要件を整理する",
+            "元担当社員ID: PLAN-001",
+            "元担当社員氏名: 田中 美咲",
+            "元担当社員部署: 企画部",
+            "元担当社員役割: Product Manager",
+            "レビュー担当社員ID: QA-001",
+            "作成者情報は、元担当社員情報と照合してください",
+            "成果物本文だけを根拠に、作成者不明または推測と判定しないでください",
+            "executed_atと本文の日付が矛盾する場合のみ",
+            "Project.mdに存在する既知情報が成果物へ反映されているか",
+            "確認できる矛盾だけを指摘してください",
+        ):
+            self.assertIn(expected_context, runner.call["system_prompt"])
+        for expected_frontmatter in (
+            "- project: ToDoアプリ",
+            "- task_id: TASK-001",
+            "- assignee_id: PLAN-001",
+            "- runner: FakeRunner",
+            "- executed_at: 2026-08-06 12:00:00",
+        ):
+            self.assertIn(expected_frontmatter, runner.call["user_prompt"])
+        self.assertNotIn("REVIEW_RESULT_JSON_START", saved)
+        structured = json.loads(
+            result["structured_review_path"].read_text(encoding="utf-8")
+        )
+        self.assertEqual(structured, {"verdict": "Approve", "issues": []})
         audit = result["audit_path"].read_text(encoding="utf-8")
         for expected in (
             "event: review",
@@ -171,7 +222,16 @@ class ReviewerWorkerTest(unittest.TestCase):
 
     def test_saves_request_changes_decision(self):
         runner = ReviewFakeRunner(
-            "## 指摘\n\nTODOの扱いを明確にしてください。\n\nRequest Changes"
+            structured_review_output(
+                "Request Changes",
+                issues=[{
+                    "category": "todo",
+                    "severity": "medium",
+                    "description": "TODOの扱いが不明です。",
+                    "suggested_action": "TODO一覧を追加してください。",
+                }],
+                markdown="## 指摘\n\nTODOの扱いを明確にしてください。",
+            )
         )
 
         result = self._reviewer(runner).review(
@@ -202,10 +262,14 @@ class ReviewerWorkerTest(unittest.TestCase):
         self.assertIsNone(runner.call)
         self.assertFalse(self._review_path().exists())
 
-    def test_rejects_review_without_final_decision(self):
-        runner = ReviewFakeRunner("要件を満たしています。")
+    def test_rejects_invalid_review_json_before_saving(self):
+        runner = ReviewFakeRunner(
+            "## レビュー\n\n確認しました。\n\n"
+            "REVIEW_RESULT_JSON_START\n{invalid json}\n"
+            "REVIEW_RESULT_JSON_END"
+        )
 
-        with self.assertRaisesRegex(ValueError, "最終行"):
+        with self.assertRaisesRegex(ValueError, "JSONが不正"):
             self._reviewer(runner).review(
                 "ToDoアプリ",
                 "TASK-001",
@@ -214,13 +278,14 @@ class ReviewerWorkerTest(unittest.TestCase):
             )
 
         self.assertFalse(self._review_path().exists())
+        self.assertFalse(self._structured_review_path().exists())
         self.assertIn(
             "status: failed",
             self._audit_path().read_text(encoding="utf-8"),
         )
 
     def test_dry_run_does_not_call_runner_or_change_files(self):
-        runner = ReviewFakeRunner("Approve")
+        runner = ReviewFakeRunner(structured_review_output("Approve"))
         deliverable_before = self.deliverable_path.read_bytes()
         tasks_path = self._project_path() / "Tasks.md"
         tasks_before = tasks_path.read_bytes()
@@ -241,7 +306,7 @@ class ReviewerWorkerTest(unittest.TestCase):
         self.assertFalse(self._audit_path().exists())
 
     def test_requires_explicit_approval(self):
-        runner = ReviewFakeRunner("Approve")
+        runner = ReviewFakeRunner(structured_review_output("Approve"))
 
         with self.assertRaises(PermissionError):
             self._reviewer(runner).review(
@@ -285,6 +350,9 @@ class ReviewerWorkerTest(unittest.TestCase):
 
     def _review_path(self):
         return self._project_path() / "Reviews" / "TASK-001.review.md"
+
+    def _structured_review_path(self):
+        return self._project_path() / "Reviews" / "TASK-001.review.json"
 
     def _audit_path(self):
         return self._project_path() / "Audit Log.md"
