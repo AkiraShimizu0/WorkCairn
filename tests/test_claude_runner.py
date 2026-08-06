@@ -53,6 +53,8 @@ class ClaudeRunnerTest(unittest.TestCase):
         log = runner.get_last_execution_log()
         self.assertEqual(log["model"], "test-claude-model")
         self.assertEqual(log["estimated_tokens"], 150)
+        self.assertEqual(log["input_tokens"], 120)
+        self.assertEqual(log["output_tokens"], 30)
         self.assertEqual(log["token_source"], "api_usage")
         self.assertGreaterEqual(log["duration_seconds"], 0)
         self.assertEqual(log["status"], "success")
@@ -102,7 +104,10 @@ class ClaudeRunnerTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "API failure"):
             runner.run(system_prompt="System", user_prompt="User")
 
-        self.assertEqual(runner.get_last_execution_log()["status"], "failed")
+        log = runner.get_last_execution_log()
+        self.assertEqual(log["status"], "failed")
+        self.assertIsNone(log["input_tokens"])
+        self.assertIsNone(log["output_tokens"])
 
     def test_worker_and_router_can_use_claude_runner(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

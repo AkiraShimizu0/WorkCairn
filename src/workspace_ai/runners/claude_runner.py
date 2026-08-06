@@ -61,7 +61,12 @@ class ClaudeRunner:
                 **self._request_arguments(system_prompt, user_prompt)
             )
             markdown = self._extract_markdown(response)
-            estimated_tokens, token_source = self._token_count(
+            (
+                estimated_tokens,
+                token_source,
+                input_tokens,
+                output_tokens,
+            ) = self._token_count(
                 response,
                 system_prompt,
                 user_prompt,
@@ -72,6 +77,8 @@ class ClaudeRunner:
                 "runner": self.name,
                 "model": self.model,
                 "estimated_tokens": None,
+                "input_tokens": None,
+                "output_tokens": None,
                 "token_source": None,
                 "duration_seconds": round(perf_counter() - started_at, 6),
                 "status": "failed",
@@ -82,6 +89,8 @@ class ClaudeRunner:
             "runner": self.name,
             "model": self.model,
             "estimated_tokens": estimated_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
             "token_source": token_source,
             "duration_seconds": round(perf_counter() - started_at, 6),
             "status": "success",
@@ -145,7 +154,12 @@ class ClaudeRunner:
         input_tokens = getattr(usage, "input_tokens", None)
         output_tokens = getattr(usage, "output_tokens", None)
         if isinstance(input_tokens, int) and isinstance(output_tokens, int):
-            return input_tokens + output_tokens, "api_usage"
+            return (
+                input_tokens + output_tokens,
+                "api_usage",
+                input_tokens,
+                output_tokens,
+            )
 
         characters = len(system_prompt) + len(user_prompt) + len(markdown)
-        return max(1, ceil(characters / 4)), "character_estimate"
+        return max(1, ceil(characters / 4)), "character_estimate", None, None
