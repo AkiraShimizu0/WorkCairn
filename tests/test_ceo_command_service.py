@@ -2,9 +2,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from workspace_ai.ceo_command_service import CEOCommandService
+from workspace_ai.organization import Organization
+from workspace_ai.project_manager import ProjectManager
 
 
 class StubOrganization:
@@ -71,6 +73,15 @@ def base_plan():
         "risks": ["MVP範囲が拡大する可能性"],
         "ceo_questions": ["対象端末はWebブラウザのみですか"],
     }
+
+
+def applicable_plan():
+    plan = base_plan()
+    for index, task in enumerate(plan["proposed_tasks"], start=1):
+        task["proposal_id"] = f"PROPOSED-{index:03d}"
+    plan["missing_roles"] = ["UI/UX Designer"]
+    plan["plan_only"] = True
+    return plan
 
 
 class CEOCommandServiceTest(unittest.TestCase):
@@ -158,14 +169,215 @@ class CEOCommandServiceTest(unittest.TestCase):
             self.project_manager.assert_not_called()
             self.workflow_engine.assert_not_called()
 
-    def test_apply_is_explicitly_unimplemented_even_when_approved(self):
+    def test_apply_without_approval_is_rejected(self):
         service, _ = self.service(base_plan())
 
-        with self.assertRaises(NotImplementedError):
-            service.apply(base_plan(), approved=True)
+        with self.assertRaises(PermissionError):
+            service.apply(applicable_plan())
 
         self.project_manager.assert_not_called()
         self.workflow_engine.assert_not_called()
+
+
+class CEOCommandServiceApplyTest(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.vault = Path(self.temporary_directory.name)
+        employees = self.vault / "社員"
+        employees.mkdir()
+        self._write_employee(
+            employees / "山本 真帆.md",
+            "PLAN-001",
+            "企画部",
+            "Product Manager",
+        )
+        self._write_employee(
+            employees / "高橋 拓海.md",
+            "DEV-001",
+            "開発部",
+            "Backend Engineer",
+        )
+        self.organization_patch = patch(
+            "workspace_ai.organization.get_vault_path",
+            return_value=self.vault,
+        )
+        self.projects_patch = patch(
+            "workspace_ai.project_manager.projects_path",
+            return_value=self.vault / "プロジェクト",
+        )
+        self.organization_patch.start()
+        self.projects_patch.start()
+
+        self.organization = Organization()
+        self.project_manager = ProjectManager(self.organization)
+        self.workflow_engine = Mock()
+        self.runner = FakePlanningRunner(base_plan())
+        self.service = CEOCommandService(
+            planner=self.runner,
+            organization=self.organization,
+            project_manager=self.project_manager,
+            workflow_engine=self.workflow_engine,
+        )
+
+    def tearDown(self):
+        self.projects_patch.stop()
+        self.organization_patch.stop()
+        self.temporary_directory.cleanup()
+
+    def test_normal_apply_creates_project_files_and_tasks(self):
+        result = self.service.apply(applicable_plan(), approved=True)
+
+        project_dir = self._project_dir()
+        self.assertTrue(project_dir.is_dir())
+        for filename in ProjectManager.MANAGED_FILES:
+            self.assertTrue((project_dir / filename).is_file())
+        self.assertTrue((project_dir / "Task Dependencies.md").is_file())
+        self.assertEqual(len(result["created_tasks"]), 2)
+        self.assertEqual(len(self.project_manager.get_tasks("家計簿Webアプリ")), 2)
+        self.workflow_engine.assert_not_called()
+
+    def test_proposed_ids_are_converted_to_task_ids(self):
+        result = self.service.apply(applicable_plan(), approved=True)
+
+        self.assertEqual(result["proposed_to_task_id_map"], {
+            "PROPOSED-001": "TASK-001",
+            "PROPOSED-002": "TASK-002",
+        })
+
+    def test_assignee_id_is_preserved(self):
+        result = self.service.apply(applicable_plan(), approved=True)
+
+        task = result["created_tasks"][0]
+        self.assertEqual(task["assignee_id"], "PLAN-001")
+        self.assertEqual(
+            self.project_manager.get_task("家計簿Webアプリ", "TASK-001")["assignee_id"],
+            "PLAN-001",
+        )
+
+    def test_unassigned_task_is_saved_and_reported(self):
+        result = self.service.apply(applicable_plan(), approved=True)
+
+        self.assertEqual(result["unassigned_tasks"], ["TASK-002"])
+        self.assertIsNone(
+            self.project_manager.get_task("家計簿Webアプリ", "TASK-002")["assignee_id"]
+        )
+
+    def test_missing_roles_are_preserved_without_recruiting(self):
+        result = self.service.apply(applicable_plan(), approved=True)
+
+        self.assertEqual(result["missing_roles"], ["UI/UX Designer"])
+        self.assertTrue(any("自動採用は行いません" in item for item in result["warnings"]))
+
+    def test_dependencies_are_converted_and_saved_separately(self):
+        result = self.service.apply(applicable_plan(), approved=True)
+
+        self.assertEqual(result["created_tasks"][1]["dependency_ids"], ["TASK-001"])
+        metadata = (self._project_dir() / "Task Dependencies.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("| TASK-002 | PROPOSED-002 | TASK-001 |", metadata)
+
+    def test_unknown_dependency_is_rejected_before_project_creation(self):
+        plan = applicable_plan()
+        plan["proposed_tasks"][1]["dependency_ids"] = ["PROPOSED-999"]
+
+        with self.assertRaisesRegex(ValueError, "PROPOSED-999"):
+            self.service.apply(plan, approved=True)
+
+        self.assertFalse(self._project_dir().exists())
+
+    def test_unknown_assigned_employee_is_rejected_before_project_creation(self):
+        plan = applicable_plan()
+        plan["assigned_existing_employees"].append("UNKNOWN-001")
+
+        with self.assertRaisesRegex(ValueError, "UNKNOWN-001"):
+            self.service.apply(plan, approved=True)
+
+        self.assertFalse(self._project_dir().exists())
+
+    def test_unknown_task_assignee_is_rejected_before_project_creation(self):
+        plan = applicable_plan()
+        plan["proposed_tasks"][0]["assignee_id"] = "UNKNOWN-001"
+
+        with self.assertRaisesRegex(ValueError, "UNKNOWN-001"):
+            self.service.apply(plan, approved=True)
+
+        self.assertFalse(self._project_dir().exists())
+
+    def test_invalid_core_plan_fields_are_rejected_before_creation(self):
+        invalid_values = (
+            ("project_name", "../outside"),
+            ("objective", ""),
+            ("proposed_tasks", []),
+        )
+        for field_name, value in invalid_values:
+            with self.subTest(field_name=field_name):
+                plan = applicable_plan()
+                plan[field_name] = value
+                with self.assertRaises(ValueError):
+                    self.service.apply(plan, approved=True)
+
+        self.assertFalse(self._project_dir().exists())
+
+    def test_cyclic_dependency_is_rejected_before_project_creation(self):
+        plan = applicable_plan()
+        plan["proposed_tasks"][0]["dependency_ids"] = ["PROPOSED-002"]
+
+        with self.assertRaisesRegex(ValueError, "循環"):
+            self.service.apply(plan, approved=True)
+
+        self.assertFalse(self._project_dir().exists())
+
+    def test_duplicate_proposed_id_is_rejected_before_project_creation(self):
+        plan = applicable_plan()
+        plan["proposed_tasks"][1]["proposal_id"] = "PROPOSED-001"
+
+        with self.assertRaisesRegex(ValueError, "重複"):
+            self.service.apply(plan, approved=True)
+
+        self.assertFalse(self._project_dir().exists())
+
+    def test_same_plan_cannot_be_applied_twice(self):
+        self.service.apply(applicable_plan(), approved=True)
+
+        with self.assertRaisesRegex(FileExistsError, "適用済み"):
+            self.service.apply(applicable_plan(), approved=True)
+
+        self.assertEqual(len(self.project_manager.get_tasks("家計簿Webアプリ")), 2)
+
+    def test_task_creation_failure_rolls_back_entire_new_project(self):
+        original_add_task = self.project_manager.add_task
+
+        def failing_add_task(project_name, title, assignee_id=None):
+            if title == "画面を設計する":
+                raise RuntimeError("simulated task failure")
+            return original_add_task(project_name, title, assignee_id)
+
+        with patch.object(
+            self.project_manager,
+            "add_task",
+            side_effect=failing_add_task,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "simulated"):
+                self.service.apply(applicable_plan(), approved=True)
+
+        self.assertFalse(self._project_dir().exists())
+
+    def _project_dir(self):
+        return self.vault / "プロジェクト" / "家計簿Webアプリ"
+
+    @staticmethod
+    def _write_employee(path, employee_id, department, role):
+        path.write_text(
+            "---\n"
+            f"id: {employee_id}\n"
+            f"department: {department}\n"
+            f"role: {role}\n"
+            "model: Claude Sonnet 5\n"
+            "status: 待機中\n"
+            "---\n",
+            encoding="utf-8",
+        )
 
 
 if __name__ == "__main__":

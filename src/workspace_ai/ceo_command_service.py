@@ -1,4 +1,8 @@
 import json
+from datetime import datetime
+import os
+import re
+import tempfile
 
 from workspace_ai.organization import Organization
 from workspace_ai.project_manager import ProjectManager
@@ -6,6 +10,8 @@ from workspace_ai.project_manager import ProjectManager
 
 class CEOCommandService:
     """CEOの依頼を、承認前の会社実行計画へ変換する。"""
+
+    DEPENDENCY_METADATA_FILENAME = "Task Dependencies.md"
 
     def __init__(
         self,
@@ -90,10 +96,301 @@ class CEOCommandService:
         }
 
     def apply(self, plan, *, approved=False):
-        """将来の承認付き適用API。初期版では常に実行しない。"""
-        raise NotImplementedError(
-            "CEOCommandService.apply()は初期版では未実装です。"
+        """承認済みPlanからProjectとTaskを一度だけ安全に作成する。"""
+        if not approved:
+            raise PermissionError("Planの適用にはapproved=Trueが必要です。")
+
+        validated = self._validate_apply_plan(plan)
+        project_name = validated["project_name"]
+        self._ensure_project_absent(project_name)
+
+        warnings = []
+        if validated["missing_roles"]:
+            warnings.append(
+                "不足ロールがあります。自動採用は行いません: "
+                + ", ".join(validated["missing_roles"])
+            )
+        unassigned_proposals = [
+            task for task in validated["proposed_tasks"]
+            if task["assignee_id"] is None
+        ]
+        if unassigned_proposals:
+            warnings.append(
+                f"未割当タスクが{len(unassigned_proposals)}件あります。"
+            )
+
+        created_project = {}
+        dependency_path = None
+        try:
+            created_project = self.project_manager.create_project(
+                project_name,
+                self._project_description(validated),
+            )
+            proposed_to_task_id_map = {}
+            created_tasks = []
+
+            for proposed_task in validated["proposed_tasks"]:
+                created = self.project_manager.add_task(
+                    project_name,
+                    proposed_task["title"],
+                    proposed_task["assignee_id"],
+                )
+                proposed_to_task_id_map[proposed_task["proposal_id"]] = created["id"]
+                created_tasks.append({
+                    **created,
+                    "proposal_id": proposed_task["proposal_id"],
+                    "rationale": proposed_task["rationale"],
+                })
+
+            for created_task, proposed_task in zip(
+                created_tasks,
+                validated["proposed_tasks"],
+            ):
+                created_task["dependency_ids"] = [
+                    proposed_to_task_id_map[dependency_id]
+                    for dependency_id in proposed_task["dependency_ids"]
+                ]
+
+            project_dir = next(iter(created_project.values())).parent
+            dependency_path = project_dir / self.DEPENDENCY_METADATA_FILENAME
+            self._write_dependency_metadata(
+                dependency_path,
+                project_name,
+                created_tasks,
+            )
+        except Exception:
+            self._rollback_project(
+                project_name,
+                created_project,
+                dependency_path,
+            )
+            raise
+
+        return {
+            "project_name": project_name,
+            "created_project": {
+                filename: str(path)
+                for filename, path in created_project.items()
+            },
+            "created_tasks": created_tasks,
+            "proposed_to_task_id_map": proposed_to_task_id_map,
+            "unassigned_tasks": [
+                task["id"] for task in created_tasks
+                if task["assignee_id"] is None
+            ],
+            "missing_roles": validated["missing_roles"],
+            "warnings": warnings,
+        }
+
+    def _validate_apply_plan(self, plan):
+        if not isinstance(plan, dict):
+            raise ValueError("planはオブジェクトである必要があります。")
+
+        project_name = self._required_text(plan.get("project_name"), "project_name")
+        # ProjectManagerの既存ルールでパスや表セルとしての妥当性を検証する。
+        try:
+            self.project_manager.get_project_path(project_name)
+        except FileNotFoundError:
+            pass
+
+        employees = self.organization.get_all_employees()
+        employees_by_id = self._employees_by_id(employees)
+        assigned_ids = self._employee_id_list(
+            plan.get("assigned_existing_employees", []),
+            "assigned_existing_employees",
+            employees_by_id,
         )
+        proposed_tasks = self._validate_apply_tasks(
+            plan.get("proposed_tasks"),
+            employees_by_id,
+        )
+        self._validate_dependency_graph(proposed_tasks)
+
+        required_roles = self._string_list(
+            plan.get("required_roles", []),
+            "required_roles",
+        )
+        existing_roles = {
+            self._required_text(employee.get("role"), "社員の役割").casefold()
+            for employee in employees
+        }
+        missing_roles = [
+            role for role in required_roles
+            if role.casefold() not in existing_roles
+        ]
+        # required_rolesがない旧Planでは、保存済みの警告情報を維持する。
+        if not required_roles:
+            missing_roles = self._string_list(
+                plan.get("missing_roles", []),
+                "missing_roles",
+            )
+
+        return {
+            "project_name": project_name,
+            "objective": self._required_text(plan.get("objective"), "objective"),
+            "summary": self._optional_text(plan.get("summary"), "summary"),
+            "assigned_existing_employees": assigned_ids,
+            "missing_roles": missing_roles,
+            "proposed_tasks": proposed_tasks,
+        }
+
+    def _validate_apply_tasks(self, tasks, employees_by_id):
+        if not isinstance(tasks, list) or not tasks:
+            raise ValueError("proposed_tasksは1件以上の配列である必要があります。")
+
+        validated = []
+        seen_ids = set()
+        for task in tasks:
+            if not isinstance(task, dict):
+                raise ValueError("proposed_tasksの各要素はオブジェクトにしてください。")
+            proposal_id = self._required_text(task.get("proposal_id"), "proposal_id")
+            if not re.fullmatch(r"PROPOSED-\d+", proposal_id):
+                raise ValueError(f"不正なPROPOSED-IDです: {proposal_id}")
+            if proposal_id in seen_ids:
+                raise ValueError(f"PROPOSED-IDが重複しています: {proposal_id}")
+            seen_ids.add(proposal_id)
+
+            title = self._required_text(task.get("title"), "タスクtitle")
+            if "\n" in title or "\r" in title or "|" in title:
+                raise ValueError("タスクtitleに改行または | は使用できません。")
+            assignee_id = task.get("assignee_id")
+            if assignee_id is not None:
+                assignee_id = self._required_text(assignee_id, "assignee_id")
+                self._ensure_known_employee(assignee_id, employees_by_id)
+
+            validated.append({
+                "proposal_id": proposal_id,
+                "title": title,
+                "assignee_id": assignee_id,
+                "dependency_ids": self._string_list(
+                    task.get("dependency_ids", []),
+                    "dependency_ids",
+                ),
+                "rationale": self._required_text(
+                    task.get("rationale"),
+                    "タスクrationale",
+                ),
+            })
+        return validated
+
+    @staticmethod
+    def _validate_dependency_graph(tasks):
+        task_ids = {task["proposal_id"] for task in tasks}
+        graph = {
+            task["proposal_id"]: task["dependency_ids"]
+            for task in tasks
+        }
+        for proposal_id, dependencies in graph.items():
+            for dependency_id in dependencies:
+                if dependency_id not in task_ids:
+                    raise ValueError(
+                        f"存在しない計画内依存IDです: {dependency_id}"
+                    )
+                if dependency_id == proposal_id:
+                    raise ValueError("タスク自身を依存先にはできません。")
+
+        states = {}
+
+        def visit(proposal_id):
+            state = states.get(proposal_id)
+            if state == "visiting":
+                raise ValueError("dependencyに循環があります。")
+            if state == "visited":
+                return
+            states[proposal_id] = "visiting"
+            for dependency_id in graph[proposal_id]:
+                visit(dependency_id)
+            states[proposal_id] = "visited"
+
+        for proposal_id in graph:
+            visit(proposal_id)
+
+    def _ensure_project_absent(self, project_name):
+        try:
+            self.project_manager.get_project_path(project_name)
+        except FileNotFoundError:
+            return
+        raise FileExistsError(
+            f"Planは既に適用済み、または同名Projectが存在します: {project_name}"
+        )
+
+    @staticmethod
+    def _project_description(plan):
+        if plan["summary"]:
+            return f'{plan["objective"]}\n\n{plan["summary"]}'
+        return plan["objective"]
+
+    @classmethod
+    def _write_dependency_metadata(cls, path, project_name, created_tasks):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        rows = []
+        for task in created_tasks:
+            dependencies = ", ".join(task["dependency_ids"]) or "なし"
+            rows.append(
+                f'| {task["id"]} | {task["proposal_id"]} | '
+                f'{dependencies} | {cls._escape_table_cell(task["rationale"])} |'
+            )
+        content = (
+            "---\n"
+            "type: task-dependencies\n"
+            f"project: {project_name}\n"
+            f"created_at: {timestamp}\n"
+            "---\n\n"
+            f"# {project_name} Task Dependencies\n\n"
+            "| Task ID | Proposed ID | Depends On | Rationale |\n"
+            "|---|---|---|---|\n"
+            + "\n".join(rows)
+            + "\n"
+        )
+        cls._atomic_create(path, content)
+
+    @staticmethod
+    def _atomic_create(path, content):
+        if path.exists():
+            raise FileExistsError(f"ファイルが既に存在します: {path}")
+        file_descriptor, temporary_name = tempfile.mkstemp(
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(file_descriptor, "w", encoding="utf-8") as file:
+                file.write(content)
+            if path.exists():
+                raise FileExistsError(f"ファイルが既に存在します: {path}")
+            os.replace(temporary_name, path)
+        except Exception:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+            raise
+
+    def _rollback_project(self, project_name, created_project, dependency_path):
+        paths = list(created_project.values())
+        if dependency_path is not None:
+            paths.append(dependency_path)
+        for path in reversed(paths):
+            path.unlink(missing_ok=True)
+
+        project_dir = None
+        if created_project:
+            project_dir = next(iter(created_project.values())).parent
+        else:
+            try:
+                project_dir = self.project_manager.get_project_path(project_name)
+            except FileNotFoundError:
+                pass
+        if project_dir is not None:
+            try:
+                project_dir.rmdir()
+            except OSError:
+                # applyが作っていないファイルは削除しない。
+                pass
+
+    @staticmethod
+    def _escape_table_cell(value):
+        return " ".join(value.splitlines()).replace("|", "\\|")
 
     @staticmethod
     def _build_system_prompt(employees):
@@ -199,6 +496,14 @@ class CEOCommandService:
     def _required_text(value, field_name):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field_name}は空でない文字列にしてください。")
+        return value.strip()
+
+    @staticmethod
+    def _optional_text(value, field_name):
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError(f"{field_name}は文字列にしてください。")
         return value.strip()
 
     @classmethod
