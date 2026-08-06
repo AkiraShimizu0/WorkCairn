@@ -27,12 +27,16 @@ class IdentityPolicy:
         self.similarity_threshold = similarity_threshold
 
     def get_existing_names(self):
-        """Organizationを正として既存社員名を取得する"""
+        """Organizationを正として全組織メンバー名を取得する"""
         return [
-            employee["name"]
-            for employee in self.organization.get_all_employees()
-            if employee.get("name")
+            identity["name"]
+            for identity in self._get_all_identities()
+            if identity.get("name")
         ]
+
+    def get_existing_identities(self):
+        """通常社員と管理者・予約Identityを区別したまま取得する"""
+        return list(self._get_all_identities())
 
     def validate_name(self, name, *, existing_names=None):
         """採用候補名を検査し、採用可否と理由を返す"""
@@ -147,25 +151,30 @@ class IdentityPolicy:
         }
 
     def audit_existing_employees(self):
-        """既存社員の名前を診断し、改名は行わず修正候補だけ返す"""
+        """全組織Identityを診断し、改名は行わず修正候補だけ返す"""
+        identities = self._get_all_identities()
         employees = self.organization.get_all_employees()
-        exact_groups = self._groups(employees, lambda employee: employee.get("name"))
+        id_groups = self._groups(identities, lambda identity: identity.get("id"))
+        exact_groups = self._groups(identities, lambda identity: identity.get("name"))
         normalized_groups = self._groups(
-            employees,
-            lambda employee: self.normalize_name(employee.get("name", "")),
+            identities,
+            lambda identity: self.normalize_name(identity.get("name", "")),
         )
         surname_groups = defaultdict(list)
         given_groups = defaultdict(list)
         invalid_names = []
 
-        for employee in employees:
-            name = employee.get("name", "")
+        for identity in identities:
+            name = identity.get("name")
+            if not name:
+                continue
             parts = self.split_japanese_name(name)
             invalid_terms = self._find_invalid_terms(self.normalize_name(name))
             if parts is None or invalid_terms:
                 invalid_names.append({
-                    "employee_id": employee.get("id"),
+                    "employee_id": identity.get("id"),
                     "name": name,
+                    "identity_type": identity.get("identity_type"),
                     "reasons": [
                         *(["invalid_name_format"] if parts is None else []),
                         *(["invalid_term"] if invalid_terms else []),
@@ -173,9 +182,10 @@ class IdentityPolicy:
                 })
                 continue
             surname, given_name = parts
-            surname_groups[surname].append(employee)
-            given_groups[given_name].append(employee)
+            surname_groups[surname].append(identity)
+            given_groups[given_name].append(identity)
 
+        duplicate_ids = self._format_groups(id_groups)
         exact_matches = self._format_groups(exact_groups)
         normalized_matches = [
             group
@@ -184,9 +194,13 @@ class IdentityPolicy:
         ]
         same_given_names = self._format_named_groups(given_groups, "given_name")
         same_surnames = self._format_named_groups(surname_groups, "surname")
-        high_similarity = self._similar_pairs(employees)
+        high_similarity = self._similar_pairs(identities)
 
         issues = []
+        issues.extend(
+            self._audit_issue("duplicate_id", "error", True, group)
+            for group in duplicate_ids
+        )
         issues.extend(
             self._audit_issue("exact_match", "error", True, group)
             for group in exact_matches
@@ -218,8 +232,19 @@ class IdentityPolicy:
             same_given_names,
             invalid_names,
         )
+        retained_identities = self._retained_identities(same_given_names)
         return {
             "employee_count": len(employees),
+            "identity_count": len(identities),
+            "workspace_manager_count": sum(
+                identity.get("identity_type") == "workspace_manager"
+                for identity in identities
+            ),
+            "reserved_identity_count": sum(
+                identity.get("identity_type") == "reserved"
+                for identity in identities
+            ),
+            "duplicate_ids": duplicate_ids,
             "exact_matches": exact_matches,
             "normalized_matches": normalized_matches,
             "same_given_names": same_given_names,
@@ -230,7 +255,13 @@ class IdentityPolicy:
             "errors": [issue for issue in issues if issue["level"] == "error"],
             "warnings": [issue for issue in issues if issue["level"] == "warning"],
             "repair_candidates": repair_candidates,
+            "recommended_rename_targets": repair_candidates,
+            "recommended_retained_identities": retained_identities,
         }
+
+    def audit_all_identities(self):
+        """全組織診断であることを明示する別名API"""
+        return self.audit_existing_employees()
 
     @classmethod
     def normalize_display_name(cls, name):
@@ -281,7 +312,12 @@ class IdentityPolicy:
 
     @staticmethod
     def _employee_summary(employee):
-        return {"id": employee.get("id"), "name": employee.get("name")}
+        summary = {"id": employee.get("id"), "name": employee.get("name")}
+        if employee.get("identity_type"):
+            summary["identity_type"] = employee["identity_type"]
+        if employee.get("identity_source"):
+            summary["identity_source"] = employee["identity_source"]
+        return summary
 
     @classmethod
     def _format_groups(cls, groups):
@@ -357,10 +393,10 @@ class IdentityPolicy:
                 candidate["reasons"].append(reason)
 
         for group in [*exact_matches, *normalized_matches]:
-            for employee in group["employees"][1:]:
+            for employee in IdentityPolicy._rename_targets(group):
                 add(employee, "既存社員と同一視される名前", "重複しない日本語姓名へ変更する")
         for group in same_given_names:
-            for employee in group["employees"][1:]:
+            for employee in IdentityPolicy._rename_targets(group):
                 add(employee, "既存社員と同じ名", "未使用の自然な名へ変更する")
         for employee in invalid_names:
             add(employee, "姓名形式または使用語が不正", "自然な日本語の『姓 名』へ変更する")
@@ -369,3 +405,39 @@ class IdentityPolicy:
             candidates.values(),
             key=lambda candidate: (candidate["name"] or "", candidate["employee_id"] or ""),
         )
+
+    @staticmethod
+    def _identity_priority(identity):
+        priority = {
+            "reserved": 0,
+            "workspace_manager": 1,
+            "employee": 2,
+        }
+        return (
+            priority.get(identity.get("identity_type"), 3),
+            identity.get("name") or "",
+            identity.get("id") or "",
+        )
+
+    @classmethod
+    def _rename_targets(cls, group):
+        ordered = sorted(group["employees"], key=cls._identity_priority)
+        return ordered[1:]
+
+    @classmethod
+    def _retained_identities(cls, same_given_names):
+        retained = []
+        for group in same_given_names:
+            ordered = sorted(group["employees"], key=cls._identity_priority)
+            if ordered:
+                retained.append({
+                    **ordered[0],
+                    "reason": f'{group["given_name"]}の基準Identityとして維持',
+                })
+        return retained
+
+    def _get_all_identities(self):
+        get_all_identities = getattr(self.organization, "get_all_identities", None)
+        if get_all_identities is not None:
+            return get_all_identities()
+        return self.organization.get_all_employees()

@@ -8,11 +8,15 @@ from workspace_ai.recruiter import Recruiter
 
 
 class FakeOrganization:
-    def __init__(self, employees):
+    def __init__(self, employees, additional_identities=None):
         self.employees = employees
+        self.additional_identities = additional_identities or []
 
     def get_all_employees(self):
         return list(self.employees)
+
+    def get_all_identities(self):
+        return [*self.employees, *self.additional_identities]
 
     def is_employee_id_available(self, employee_id):
         return all(employee.get("id") != employee_id for employee in self.employees)
@@ -147,6 +151,68 @@ class IdentityPolicyTest(unittest.TestCase):
         self.assertIn("使用済みの名：拓海、美咲", prompt)
         self.assertIn("完全一致と同じ名を必ず避けてください", prompt)
         self.assertIn("日本語の姓名形式", prompt)
+
+    def test_manager_is_included_in_same_given_name_and_prompt_context(self):
+        organization = FakeOrganization(
+            [{"id": "PLAN-001", "name": "田中 美咲", "identity_type": "employee"}],
+            [{
+                "id": "MGR-001",
+                "name": "中村 美咲",
+                "identity_type": "workspace_manager",
+            }],
+        )
+
+        audit = IdentityPolicy(organization).audit_all_identities()
+        prompt = build_manager_prompt("社員を採用する", organization)
+
+        group = audit["same_given_names"][0]
+        self.assertEqual(group["given_name"], "美咲")
+        self.assertEqual(
+            {employee["id"] for employee in group["employees"]},
+            {"PLAN-001", "MGR-001"},
+        )
+        self.assertEqual(audit["employee_count"], 1)
+        self.assertEqual(audit["identity_count"], 2)
+        self.assertIn("中村 美咲", prompt)
+        self.assertIn("中村", prompt)
+
+    def test_manager_and_employee_exact_name_and_id_are_detected(self):
+        organization = FakeOrganization(
+            [{
+                "id": "MGR-001",
+                "name": "中村 美咲",
+                "identity_type": "employee",
+            }],
+            [{
+                "id": "MGR-001",
+                "name": "中村 美咲",
+                "identity_type": "workspace_manager",
+            }],
+        )
+
+        audit = IdentityPolicy(organization).audit_all_identities()
+
+        self.assertEqual(audit["duplicate_ids"][0]["key"], "MGR-001")
+        self.assertEqual(audit["exact_matches"][0]["key"], "中村 美咲")
+        self.assertIn("duplicate_id", self._types(audit["errors"]))
+        self.assertIn("exact_match", self._types(audit["errors"]))
+
+    def test_recruiter_batch_validation_reserves_manager_id(self):
+        organization = FakeOrganization(
+            [{"id": "PLAN-001", "name": "田中 美咲"}],
+            [{
+                "id": "MGR-001",
+                "name": "中村 美咲",
+                "identity_type": "workspace_manager",
+            }],
+        )
+        recruiter = Recruiter(organization, IdentityPolicy(organization))
+
+        with self.assertRaisesRegex(ValueError, "MGR-001"):
+            recruiter.validate_candidates([{
+                "id": "MGR-001",
+                "name": "佐藤 蓮",
+            }])
 
     @staticmethod
     def _types(issues):

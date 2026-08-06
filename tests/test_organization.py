@@ -56,6 +56,33 @@ class OrganizationTest(unittest.TestCase):
             }],
         )
 
+    def test_all_identities_include_manager_and_reserved_without_employee_count(self):
+        write_employee(self.vault / "社員", "田中 美咲", "PLAN-001")
+        state_path = self.vault / "会社" / "Workspace State.md"
+        state_path.write_text(
+            "## Workspace Manager\n\n"
+            "| ID | 氏名 | 役割 | 状態 | 現在の作業 |\n"
+            "|---|---|---|---|---|\n"
+            "| MGR-001 | 中村 美咲 | Workspace Manager | 待機中 | なし |\n\n"
+            "## 部署\n",
+            encoding="utf-8",
+        )
+        organization = Organization(reserved_identities=[{
+            "id": "BOARD-001",
+            "name": "山田 太郎",
+        }])
+
+        identities = organization.get_all_identities()
+
+        self.assertEqual(len(organization.get_all_employees()), 1)
+        self.assertEqual(len(identities), 3)
+        self.assertEqual(
+            {identity["identity_type"] for identity in identities},
+            {"employee", "workspace_manager", "reserved"},
+        )
+        self.assertFalse(organization.is_employee_id_available("MGR-001"))
+        self.assertFalse(organization.is_employee_id_available("BOARD-001"))
+
     def test_recruiter_rejects_existing_and_batch_duplicate_ids(self):
         write_employee(self.vault / "社員", "佐藤 蓮", "DEV-001")
         recruiter = Recruiter()

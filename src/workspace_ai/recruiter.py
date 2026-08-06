@@ -59,8 +59,8 @@ class Recruiter:
         """複数社員を採用する前に、全候補をまとめて検査する"""
         existing_names = self.get_existing_employees()
         existing_ids = {
-            employee.get("id")
-            for employee in self.organization.get_all_employees()
+            identity.get("id")
+            for identity in self.identity_policy.get_existing_identities()
         }
         candidate_names = []
         candidate_ids = set()

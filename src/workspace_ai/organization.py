@@ -13,6 +13,15 @@ load_dotenv()
 
 class Organization:
 
+    RESERVED_IDENTITIES = ()
+
+    def __init__(self, reserved_identities=None):
+        self._reserved_identities = (
+            tuple(reserved_identities)
+            if reserved_identities is not None
+            else tuple(self.RESERVED_IDENTITIES)
+        )
+
     def get_employee_files(self):
         """社員ファイル一覧を取得する"""
 
@@ -67,6 +76,58 @@ class Organization:
 
         return employees
 
+    def get_all_identities(self):
+        """通常社員・Workspace Manager・予約済みIDを区別して取得する"""
+        employees = [
+            {
+                **employee,
+                "identity_type": "employee",
+                "identity_source": "employee_markdown",
+            }
+            for employee in self.get_all_employees()
+        ]
+        return [
+            *employees,
+            *self.get_workspace_managers(),
+            *self.get_reserved_identities(),
+        ]
+
+    def get_workspace_managers(self):
+        """Workspace StateのMGR-*行をIdentityとして読み取る"""
+        state_path = get_vault_path() / "会社" / "Workspace State.md"
+        if not state_path.is_file():
+            return []
+
+        content = state_path.read_text(encoding="utf-8")
+        managers = []
+        for line in self._get_section_lines(content, "Workspace Manager"):
+            if not line.startswith("|"):
+                continue
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) < 2 or not cells[0].startswith("MGR-"):
+                continue
+            managers.append({
+                "id": cells[0],
+                "name": cells[1],
+                "role": cells[2] if len(cells) > 2 else "Workspace Manager",
+                "status": cells[3] if len(cells) > 3 else "",
+                "current_task": cells[4] if len(cells) > 4 else "",
+                "identity_type": "workspace_manager",
+                "identity_source": "workspace_state",
+            })
+        return managers
+
+    def get_reserved_identities(self):
+        """将来の組織ID予約を全Identity検査へ渡す拡張点"""
+        return [
+            {
+                **identity,
+                "identity_type": "reserved",
+                "identity_source": "organization_reservation",
+            }
+            for identity in self._reserved_identities
+        ]
+
     def find_duplicate_ids(self):
         """社員IDの重複を検出する"""
         return list(self.get_duplicate_id_details())
@@ -87,10 +148,10 @@ class Organization:
         }
 
     def is_employee_id_available(self, employee_id):
-        """社員IDが未使用か確認する"""
+        """全組織Identityで社員IDが未使用か確認する"""
         return all(
-            employee.get("id") != employee_id
-            for employee in self.get_all_employees()
+            identity.get("id") != employee_id
+            for identity in self.get_all_identities()
         )
 
     def get_employee_by_id(self, employee_id):
