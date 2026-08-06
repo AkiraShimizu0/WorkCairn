@@ -1,0 +1,21 @@
+[project]
+name = "workspace-ai"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "AkiraShimizu", email = "cwvzzsyt2c@privaterelay.appleid.com" }
+]
+requires-python = ">=3.9"
+dependencies = [
+    "anthropic>=0.120.2",
+    "crewai>=0.5.0",
+    "python-dotenv>=1.2.1",
+]
+
+[project.scripts]
+workspace-ai = "workspace_ai:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
