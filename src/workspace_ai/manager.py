@@ -4,6 +4,8 @@ from pathlib import Path
 import os
 from workspace_ai.utils.obsidian import get_vault_path
 from workspace_ai.recruiter import Recruiter
+from workspace_ai.identity_policy import IdentityPolicy
+from workspace_ai.organization import Organization
 from datetime import datetime
 import json
 import re
@@ -17,20 +19,53 @@ client = Anthropic(
 def ask_manager(request: str) -> str:
     """Workspace Managerへ依頼する"""
 
+    manager_prompt = build_manager_prompt(request)
+
     response = client.messages.create(
         model="claude-sonnet-5",
         max_tokens=3000,
         messages=[
             {
                 "role": "user",
-                "content": f"""
+                "content": manager_prompt,
+            }
+        ],
+    )
+
+    return "".join(
+        block.text
+        for block in response.content
+        if hasattr(block, "text")
+    )
+
+def build_manager_prompt(request: str, organization=None) -> str:
+    """既存社員のIdentity情報を含む社員生成Promptを構築する"""
+    organization = organization or Organization()
+    identity_policy = IdentityPolicy(organization)
+    existing_names = identity_policy.get_existing_names()
+    name_parts = [
+        identity_policy.split_japanese_name(name)
+        for name in existing_names
+    ]
+    used_surnames = sorted({parts[0] for parts in name_parts if parts})
+    used_given_names = sorted({parts[1] for parts in name_parts if parts})
+    existing_names_text = "、".join(sorted(existing_names)) or "なし"
+    used_surnames_text = "、".join(used_surnames) or "なし"
+    used_given_names_text = "、".join(used_given_names) or "なし"
+
+    return f"""
 あなたはWorkspace社のWorkspace Managerです。
 社員生成ルール：
 - 社員名は必ず日本語の姓名形式にしてください
 - 英語名は禁止してください
-- 既存社員と同じ名前・姓を避けてください
+- 既存社員との完全一致と同じ名を必ず避けてください
+- 使用済みの姓は重複を抑え、重なる場合は識別しやすい名にしてください
 - 各社員は異なる個性を持つ自然な名前にしてください
 - modelは現時点では指定値を使用してください
+
+既存社員の氏名：{existing_names_text}
+使用済みの姓：{used_surnames_text}
+使用済みの名：{used_given_names_text}
 
 CEOから依頼が届きました。
 
@@ -72,15 +107,6 @@ EMPLOYEE_JSON_START
 }}
 EMPLOYEE_JSON_END
 """
-            }
-        ],
-    )
-
-    return "".join(
-        block.text
-        for block in response.content
-        if hasattr(block, "text")
-    )
 
 def extract_employees(content: str) -> list[dict]:
     """Claude回答から採用用JSONを抽出する"""
