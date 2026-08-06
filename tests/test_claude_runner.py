@@ -18,12 +18,13 @@ class ClaudeRunnerTest(unittest.TestCase):
         return SimpleNamespace(
             content=[
                 SimpleNamespace(type="thinking", thinking="内部思考"),
-                SimpleNamespace(type="text", text="# 成果物\n\nMarkdown本文"),
+                SimpleNamespace(type="text", text="# 成果物"),
+                SimpleNamespace(type="text", text="Markdown本文"),
             ],
             usage=SimpleNamespace(input_tokens=120, output_tokens=30),
         )
 
-    def test_uses_worker_prompts_and_returns_only_markdown(self):
+    def test_temperature_capable_model_receives_temperature(self):
         client = Mock()
         client.messages.create.return_value = self._response()
         runner = ClaudeRunner(
@@ -31,6 +32,9 @@ class ClaudeRunnerTest(unittest.TestCase):
             model="test-claude-model",
             temperature=0.1,
             max_tokens=1234,
+            model_optional_parameters={
+                "test-claude-model": {"temperature"},
+            },
         )
 
         result = runner.run(
@@ -38,7 +42,7 @@ class ClaudeRunnerTest(unittest.TestCase):
             user_prompt="User Prompt",
         )
 
-        self.assertEqual(result, "# 成果物\n\nMarkdown本文")
+        self.assertEqual(result, "# 成果物\nMarkdown本文")
         client.messages.create.assert_called_once_with(
             model="test-claude-model",
             max_tokens=1234,
@@ -52,6 +56,36 @@ class ClaudeRunnerTest(unittest.TestCase):
         self.assertEqual(log["token_source"], "api_usage")
         self.assertGreaterEqual(log["duration_seconds"], 0)
         self.assertEqual(log["status"], "success")
+
+    def test_claude_sonnet_5_omits_temperature(self):
+        client = Mock()
+        client.messages.create.return_value = self._response()
+        runner = ClaudeRunner(
+            client=client,
+            model="claude-sonnet-5",
+            temperature=0.2,
+            max_tokens=3000,
+        )
+
+        runner.run(system_prompt="System", user_prompt="User")
+
+        arguments = client.messages.create.call_args.kwargs
+        self.assertEqual(arguments["model"], "claude-sonnet-5")
+        self.assertEqual(arguments["max_tokens"], 3000)
+        self.assertNotIn("temperature", arguments)
+
+    def test_unknown_model_omits_unapproved_optional_parameters(self):
+        client = Mock()
+        client.messages.create.return_value = self._response()
+        runner = ClaudeRunner(
+            client=client,
+            model="future-unknown-model",
+            temperature=0.9,
+        )
+
+        runner.run(system_prompt="System", user_prompt="User")
+
+        self.assertNotIn("temperature", client.messages.create.call_args.kwargs)
 
     def test_reads_only_anthropic_api_key_from_environment(self):
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=False):

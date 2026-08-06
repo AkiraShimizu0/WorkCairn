@@ -9,6 +9,10 @@ class ClaudeRunner:
     """Anthropic SDKでClaudeを呼び出すRunner"""
 
     name = "ClaudeRunner"
+    DEFAULT_MODEL_OPTIONAL_PARAMETERS = {
+        "claude-sonnet-5": frozenset(),
+    }
+    SUPPORTED_OPTIONAL_PARAMETERS = frozenset({"temperature"})
 
     def __init__(
         self,
@@ -17,10 +21,16 @@ class ClaudeRunner:
         model="claude-sonnet-5",
         temperature=0.2,
         max_tokens=3000,
+        model_optional_parameters=None,
     ):
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.model_optional_parameters = dict(
+            self.DEFAULT_MODEL_OPTIONAL_PARAMETERS
+        )
+        if model_optional_parameters:
+            self._register_model_optional_parameters(model_optional_parameters)
         self.last_execution_log = None
 
         if client is not None:
@@ -48,11 +58,7 @@ class ClaudeRunner:
 
         try:
             response = self.client.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
+                **self._request_arguments(system_prompt, user_prompt)
             )
             markdown = self._extract_markdown(response)
             estimated_tokens, token_source = self._token_count(
@@ -81,6 +87,32 @@ class ClaudeRunner:
             "status": "success",
         }
         return markdown
+
+    def _request_arguments(self, system_prompt, user_prompt):
+        """モデルで許可されたオプションだけをAPI引数へ追加する"""
+        arguments = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+        }
+        optional_parameters = self.model_optional_parameters.get(
+            self.model,
+            frozenset(),
+        )
+        if "temperature" in optional_parameters and self.temperature is not None:
+            arguments["temperature"] = self.temperature
+        return arguments
+
+    def _register_model_optional_parameters(self, model_parameters):
+        for model, parameters in model_parameters.items():
+            parameters = frozenset(parameters)
+            unsupported = parameters - self.SUPPORTED_OPTIONAL_PARAMETERS
+            if unsupported:
+                raise ValueError(
+                    f"未対応のClaudeオプションです: {', '.join(sorted(unsupported))}"
+                )
+            self.model_optional_parameters[str(model)] = parameters
 
     def get_last_execution_log(self):
         """直近実行の統計を呼び出し側が記録できる形で返す"""
