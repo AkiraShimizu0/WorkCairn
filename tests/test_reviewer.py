@@ -33,6 +33,32 @@ class ReviewFakeRunner:
         }
         return self.output
 
+    def get_last_execution_log(self):
+        return {
+            "runner": self.name,
+            "model": "fake-review-model",
+            "input_tokens": 100,
+            "output_tokens": 25,
+            "duration_seconds": 0.5,
+            "status": "success",
+        }
+
+
+class FailingReviewRunner(ReviewFakeRunner):
+    def run(self, **kwargs):
+        self.call = kwargs
+        raise RuntimeError("review failed")
+
+    def get_last_execution_log(self):
+        return {
+            "runner": self.name,
+            "model": "fake-review-model",
+            "input_tokens": None,
+            "output_tokens": None,
+            "duration_seconds": 0.25,
+            "status": "failed",
+        }
+
 
 class ReviewerWorkerTest(unittest.TestCase):
     def setUp(self):
@@ -98,7 +124,12 @@ class ReviewerWorkerTest(unittest.TestCase):
         )
         reviewer = self._reviewer(runner)
 
-        result = reviewer.review("ToDoアプリ", "TASK-001", "QA-001")
+        result = reviewer.review(
+            "ToDoアプリ",
+            "TASK-001",
+            "QA-001",
+            approved=True,
+        )
 
         self.assertEqual(result["decision"], "Approve")
         self.assertEqual(result["runner"], "ReviewFakeRunner")
@@ -110,11 +141,23 @@ class ReviewerWorkerTest(unittest.TestCase):
             "task_id: TASK-001",
             "reviewer: QA-001",
             "reviewed_at:",
+            "runner: ReviewFakeRunner",
+            "model: Claude Sonnet 5",
             "Approve",
         ):
             self.assertIn(expected, saved)
         self.assertIn("タスクを追加できる", runner.call["user_prompt"])
         self.assertEqual(runner.call["employee"]["id"], "QA-001")
+        audit = result["audit_path"].read_text(encoding="utf-8")
+        for expected in (
+            "event: review",
+            "status: success",
+            "input_tokens: 100",
+            "output_tokens: 25",
+            "duration_seconds: 0.5",
+            "decision: Approve",
+        ):
+            self.assertIn(expected, audit)
         for review_point in (
             "要件漏れ",
             "不明点",
@@ -135,6 +178,7 @@ class ReviewerWorkerTest(unittest.TestCase):
             "ToDoアプリ",
             "TASK-001",
             "QA-001",
+            approved=True,
         )
 
         self.assertEqual(result["decision"], "Request Changes")
@@ -152,6 +196,7 @@ class ReviewerWorkerTest(unittest.TestCase):
                 "ToDoアプリ",
                 "TASK-001",
                 "QA-001",
+                approved=True,
             )
 
         self.assertIsNone(runner.call)
@@ -165,9 +210,71 @@ class ReviewerWorkerTest(unittest.TestCase):
                 "ToDoアプリ",
                 "TASK-001",
                 "QA-001",
+                approved=True,
             )
 
         self.assertFalse(self._review_path().exists())
+        self.assertIn(
+            "status: failed",
+            self._audit_path().read_text(encoding="utf-8"),
+        )
+
+    def test_dry_run_does_not_call_runner_or_change_files(self):
+        runner = ReviewFakeRunner("Approve")
+        deliverable_before = self.deliverable_path.read_bytes()
+        tasks_path = self._project_path() / "Tasks.md"
+        tasks_before = tasks_path.read_bytes()
+
+        result = self._reviewer(runner).review(
+            "ToDoアプリ",
+            "TASK-001",
+            "QA-001",
+            dry_run=True,
+        )
+
+        self.assertEqual(result["status"], "dry_run")
+        self.assertEqual(result["runner"], "ReviewFakeRunner")
+        self.assertIsNone(runner.call)
+        self.assertEqual(self.deliverable_path.read_bytes(), deliverable_before)
+        self.assertEqual(tasks_path.read_bytes(), tasks_before)
+        self.assertFalse(self._review_path().exists())
+        self.assertFalse(self._audit_path().exists())
+
+    def test_requires_explicit_approval(self):
+        runner = ReviewFakeRunner("Approve")
+
+        with self.assertRaises(PermissionError):
+            self._reviewer(runner).review(
+                "ToDoアプリ",
+                "TASK-001",
+                "QA-001",
+            )
+
+        self.assertIsNone(runner.call)
+        self.assertFalse(self._review_path().exists())
+        self.assertFalse(self._audit_path().exists())
+
+    def test_runner_failure_writes_audit_without_review(self):
+        runner = FailingReviewRunner("unused")
+        deliverable_before = self.deliverable_path.read_bytes()
+        tasks_path = self._project_path() / "Tasks.md"
+        tasks_before = tasks_path.read_bytes()
+
+        with self.assertRaisesRegex(RuntimeError, "review failed"):
+            self._reviewer(runner).review(
+                "ToDoアプリ",
+                "TASK-001",
+                "QA-001",
+                approved=True,
+            )
+
+        self.assertFalse(self._review_path().exists())
+        self.assertEqual(self.deliverable_path.read_bytes(), deliverable_before)
+        self.assertEqual(tasks_path.read_bytes(), tasks_before)
+        audit = self._audit_path().read_text(encoding="utf-8")
+        self.assertIn("status: failed", audit)
+        self.assertIn("duration_seconds: 0.25", audit)
+        self.assertIn("RuntimeError: review failed", audit)
 
     def _reviewer(self, runner):
         return ReviewerWorker(
@@ -177,13 +284,13 @@ class ReviewerWorkerTest(unittest.TestCase):
         )
 
     def _review_path(self):
-        return (
-            self.vault
-            / "プロジェクト"
-            / "ToDoアプリ"
-            / "Reviews"
-            / "TASK-001.review.md"
-        )
+        return self._project_path() / "Reviews" / "TASK-001.review.md"
+
+    def _audit_path(self):
+        return self._project_path() / "Audit Log.md"
+
+    def _project_path(self):
+        return self.vault / "プロジェクト" / "ToDoアプリ"
 
     @staticmethod
     def _write_employee(path, employee_id, department, role):
