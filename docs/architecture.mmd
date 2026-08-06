@@ -1,0 +1,8 @@
+flowchart TD
+    CEO["CEO"] --> Manager["Workspace Manager"]
+    Manager --> Workflow["Workflow Engine"]
+    Workflow --> Executor["TaskExecutor"]
+    Executor --> Worker["Worker"]
+    Worker --> Prompt["PromptBuilder"]
+    Prompt --> Router["ModelRouter"]
+    Router --> Claude["ClaudeRunner"]

@@ -1,0 +1,30 @@
+# Changelog
+
+このファイルはConventional Commitsの履歴から生成しています。変更内容は[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/)の形式を参考に分類しています。
+
+## [0.1.0] - 2026-08-07
+
+### Added
+
+- Workspace OSのPythonパッケージ、uv設定、テスト基盤を追加（`5e80558`）。
+- Obsidian連携によるOrganization、Employee、Recruiterと社員ID重複防止を追加（`b6eef13`）。
+- Project.md、Tasks.md、Decisions.md、Progress.mdを管理するProjectManagerを追加（`82f0d9a`）。
+- Worker、ModelRouter、TaskExecutor、Fake Runner対応の実行パイプラインを追加（`d49ad05`）。
+- ClaudeRunnerの入出力トークン数と実行統計を記録（`e6a485b`）。
+- 別AI社員が成果物を評価するReviewerWorkerを追加（`32e9f60`）。
+- レビュー実行のバックアップ、Audit Log、失敗記録を追加（`8a58956`）。
+- 構造化レビューJSONとRevisionTaskServiceによる修正フローを追加（`bfb914c`）。
+- 既存レビューを保持するバージョン付き構造化レビューを追加（`bf1cd27`）。
+- 構造化レビューから重複なく修正タスクを正式作成する機能を追加（`b688489`）。
+- 1タスク分の実行・レビュー・修正を調整するWorkflowEngineを追加（`6af4879`）。
+- 社員名の重複・類似・形式を検査するIdentityPolicyを追加（`f2958f8`）。
+- バックアップ、原子的更新、ロールバックを備えたEmployeeRenameServiceを追加（`629f082`）。
+
+### Changed
+
+- Worker内のプロンプト生成をPromptBuilderへ分離し、会社・社員・プロジェクト・タスクのコンテキストを統合（`64dc3b9`）。
+
+### Fixed
+
+- `claude-sonnet-5`へ未対応の`temperature`を送信しないモデル別リクエスト設定へ修正（`f8e2919`）。
+- Identity診断と社員生成PromptへWorkspace Managerおよび予約済み組織IDを含めるよう修正（`af58ad4`）。
