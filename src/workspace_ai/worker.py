@@ -46,15 +46,19 @@ class Worker:
 
     def execute(self, project, task, employee):
         """プロンプトを構築し、Routerで選択したRunnerを実行する"""
+        prompts = self._build_prompts(project, task)
+        return self.execute_with_prompts(project, task, employee, prompts)
+
+    def execute_with_prompts(self, project, task, employee, prompts):
+        """PromptBuilder等で構築済みのプロンプトを共通Runner経路で実行する"""
         if employee.get("id") != self.employee_id:
             raise ValueError(
                 f"Workerと担当社員が一致しません: "
                 f"{self.employee_id} != {employee.get('id')}"
             )
 
-        prompts = self._build_prompts(project, task)
-        system_prompt = prompts["system_prompt"]
-        user_prompt = prompts["user_prompt"]
+        system_prompt = self._validated_prompt(prompts, "system_prompt")
+        user_prompt = self._validated_prompt(prompts, "user_prompt")
         runner_name, runner = self._select_runner(task)
         output = self._invoke_runner(
             runner,
@@ -71,6 +75,16 @@ class Worker:
             "user_prompt": user_prompt,
             "execution_log": self._runner_execution_log(runner),
         }
+
+    @staticmethod
+    def _validated_prompt(prompts, key):
+        try:
+            prompt = prompts[key]
+        except (KeyError, TypeError) as error:
+            raise ValueError(f"{key}が指定されていません。") from error
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError(f"{key}は空でない文字列を指定してください。")
+        return prompt
 
     def _build_prompts(self, project, task, current_datetime=None):
         if task is None:

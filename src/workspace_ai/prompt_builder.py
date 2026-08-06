@@ -26,6 +26,39 @@ class PromptBuilder:
             "user_prompt": self._user_prompt(project_info["name"], task),
         }
 
+    def build_review(
+        self,
+        employee,
+        project,
+        task,
+        deliverable,
+        current_datetime,
+    ):
+        """成果物レビュー用のSystem PromptとUser Promptを構築する"""
+        prompts = self.build(employee, project, task, current_datetime)
+        review_rules = "\n".join([
+            "あなたは成果物を客観的に確認するReviewerです。",
+            "次の観点をすべて確認してください。",
+            "- 要件漏れ",
+            "- 不明点",
+            "- 推測による記述",
+            "- 一貫性",
+            "- Markdown品質",
+            "- TODO不足",
+            "- MVPとして適切か",
+            "指摘には理由と具体的な修正案を含めてください。",
+            "レビューの最終行はApproveまたはRequest Changesのどちらか一方だけにしてください。",
+        ])
+        prompts["system_prompt"] = (
+            f'{prompts["system_prompt"]}\n\n## レビュー方針\n{review_rules}'
+        )
+        prompts["user_prompt"] = self._review_user_prompt(
+            self._project_info(project)["name"],
+            task,
+            deliverable,
+        )
+        return prompts
+
     def _system_sections(
         self,
         employee,
@@ -85,6 +118,17 @@ class PromptBuilder:
             f"タスクID: {task['id']}\n"
             f"担当タスク: {task['title']}\n\n"
             "この担当タスクの成果物を作成してください。"
+        )
+
+    @staticmethod
+    def _review_user_prompt(project_name, task, deliverable):
+        return (
+            f"プロジェクト: {project_name}\n"
+            f"タスクID: {task['id']}\n"
+            f"レビュー対象: {task['title']}\n\n"
+            "## レビュー対象成果物\n\n"
+            f"{deliverable.strip()}\n\n"
+            "指定された観点でレビューしてください。"
         )
 
     def _project_info(self, project):
