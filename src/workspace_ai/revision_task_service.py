@@ -13,6 +13,7 @@ class RevisionTaskService:
     """Request Changesレビューから元担当社員向け修正タスクを作成する"""
 
     JST = ZoneInfo("Asia/Tokyo")
+    REVIEW_VERSION_PATTERN = re.compile(r"v\d+")
 
     def __init__(self, project_manager=None):
         self.project_manager = project_manager or ProjectManager()
@@ -24,11 +25,16 @@ class RevisionTaskService:
         *,
         dry_run=False,
         approved=False,
+        review_version=None,
     ):
         """修正タスク案を返すか、承認済みの場合だけ実際に作成する"""
         project_dir = self.project_manager.get_project_path(project_name)
         source_task = self.project_manager.get_task(project_name, source_task_id)
-        source_review = project_dir / "Reviews" / f"{source_task_id}.review.md"
+        source_review = self._review_path(
+            project_dir,
+            source_task_id,
+            review_version,
+        )
         if not source_review.is_file():
             raise FileNotFoundError(f"元レビューが見つかりません: {source_task_id}")
         self._validate_review_frontmatter(
@@ -37,7 +43,12 @@ class RevisionTaskService:
             source_task_id,
         )
 
-        metadata_path = project_dir / "Revisions" / f"{source_task_id}.revision.md"
+        metadata_name = (
+            f"{source_task_id}.review.{review_version}.revision.md"
+            if review_version
+            else f"{source_task_id}.revision.md"
+        )
+        metadata_path = project_dir / "Revisions" / metadata_name
         if metadata_path.exists():
             raise FileExistsError(
                 f"同じレビューから修正タスクが既に作成されています: {source_task_id}"
@@ -66,6 +77,7 @@ class RevisionTaskService:
             "next_task_id": next_task_id,
             "metadata_path": metadata_path,
             "review_format": review_format,
+            "review_version": review_version,
         }
         if dry_run:
             return {"status": "dry_run", **plan}
@@ -100,6 +112,15 @@ class RevisionTaskService:
             **completed_plan,
             "task": task,
         }
+
+    @classmethod
+    def _review_path(cls, project_dir, source_task_id, review_version):
+        if review_version is not None:
+            review_version = str(review_version).strip()
+            if not cls.REVIEW_VERSION_PATTERN.fullmatch(review_version):
+                raise ValueError(f"不正なレビュー版です: {review_version}")
+        suffix = f".{review_version}" if review_version else ""
+        return project_dir / "Reviews" / f"{source_task_id}.review{suffix}.md"
 
     @staticmethod
     def _load_review_result(source_review, allow_legacy):

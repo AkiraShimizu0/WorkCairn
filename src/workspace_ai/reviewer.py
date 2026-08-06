@@ -16,6 +16,7 @@ class ReviewerWorker:
     """別のAI社員としてタスク成果物をレビューする"""
 
     TASK_ID_PATTERN = re.compile(r"TASK-\d+")
+    REVIEW_VERSION_PATTERN = re.compile(r"v\d+")
     JST = ZoneInfo("Asia/Tokyo")
 
     def __init__(
@@ -42,6 +43,7 @@ class ReviewerWorker:
         *,
         dry_run=False,
         approved=False,
+        review_version=None,
     ):
         """成果物をレビューし、Reviewsフォルダへ安全に保存する"""
         self._validate_task_id(task_id)
@@ -63,8 +65,11 @@ class ReviewerWorker:
         if source_employee is None:
             raise ValueError(f"元担当社員IDが存在しません: {source_employee_id}")
 
-        review_path = project_dir / "Reviews" / f"{task_id}.review.md"
-        structured_review_path = project_dir / "Reviews" / f"{task_id}.review.json"
+        review_path, structured_review_path = self._review_paths(
+            project_dir,
+            task_id,
+            review_version,
+        )
         if review_path.exists():
             raise FileExistsError(f"レビューが既に存在します: {task_id}")
         if structured_review_path.exists():
@@ -108,9 +113,15 @@ class ReviewerWorker:
             "structured_review_path": structured_review_path,
             "audit_path": audit_path,
             "deliverable_frontmatter": deliverable_frontmatter,
+            "review_version": review_version,
         }
         if dry_run:
-            return {"status": "dry_run", **plan}
+            return {
+                "status": "dry_run",
+                **plan,
+                "system_prompt": prompts["system_prompt"],
+                "user_prompt": prompts["user_prompt"],
+            }
         if not approved:
             raise PermissionError("明示的な承認がないためレビューを実行しません。")
 
@@ -142,6 +153,7 @@ class ReviewerWorker:
                     reviewed_at,
                     execution["runner"],
                     reviewer["model"],
+                    review_version,
                     structured_review_path.name,
                     human_markdown,
                     decision,
@@ -192,6 +204,17 @@ class ReviewerWorker:
         if not cls.TASK_ID_PATTERN.fullmatch(str(task_id)):
             raise ValueError(f"不正なタスクIDです: {task_id}")
 
+    @classmethod
+    def _review_paths(cls, project_dir, task_id, review_version):
+        if review_version is not None:
+            review_version = str(review_version).strip()
+            if not cls.REVIEW_VERSION_PATTERN.fullmatch(review_version):
+                raise ValueError(f"不正なレビュー版です: {review_version}")
+        suffix = f".{review_version}" if review_version else ""
+        base_name = f"{task_id}.review{suffix}"
+        reviews_dir = project_dir / "Reviews"
+        return reviews_dir / f"{base_name}.md", reviews_dir / f"{base_name}.json"
+
     @staticmethod
     def _review_content(
         project_name,
@@ -200,11 +223,13 @@ class ReviewerWorker:
         reviewed_at,
         runner_name,
         model,
+        review_version,
         result_file,
         human_markdown,
         decision,
     ):
         timestamp = reviewed_at.strftime("%Y-%m-%d %H:%M:%S %Z")
+        version_line = f"version: {review_version}\n" if review_version else ""
         return (
             "---\n"
             "type: review\n"
@@ -214,6 +239,7 @@ class ReviewerWorker:
             f"reviewed_at: {timestamp}\n"
             f"runner: {runner_name}\n"
             f"model: {model}\n"
+            f"{version_line}"
             f"result_file: {result_file}\n"
             "---\n\n"
             f"# {task_id} Review\n\n"

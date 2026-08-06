@@ -247,6 +247,32 @@ class ReviewerWorkerTest(unittest.TestCase):
             result["review_path"].read_text(encoding="utf-8"),
         )
 
+    def test_versioned_review_preserves_existing_legacy_review(self):
+        legacy_path = self._review_path()
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text("legacy review\n", encoding="utf-8")
+        legacy_before = legacy_path.read_bytes()
+        runner = ReviewFakeRunner(structured_review_output("Approve"))
+
+        result = self._reviewer(runner).review(
+            "ToDoアプリ",
+            "TASK-001",
+            "QA-001",
+            approved=True,
+            review_version="v2",
+        )
+
+        self.assertEqual(legacy_path.read_bytes(), legacy_before)
+        self.assertEqual(result["review_path"].name, "TASK-001.review.v2.md")
+        self.assertEqual(
+            result["structured_review_path"].name,
+            "TASK-001.review.v2.json",
+        )
+        self.assertIn(
+            "version: v2",
+            result["review_path"].read_text(encoding="utf-8"),
+        )
+
     def test_rejects_missing_deliverable_without_calling_runner(self):
         self.deliverable_path.unlink()
         runner = ReviewFakeRunner("Approve")

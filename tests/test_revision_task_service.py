@@ -165,6 +165,35 @@ class RevisionTaskServiceTest(unittest.TestCase):
             )
         self.assertEqual(len(self.manager.get_tasks("ToDoアプリ")), 1)
 
+    def test_versioned_structured_review_builds_separate_plan(self):
+        versioned_review = self.review_path.with_name("TASK-001.review.v2.md")
+        versioned_json = self.review_path.with_name("TASK-001.review.v2.json")
+        versioned_review.write_text(
+            self.review_path.read_text(encoding="utf-8").replace(
+                "reviewer: QA-001\n",
+                "reviewer: QA-001\nversion: v2\n",
+            ),
+            encoding="utf-8",
+        )
+        versioned_json.write_text(
+            self.structured_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+        plan = self.service.create_revision_task(
+            "ToDoアプリ",
+            "TASK-001",
+            dry_run=True,
+            review_version="v2",
+        )
+
+        self.assertEqual(plan["source_review"], "Reviews/TASK-001.review.v2.md")
+        self.assertEqual(plan["review_version"], "v2")
+        self.assertEqual(
+            plan["metadata_path"].name,
+            "TASK-001.review.v2.revision.md",
+        )
+
     def _write_result(self, verdict, issues):
         self.structured_path.write_text(
             json.dumps(
