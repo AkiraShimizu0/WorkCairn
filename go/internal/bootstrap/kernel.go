@@ -2,15 +2,40 @@
 package bootstrap
 
 import (
+	"context"
+	"errors"
+
 	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/runner"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/taskstore"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
 )
 
 const DefaultKernelVersion = "v0.3.0"
 
+var ErrWorkerRuntimeNotConfigured = errors.New("worker runtime is not configured")
+
+// WorkerRuntime contains only composition dependencies. Provider credentials
+// and configuration remain the responsibility of a future Runtime layer.
+type WorkerRuntime struct {
+	PromptBuilder worker.PromptBuilder
+	Runners       runner.Resolver
+}
+
 // NewDefaultKernel registers production services without starting the Kernel.
+// Worker execution is safely unavailable until Runtime dependencies are
+// supplied through NewKernelWithWorkerRuntime.
 func NewDefaultKernel(version string) (*kernel.Kernel, error) {
+	return NewKernelWithWorkerRuntime(version, WorkerRuntime{
+		PromptBuilder: unconfiguredPromptBuilder{},
+		Runners:       runner.NewRegistry(),
+	})
+}
+
+// NewKernelWithWorkerRuntime is the composition root used by tests today and
+// by a future CLI/API Runtime when provider Adapters are available.
+func NewKernelWithWorkerRuntime(version string, runtime WorkerRuntime) (*kernel.Kernel, error) {
 	workspaceKernel, err := kernel.New(version)
 	if err != nil {
 		return nil, err
@@ -32,5 +57,18 @@ func NewDefaultKernel(version string) (*kernel.Kernel, error) {
 	if err := workspaceKernel.RegisterTaskService(taskService); err != nil {
 		return nil, err
 	}
+	workerService, err := service.NewWorkerService(runtime.PromptBuilder, runtime.Runners)
+	if err != nil {
+		return nil, err
+	}
+	if err := workspaceKernel.RegisterWorkerService(workerService); err != nil {
+		return nil, err
+	}
 	return workspaceKernel, nil
+}
+
+type unconfiguredPromptBuilder struct{}
+
+func (unconfiguredPromptBuilder) Build(context.Context, worker.PromptInput) (worker.Prompt, error) {
+	return worker.Prompt{}, ErrWorkerRuntimeNotConfigured
 }

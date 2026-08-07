@@ -26,6 +26,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0003: Workspace Kernelを中心コンポーネントとする](adr/ADR-0003-workspace-kernel.md)
 - [ADR-0004: Event DrivenをWorkspace OSの基本設計とする](adr/ADR-0004-event-system.md)
 - [ADR-0005: Task lifecycleをGo TaskServiceの責務とする](adr/ADR-0005-task-lifecycle.md)
+- [ADR-0006: WorkerとRunnerをProvider非依存の境界で分離する](adr/ADR-0006-worker-runner-boundary.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -49,6 +50,8 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Workspace Kernel | Goサービスの登録・参照、ライフサイクル、Command実行を調停する |
 | Go Event Service | 型付きBusiness Eventを検証し、in-process Busで同期配信する |
 | Go Task Service | Task lifecycle、Version/CAS、Store境界、Event発行を管理する |
+| Go Worker Service | AI社員の実行ContextからPromptを構築し、登録済みRunnerを選択して構造化結果を返す |
+| Go Runner Registry | 社員model値をProvider非依存のRunner Adapterへ明示的に解決する |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
@@ -76,7 +79,7 @@ Workspace OSは、中核ロジックをPythonからGo Coreへ段階的に移行�
 
 - 依存解析や実行可否判定など、副作用のないCoreから順次Goへ置き換えます。
 - MarkdownやObsidianのファイルI/OはCoreの外側に置きます。
-- AI Runner、PromptBuilder、ModelRouterなどのAI連携層は当面Pythonに残します。
+- Prompt本文とProvider固有Runnerなど、未移植のAI Adapterは当面Pythonに残します。
 - Go CoreはCrewAI、外部LLM SDK、Pythonランタイム、`.env`へ依存しません。
 - Rustへの主移行は行わず、GoをWorkspace OSの中核実装として育てます。
 
@@ -87,7 +90,9 @@ Workspace OSは、中核ロジックをPythonからGo Coreへ段階的に移行�
 - `go/internal/event`: 型付きEvent、検証、UUIDv4 ID、in-memory Event Bus
 - `go/internal/task`: Task状態、遷移、失敗事実、Versionを管理するDomain
 - `go/internal/taskstore`: TaskStoreのin-memory Adapter
-- `go/internal/service`: Kernel向けProject/Workflow/Task/Event Facade
+- `go/internal/worker`: AI社員実行のContext、Prompt、Runner要求・結果のDomain契約
+- `go/internal/runner`: model値とRunner Adapterを解決するthread-safe Registry
+- `go/internal/service`: Kernel向けProject/Workflow/Task/Event/Worker Facade
 - `go/internal/kernel`: サービス境界、ライフサイクル、Command調停
 - `go/internal/bootstrap`: 具体Serviceを登録するcomposition root
 - `go/cmd/workspace-core`: バージョン付きJSON契約を公開するCLI境界
@@ -110,6 +115,10 @@ Workspace Kernel
     │       ├── Task Domain
     │       ├── TaskStore
     │       └── EventService
+    ├── WorkerService
+    │       ├── PromptBuilder port
+    │       └── RunnerRegistry
+    │               └── Runner Adapter
     └── EventService
             ↓
         Event Bus
@@ -129,7 +138,7 @@ JSON契約v1は、`version`、`operation`、`payload`を標準入力で受け取
 
 対応operationは`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`です。ローカルバイナリは`make go-build`で`bin/workspace-core`へ生成し、`bin/`はGit管理しません。
 
-PromptBuilder、Worker、ModelRouter、LLM Runner、外部LLM SDKは当面Pythonに残します。Task lifecycleはGo TaskServiceへ移行済みです。次の段階ではWorkflowEngineのオーケストレーションとWorker／Runner境界をGoへ移し、PythonはVault I/OとAI Adapterへさらに縮小します。
+Worker Context、Prompt/Runner契約、モデルルーティング、WorkerServiceはGoへ移行済みです。Prompt本文の構築とProvider固有Runner、外部LLM SDKは移行期間中Pythonに残します。次の段階ではGo PromptBuilderとProvider Runner Adapterを実装し、PythonはVault I/Oとlegacy比較へさらに縮小します。
 
 ### Workspace Kernel v0.3
 
@@ -149,6 +158,10 @@ Workspace Kernel
     │       ├── Task Domain
     │       ├── TaskStore
     │       └── EventService
+    ├── WorkerService
+    │       ├── PromptBuilder
+    │       └── RunnerRegistry
+    │               └── Runner
     └── EventService
             ↓
         Event Bus
@@ -156,11 +169,10 @@ Workspace Kernel
 将来追加
     ├── Organization Service
     ├── Scheduler
-    ├── Audit
-    └── Worker
+    └── Audit
 ```
 
-`bootstrap.NewDefaultKernel`がProjectService、WorkflowService、TaskService、EventServiceの具体実装を登録します。Kernel StartはEventServiceの後にTaskServiceを有効化し、Kernel StopはTaskServiceを無効化してからEventServiceを停止します。`kernel.status`には4 Serviceが表示されます。既存CLI Commandは従来どおり`CLI → Kernel → Service → Domain`を通り、JSON Contract v1のoperation、payload、result、error codeは変更していません。
+`bootstrap.NewDefaultKernel`がProjectService、WorkflowService、TaskService、EventService、WorkerServiceの具体実装を登録します。Kernel StartはEventService、TaskService、WorkerServiceの順に有効化し、Kernel Stopは逆順に停止します。`kernel.status`には5 Serviceが表示されます。既存CLI Commandは従来どおり`CLI → Kernel → Service → Domain`を通り、JSON Contract v1のoperation、payload、result、error codeは変更していません。
 
 EventServiceはKernelのライフサイクルに従います。購読はKernel起動前に構成でき、PublishはStart後のみ受け付け、Stop後は拒否します。Kernelが保持するのはEventService interfaceだけであり、Event Bus内部実装、handler、永続化を知りません。
 
@@ -171,14 +183,32 @@ TaskServiceはCreate、Start、Complete、Fail、Hold、Resume、Getを提供し
 ```text
 TaskStarted
     ↓
-WorkerService (future)
+WorkerService
     ↓
-RunnerService (future)
+Runner Adapter
     ↓
 TaskService.Complete / TaskService.Fail
 ```
 
-Scheduler、Worker実行、LLM呼び出し、Obsidian I/OはKernelに含めません。Project/Workflow/Task/Eventのビジネスルールの正本は各Domainパッケージであり、Serviceは型付きFacade、Kernelは実行調停、CLIはJSON Adapterに限定します。
+WorkerServiceはTask lifecycleから独立し、Employee/Task/Project Contextを受けて`PromptBuilder → RunnerRegistry → Runner`を実行します。RunnerはMarkdown、Task状態、承認、Retry Policyを知りません。KernelはWorkerService interfaceだけを保持し、Provider SDKやAPIキーを参照しません。`bootstrap.NewKernelWithWorkerRuntime`へPromptBuilderとRunner Resolverを渡すことでFakeまたは将来のProvider Adapterを注入できます。Default KernelはProvider未設定のため、実AI呼び出しを安全に拒否します。
+
+```text
+Workflow / Policy (future)
+    ↓
+TaskService.Start
+    ↓
+WorkerService.Execute
+    ├── PromptBuilder
+    └── RunnerRegistry
+            ├── ClaudeRunner (future)
+            ├── OpenAIRunner (future)
+            ├── GeminiRunner (future)
+            └── OllamaRunner (future)
+    ↓
+TaskService.Complete / Fail
+```
+
+Scheduler、Provider固有のLLM呼び出し、Obsidian I/OはKernelに含めません。Project/Workflow/Task/Event/Workerのビジネスルールと契約の正本は各Domainパッケージであり、Serviceは型付きFacade、Kernelは実行調停、CLIはJSON Adapterに限定します。
 
 ## 主要な設計原則
 

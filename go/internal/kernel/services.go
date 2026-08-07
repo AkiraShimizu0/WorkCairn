@@ -10,6 +10,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/workflow"
 )
 
@@ -22,6 +23,7 @@ const (
 	ServiceEvent        ServiceKind = "event"
 	ServiceOrganization ServiceKind = "organization"
 	ServiceTask         ServiceKind = "task"
+	ServiceWorker       ServiceKind = "worker"
 )
 
 var (
@@ -76,6 +78,14 @@ type TaskService interface {
 	Get(ctx context.Context, taskID string) (task.Task, error)
 }
 
+// WorkerService is the provider-neutral AI employee execution boundary. The
+// Kernel does not know its PromptBuilder, Runner Registry, or Provider.
+type WorkerService interface {
+	Activate() error
+	Deactivate() error
+	Execute(ctx context.Context, request worker.ExecutionRequest) (worker.ExecutionResult, error)
+}
+
 func (kernel *Kernel) RegisterProjectService(service ProjectService) error {
 	return kernel.registerService(ServiceProject, service)
 }
@@ -94,6 +104,10 @@ func (kernel *Kernel) RegisterOrganizationService(service OrganizationService) e
 
 func (kernel *Kernel) RegisterTaskService(service TaskService) error {
 	return kernel.registerService(ServiceTask, service)
+}
+
+func (kernel *Kernel) RegisterWorkerService(service WorkerService) error {
+	return kernel.registerService(ServiceWorker, service)
 }
 
 func (kernel *Kernel) ProjectService() (ProjectService, error) {
@@ -134,6 +148,14 @@ func (kernel *Kernel) TaskService() (TaskService, error) {
 		return nil, err
 	}
 	return service.(TaskService), nil
+}
+
+func (kernel *Kernel) WorkerService() (WorkerService, error) {
+	service, err := kernel.service(ServiceWorker)
+	if err != nil {
+		return nil, err
+	}
+	return service.(WorkerService), nil
 }
 
 func (kernel *Kernel) registerService(kind ServiceKind, service any) error {

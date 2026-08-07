@@ -49,6 +49,7 @@ func (kernel *Kernel) Start() error {
 	}
 	eventService, hasEventService := kernel.services[ServiceEvent]
 	taskService, hasTaskService := kernel.services[ServiceTask]
+	workerService, hasWorkerService := kernel.services[ServiceWorker]
 	kernel.mu.RUnlock()
 
 	if hasEventService {
@@ -62,6 +63,17 @@ func (kernel *Kernel) Start() error {
 				_ = eventService.(EventService).Stop()
 			}
 			return fmt.Errorf("activate task service: %w", err)
+		}
+	}
+	if hasWorkerService {
+		if err := workerService.(WorkerService).Activate(); err != nil {
+			if hasTaskService {
+				_ = taskService.(TaskService).Deactivate()
+			}
+			if hasEventService {
+				_ = eventService.(EventService).Stop()
+			}
+			return fmt.Errorf("activate worker service: %w", err)
 		}
 	}
 
@@ -83,8 +95,14 @@ func (kernel *Kernel) Stop() error {
 	}
 	eventService, hasEventService := kernel.services[ServiceEvent]
 	taskService, hasTaskService := kernel.services[ServiceTask]
+	workerService, hasWorkerService := kernel.services[ServiceWorker]
 	kernel.mu.RUnlock()
 
+	if hasWorkerService {
+		if err := workerService.(WorkerService).Deactivate(); err != nil {
+			return fmt.Errorf("deactivate worker service: %w", err)
+		}
+	}
 	if hasTaskService {
 		if err := taskService.(TaskService).Deactivate(); err != nil {
 			return fmt.Errorf("deactivate task service: %w", err)

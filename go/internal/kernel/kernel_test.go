@@ -10,6 +10,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/workflow"
 )
 
@@ -29,6 +30,12 @@ type fakeTaskService struct {
 	deactivateCalls int
 	createCalls     int
 }
+type fakeWorkerService struct {
+	active          bool
+	activateCalls   int
+	deactivateCalls int
+	executeCalls    int
+}
 type fakeEventService struct {
 	started      bool
 	startCalls   int
@@ -38,6 +45,7 @@ type fakeEventService struct {
 
 var errFakeEventServiceStopped = errors.New("fake event service is stopped")
 var errFakeTaskServiceInactive = errors.New("fake task service is inactive")
+var errFakeWorkerServiceInactive = errors.New("fake worker service is inactive")
 
 func (service *fakeProjectService) NextTaskID([]string) (string, error) {
 	service.nextCalls++
@@ -91,6 +99,26 @@ func (*fakeTaskService) Resume(context.Context, string) (task.Task, error) {
 }
 func (*fakeTaskService) Get(context.Context, string) (task.Task, error) {
 	return task.Task{}, nil
+}
+func (service *fakeWorkerService) Activate() error {
+	service.activateCalls++
+	service.active = true
+	return nil
+}
+func (service *fakeWorkerService) Deactivate() error {
+	service.deactivateCalls++
+	service.active = false
+	return nil
+}
+func (service *fakeWorkerService) Execute(_ context.Context, request worker.ExecutionRequest) (worker.ExecutionResult, error) {
+	if !service.active {
+		return worker.ExecutionResult{}, errFakeWorkerServiceInactive
+	}
+	service.executeCalls++
+	return worker.ExecutionResult{
+		Content: "result", EmployeeID: request.Employee.EmployeeID, TaskID: request.Task.TaskID,
+		Runner: "FakeRunner", Model: request.Employee.Model, Status: worker.StatusCompleted,
+	}, nil
 }
 func (service *fakeEventService) Start() error {
 	service.startCalls++
@@ -170,6 +198,7 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 	events := &fakeEventService{}
 	organization := &fakeOrganizationService{}
 	task := &fakeTaskService{}
+	workerService := &fakeWorkerService{}
 
 	registrations := []struct {
 		name string
@@ -180,6 +209,7 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 		{"event", kernel.RegisterEventService(events)},
 		{"organization", kernel.RegisterOrganizationService(organization)},
 		{"task", kernel.RegisterTaskService(task)},
+		{"worker", kernel.RegisterWorkerService(workerService)},
 	}
 	for _, registration := range registrations {
 		if registration.err != nil {
@@ -207,12 +237,17 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 	if err != nil || gotTask != task {
 		t.Fatalf("TaskService() = %#v, %v", gotTask, err)
 	}
+	gotWorker, err := kernel.WorkerService()
+	if err != nil || gotWorker != workerService {
+		t.Fatalf("WorkerService() = %#v, %v", gotWorker, err)
+	}
 
 	wantServices := []ServiceKind{
 		ServiceEvent,
 		ServiceOrganization,
 		ServiceProject,
 		ServiceTask,
+		ServiceWorker,
 		ServiceWorkflow,
 	}
 	if got := kernel.Status().RegisteredServices; !reflect.DeepEqual(got, wantServices) {
@@ -241,6 +276,9 @@ func TestUnregisteredServiceIsRejected(t *testing.T) {
 	}
 	if _, err := kernel.EventService(); !errors.Is(err, ErrServiceNotRegistered) {
 		t.Fatalf("EventService() error = %v, want ErrServiceNotRegistered", err)
+	}
+	if _, err := kernel.WorkerService(); !errors.Is(err, ErrServiceNotRegistered) {
+		t.Fatalf("WorkerService() error = %v, want ErrServiceNotRegistered", err)
 	}
 }
 
@@ -296,6 +334,33 @@ func TestKernelControlsTaskServiceLifecycle(t *testing.T) {
 	}
 	if tasks.activateCalls != 1 || tasks.deactivateCalls != 1 || tasks.createCalls != 1 {
 		t.Fatalf("task lifecycle calls = activate:%d deactivate:%d create:%d", tasks.activateCalls, tasks.deactivateCalls, tasks.createCalls)
+	}
+}
+
+func TestKernelControlsWorkerServiceLifecycle(t *testing.T) {
+	kernel, _ := New("v0.3.0")
+	workers := &fakeWorkerService{}
+	if err := kernel.RegisterWorkerService(workers); err != nil {
+		t.Fatal(err)
+	}
+	request := worker.ExecutionRequest{}
+	if _, err := workers.Execute(context.Background(), request); !errors.Is(err, errFakeWorkerServiceInactive) {
+		t.Fatalf("Execute() before Kernel.Start error = %v", err)
+	}
+	if err := kernel.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workers.Execute(context.Background(), request); err != nil {
+		t.Fatalf("Execute() while Kernel started error = %v", err)
+	}
+	if err := kernel.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workers.Execute(context.Background(), request); !errors.Is(err, errFakeWorkerServiceInactive) {
+		t.Fatalf("Execute() after Kernel.Stop error = %v", err)
+	}
+	if workers.activateCalls != 1 || workers.deactivateCalls != 1 || workers.executeCalls != 1 {
+		t.Fatalf("worker lifecycle calls = activate:%d deactivate:%d execute:%d", workers.activateCalls, workers.deactivateCalls, workers.executeCalls)
 	}
 }
 
