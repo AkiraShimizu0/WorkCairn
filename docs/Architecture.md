@@ -17,6 +17,15 @@ flowchart TD
 
 Mermaidソース: [architecture.mmd](architecture.mmd)
 
+## Architecture Decision Records
+
+重要な設計判断は[docs/adr](adr/)で管理します。
+
+- [ADR-0001: GoをWorkspace OSの中核実装とする](adr/ADR-0001-go-core.md)
+- [ADR-0002: PythonとGo CoreをJSON Contractで疎結合にする](adr/ADR-0002-json-contract.md)
+- [ADR-0003: Workspace Kernelを中心コンポーネントとする](adr/ADR-0003-workspace-kernel.md)
+- [ADRテンプレート](adr/ADR-template.md)
+
 ## コンポーネント
 
 | コンポーネント | 責務 |

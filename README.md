@@ -35,11 +35,26 @@ flowchart TD
 
 各層の責務とデータ境界は[docs/Architecture.md](docs/Architecture.md)を参照してください。Mermaidソースは[docs/architecture.mmd](docs/architecture.mmd)にあります。
 
+## Architecture Decisions
+
+長期的な設計判断は[docs/adr/](docs/adr/)のArchitecture Decision Record（ADR）で管理します。
+
+- [ADR-0001: GoをWorkspace OSの中核実装とする](docs/adr/ADR-0001-go-core.md)
+- [ADR-0002: PythonとGo CoreをJSON Contractで疎結合にする](docs/adr/ADR-0002-json-contract.md)
+- [ADR-0003: Workspace Kernelを中心コンポーネントとする](docs/adr/ADR-0003-workspace-kernel.md)
+
+新しいADRは[ADRテンプレート](docs/adr/ADR-template.md)から作成します。
+
 ## ディレクトリ構成
 
 ```text
 workspace-os/
 ├── docs/
+│   ├── adr/
+│   │   ├── ADR-0001-go-core.md
+│   │   ├── ADR-0002-json-contract.md
+│   │   ├── ADR-0003-workspace-kernel.md
+│   │   └── ADR-template.md
 │   ├── Architecture.md
 │   ├── IdentityPolicy.md
 │   ├── ReviewFlow.md
