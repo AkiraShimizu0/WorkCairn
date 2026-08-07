@@ -1,0 +1,120 @@
+{
+  "cases": [
+    {
+      "name": "ready_without_dependencies",
+      "tasks": [
+        {"id": "TASK-001", "title": "要件整理", "assignee_id": "PLAN-001", "status": "未着手"}
+      ],
+      "dependencies": [{"task_id": "TASK-001", "depends_on": []}],
+      "existing_employee_ids": ["PLAN-001"],
+      "expected": {"task_id": "TASK-001", "ready": true, "state": "ready", "blocked_by": [], "reason": "ready"}
+    },
+    {
+      "name": "blocked_by_incomplete_dependency",
+      "tasks": [
+        {"id": "TASK-001", "title": "要件整理", "assignee_id": "PLAN-001", "status": "進行中"},
+        {"id": "TASK-002", "title": "実装", "assignee_id": "DEV-001", "status": "未着手"}
+      ],
+      "dependencies": [
+        {"task_id": "TASK-001", "depends_on": []},
+        {"task_id": "TASK-002", "depends_on": ["TASK-001"]}
+      ],
+      "existing_employee_ids": ["PLAN-001", "DEV-001"],
+      "expected": {"task_id": "TASK-002", "ready": false, "state": "blocked", "blocked_by": ["TASK-001"], "reason": "dependencies_incomplete"}
+    },
+    {
+      "name": "ready_after_completed_dependency",
+      "tasks": [
+        {"id": "TASK-001", "title": "要件整理", "assignee_id": "PLAN-001", "status": "完了"},
+        {"id": "TASK-002", "title": "実装", "assignee_id": "DEV-001", "status": "未着手"}
+      ],
+      "dependencies": [
+        {"task_id": "TASK-001", "depends_on": []},
+        {"task_id": "TASK-002", "depends_on": ["TASK-001"]}
+      ],
+      "existing_employee_ids": ["PLAN-001", "DEV-001"],
+      "expected": {"task_id": "TASK-002", "ready": true, "state": "ready", "blocked_by": [], "reason": "ready"}
+    },
+    {
+      "name": "blocked_without_assignee",
+      "tasks": [
+        {"id": "TASK-001", "title": "担当待ち", "assignee_id": null, "status": "未着手"}
+      ],
+      "dependencies": [{"task_id": "TASK-001", "depends_on": []}],
+      "existing_employee_ids": ["PLAN-001"],
+      "expected": {"task_id": "TASK-001", "ready": false, "state": "blocked", "blocked_by": [], "reason": "assignee_missing"}
+    },
+    {
+      "name": "blocked_unknown_employee",
+      "tasks": [
+        {"id": "TASK-001", "title": "担当確認", "assignee_id": "UNKNOWN-001", "status": "未着手"}
+      ],
+      "dependencies": [{"task_id": "TASK-001", "depends_on": []}],
+      "existing_employee_ids": ["PLAN-001"],
+      "expected": {"task_id": "TASK-001", "ready": false, "state": "blocked", "blocked_by": [], "reason": "assignee_not_found"}
+    },
+    {
+      "name": "waiting_without_unstarted_tasks",
+      "tasks": [
+        {"id": "TASK-001", "title": "実行中", "assignee_id": "PLAN-001", "status": "進行中"}
+      ],
+      "dependencies": [{"task_id": "TASK-001", "depends_on": []}],
+      "existing_employee_ids": ["PLAN-001"],
+      "expected": {"task_id": "", "ready": false, "state": "waiting", "blocked_by": [], "reason": "no_unstarted_tasks"}
+    },
+    {
+      "name": "completed_all_tasks",
+      "tasks": [
+        {"id": "TASK-001", "title": "要件整理", "assignee_id": "PLAN-001", "status": "完了"},
+        {"id": "TASK-002", "title": "実装", "assignee_id": "DEV-001", "status": "完了"}
+      ],
+      "dependencies": [
+        {"task_id": "TASK-001", "depends_on": []},
+        {"task_id": "TASK-002", "depends_on": ["TASK-001"]}
+      ],
+      "existing_employee_ids": ["PLAN-001", "DEV-001"],
+      "expected": {"task_id": "", "ready": false, "state": "completed", "blocked_by": [], "reason": "all_tasks_completed"}
+    },
+    {
+      "name": "ready_after_multiple_dependencies",
+      "tasks": [
+        {"id": "TASK-001", "title": "要件整理", "assignee_id": "PLAN-001", "status": "完了"},
+        {"id": "TASK-002", "title": "設計", "assignee_id": "DESIGN-001", "status": "完了"},
+        {"id": "TASK-003", "title": "実装", "assignee_id": "DEV-001", "status": "未着手"}
+      ],
+      "dependencies": [
+        {"task_id": "TASK-001", "depends_on": []},
+        {"task_id": "TASK-002", "depends_on": []},
+        {"task_id": "TASK-003", "depends_on": ["TASK-001", "TASK-002"]}
+      ],
+      "existing_employee_ids": ["PLAN-001", "DESIGN-001", "DEV-001"],
+      "expected": {"task_id": "TASK-003", "ready": true, "state": "ready", "blocked_by": [], "reason": "ready"}
+    }
+  ],
+  "errors": [
+    {
+      "name": "unknown_dependency",
+      "tasks": [
+        {"id": "TASK-001", "title": "要件整理", "assignee_id": "PLAN-001", "status": "未着手"}
+      ],
+      "dependencies": [{"task_id": "TASK-001", "depends_on": ["TASK-999"]}],
+      "existing_employee_ids": ["PLAN-001"],
+      "error_kind": "unknown_dependency",
+      "python_error_pattern": "不明なdependency"
+    },
+    {
+      "name": "cyclic_dependency",
+      "tasks": [
+        {"id": "TASK-001", "title": "要件整理", "assignee_id": "PLAN-001", "status": "未着手"},
+        {"id": "TASK-002", "title": "実装", "assignee_id": "DEV-001", "status": "未着手"}
+      ],
+      "dependencies": [
+        {"task_id": "TASK-001", "depends_on": ["TASK-002"]},
+        {"task_id": "TASK-002", "depends_on": ["TASK-001"]}
+      ],
+      "existing_employee_ids": ["PLAN-001", "DEV-001"],
+      "error_kind": "cyclic_dependency",
+      "python_error_pattern": "循環"
+    }
+  ]
+}

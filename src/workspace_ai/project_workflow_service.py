@@ -104,154 +104,171 @@ class ProjectWorkflowService:
         project_path = self.project_manager.get_project_path(project_name)
         tasks = self.project_manager.get_tasks(project_name)
         dependencies_by_task = self.dependency_reader.read(project_path)
-        tasks_by_id = self._tasks_by_id(tasks)
-        self._validate_dependency_graph(tasks_by_id, dependencies_by_task)
-
-        if tasks and all(task["status"] == "完了" for task in tasks):
-            return self._empty_result(
-                project_name,
-                state="completed",
-                reason="all_tasks_completed",
-                next_action="none",
-            )
-
-        pending_task = next(
-            (task for task in tasks if task["status"] == "未着手"),
-            None,
+        return evaluate_workflow_readiness(
+            project_name,
+            tasks,
+            dependencies_by_task,
+            self.organization.employee_exists,
         )
-        if pending_task is None:
-            return self._empty_result(
-                project_name,
-                state="waiting",
-                reason="no_unstarted_tasks",
-                next_action="wait",
-            )
 
-        task_id = pending_task["id"]
-        dependency_ids = dependencies_by_task.get(task_id, [])
-        blocked_by = [
-            dependency_id
-            for dependency_id in dependency_ids
-            if tasks_by_id[dependency_id]["status"] != "完了"
-        ]
-        blocking_reasons = []
-        assignee_id = pending_task.get("assignee_id")
-        if assignee_id is None:
-            blocking_reasons.append("assignee_missing")
-        elif not self.organization.employee_exists(assignee_id):
-            blocking_reasons.append("assignee_not_found")
-        if blocked_by:
-            blocking_reasons.append("dependencies_incomplete")
 
-        if blocking_reasons:
-            return self._task_result(
-                project_name,
-                pending_task,
-                dependency_ids,
-                blocked_by,
-                ready=False,
-                state="blocked",
-                reason=blocking_reasons[0],
-                blocking_reasons=blocking_reasons,
-                next_action="resolve_blockers",
-            )
+def evaluate_workflow_readiness(
+    project_name,
+    tasks,
+    dependencies_by_task,
+    employee_exists,
+):
+    """I/Oに依存せず、WorkflowEngineへ渡す次の1タスクを判定する。"""
+    if not callable(employee_exists):
+        raise ValueError("employee_existsは呼び出し可能である必要があります。")
+    tasks_by_id = _tasks_by_id(tasks)
+    _validate_dependency_graph(tasks_by_id, dependencies_by_task)
 
-        return self._task_result(
+    if tasks and all(task["status"] == "完了" for task in tasks):
+        return _empty_result(
+            project_name,
+            state="completed",
+            reason="all_tasks_completed",
+            next_action="none",
+        )
+
+    pending_task = next(
+        (task for task in tasks if task["status"] == "未着手"),
+        None,
+    )
+    if pending_task is None:
+        return _empty_result(
+            project_name,
+            state="waiting",
+            reason="no_unstarted_tasks",
+            next_action="wait",
+        )
+
+    task_id = pending_task["id"]
+    dependency_ids = dependencies_by_task.get(task_id, [])
+    blocked_by = [
+        dependency_id
+        for dependency_id in dependency_ids
+        if tasks_by_id[dependency_id]["status"] != "完了"
+    ]
+    blocking_reasons = []
+    assignee_id = pending_task.get("assignee_id")
+    if assignee_id is None:
+        blocking_reasons.append("assignee_missing")
+    elif not employee_exists(assignee_id):
+        blocking_reasons.append("assignee_not_found")
+    if blocked_by:
+        blocking_reasons.append("dependencies_incomplete")
+
+    if blocking_reasons:
+        return _task_result(
             project_name,
             pending_task,
             dependency_ids,
-            [],
-            ready=True,
-            state="ready",
-            reason="ready",
-            blocking_reasons=[],
-            next_action="workflow_execute",
+            blocked_by,
+            ready=False,
+            state="blocked",
+            reason=blocking_reasons[0],
+            blocking_reasons=blocking_reasons,
+            next_action="resolve_blockers",
         )
 
-    @staticmethod
-    def _tasks_by_id(tasks):
-        tasks_by_id = {}
-        for task in tasks:
-            if not isinstance(task, dict):
-                raise ValueError("ProjectManagerのtaskはdictである必要があります。")
-            task_id = task.get("id")
-            if not isinstance(task_id, str) or not task_id:
-                raise ValueError("Task IDが不正です。")
-            if task_id in tasks_by_id:
-                raise ValueError(f"Task IDが重複しています: {task_id}")
-            tasks_by_id[task_id] = task
-        return tasks_by_id
-
-    @staticmethod
-    def _validate_dependency_graph(tasks_by_id, dependencies_by_task):
-        for task_id, dependency_ids in dependencies_by_task.items():
-            if task_id not in tasks_by_id:
-                raise ValueError(
-                    f"依存メタデータに存在しないTask IDがあります: {task_id}"
-                )
-            for dependency_id in dependency_ids:
-                if dependency_id not in tasks_by_id:
-                    raise ValueError(f"不明なdependencyです: {dependency_id}")
-
-        graph = {
-            task_id: dependencies_by_task.get(task_id, [])
-            for task_id in tasks_by_id
-        }
-        states = {}
-
-        def visit(task_id):
-            state = states.get(task_id)
-            if state == "visiting":
-                raise ValueError("dependencyに循環があります。")
-            if state == "visited":
-                return
-            states[task_id] = "visiting"
-            for dependency_id in graph[task_id]:
-                visit(dependency_id)
-            states[task_id] = "visited"
-
-        for task_id in graph:
-            visit(task_id)
-
-    @staticmethod
-    def _task_result(
+    return _task_result(
         project_name,
-        task,
-        dependencies,
-        blocked_by,
-        *,
-        ready,
-        state,
-        reason,
-        blocking_reasons,
-        next_action,
-    ):
-        return {
-            "project_name": project_name,
-            "task_id": task["id"],
-            "title": task["title"],
-            "assignee_id": task.get("assignee_id"),
-            "dependencies": list(dependencies),
-            "blocked_by": list(blocked_by),
-            "ready": ready,
-            "state": state,
-            "reason": reason,
-            "blocking_reasons": list(blocking_reasons),
-            "next_action": next_action,
-        }
+        pending_task,
+        dependency_ids,
+        [],
+        ready=True,
+        state="ready",
+        reason="ready",
+        blocking_reasons=[],
+        next_action="workflow_execute",
+    )
 
-    @staticmethod
-    def _empty_result(project_name, *, state, reason, next_action):
-        return {
-            "project_name": project_name,
-            "task_id": None,
-            "title": None,
-            "assignee_id": None,
-            "dependencies": [],
-            "blocked_by": [],
-            "ready": False,
-            "state": state,
-            "reason": reason,
-            "blocking_reasons": [],
-            "next_action": next_action,
-        }
+
+def _tasks_by_id(tasks):
+    tasks_by_id = {}
+    for task in tasks:
+        if not isinstance(task, dict):
+            raise ValueError("ProjectManagerのtaskはdictである必要があります。")
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("Task IDが不正です。")
+        if task_id in tasks_by_id:
+            raise ValueError(f"Task IDが重複しています: {task_id}")
+        tasks_by_id[task_id] = task
+    return tasks_by_id
+
+
+def _validate_dependency_graph(tasks_by_id, dependencies_by_task):
+    for task_id, dependency_ids in dependencies_by_task.items():
+        if task_id not in tasks_by_id:
+            raise ValueError(
+                f"依存メタデータに存在しないTask IDがあります: {task_id}"
+            )
+        for dependency_id in dependency_ids:
+            if dependency_id not in tasks_by_id:
+                raise ValueError(f"不明なdependencyです: {dependency_id}")
+
+    graph = {
+        task_id: dependencies_by_task.get(task_id, [])
+        for task_id in tasks_by_id
+    }
+    states = {}
+
+    def visit(task_id):
+        state = states.get(task_id)
+        if state == "visiting":
+            raise ValueError("dependencyに循環があります。")
+        if state == "visited":
+            return
+        states[task_id] = "visiting"
+        for dependency_id in graph[task_id]:
+            visit(dependency_id)
+        states[task_id] = "visited"
+
+    for task_id in graph:
+        visit(task_id)
+
+
+def _task_result(
+    project_name,
+    task,
+    dependencies,
+    blocked_by,
+    *,
+    ready,
+    state,
+    reason,
+    blocking_reasons,
+    next_action,
+):
+    return {
+        "project_name": project_name,
+        "task_id": task["id"],
+        "title": task["title"],
+        "assignee_id": task.get("assignee_id"),
+        "dependencies": list(dependencies),
+        "blocked_by": list(blocked_by),
+        "ready": ready,
+        "state": state,
+        "reason": reason,
+        "blocking_reasons": list(blocking_reasons),
+        "next_action": next_action,
+    }
+
+
+def _empty_result(project_name, *, state, reason, next_action):
+    return {
+        "project_name": project_name,
+        "task_id": None,
+        "title": None,
+        "assignee_id": None,
+        "dependencies": [],
+        "blocked_by": [],
+        "ready": False,
+        "state": state,
+        "reason": reason,
+        "blocking_reasons": [],
+        "next_action": next_action,
+    }

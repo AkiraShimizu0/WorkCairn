@@ -35,6 +35,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | ReviewerWorker | 元担当者とは別のAI社員として成果物をレビューする |
 | RevisionTaskService | Request Changesから元担当社員向け修正タスクを作る |
 | EmployeeRenameService | IDを維持して構造化された氏名参照だけを安全に改名する |
+| Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 
 ## データ境界
 
@@ -53,6 +54,18 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 ### Python
 
 Python層はMarkdownの読み取り、検証、状態遷移、Runner呼び出しを担当します。Runner以外のコンポーネントは特定AI APIへ依存しません。
+
+### Go Coreへの段階移行
+
+Workspace OSは、中核ロジックをPythonからGo Coreへ段階的に移行しています。移行期間中もPython実装を本番実装・比較対象として維持し、共有fixtureでGoとの同等性を確認します。
+
+- 依存解析や実行可否判定など、副作用のないCoreから順次Goへ置き換えます。
+- MarkdownやObsidianのファイルI/OはCoreの外側に置きます。
+- AI Runner、PromptBuilder、ModelRouterなどのAI連携層は当面Pythonに残します。
+- Go CoreはCrewAI、外部LLM SDK、Pythonランタイム、`.env`へ依存しません。
+- Rustへの主移行は行わず、GoをWorkspace OSの中核実装として育てます。
+
+最初のGoコンポーネントは`go/internal/workflow`です。PythonとGoは`fixtures/workflow/readiness_cases.json`を共通契約として使用します。
 
 ## 主要な設計原則
 
