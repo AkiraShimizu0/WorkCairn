@@ -10,6 +10,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 )
 
 func TestNewDefaultKernelRegistersProductionServices(t *testing.T) {
@@ -17,7 +18,7 @@ func TestNewDefaultKernelRegistersProductionServices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []kernel.ServiceKind{kernel.ServiceEvent, kernel.ServiceProject, kernel.ServiceWorkflow}
+	want := []kernel.ServiceKind{kernel.ServiceEvent, kernel.ServiceProject, kernel.ServiceTask, kernel.ServiceWorkflow}
 	if status := workspaceKernel.Status(); status.State != kernel.StateStopped || !reflect.DeepEqual(status.RegisteredServices, want) {
 		t.Fatalf("Status() = %#v", status)
 	}
@@ -43,10 +44,21 @@ func TestNewDefaultKernelRegistersProductionServices(t *testing.T) {
 	if err := eventService.Publish(context.Background(), published); err != nil {
 		t.Fatalf("Publish() while Kernel started error = %v", err)
 	}
+	taskService, err := workspaceKernel.TaskService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := taskService.Create(context.Background(), task.CreateInput{ID: "TASK-001", Title: "Kernel task"})
+	if err != nil || created.Status != task.StatusUnstarted {
+		t.Fatalf("TaskService.Create() = %#v, %v", created, err)
+	}
 	if err := workspaceKernel.Stop(); err != nil {
 		t.Fatal(err)
 	}
 	if err := eventService.Publish(context.Background(), published); !errors.Is(err, service.ErrEventServiceNotStarted) {
 		t.Fatalf("Publish() after Kernel stopped error = %v", err)
+	}
+	if _, err := taskService.Start(context.Background(), created.ID); !errors.Is(err, service.ErrTaskServiceNotActive) {
+		t.Fatalf("TaskService.Start() after Kernel stopped error = %v", err)
 	}
 }

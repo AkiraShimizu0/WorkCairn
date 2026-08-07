@@ -25,6 +25,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0002: PythonとGo CoreをJSON Contractで疎結合にする](adr/ADR-0002-json-contract.md)
 - [ADR-0003: Workspace Kernelを中心コンポーネントとする](adr/ADR-0003-workspace-kernel.md)
 - [ADR-0004: Event DrivenをWorkspace OSの基本設計とする](adr/ADR-0004-event-system.md)
+- [ADR-0005: Task lifecycleをGo TaskServiceの責務とする](adr/ADR-0005-task-lifecycle.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -47,6 +48,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | EmployeeRenameService | IDを維持して構造化された氏名参照だけを安全に改名する |
 | Workspace Kernel | Goサービスの登録・参照、ライフサイクル、Command実行を調停する |
 | Go Event Service | 型付きBusiness Eventを検証し、in-process Busで同期配信する |
+| Go Task Service | Task lifecycle、Version/CAS、Store境界、Event発行を管理する |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
@@ -81,9 +83,11 @@ Workspace OSは、中核ロジックをPythonからGo Coreへ段階的に移行�
 現在のGo Coreは次のパッケージで構成します。
 
 - `go/internal/workflow`: 依存解析、循環検出、実行可否判定
-- `go/internal/project`: TASK-ID、Task Status、状態遷移、Task検証
+- `go/internal/project`: ProjectService向け後方互換Facade。Task規則はTask Domainへ委譲
 - `go/internal/event`: 型付きEvent、検証、UUIDv4 ID、in-memory Event Bus
-- `go/internal/service`: Kernel向けProject/Workflow/Event Facade
+- `go/internal/task`: Task状態、遷移、失敗事実、Versionを管理するDomain
+- `go/internal/taskstore`: TaskStoreのin-memory Adapter
+- `go/internal/service`: Kernel向けProject/Workflow/Task/Event Facade
 - `go/internal/kernel`: サービス境界、ライフサイクル、Command調停
 - `go/internal/bootstrap`: 具体Serviceを登録するcomposition root
 - `go/cmd/workspace-core`: バージョン付きJSON契約を公開するCLI境界
@@ -102,6 +106,10 @@ Workspace Kernel
     ├── WorkflowService
     │       ↓
     │   Workflow Domain
+    ├── TaskService
+    │       ├── Task Domain
+    │       ├── TaskStore
+    │       └── EventService
     └── EventService
             ↓
         Event Bus
@@ -121,7 +129,7 @@ JSON契約v1は、`version`、`operation`、`payload`を標準入力で受け取
 
 対応operationは`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`です。ローカルバイナリは`make go-build`で`bin/workspace-core`へ生成し、`bin/`はGit管理しません。
 
-PromptBuilder、Worker、ModelRouter、LLM Runner、外部LLM SDKは当面Pythonに残します。次の移行段階ではWorkflowEngineのオーケストレーションとTaskExecutorのライフサイクル/状態機械をGoへ移し、PythonはVault I/OとAI Adapterへさらに縮小します。
+PromptBuilder、Worker、ModelRouter、LLM Runner、外部LLM SDKは当面Pythonに残します。Task lifecycleはGo TaskServiceへ移行済みです。次の段階ではWorkflowEngineのオーケストレーションとWorker／Runner境界をGoへ移し、PythonはVault I/OとAI Adapterへさらに縮小します。
 
 ### Workspace Kernel v0.3
 
@@ -137,25 +145,40 @@ Workspace Kernel
     ├── WorkflowService
     │       ↓
     │   Workflow Domain
+    ├── TaskService
+    │       ├── Task Domain
+    │       ├── TaskStore
+    │       └── EventService
     └── EventService
             ↓
         Event Bus
 
 将来追加
-    ├── Task Service
     ├── Organization Service
     ├── Scheduler
     ├── Audit
     └── Worker
 ```
 
-`bootstrap.NewDefaultKernel`がProjectService、WorkflowService、EventServiceの具体実装を登録し、CLIはKernelを起動してから全Domain Commandを実行します。`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`はすべて`CLI → Kernel → Service → Domain`を通り、CLIからProject/Workflow Domainを直接参照しません。Kernelが停止中のDomain Commandと未登録Serviceは明示的に拒否します。JSON Contract v1のoperation、payload、result、既存error codeは変更していません。
+`bootstrap.NewDefaultKernel`がProjectService、WorkflowService、TaskService、EventServiceの具体実装を登録します。Kernel StartはEventServiceの後にTaskServiceを有効化し、Kernel StopはTaskServiceを無効化してからEventServiceを停止します。`kernel.status`には4 Serviceが表示されます。既存CLI Commandは従来どおり`CLI → Kernel → Service → Domain`を通り、JSON Contract v1のoperation、payload、result、error codeは変更していません。
 
 EventServiceはKernelのライフサイクルに従います。購読はKernel起動前に構成でき、PublishはStart後のみ受け付け、Stop後は拒否します。Kernelが保持するのはEventService interfaceだけであり、Event Bus内部実装、handler、永続化を知りません。
 
 初期Event配送はin-process、synchronous、at-most-onceです。1回のPublish内はsubscriber登録順、逐次Publishは呼び出し順を維持します。並行Publish間のglobal ordering、自動retry、永続queueは提供しません。subscriber失敗は他のsubscriberを抑止せず、集約して呼び出し元へ返します。Auditは将来`Event Bus → Audit Subscriber → Audit Store`として接続し、Event DomainはAudit MarkdownやObsidianへ依存しません。
 
-Scheduler、Worker実行、LLM呼び出し、Obsidian I/OはKernelに含めません。Project/Workflow/Eventのビジネスルールの正本は引き続きDomainパッケージであり、Serviceは型付きFacade、Kernelは実行調停、CLIはJSON Adapterに限定します。
+TaskServiceはCreate、Start、Complete、Fail、Hold、Resume、Getを提供します。TaskStore更新はVersionによるcompare-and-setを使います。Store成功後のEvent Publish失敗は保存済み状態を含む型付き部分成功エラーとして返し、初期版ではrollbackや自動retryを行いません。将来の永続AdapterではTransactional Outboxを追加できる境界です。
+
+```text
+TaskStarted
+    ↓
+WorkerService (future)
+    ↓
+RunnerService (future)
+    ↓
+TaskService.Complete / TaskService.Fail
+```
+
+Scheduler、Worker実行、LLM呼び出し、Obsidian I/OはKernelに含めません。Project/Workflow/Task/Eventのビジネスルールの正本は各Domainパッケージであり、Serviceは型付きFacade、Kernelは実行調停、CLIはJSON Adapterに限定します。
 
 ## 主要な設計原則
 

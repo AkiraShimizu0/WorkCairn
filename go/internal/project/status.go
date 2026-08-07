@@ -1,37 +1,20 @@
 package project
 
-import (
-	"errors"
-	"fmt"
-)
+import "github.com/AkiraShimizu0/workspace-os/go/internal/task"
 
 // Status is a closed set of project task states.
-type Status string
+type Status = task.Status
 
 const (
-	StatusUnstarted  Status = "未着手"
-	StatusInProgress Status = "進行中"
-	StatusOnHold     Status = "保留"
-	StatusCompleted  Status = "完了"
+	StatusUnstarted  = task.StatusUnstarted
+	StatusInProgress = task.StatusInProgress
+	StatusOnHold     = task.StatusOnHold
+	StatusCompleted  = task.StatusCompleted
 )
 
-var ErrInvalidStatus = errors.New("invalid task status")
-
-// Valid reports whether the status belongs to the domain state set.
-func (status Status) Valid() bool {
-	switch status {
-	case StatusUnstarted, StatusInProgress, StatusOnHold, StatusCompleted:
-		return true
-	default:
-		return false
-	}
-}
+var ErrInvalidStatus = task.ErrInvalidStatus
 
 // ParseStatus validates a serialized status value.
 func ParseStatus(value string) (Status, error) {
-	status := Status(value)
-	if !status.Valid() {
-		return "", fmt.Errorf("%w: %s", ErrInvalidStatus, value)
-	}
-	return status, nil
+	return task.ParseStatus(value)
 }

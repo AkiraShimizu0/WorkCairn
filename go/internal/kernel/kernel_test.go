@@ -9,6 +9,7 @@ import (
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/workflow"
 )
 
@@ -22,7 +23,12 @@ type fakeWorkflowService struct {
 	err    error
 }
 type fakeOrganizationService struct{}
-type fakeTaskService struct{}
+type fakeTaskService struct {
+	active          bool
+	activateCalls   int
+	deactivateCalls int
+	createCalls     int
+}
 type fakeEventService struct {
 	started      bool
 	startCalls   int
@@ -31,6 +37,7 @@ type fakeEventService struct {
 }
 
 var errFakeEventServiceStopped = errors.New("fake event service is stopped")
+var errFakeTaskServiceInactive = errors.New("fake task service is inactive")
 
 func (service *fakeProjectService) NextTaskID([]string) (string, error) {
 	service.nextCalls++
@@ -50,7 +57,41 @@ func (service *fakeWorkflowService) Readiness(
 	return service.result, service.err
 }
 func (*fakeOrganizationService) IsOrganizationService() {}
-func (*fakeTaskService) IsTaskService()                 {}
+func (service *fakeTaskService) Activate() error {
+	service.activateCalls++
+	service.active = true
+	return nil
+}
+func (service *fakeTaskService) Deactivate() error {
+	service.deactivateCalls++
+	service.active = false
+	return nil
+}
+func (service *fakeTaskService) Create(_ context.Context, input task.CreateInput) (task.Task, error) {
+	if !service.active {
+		return task.Task{}, errFakeTaskServiceInactive
+	}
+	service.createCalls++
+	return task.New(input)
+}
+func (*fakeTaskService) Start(context.Context, string) (task.Task, error) {
+	return task.Task{}, nil
+}
+func (*fakeTaskService) Complete(context.Context, string) (task.Task, error) {
+	return task.Task{}, nil
+}
+func (*fakeTaskService) Fail(context.Context, string, string) (task.Task, error) {
+	return task.Task{}, nil
+}
+func (*fakeTaskService) Hold(context.Context, string, string) (task.Task, error) {
+	return task.Task{}, nil
+}
+func (*fakeTaskService) Resume(context.Context, string) (task.Task, error) {
+	return task.Task{}, nil
+}
+func (*fakeTaskService) Get(context.Context, string) (task.Task, error) {
+	return task.Task{}, nil
+}
 func (service *fakeEventService) Start() error {
 	service.startCalls++
 	service.started = true
@@ -227,6 +268,34 @@ func TestKernelControlsEventServiceLifecycle(t *testing.T) {
 	}
 	if events.startCalls != 1 || events.stopCalls != 1 || events.publishCalls != 1 {
 		t.Fatalf("event lifecycle calls = start:%d stop:%d publish:%d", events.startCalls, events.stopCalls, events.publishCalls)
+	}
+}
+
+func TestKernelControlsTaskServiceLifecycle(t *testing.T) {
+	kernel, _ := New("v0.3.0")
+	tasks := &fakeTaskService{}
+	if err := kernel.RegisterTaskService(tasks); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	input := task.CreateInput{ID: "TASK-001", Title: "test"}
+	if _, err := tasks.Create(ctx, input); !errors.Is(err, errFakeTaskServiceInactive) {
+		t.Fatalf("Create() before Kernel.Start error = %v", err)
+	}
+	if err := kernel.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Create(ctx, input); err != nil {
+		t.Fatalf("Create() while Kernel started error = %v", err)
+	}
+	if err := kernel.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Create(ctx, input); !errors.Is(err, errFakeTaskServiceInactive) {
+		t.Fatalf("Create() after Kernel.Stop error = %v", err)
+	}
+	if tasks.activateCalls != 1 || tasks.deactivateCalls != 1 || tasks.createCalls != 1 {
+		t.Fatalf("task lifecycle calls = activate:%d deactivate:%d create:%d", tasks.activateCalls, tasks.deactivateCalls, tasks.createCalls)
 	}
 }
 

@@ -10,6 +10,7 @@ const (
 	TaskCompleted     Type = "task.completed"
 	TaskFailed        Type = "task.failed"
 	TaskHeld          Type = "task.held"
+	TaskResumed       Type = "task.resumed"
 	ReviewRequested   Type = "review.requested"
 	ReviewCompleted   Type = "review.completed"
 	RevisionCreated   Type = "revision.created"
@@ -26,6 +27,7 @@ var supportedTypes = map[Type]struct{}{
 	TaskCompleted:     {},
 	TaskFailed:        {},
 	TaskHeld:          {},
+	TaskResumed:       {},
 	ReviewRequested:   {},
 	ReviewCompleted:   {},
 	RevisionCreated:   {},

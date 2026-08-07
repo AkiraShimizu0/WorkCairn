@@ -9,6 +9,7 @@ import (
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/workflow"
 )
 
@@ -61,9 +62,18 @@ type OrganizationService interface {
 	IsOrganizationService()
 }
 
-// TaskService remains a marker until its Go Domain is integrated.
+// TaskService owns Task lifecycle while Worker execution and storage Adapters
+// remain separate boundaries.
 type TaskService interface {
-	IsTaskService()
+	Activate() error
+	Deactivate() error
+	Create(ctx context.Context, input task.CreateInput) (task.Task, error)
+	Start(ctx context.Context, taskID string) (task.Task, error)
+	Complete(ctx context.Context, taskID string) (task.Task, error)
+	Fail(ctx context.Context, taskID, reason string) (task.Task, error)
+	Hold(ctx context.Context, taskID, reason string) (task.Task, error)
+	Resume(ctx context.Context, taskID string) (task.Task, error)
+	Get(ctx context.Context, taskID string) (task.Task, error)
 }
 
 func (kernel *Kernel) RegisterProjectService(service ProjectService) error {

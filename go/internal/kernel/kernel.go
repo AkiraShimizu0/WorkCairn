@@ -48,11 +48,20 @@ func (kernel *Kernel) Start() error {
 		return ErrAlreadyStarted
 	}
 	eventService, hasEventService := kernel.services[ServiceEvent]
+	taskService, hasTaskService := kernel.services[ServiceTask]
 	kernel.mu.RUnlock()
 
 	if hasEventService {
 		if err := eventService.(EventService).Start(); err != nil {
 			return fmt.Errorf("start event service: %w", err)
+		}
+	}
+	if hasTaskService {
+		if err := taskService.(TaskService).Activate(); err != nil {
+			if hasEventService {
+				_ = eventService.(EventService).Stop()
+			}
+			return fmt.Errorf("activate task service: %w", err)
 		}
 	}
 
@@ -73,8 +82,14 @@ func (kernel *Kernel) Stop() error {
 		return ErrNotStarted
 	}
 	eventService, hasEventService := kernel.services[ServiceEvent]
+	taskService, hasTaskService := kernel.services[ServiceTask]
 	kernel.mu.RUnlock()
 
+	if hasTaskService {
+		if err := taskService.(TaskService).Deactivate(); err != nil {
+			return fmt.Errorf("deactivate task service: %w", err)
+		}
+	}
 	if hasEventService {
 		if err := eventService.(EventService).Stop(); err != nil {
 			return fmt.Errorf("stop event service: %w", err)

@@ -79,6 +79,7 @@ func TestEventTypesAreClosed(t *testing.T) {
 		TaskCompleted,
 		TaskFailed,
 		TaskHeld,
+		TaskResumed,
 		ReviewRequested,
 		ReviewCompleted,
 		RevisionCreated,
