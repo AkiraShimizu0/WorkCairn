@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+
+	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/workflow"
 )
 
 // ServiceKind identifies a stable Kernel service boundary.
@@ -23,20 +26,28 @@ var (
 	ErrServiceNotRegistered     = errors.New("kernel service is not registered")
 )
 
-// Marker interfaces keep service boundaries distinct without defining domain
-// operations before their Go services are integrated into the Kernel.
+// ProjectService is the Kernel-facing facade for the Project Domain.
 type ProjectService interface {
-	IsProjectService()
+	NextTaskID(existingIDs []string) (string, error)
+	ValidateTask(task project.Task) error
+	CanTransition(current, target project.Status) error
 }
 
+// WorkflowService is the Kernel-facing facade for the Workflow Domain.
 type WorkflowService interface {
-	IsWorkflowService()
+	Readiness(
+		tasks []workflow.Task,
+		dependencies []workflow.Dependency,
+		existingEmployees map[string]bool,
+	) (workflow.ReadinessResult, error)
 }
 
+// OrganizationService remains a marker until its Go Domain is integrated.
 type OrganizationService interface {
 	IsOrganizationService()
 }
 
+// TaskService remains a marker until its Go Domain is integrated.
 type TaskService interface {
 	IsTaskService()
 }

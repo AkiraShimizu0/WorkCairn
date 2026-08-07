@@ -80,6 +80,9 @@ Workspace OSは、中核ロジックをPythonからGo Coreへ段階的に移行�
 
 - `go/internal/workflow`: 依存解析、循環検出、実行可否判定
 - `go/internal/project`: TASK-ID、Task Status、状態遷移、Task検証
+- `go/internal/service`: Kernel向けProject/Workflow Facade
+- `go/internal/kernel`: サービス境界、ライフサイクル、Command調停
+- `go/internal/bootstrap`: 具体Serviceを登録するcomposition root
 - `go/cmd/workspace-core`: バージョン付きJSON契約を公開するCLI境界
 
 PythonとGoは`fixtures/workflow`、`fixtures/project`、`fixtures/go_core`のJSONを共通契約として使用します。実行時の境界は次のとおりです。
@@ -87,9 +90,15 @@ PythonとGoは`fixtures/workflow`、`fixtures/project`、`fixtures/go_core`のJS
 ```text
 Python Adapter (GoCoreClient / ProjectManager / ProjectWorkflowService)
     ↓ JSON Contract v1 (stdin/stdout)
-workspace-core
-    ├── project domain
-    └── workflow domain
+workspace-core CLI
+    ↓
+Workspace Kernel
+    ├── ProjectService
+    │       ↓
+    │   Project Domain
+    └── WorkflowService
+            ↓
+        Workflow Domain
 ```
 
 Go CoreはProject/Workflow領域のビジネスルールの正本です。`ProjectManager`はObsidian Markdown Adapterへ段階的に縮小しており、`GoCoreClient`を通じてTASK-ID採番、Task検証、状態遷移判定をGoへ委譲します。`ProjectWorkflowService`もTasks、依存メタデータ、社員存在情報を標準化して`workflow.readiness`へ渡し、Python側ではreadinessを再判定しません。
@@ -110,25 +119,31 @@ PromptBuilder、Worker、ModelRouter、LLM Runner、外部LLM SDKは当面Python
 
 ### Workspace Kernel v0.3
 
-`go/internal/kernel`はWorkspace OSの中心となる最小Kernelです。初期版はサービスの登録・参照、`started`/`stopped`ライフサイクル、状態snapshot、構造化Commandの受付だけを担当します。Project、Workflow、Task、Organizationのビジネスルールは各サービスに委譲し、Kernel自身には持ち込みません。
+`go/internal/kernel`はWorkspace OSの中心となる最小Kernelです。サービスの登録・参照、`started`/`stopped`ライフサイクル、状態snapshot、構造化Commandの受付だけを担当します。Project、Workflow、Task、Organizationのビジネスルールは各Domainへ委譲し、Kernel自身には持ち込みません。
 
 ```text
 workspace-core CLI (JSON Contract v1)
-    ↓ 将来の内部接続
+    ↓ Command
 Workspace Kernel
-    ├── Project Service
-    ├── Workflow Service
-    ├── Task Service
-    └── Organization Service
+    ├── ProjectService
+    │       ↓
+    │   Project Domain
+    └── WorkflowService
+            ↓
+        Workflow Domain
 
 将来追加
+    ├── Task Service
+    ├── Organization Service
     ├── Event
     ├── Scheduler
     ├── Audit
     └── Worker
 ```
 
-現時点のCLI operationは従来どおりGo Domainを直接呼び出し、JSON Contract v1に変更はありません。次の段階で既存Project/Workflow CoreをService実装としてKernelへ登録し、`cmd/workspace-core → Kernel → Domain Services`へ移行します。Scheduler、Event Bus、Worker実行、LLM呼び出し、Obsidian I/Oは初期Kernelに含めません。
+`bootstrap.NewDefaultKernel`がProjectServiceとWorkflowServiceの具体実装を登録し、CLIはKernelを起動してから全Domain Commandを実行します。`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`はすべて`CLI → Kernel → Service → Domain`を通り、CLIからProject/Workflow Domainを直接参照しません。Kernelが停止中のDomain Commandと未登録Serviceは明示的に拒否します。JSON Contract v1のoperation、payload、result、既存error codeは変更していません。
+
+Scheduler、Event Bus、Worker実行、LLM呼び出し、Obsidian I/OはKernelに含めません。Project/Workflowのビジネスルールの正本は引き続きDomainパッケージであり、Serviceは型付きFacade、Kernelは実行調停、CLIはJSON Adapterに限定します。
 
 ## 主要な設計原則
 

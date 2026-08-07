@@ -8,8 +8,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/workflow"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/bootstrap"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
 )
 
 const (
@@ -35,23 +35,8 @@ type responseError struct {
 	Message string `json:"message"`
 }
 
-type nextTaskIDPayload struct {
-	ExistingIDs []string `json:"existing_ids"`
-}
-
-type validateTaskPayload struct {
-	Task project.Task `json:"task"`
-}
-
-type transitionPayload struct {
-	Current string `json:"current"`
-	Target  string `json:"target"`
-}
-
-type readinessPayload struct {
-	Tasks             []workflow.Task       `json:"tasks"`
-	Dependencies      []workflow.Dependency `json:"dependencies"`
-	ExistingEmployees []string              `json:"existing_employee_ids"`
+type commandExecutor interface {
+	HandleCommand(command kernel.Command) (kernel.CommandResult, error)
 }
 
 func main() {
@@ -82,14 +67,23 @@ func run(input io.Reader, output io.Writer) (exitCode int) {
 		_ = writeResponse(output, failure("INVALID_REQUEST", "request must be valid JSON"))
 		return 1
 	}
-	if err := writeResponse(output, dispatch(req)); err != nil {
+	workspaceKernel, err := bootstrap.NewDefaultKernel(bootstrap.DefaultKernelVersion)
+	if err != nil {
+		_ = writeResponse(output, failure("INTERNAL_ERROR", "internal error"))
+		return 1
+	}
+	if err := workspaceKernel.Start(); err != nil {
+		_ = writeResponse(output, failure("INTERNAL_ERROR", "internal error"))
+		return 1
+	}
+	if err := writeResponse(output, dispatch(req, workspaceKernel)); err != nil {
 		return 1
 	}
 	written = true
 	return 0
 }
 
-func dispatch(req request) response {
+func dispatch(req request, executor commandExecutor) response {
 	if req.Version != contractVersion {
 		return failure("UNSUPPORTED_VERSION", "contract version is not supported")
 	}
@@ -97,60 +91,14 @@ func dispatch(req request) response {
 		return failure("INVALID_REQUEST", "operation and payload are required")
 	}
 
-	switch req.Operation {
-	case "project.next_task_id":
-		var payload nextTaskIDPayload
-		if err := decodeStrict(req.Payload, &payload); err != nil {
-			return failure("INVALID_REQUEST", "invalid project.next_task_id payload")
-		}
-		taskID, err := project.NextTaskID(payload.ExistingIDs)
-		if err != nil {
-			return domainFailure(err)
-		}
-		return success(map[string]string{"task_id": taskID})
-	case "project.validate_task":
-		var payload validateTaskPayload
-		if err := decodeStrict(req.Payload, &payload); err != nil {
-			return failure("INVALID_REQUEST", "invalid project.validate_task payload")
-		}
-		if err := project.ValidateTask(payload.Task); err != nil {
-			return domainFailure(err)
-		}
-		return success(map[string]bool{"valid": true})
-	case "project.can_transition":
-		var payload transitionPayload
-		if err := decodeStrict(req.Payload, &payload); err != nil {
-			return failure("INVALID_REQUEST", "invalid project.can_transition payload")
-		}
-		current, err := project.ParseStatus(payload.Current)
-		if err != nil {
-			return domainFailure(err)
-		}
-		target, err := project.ParseStatus(payload.Target)
-		if err != nil {
-			return domainFailure(err)
-		}
-		if err := project.ValidateTransition(current, target); err != nil {
-			return domainFailure(err)
-		}
-		return success(map[string]bool{"allowed": true})
-	case "workflow.readiness":
-		var payload readinessPayload
-		if err := decodeStrict(req.Payload, &payload); err != nil {
-			return failure("INVALID_REQUEST", "invalid workflow.readiness payload")
-		}
-		employees := make(map[string]bool, len(payload.ExistingEmployees))
-		for _, employeeID := range payload.ExistingEmployees {
-			employees[employeeID] = true
-		}
-		result, err := workflow.EvaluateReadiness(payload.Tasks, payload.Dependencies, employees)
-		if err != nil {
-			return domainFailure(err)
-		}
-		return success(result)
-	default:
-		return failure("UNKNOWN_OPERATION", "operation is not supported")
+	result, err := executor.HandleCommand(kernel.Command{
+		Type:    req.Operation,
+		Payload: req.Payload,
+	})
+	if err != nil {
+		return kernelFailure(err)
 	}
+	return success(result.Data)
 }
 
 func decodeStrict(data []byte, target any) error {
@@ -173,26 +121,12 @@ func failure(code, message string) response {
 	return response{Version: contractVersion, OK: false, Error: &responseError{Code: code, Message: message}}
 }
 
-func domainFailure(err error) response {
-	code := "INVALID_REQUEST"
-	switch {
-	case errors.Is(err, project.ErrInvalidTaskID):
-		code = "INVALID_TASK_ID"
-	case errors.Is(err, project.ErrDuplicateTaskID), errors.Is(err, workflow.ErrDuplicateTaskID):
-		code = "DUPLICATE_TASK_ID"
-	case errors.Is(err, project.ErrInvalidStatus):
-		code = "INVALID_STATUS"
-	case errors.Is(err, project.ErrInvalidTransition):
-		code = "INVALID_TRANSITION"
-	case errors.Is(err, project.ErrInvalidTaskTitle):
-		code = "INVALID_TASK_TITLE"
-	case errors.Is(err, project.ErrInvalidAssigneeID):
-		code = "INVALID_ASSIGNEE_ID"
-	case errors.Is(err, workflow.ErrUnknownDependency):
-		code = "UNKNOWN_DEPENDENCY"
-	case errors.Is(err, workflow.ErrCyclicDependency):
-		code = "CYCLIC_DEPENDENCY"
+func kernelFailure(err error) response {
+	var commandError *kernel.CommandError
+	if !errors.As(err, &commandError) {
+		return failure("INTERNAL_ERROR", safeMessage("INTERNAL_ERROR"))
 	}
+	code := string(commandError.Kind)
 	return failure(code, safeMessage(code))
 }
 
@@ -202,7 +136,9 @@ func safeMessage(code string) string {
 		"INVALID_STATUS": "task status is invalid", "INVALID_TRANSITION": "task status transition is invalid",
 		"INVALID_TASK_TITLE": "task title is invalid", "INVALID_ASSIGNEE_ID": "assignee ID is invalid",
 		"UNKNOWN_DEPENDENCY": "dependency references an unknown task", "CYCLIC_DEPENDENCY": "dependency graph contains a cycle",
-		"INVALID_REQUEST": "request is invalid",
+		"INVALID_REQUEST": "request is invalid", "UNKNOWN_OPERATION": "operation is not supported",
+		"TASK_NOT_READY": "task is not ready", "KERNEL_NOT_STARTED": "workspace kernel is not started",
+		"SERVICE_NOT_REGISTERED": "required kernel service is not registered", "INTERNAL_ERROR": "internal error",
 	}
 	if message, ok := messages[code]; ok {
 		return message
