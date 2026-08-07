@@ -44,6 +44,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | ReviewerWorker | 元担当者とは別のAI社員として成果物をレビューする |
 | RevisionTaskService | Request Changesから元担当社員向け修正タスクを作る |
 | EmployeeRenameService | IDを維持して構造化された氏名参照だけを安全に改名する |
+| Workspace Kernel | Goサービスの登録・参照、ライフサイクル、Command実行を調停する |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
@@ -106,6 +107,28 @@ JSON契約v1は、`version`、`operation`、`payload`を標準入力で受け取
 対応operationは`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`です。ローカルバイナリは`make go-build`で`bin/workspace-core`へ生成し、`bin/`はGit管理しません。
 
 PromptBuilder、Worker、ModelRouter、LLM Runner、外部LLM SDKは当面Pythonに残します。次の移行段階ではWorkflowEngineのオーケストレーションとTaskExecutorのライフサイクル/状態機械をGoへ移し、PythonはVault I/OとAI Adapterへさらに縮小します。
+
+### Workspace Kernel v0.3
+
+`go/internal/kernel`はWorkspace OSの中心となる最小Kernelです。初期版はサービスの登録・参照、`started`/`stopped`ライフサイクル、状態snapshot、構造化Commandの受付だけを担当します。Project、Workflow、Task、Organizationのビジネスルールは各サービスに委譲し、Kernel自身には持ち込みません。
+
+```text
+workspace-core CLI (JSON Contract v1)
+    ↓ 将来の内部接続
+Workspace Kernel
+    ├── Project Service
+    ├── Workflow Service
+    ├── Task Service
+    └── Organization Service
+
+将来追加
+    ├── Event
+    ├── Scheduler
+    ├── Audit
+    └── Worker
+```
+
+現時点のCLI operationは従来どおりGo Domainを直接呼び出し、JSON Contract v1に変更はありません。次の段階で既存Project/Workflow CoreをService実装としてKernelへ登録し、`cmd/workspace-core → Kernel → Domain Services`へ移行します。Scheduler、Event Bus、Worker実行、LLM呼び出し、Obsidian I/Oは初期Kernelに含めません。
 
 ## 主要な設計原則
 
