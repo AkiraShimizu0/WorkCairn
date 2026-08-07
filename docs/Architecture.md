@@ -36,6 +36,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | RevisionTaskService | Request Changesから元担当社員向け修正タスクを作る |
 | EmployeeRenameService | IDを維持して構造化された氏名参照だけを安全に改名する |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
+| Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
 ## データ境界
 
@@ -65,7 +66,12 @@ Workspace OSは、中核ロジックをPythonからGo Coreへ段階的に移行�
 - Go CoreはCrewAI、外部LLM SDK、Pythonランタイム、`.env`へ依存しません。
 - Rustへの主移行は行わず、GoをWorkspace OSの中核実装として育てます。
 
-最初のGoコンポーネントは`go/internal/workflow`です。PythonとGoは`fixtures/workflow/readiness_cases.json`を共通契約として使用します。
+現在のGo Coreは次のパッケージで構成します。
+
+- `go/internal/workflow`: 依存解析、循環検出、実行可否判定
+- `go/internal/project`: TASK-ID、Task Status、状態遷移、Task検証
+
+PythonとGoは`fixtures/workflow`と`fixtures/project`のJSONを共通契約として使用します。Pythonの`ProjectManager`は移行期間中もMarkdown I/Oと既存Adapterとして維持し、Goバイナリとの実行時接続は後続段階で追加します。
 
 ## 主要な設計原則
 

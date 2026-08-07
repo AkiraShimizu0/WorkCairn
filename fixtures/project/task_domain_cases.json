@@ -1,0 +1,92 @@
+{
+  "task_id_cases": [
+    {
+      "name": "first_task",
+      "existing_ids": [],
+      "expected_id": "TASK-001"
+    },
+    {
+      "name": "next_sequential_task",
+      "existing_ids": ["TASK-001", "TASK-002"],
+      "expected_id": "TASK-003"
+    },
+    {
+      "name": "next_after_gap",
+      "existing_ids": ["TASK-001", "TASK-003"],
+      "expected_id": "TASK-004"
+    },
+    {
+      "name": "next_after_three_digits",
+      "existing_ids": ["TASK-999"],
+      "expected_id": "TASK-1000"
+    },
+    {
+      "name": "duplicate_task_id",
+      "existing_ids": ["TASK-001", "TASK-001"],
+      "error_kind": "duplicate_task_id"
+    },
+    {
+      "name": "invalid_short_task_id",
+      "existing_ids": ["TASK-1"],
+      "error_kind": "invalid_task_id"
+    },
+    {
+      "name": "invalid_zero_task_id",
+      "existing_ids": ["TASK-000"],
+      "error_kind": "invalid_task_id"
+    }
+  ],
+  "status_cases": [
+    {"name": "unstarted", "status": "未着手", "valid": true},
+    {"name": "in_progress", "status": "進行中", "valid": true},
+    {"name": "on_hold", "status": "保留", "valid": true},
+    {"name": "completed", "status": "完了", "valid": true},
+    {"name": "unknown", "status": "不正", "valid": false}
+  ],
+  "transition_cases": [
+    {"name": "start_task", "from": "未着手", "to": "進行中", "valid": true},
+    {"name": "complete_task", "from": "進行中", "to": "完了", "valid": true},
+    {"name": "hold_task", "from": "進行中", "to": "保留", "valid": true},
+    {"name": "retry_held_task", "from": "保留", "to": "未着手", "valid": true},
+    {"name": "completed_is_terminal", "from": "完了", "to": "進行中", "valid": false},
+    {"name": "cannot_skip_execution", "from": "未着手", "to": "完了", "valid": false},
+    {"name": "cannot_repeat_same_status", "from": "進行中", "to": "進行中", "valid": false}
+  ],
+  "task_validation_cases": [
+    {
+      "name": "valid_assigned_task",
+      "task": {"id": "TASK-001", "title": "要件を整理する", "assignee_id": "PLAN-001", "status": "未着手"},
+      "valid": true
+    },
+    {
+      "name": "valid_unassigned_task",
+      "task": {"id": "TASK-002", "title": "担当待ち", "assignee_id": null, "status": "未着手"},
+      "valid": true
+    },
+    {
+      "name": "invalid_task_id",
+      "task": {"id": "TASK-2", "title": "不正ID", "assignee_id": null, "status": "未着手"},
+      "valid": false
+    },
+    {
+      "name": "empty_title",
+      "task": {"id": "TASK-003", "title": "  ", "assignee_id": null, "status": "未着手"},
+      "valid": false
+    },
+    {
+      "name": "invalid_status",
+      "task": {"id": "TASK-004", "title": "状態不正", "assignee_id": "PLAN-001", "status": "不正"},
+      "valid": false
+    },
+    {
+      "name": "empty_assignee",
+      "task": {"id": "TASK-005", "title": "担当不正", "assignee_id": "", "status": "未着手"},
+      "valid": false
+    },
+    {
+      "name": "table_separator_in_title",
+      "task": {"id": "TASK-006", "title": "不正|タイトル", "assignee_id": null, "status": "未着手"},
+      "valid": false
+    }
+  ]
+}
