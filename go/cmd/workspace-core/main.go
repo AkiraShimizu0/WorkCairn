@@ -76,6 +76,7 @@ func run(input io.Reader, output io.Writer) (exitCode int) {
 		_ = writeResponse(output, failure("INTERNAL_ERROR", "internal error"))
 		return 1
 	}
+	defer func() { _ = workspaceKernel.Stop() }()
 	if err := writeResponse(output, dispatch(req, workspaceKernel)); err != nil {
 		return 1
 	}

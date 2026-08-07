@@ -24,6 +24,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0001: GoをWorkspace OSの中核実装とする](adr/ADR-0001-go-core.md)
 - [ADR-0002: PythonとGo CoreをJSON Contractで疎結合にする](adr/ADR-0002-json-contract.md)
 - [ADR-0003: Workspace Kernelを中心コンポーネントとする](adr/ADR-0003-workspace-kernel.md)
+- [ADR-0004: Event DrivenをWorkspace OSの基本設計とする](adr/ADR-0004-event-system.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -45,6 +46,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | RevisionTaskService | Request Changesから元担当社員向け修正タスクを作る |
 | EmployeeRenameService | IDを維持して構造化された氏名参照だけを安全に改名する |
 | Workspace Kernel | Goサービスの登録・参照、ライフサイクル、Command実行を調停する |
+| Go Event Service | 型付きBusiness Eventを検証し、in-process Busで同期配信する |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
@@ -80,7 +82,8 @@ Workspace OSは、中核ロジックをPythonからGo Coreへ段階的に移行�
 
 - `go/internal/workflow`: 依存解析、循環検出、実行可否判定
 - `go/internal/project`: TASK-ID、Task Status、状態遷移、Task検証
-- `go/internal/service`: Kernel向けProject/Workflow Facade
+- `go/internal/event`: 型付きEvent、検証、UUIDv4 ID、in-memory Event Bus
+- `go/internal/service`: Kernel向けProject/Workflow/Event Facade
 - `go/internal/kernel`: サービス境界、ライフサイクル、Command調停
 - `go/internal/bootstrap`: 具体Serviceを登録するcomposition root
 - `go/cmd/workspace-core`: バージョン付きJSON契約を公開するCLI境界
@@ -96,9 +99,12 @@ Workspace Kernel
     ├── ProjectService
     │       ↓
     │   Project Domain
-    └── WorkflowService
+    ├── WorkflowService
+    │       ↓
+    │   Workflow Domain
+    └── EventService
             ↓
-        Workflow Domain
+        Event Bus
 ```
 
 Go CoreはProject/Workflow領域のビジネスルールの正本です。`ProjectManager`はObsidian Markdown Adapterへ段階的に縮小しており、`GoCoreClient`を通じてTASK-ID採番、Task検証、状態遷移判定をGoへ委譲します。`ProjectWorkflowService`もTasks、依存メタデータ、社員存在情報を標準化して`workflow.readiness`へ渡し、Python側ではreadinessを再判定しません。
@@ -128,22 +134,28 @@ Workspace Kernel
     ├── ProjectService
     │       ↓
     │   Project Domain
-    └── WorkflowService
+    ├── WorkflowService
+    │       ↓
+    │   Workflow Domain
+    └── EventService
             ↓
-        Workflow Domain
+        Event Bus
 
 将来追加
     ├── Task Service
     ├── Organization Service
-    ├── Event
     ├── Scheduler
     ├── Audit
     └── Worker
 ```
 
-`bootstrap.NewDefaultKernel`がProjectServiceとWorkflowServiceの具体実装を登録し、CLIはKernelを起動してから全Domain Commandを実行します。`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`はすべて`CLI → Kernel → Service → Domain`を通り、CLIからProject/Workflow Domainを直接参照しません。Kernelが停止中のDomain Commandと未登録Serviceは明示的に拒否します。JSON Contract v1のoperation、payload、result、既存error codeは変更していません。
+`bootstrap.NewDefaultKernel`がProjectService、WorkflowService、EventServiceの具体実装を登録し、CLIはKernelを起動してから全Domain Commandを実行します。`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`はすべて`CLI → Kernel → Service → Domain`を通り、CLIからProject/Workflow Domainを直接参照しません。Kernelが停止中のDomain Commandと未登録Serviceは明示的に拒否します。JSON Contract v1のoperation、payload、result、既存error codeは変更していません。
 
-Scheduler、Event Bus、Worker実行、LLM呼び出し、Obsidian I/OはKernelに含めません。Project/Workflowのビジネスルールの正本は引き続きDomainパッケージであり、Serviceは型付きFacade、Kernelは実行調停、CLIはJSON Adapterに限定します。
+EventServiceはKernelのライフサイクルに従います。購読はKernel起動前に構成でき、PublishはStart後のみ受け付け、Stop後は拒否します。Kernelが保持するのはEventService interfaceだけであり、Event Bus内部実装、handler、永続化を知りません。
+
+初期Event配送はin-process、synchronous、at-most-onceです。1回のPublish内はsubscriber登録順、逐次Publishは呼び出し順を維持します。並行Publish間のglobal ordering、自動retry、永続queueは提供しません。subscriber失敗は他のsubscriberを抑止せず、集約して呼び出し元へ返します。Auditは将来`Event Bus → Audit Subscriber → Audit Store`として接続し、Event DomainはAudit MarkdownやObsidianへ依存しません。
+
+Scheduler、Worker実行、LLM呼び出し、Obsidian I/OはKernelに含めません。Project/Workflow/Eventのビジネスルールの正本は引き続きDomainパッケージであり、Serviceは型付きFacade、Kernelは実行調停、CLIはJSON Adapterに限定します。
 
 ## 主要な設計原則
 

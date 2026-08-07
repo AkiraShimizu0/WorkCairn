@@ -42,6 +42,7 @@ flowchart TD
 - [ADR-0001: GoをWorkspace OSの中核実装とする](docs/adr/ADR-0001-go-core.md)
 - [ADR-0002: PythonとGo CoreをJSON Contractで疎結合にする](docs/adr/ADR-0002-json-contract.md)
 - [ADR-0003: Workspace Kernelを中心コンポーネントとする](docs/adr/ADR-0003-workspace-kernel.md)
+- [ADR-0004: Event DrivenをWorkspace OSの基本設計とする](docs/adr/ADR-0004-event-system.md)
 
 新しいADRは[ADRテンプレート](docs/adr/ADR-template.md)から作成します。
 
@@ -54,6 +55,7 @@ workspace-os/
 │   │   ├── ADR-0001-go-core.md
 │   │   ├── ADR-0002-json-contract.md
 │   │   ├── ADR-0003-workspace-kernel.md
+│   │   ├── ADR-0004-event-system.md
 │   │   └── ADR-template.md
 │   ├── Architecture.md
 │   ├── IdentityPolicy.md

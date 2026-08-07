@@ -1,11 +1,13 @@
 package kernel
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/workflow"
 )
@@ -21,6 +23,14 @@ type fakeWorkflowService struct {
 }
 type fakeOrganizationService struct{}
 type fakeTaskService struct{}
+type fakeEventService struct {
+	started      bool
+	startCalls   int
+	stopCalls    int
+	publishCalls int
+}
+
+var errFakeEventServiceStopped = errors.New("fake event service is stopped")
 
 func (service *fakeProjectService) NextTaskID([]string) (string, error) {
 	service.nextCalls++
@@ -41,6 +51,27 @@ func (service *fakeWorkflowService) Readiness(
 }
 func (*fakeOrganizationService) IsOrganizationService() {}
 func (*fakeTaskService) IsTaskService()                 {}
+func (service *fakeEventService) Start() error {
+	service.startCalls++
+	service.started = true
+	return nil
+}
+func (service *fakeEventService) Stop() error {
+	service.stopCalls++
+	service.started = false
+	return nil
+}
+func (service *fakeEventService) Publish(context.Context, event.Event) error {
+	if !service.started {
+		return errFakeEventServiceStopped
+	}
+	service.publishCalls++
+	return nil
+}
+func (*fakeEventService) Subscribe(event.Type, event.Handler) (event.Subscription, error) {
+	return event.Subscription{}, nil
+}
+func (*fakeEventService) Unsubscribe(event.Subscription) error { return nil }
 
 func TestNewKernel(t *testing.T) {
 	kernel, err := New("v0.3.0")
@@ -95,6 +126,7 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 	kernel, _ := New("v0.3.0")
 	project := &fakeProjectService{}
 	workflow := &fakeWorkflowService{}
+	events := &fakeEventService{}
 	organization := &fakeOrganizationService{}
 	task := &fakeTaskService{}
 
@@ -104,6 +136,7 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 	}{
 		{"project", kernel.RegisterProjectService(project)},
 		{"workflow", kernel.RegisterWorkflowService(workflow)},
+		{"event", kernel.RegisterEventService(events)},
 		{"organization", kernel.RegisterOrganizationService(organization)},
 		{"task", kernel.RegisterTaskService(task)},
 	}
@@ -121,6 +154,10 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 	if err != nil || gotWorkflow != workflow {
 		t.Fatalf("WorkflowService() = %#v, %v", gotWorkflow, err)
 	}
+	gotEvents, err := kernel.EventService()
+	if err != nil || gotEvents != events {
+		t.Fatalf("EventService() = %#v, %v", gotEvents, err)
+	}
 	gotOrganization, err := kernel.OrganizationService()
 	if err != nil || gotOrganization != organization {
 		t.Fatalf("OrganizationService() = %#v, %v", gotOrganization, err)
@@ -131,6 +168,7 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 	}
 
 	wantServices := []ServiceKind{
+		ServiceEvent,
 		ServiceOrganization,
 		ServiceProject,
 		ServiceTask,
@@ -159,6 +197,46 @@ func TestUnregisteredServiceIsRejected(t *testing.T) {
 	kernel, _ := New("v0.3.0")
 	if _, err := kernel.WorkflowService(); !errors.Is(err, ErrServiceNotRegistered) {
 		t.Fatalf("WorkflowService() error = %v, want ErrServiceNotRegistered", err)
+	}
+	if _, err := kernel.EventService(); !errors.Is(err, ErrServiceNotRegistered) {
+		t.Fatalf("EventService() error = %v, want ErrServiceNotRegistered", err)
+	}
+}
+
+func TestKernelControlsEventServiceLifecycle(t *testing.T) {
+	kernel, _ := New("v0.3.0")
+	events := &fakeEventService{}
+	if err := kernel.RegisterEventService(events); err != nil {
+		t.Fatal(err)
+	}
+	published := event.Event{}
+	if err := events.Publish(context.Background(), published); !errors.Is(err, errFakeEventServiceStopped) {
+		t.Fatalf("Publish() before Kernel.Start error = %v", err)
+	}
+	if err := kernel.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := events.Publish(context.Background(), published); err != nil {
+		t.Fatalf("Publish() while Kernel started error = %v", err)
+	}
+	if err := kernel.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if err := events.Publish(context.Background(), published); !errors.Is(err, errFakeEventServiceStopped) {
+		t.Fatalf("Publish() after Kernel.Stop error = %v", err)
+	}
+	if events.startCalls != 1 || events.stopCalls != 1 || events.publishCalls != 1 {
+		t.Fatalf("event lifecycle calls = start:%d stop:%d publish:%d", events.startCalls, events.stopCalls, events.publishCalls)
+	}
+}
+
+func TestServiceRegistrationRequiresStoppedKernel(t *testing.T) {
+	kernel, _ := New("v0.3.0")
+	if err := kernel.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := kernel.RegisterEventService(&fakeEventService{}); !errors.Is(err, ErrServiceRegistrationClosed) {
+		t.Fatalf("RegisterEventService() error = %v", err)
 	}
 }
 

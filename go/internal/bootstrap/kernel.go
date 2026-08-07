@@ -20,5 +20,8 @@ func NewDefaultKernel(version string) (*kernel.Kernel, error) {
 	if err := workspaceKernel.RegisterWorkflowService(service.NewWorkflowService()); err != nil {
 		return nil, err
 	}
+	if err := workspaceKernel.RegisterEventService(service.NewEventService(nil)); err != nil {
+		return nil, err
+	}
 	return workspaceKernel, nil
 }

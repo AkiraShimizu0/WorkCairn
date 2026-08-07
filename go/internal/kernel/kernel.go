@@ -4,6 +4,7 @@ package kernel
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 )
@@ -16,10 +17,11 @@ var (
 
 // Kernel coordinates service registration, lifecycle, and command dispatch.
 type Kernel struct {
-	mu       sync.RWMutex
-	version  string
-	state    LifecycleState
-	services map[ServiceKind]any
+	lifecycleMu sync.Mutex
+	mu          sync.RWMutex
+	version     string
+	state       LifecycleState
+	services    map[ServiceKind]any
 }
 
 // New creates a stopped Kernel with no registered services.
@@ -37,23 +39,51 @@ func New(version string) (*Kernel, error) {
 
 // Start transitions a stopped Kernel to started.
 func (kernel *Kernel) Start() error {
-	kernel.mu.Lock()
-	defer kernel.mu.Unlock()
+	kernel.lifecycleMu.Lock()
+	defer kernel.lifecycleMu.Unlock()
+
+	kernel.mu.RLock()
 	if kernel.state == StateStarted {
+		kernel.mu.RUnlock()
 		return ErrAlreadyStarted
 	}
+	eventService, hasEventService := kernel.services[ServiceEvent]
+	kernel.mu.RUnlock()
+
+	if hasEventService {
+		if err := eventService.(EventService).Start(); err != nil {
+			return fmt.Errorf("start event service: %w", err)
+		}
+	}
+
+	kernel.mu.Lock()
 	kernel.state = StateStarted
+	kernel.mu.Unlock()
 	return nil
 }
 
 // Stop transitions a started Kernel to stopped.
 func (kernel *Kernel) Stop() error {
-	kernel.mu.Lock()
-	defer kernel.mu.Unlock()
+	kernel.lifecycleMu.Lock()
+	defer kernel.lifecycleMu.Unlock()
+
+	kernel.mu.RLock()
 	if kernel.state != StateStarted {
+		kernel.mu.RUnlock()
 		return ErrNotStarted
 	}
+	eventService, hasEventService := kernel.services[ServiceEvent]
+	kernel.mu.RUnlock()
+
+	if hasEventService {
+		if err := eventService.(EventService).Stop(); err != nil {
+			return fmt.Errorf("stop event service: %w", err)
+		}
+	}
+
+	kernel.mu.Lock()
 	kernel.state = StateStopped
+	kernel.mu.Unlock()
 	return nil
 }
 

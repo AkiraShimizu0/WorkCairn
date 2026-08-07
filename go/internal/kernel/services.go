@@ -1,11 +1,13 @@
 package kernel
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
 	"sort"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/workflow"
 )
@@ -16,14 +18,16 @@ type ServiceKind string
 const (
 	ServiceProject      ServiceKind = "project"
 	ServiceWorkflow     ServiceKind = "workflow"
+	ServiceEvent        ServiceKind = "event"
 	ServiceOrganization ServiceKind = "organization"
 	ServiceTask         ServiceKind = "task"
 )
 
 var (
-	ErrInvalidService           = errors.New("kernel service is invalid")
-	ErrServiceAlreadyRegistered = errors.New("kernel service is already registered")
-	ErrServiceNotRegistered     = errors.New("kernel service is not registered")
+	ErrInvalidService            = errors.New("kernel service is invalid")
+	ErrServiceAlreadyRegistered  = errors.New("kernel service is already registered")
+	ErrServiceNotRegistered      = errors.New("kernel service is not registered")
+	ErrServiceRegistrationClosed = errors.New("kernel service registration requires stopped kernel")
 )
 
 // ProjectService is the Kernel-facing facade for the Project Domain.
@@ -42,6 +46,16 @@ type WorkflowService interface {
 	) (workflow.ReadinessResult, error)
 }
 
+// EventService is the Kernel-facing business event boundary. The concrete Bus,
+// persistence, and subscriber implementations remain outside Kernel.
+type EventService interface {
+	Start() error
+	Stop() error
+	Publish(ctx context.Context, published event.Event) error
+	Subscribe(eventType event.Type, handler event.Handler) (event.Subscription, error)
+	Unsubscribe(subscription event.Subscription) error
+}
+
 // OrganizationService remains a marker until its Go Domain is integrated.
 type OrganizationService interface {
 	IsOrganizationService()
@@ -58,6 +72,10 @@ func (kernel *Kernel) RegisterProjectService(service ProjectService) error {
 
 func (kernel *Kernel) RegisterWorkflowService(service WorkflowService) error {
 	return kernel.registerService(ServiceWorkflow, service)
+}
+
+func (kernel *Kernel) RegisterEventService(service EventService) error {
+	return kernel.registerService(ServiceEvent, service)
 }
 
 func (kernel *Kernel) RegisterOrganizationService(service OrganizationService) error {
@@ -84,6 +102,14 @@ func (kernel *Kernel) WorkflowService() (WorkflowService, error) {
 	return service.(WorkflowService), nil
 }
 
+func (kernel *Kernel) EventService() (EventService, error) {
+	service, err := kernel.service(ServiceEvent)
+	if err != nil {
+		return nil, err
+	}
+	return service.(EventService), nil
+}
+
 func (kernel *Kernel) OrganizationService() (OrganizationService, error) {
 	service, err := kernel.service(ServiceOrganization)
 	if err != nil {
@@ -104,8 +130,13 @@ func (kernel *Kernel) registerService(kind ServiceKind, service any) error {
 	if isNil(service) {
 		return fmt.Errorf("%w: %s", ErrInvalidService, kind)
 	}
+	kernel.lifecycleMu.Lock()
+	defer kernel.lifecycleMu.Unlock()
 	kernel.mu.Lock()
 	defer kernel.mu.Unlock()
+	if kernel.state != StateStopped {
+		return fmt.Errorf("%w: %s", ErrServiceRegistrationClosed, kind)
+	}
 	if _, exists := kernel.services[kind]; exists {
 		return fmt.Errorf("%w: %s", ErrServiceAlreadyRegistered, kind)
 	}
