@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from workspace_ai.project_manager import ProjectManager
 from workspace_ai.organization import Organization
+from workspace_ai.go_core_client import GoCoreError
 
 
 class ProjectManagerTest(unittest.TestCase):
@@ -77,7 +78,7 @@ class ProjectManagerTest(unittest.TestCase):
             encoding="utf-8"
         )
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(GoCoreError, "INVALID_STATUS"):
             self.manager.update_task_status("安全な案件", "TASK-001", "不正")
 
         after = (self.vault / "プロジェクト" / "安全な案件" / "Tasks.md").read_text(
@@ -114,10 +115,15 @@ class ProjectManagerTest(unittest.TestCase):
         class FakeGoCoreClient:
             def __init__(self):
                 self.calls = []
+                self.validated = []
 
             def next_task_id(self, existing_ids):
                 self.calls.append(existing_ids)
                 return "TASK-010"
+
+            def validate_task(self, task):
+                self.validated.append(task)
+                return True
 
         client = FakeGoCoreClient()
         manager = ProjectManager(Organization(), go_core_client=client)
@@ -127,7 +133,77 @@ class ProjectManagerTest(unittest.TestCase):
 
         self.assertEqual(task["id"], "TASK-010")
         self.assertEqual(task["task_id_source"], "go_core")
+        self.assertEqual(task["task_validation_source"], "go_core")
         self.assertEqual(client.calls, [[]])
+        self.assertEqual(client.validated[0]["status"], "未着手")
+
+    def test_go_validation_rejection_does_not_write(self):
+        class RejectingGoCoreClient:
+            def next_task_id(self, existing_ids):
+                return "TASK-001"
+
+            def validate_task(self, task):
+                raise GoCoreError("INVALID_TASK_TITLE", "task title is invalid")
+
+        manager = ProjectManager(Organization(), go_core_client=RejectingGoCoreClient())
+        manager.create_project("検証拒否")
+        tasks_path = self.vault / "プロジェクト" / "検証拒否" / "Tasks.md"
+        before = tasks_path.read_bytes()
+
+        with self.assertRaisesRegex(GoCoreError, "INVALID_TASK_TITLE"):
+            manager.add_task("検証拒否", "拒否対象")
+
+        self.assertEqual(tasks_path.read_bytes(), before)
+
+    def test_go_transition_is_used_and_rejection_does_not_write(self):
+        class TransitionGoCoreClient:
+            def __init__(self):
+                self.transitions = []
+
+            def next_task_id(self, existing_ids):
+                return "TASK-001"
+
+            def validate_task(self, task):
+                return True
+
+            def can_transition(self, current, target):
+                self.transitions.append((current, target))
+                raise GoCoreError("INVALID_TRANSITION", "transition rejected")
+
+        client = TransitionGoCoreClient()
+        manager = ProjectManager(Organization(), go_core_client=client)
+        manager.create_project("遷移拒否")
+        manager.add_task("遷移拒否", "状態を守る")
+        tasks_path = self.vault / "プロジェクト" / "遷移拒否" / "Tasks.md"
+        before = tasks_path.read_bytes()
+
+        with self.assertRaisesRegex(GoCoreError, "INVALID_TRANSITION"):
+            manager.update_task_status("遷移拒否", "TASK-001", "完了")
+
+        self.assertEqual(client.transitions, [("未着手", "完了")])
+        self.assertEqual(tasks_path.read_bytes(), before)
+
+    def test_go_transition_unavailable_does_not_silently_fallback(self):
+        class TransitionUnavailableClient:
+            def next_task_id(self, existing_ids):
+                return "TASK-001"
+
+            def validate_task(self, task):
+                return True
+
+            def can_transition(self, current, target):
+                raise RuntimeError("Go transition unavailable")
+
+        manager = ProjectManager(Organization(), go_core_client=TransitionUnavailableClient())
+        manager.create_project("遷移停止")
+        manager.add_task("遷移停止", "変更しない")
+        tasks_path = self.vault / "プロジェクト" / "遷移停止" / "Tasks.md"
+        before = tasks_path.read_bytes()
+
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            manager.update_task_status("遷移停止", "TASK-001", "進行中")
+
+        self.assertEqual(tasks_path.read_bytes(), before)
 
     def test_go_failure_does_not_silently_fallback_or_write(self):
         class FailingGoCoreClient:
@@ -141,6 +217,24 @@ class ProjectManagerTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "unavailable"):
             manager.add_task("失敗時安全", "書き込まない")
+
+        self.assertEqual(tasks_path.read_bytes(), before)
+
+    def test_go_validation_unavailable_does_not_silently_fallback(self):
+        class ValidationUnavailableClient:
+            def next_task_id(self, existing_ids):
+                return "TASK-001"
+
+            def validate_task(self, task):
+                raise RuntimeError("Go validation unavailable")
+
+        manager = ProjectManager(Organization(), go_core_client=ValidationUnavailableClient())
+        manager.create_project("検証停止")
+        tasks_path = self.vault / "プロジェクト" / "検証停止" / "Tasks.md"
+        before = tasks_path.read_bytes()
+
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            manager.add_task("検証停止", "停止する")
 
         self.assertEqual(tasks_path.read_bytes(), before)
 
@@ -160,6 +254,37 @@ class ProjectManagerTest(unittest.TestCase):
 
         self.assertEqual(task["id"], "TASK-001")
         self.assertEqual(task["task_id_source"], "python_explicit_fallback")
+        self.assertEqual(
+            task["task_validation_source"],
+            "python_explicit_fallback",
+        )
+
+    def test_status_transition_fallback_requires_explicit_setting(self):
+        class TransitionUnavailableClient:
+            def next_task_id(self, existing_ids):
+                return "TASK-001"
+
+            def validate_task(self, task):
+                return True
+
+            def can_transition(self, current, target):
+                raise RuntimeError("Go transition unavailable")
+
+        manager = ProjectManager(
+            Organization(),
+            go_core_client=TransitionUnavailableClient(),
+            allow_python_domain_fallback=True,
+        )
+        manager.create_project("遷移Fallback")
+        manager.add_task("遷移Fallback", "明示的に切り替える")
+
+        result = manager.update_task_status("遷移Fallback", "TASK-001", "完了")
+
+        self.assertEqual(result["status"], "完了")
+        self.assertEqual(
+            result["status_transition_source"],
+            "python_explicit_fallback",
+        )
 
 
 if __name__ == "__main__":

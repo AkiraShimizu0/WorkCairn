@@ -49,6 +49,7 @@
     {"name": "hold_task", "from": "進行中", "to": "保留", "valid": true},
     {"name": "retry_held_task", "from": "保留", "to": "未着手", "valid": true},
     {"name": "completed_is_terminal", "from": "完了", "to": "進行中", "valid": false},
+    {"name": "completed_cannot_restart", "from": "完了", "to": "未着手", "valid": false},
     {"name": "cannot_skip_execution", "from": "未着手", "to": "完了", "valid": false},
     {"name": "cannot_repeat_same_status", "from": "進行中", "to": "進行中", "valid": false}
   ],

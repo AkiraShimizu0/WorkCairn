@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from workspace_ai.organization import Organization
+from workspace_ai.go_core_client import GoCoreError
 from workspace_ai.project_manager import ProjectManager
 from workspace_ai.project_workflow_service import (
     ProjectWorkflowService,
@@ -54,6 +55,7 @@ class ProjectWorkflowServiceTest(unittest.TestCase):
         self.assertTrue(result["ready"])
         self.assertEqual(result["state"], "ready")
         self.assertEqual(result["next_action"], "workflow_execute")
+        self.assertEqual(result["workflow_readiness_source"], "go_core")
 
     def test_incomplete_dependency_blocks_pending_task(self):
         self._create_two_tasks()
@@ -70,6 +72,7 @@ class ProjectWorkflowServiceTest(unittest.TestCase):
 
     def test_completed_dependencies_make_pending_task_ready(self):
         self._create_two_tasks()
+        self.project_manager.update_task_status("家計簿Webアプリ", "TASK-001", "進行中")
         self.project_manager.update_task_status("家計簿Webアプリ", "TASK-001", "完了")
         self._write_dependencies({"TASK-001": [], "TASK-002": ["TASK-001"]})
 
@@ -110,6 +113,7 @@ class ProjectWorkflowServiceTest(unittest.TestCase):
 
     def test_all_tasks_completed_returns_completed(self):
         self.project_manager.add_task("家計簿Webアプリ", "完了済み", "PLAN-001")
+        self.project_manager.update_task_status("家計簿Webアプリ", "TASK-001", "進行中")
         self.project_manager.update_task_status("家計簿Webアプリ", "TASK-001", "完了")
         self._write_dependencies({"TASK-001": []})
 
@@ -126,7 +130,7 @@ class ProjectWorkflowServiceTest(unittest.TestCase):
             "TASK-002": ["TASK-001"],
         })
 
-        with self.assertRaisesRegex(ValueError, "循環"):
+        with self.assertRaisesRegex(GoCoreError, "CYCLIC_DEPENDENCY"):
             self.service.prepare_next("家計簿Webアプリ")
 
         self.workflow_engine.start_project.assert_not_called()
@@ -135,7 +139,7 @@ class ProjectWorkflowServiceTest(unittest.TestCase):
         self.project_manager.add_task("家計簿Webアプリ", "要件整理", "PLAN-001")
         self._write_dependencies({"TASK-001": ["TASK-999"]})
 
-        with self.assertRaisesRegex(ValueError, "TASK-999"):
+        with self.assertRaisesRegex(GoCoreError, "UNKNOWN_DEPENDENCY"):
             self.service.prepare_next("家計簿Webアプリ")
 
     def test_non_pending_project_returns_waiting(self):
@@ -150,6 +154,7 @@ class ProjectWorkflowServiceTest(unittest.TestCase):
 
     def test_revision_task_without_metadata_row_uses_normal_rules(self):
         self.project_manager.add_task("家計簿Webアプリ", "元タスク", "PLAN-001")
+        self.project_manager.update_task_status("家計簿Webアプリ", "TASK-001", "進行中")
         self.project_manager.update_task_status("家計簿Webアプリ", "TASK-001", "完了")
         self.project_manager.add_task(
             "家計簿Webアプリ",
@@ -183,6 +188,81 @@ class ProjectWorkflowServiceTest(unittest.TestCase):
             self.service.prepare_next("家計簿Webアプリ", dry_run=False)
 
         self.workflow_engine.start_project.assert_not_called()
+
+    def test_readiness_is_delegated_without_using_legacy_evaluator(self):
+        self.project_manager.add_task("家計簿Webアプリ", "要件整理", "PLAN-001")
+        self._write_dependencies({"TASK-001": []})
+        go_client = Mock()
+        go_client.workflow_readiness.return_value = {
+            "task_id": "TASK-001",
+            "title": "要件整理",
+            "assignee_id": "PLAN-001",
+            "dependencies": [],
+            "blocked_by": [],
+            "ready": True,
+            "state": "ready",
+            "reason": "ready",
+            "blocking_reasons": [],
+            "next_action": "workflow_execute",
+        }
+        service = ProjectWorkflowService(
+            organization=self.organization,
+            project_manager=self.project_manager,
+            workflow_engine=self.workflow_engine,
+            go_core_client=go_client,
+        )
+
+        with patch(
+            "workspace_ai.project_workflow_service.evaluate_workflow_readiness"
+        ) as legacy:
+            result = service.prepare_next("家計簿Webアプリ")
+
+        legacy.assert_not_called()
+        go_client.workflow_readiness.assert_called_once()
+        tasks, dependencies, employee_ids = go_client.workflow_readiness.call_args.args
+        self.assertEqual(set(tasks[0]), {"id", "title", "assignee_id", "status"})
+        self.assertEqual(dependencies, [{"task_id": "TASK-001", "depends_on": []}])
+        self.assertEqual(employee_ids, ["PLAN-001"])
+        self.assertEqual(result["workflow_readiness_source"], "go_core")
+
+    def test_go_readiness_unavailable_has_no_implicit_fallback(self):
+        self.project_manager.add_task("家計簿Webアプリ", "要件整理", "PLAN-001")
+        self._write_dependencies({"TASK-001": []})
+        go_client = Mock()
+        go_client.workflow_readiness.side_effect = RuntimeError("Go readiness unavailable")
+        service = ProjectWorkflowService(
+            organization=self.organization,
+            project_manager=self.project_manager,
+            workflow_engine=self.workflow_engine,
+            go_core_client=go_client,
+        )
+        before = self._vault_snapshot()
+
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            service.prepare_next("家計簿Webアプリ")
+
+        self.assertEqual(self._vault_snapshot(), before)
+
+    def test_explicit_readiness_fallback_is_traceable(self):
+        self.project_manager.add_task("家計簿Webアプリ", "要件整理", "PLAN-001")
+        self._write_dependencies({"TASK-001": []})
+        go_client = Mock()
+        go_client.workflow_readiness.side_effect = RuntimeError("Go readiness unavailable")
+        service = ProjectWorkflowService(
+            organization=self.organization,
+            project_manager=self.project_manager,
+            workflow_engine=self.workflow_engine,
+            go_core_client=go_client,
+            allow_python_readiness_fallback=True,
+        )
+
+        result = service.prepare_next("家計簿Webアプリ")
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(
+            result["workflow_readiness_source"],
+            "python_explicit_fallback",
+        )
 
     def _create_two_tasks(self):
         self.project_manager.add_task("家計簿Webアプリ", "要件整理", "PLAN-001")

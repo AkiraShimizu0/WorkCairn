@@ -2,7 +2,7 @@ import json
 import unittest
 from pathlib import Path
 
-from workspace_ai.project_workflow_service import evaluate_workflow_readiness
+from workspace_ai.go_core_client import GoCoreClient, GoCoreError
 
 
 FIXTURE_PATH = (
@@ -17,21 +17,15 @@ class WorkflowParityFixtureTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+        cls.client = GoCoreClient()
 
     def test_python_matches_shared_readiness_cases(self):
         for case in self.fixture["cases"]:
             with self.subTest(case=case["name"]):
-                dependencies = {
-                    item["task_id"]: item["depends_on"]
-                    for item in case["dependencies"]
-                }
-                employees = set(case["existing_employee_ids"])
-
-                result = evaluate_workflow_readiness(
-                    "Fixture Project",
+                result = self.client.workflow_readiness(
                     case["tasks"],
-                    dependencies,
-                    employees.__contains__,
+                    case["dependencies"],
+                    case["existing_employee_ids"],
                 )
 
                 actual = {
@@ -46,22 +40,17 @@ class WorkflowParityFixtureTest(unittest.TestCase):
     def test_python_matches_shared_error_cases(self):
         for case in self.fixture["errors"]:
             with self.subTest(case=case["name"]):
-                dependencies = {
-                    item["task_id"]: item["depends_on"]
-                    for item in case["dependencies"]
-                }
-                employees = set(case["existing_employee_ids"])
-
-                with self.assertRaisesRegex(
-                    ValueError,
-                    case["python_error_pattern"],
-                ):
-                    evaluate_workflow_readiness(
-                        "Fixture Project",
+                with self.assertRaises(GoCoreError) as raised:
+                    self.client.workflow_readiness(
                         case["tasks"],
-                        dependencies,
-                        employees.__contains__,
+                        case["dependencies"],
+                        case["existing_employee_ids"],
                     )
+                expected_code = {
+                    "unknown_dependency": "UNKNOWN_DEPENDENCY",
+                    "cyclic_dependency": "CYCLIC_DEPENDENCY",
+                }[case["error_kind"]]
+                self.assertEqual(raised.exception.code, expected_code)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from workspace_ai.go_core_client import GoCoreClient
+from workspace_ai.go_core_client import GoCoreClient, GoCoreError
 from workspace_ai.organization import Organization
 from workspace_ai.project_manager import ProjectManager
 
@@ -93,10 +93,28 @@ class GoCoreIntegrationTest(unittest.TestCase):
                 manager.create_project("Go連携")
                 first = manager.add_task("Go連携", "仕様を決める")
                 second = manager.add_task("Go連携", "実装する")
+                tasks_path = vault / "プロジェクト" / "Go連携" / "Tasks.md"
+                before_validation_rejection = tasks_path.read_bytes()
+                with self.assertRaisesRegex(GoCoreError, "INVALID_TASK_TITLE"):
+                    manager.add_task("Go連携", "不正|タイトル")
+                self.assertEqual(tasks_path.read_bytes(), before_validation_rejection)
+                started = manager.update_task_status(
+                    "Go連携",
+                    "TASK-001",
+                    "進行中",
+                )
+                before_rejection = tasks_path.read_bytes()
+                with self.assertRaisesRegex(GoCoreError, "INVALID_TRANSITION"):
+                    manager.update_task_status("Go連携", "TASK-002", "完了")
+                self.assertEqual(tasks_path.read_bytes(), before_rejection)
 
         self.assertEqual([first["id"], second["id"]], ["TASK-001", "TASK-002"])
         self.assertEqual(first["task_id_source"], "go_core")
+        self.assertEqual(first["task_validation_source"], "go_core")
+        self.assertEqual(started["status_transition_source"], "go_core")
         self.assertEqual(manager.last_task_id_source, "go_core")
+        self.assertEqual(manager.last_task_validation_source, "go_core")
+        self.assertEqual(manager.last_status_transition_source, "go_core")
 
 
 if __name__ == "__main__":

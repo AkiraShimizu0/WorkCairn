@@ -1,5 +1,7 @@
 import re
 
+from workspace_ai.go_core_client import GoCoreClient
+
 
 DEPENDENCY_METADATA_FILENAME = "Task Dependencies.md"
 
@@ -70,6 +72,8 @@ class ProjectWorkflowService:
         project_manager,
         workflow_engine,
         dependency_reader=None,
+        go_core_client=None,
+        allow_python_readiness_fallback=False,
     ):
         dependencies = {
             "organization": organization,
@@ -95,6 +99,15 @@ class ProjectWorkflowService:
         self.project_manager = project_manager
         self.workflow_engine = workflow_engine
         self.dependency_reader = dependency_reader or TaskDependencyReader()
+        manager_go_core_client = getattr(project_manager, "go_core_client", None)
+        if go_core_client is not None:
+            self.go_core_client = go_core_client
+        elif manager_go_core_client is not None:
+            self.go_core_client = manager_go_core_client
+        else:
+            self.go_core_client = GoCoreClient()
+        self.allow_python_readiness_fallback = allow_python_readiness_fallback
+        self.last_readiness_source = None
 
     def prepare_next(self, project_name, *, dry_run=True):
         """WorkflowEngineと同じ順序の1タスクを読取専用で判定する。"""
@@ -104,12 +117,69 @@ class ProjectWorkflowService:
         project_path = self.project_manager.get_project_path(project_name)
         tasks = self.project_manager.get_tasks(project_name)
         dependencies_by_task = self.dependency_reader.read(project_path)
-        return evaluate_workflow_readiness(
-            project_name,
-            tasks,
-            dependencies_by_task,
-            self.organization.employee_exists,
-        )
+        domain_tasks = [
+            {
+                "id": task.get("id"),
+                "title": task.get("title"),
+                "assignee_id": task.get("assignee_id"),
+                "status": task.get("status"),
+            }
+            for task in tasks
+        ]
+        dependencies = [
+            {"task_id": task_id, "depends_on": list(dependency_ids)}
+            for task_id, dependency_ids in dependencies_by_task.items()
+        ]
+        existing_employee_ids = self._existing_employee_ids(tasks)
+
+        try:
+            result = self.go_core_client.workflow_readiness(
+                domain_tasks,
+                dependencies,
+                existing_employee_ids,
+            )
+        except Exception:
+            if not self.allow_python_readiness_fallback:
+                raise
+            result = evaluate_workflow_readiness(
+                project_name,
+                tasks,
+                dependencies_by_task,
+                self.organization.employee_exists,
+            )
+            self.last_readiness_source = "python_explicit_fallback"
+            result["workflow_readiness_source"] = self.last_readiness_source
+            return result
+
+        self.last_readiness_source = "go_core"
+        return self._adapt_go_result(project_name, result)
+
+    def _existing_employee_ids(self, tasks):
+        """Build the employee-existence input at the Python organization boundary."""
+        existing = []
+        seen = set()
+        for task in tasks:
+            assignee_id = task.get("assignee_id")
+            if (
+                assignee_id
+                and assignee_id not in seen
+                and self.organization.employee_exists(assignee_id)
+            ):
+                existing.append(assignee_id)
+                seen.add(assignee_id)
+        return existing
+
+    def _adapt_go_result(self, project_name, result):
+        if not isinstance(result, dict):
+            raise ValueError("Go Coreのreadiness結果が不正です。")
+        adapted = dict(result)
+        adapted["project_name"] = project_name
+        if adapted.get("task_id") == "":
+            adapted["task_id"] = None
+        if adapted.get("title") == "":
+            adapted["title"] = None
+        adapted["workflow_readiness_source"] = self.last_readiness_source
+        return adapted
 
 
 def evaluate_workflow_readiness(
@@ -118,7 +188,7 @@ def evaluate_workflow_readiness(
     dependencies_by_task,
     employee_exists,
 ):
-    """I/Oに依存せず、WorkflowEngineへ渡す次の1タスクを判定する。"""
+    """Legacy/reference readiness used only by explicit fallback."""
     if not callable(employee_exists):
         raise ValueError("employee_existsは呼び出し可能である必要があります。")
     tasks_by_id = _tasks_by_id(tasks)

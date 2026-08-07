@@ -75,14 +75,16 @@ Workspace OSは、中核ロジックをPythonからGo Coreへ段階的に移行�
 PythonとGoは`fixtures/workflow`、`fixtures/project`、`fixtures/go_core`のJSONを共通契約として使用します。実行時の境界は次のとおりです。
 
 ```text
-Python Adapter (GoCoreClient / ProjectManager)
-    ↓ JSON stdin/stdout (contract v1)
+Python Adapter (GoCoreClient / ProjectManager / ProjectWorkflowService)
+    ↓ JSON Contract v1 (stdin/stdout)
 workspace-core
-    ↓
-Go Domain (project / workflow)
+    ├── project domain
+    └── workflow domain
 ```
 
-`ProjectManager`はMarkdown I/Oを維持し、注入された`GoCoreClient`を通じてTASK-ID採番をGoへ委譲できます。Go Coreが利用できない場合のPythonフォールバックは明示設定時だけ許可され、`task_id_source`で利用実装を追跡できます。`workspace-core`はファイルシステムや`.env`を読み書きせず、標準出力にはJSONだけを返します。
+Go CoreはProject/Workflow領域のビジネスルールの正本です。`ProjectManager`はObsidian Markdown Adapterへ段階的に縮小しており、`GoCoreClient`を通じてTASK-ID採番、Task検証、状態遷移判定をGoへ委譲します。`ProjectWorkflowService`もTasks、依存メタデータ、社員存在情報を標準化して`workflow.readiness`へ渡し、Python側ではreadinessを再判定しません。
+
+Go Coreが利用できない場合のPythonフォールバックは明示設定時だけ許可されます。利用実装は`task_id_source`、`task_validation_source`、`status_transition_source`、`workflow_readiness_source`で追跡できます。legacy Python実装は移行期間中のreference/explicit fallbackに限定します。`workspace-core`はファイルシステムや`.env`を読み書きせず、標準出力にはJSONだけを返します。
 
 JSON契約v1は、`version`、`operation`、`payload`を標準入力で受け取り、`version`、`ok`、`result`、`error`を標準出力へ1件だけ返します。エラーは内部例外文を公開せず、次の機械判定可能なコードを使用します。
 
@@ -93,6 +95,8 @@ JSON契約v1は、`version`、`operation`、`payload`を標準入力で受け取
 | Workflow | `UNKNOWN_DEPENDENCY`, `CYCLIC_DEPENDENCY` |
 
 対応operationは`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`です。ローカルバイナリは`make go-build`で`bin/workspace-core`へ生成し、`bin/`はGit管理しません。
+
+PromptBuilder、Worker、ModelRouter、LLM Runner、外部LLM SDKは当面Pythonに残します。次の移行段階ではWorkflowEngineのオーケストレーションとTaskExecutorのライフサイクル/状態機械をGoへ移し、PythonはVault I/OとAI Adapterへさらに縮小します。
 
 ## 主要な設計原則
 
