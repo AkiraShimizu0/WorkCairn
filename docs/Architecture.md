@@ -27,6 +27,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0004: Event DrivenをWorkspace OSの基本設計とする](adr/ADR-0004-event-system.md)
 - [ADR-0005: Task lifecycleをGo TaskServiceの責務とする](adr/ADR-0005-task-lifecycle.md)
 - [ADR-0006: WorkerとRunnerをProvider非依存の境界で分離する](adr/ADR-0006-worker-runner-boundary.md)
+- [ADR-0007: Workflow executionとPolicyをTask lifecycleから分離する](adr/ADR-0007-workflow-execution-policy.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -52,6 +53,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Task Service | Task lifecycle、Version/CAS、Store境界、Event発行を管理する |
 | Go Worker Service | AI社員の実行ContextからPromptを構築し、登録済みRunnerを選択して構造化結果を返す |
 | Go Runner Registry | 社員model値をProvider非依存のRunner Adapterへ明示的に解決する |
+| Go Execution Service | readiness、承認、Task lifecycle、Worker実行、失敗Policyを1タスク単位で調停する |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
@@ -71,7 +73,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 
 ### Python
 
-Python層はMarkdownとObsidianのI/O、Adapter、Prompt、Runner、LLM SDKを担当します。新しいビジネスルールの正本はGo Coreへ寄せ、Python側にはI/Oとオーケストレーションの責務を残します。
+Python層はMarkdownとObsidianのI/O、legacy Adapter、Prompt本文、Provider Runner、LLM SDKを担当します。新しいビジネスルールの正本はGo Coreへ寄せ、Python側の旧オーケストレーションは比較対象としてのみ残します。
 
 ### Go Coreへの段階移行
 
@@ -92,7 +94,9 @@ Workspace OSは、中核ロジックをPythonからGo Coreへ段階的に移行�
 - `go/internal/taskstore`: TaskStoreのin-memory Adapter
 - `go/internal/worker`: AI社員実行のContext、Prompt、Runner要求・結果のDomain契約
 - `go/internal/runner`: model値とRunner Adapterを解決するthread-safe Registry
-- `go/internal/service`: Kernel向けProject/Workflow/Task/Event/Worker Facade
+- `go/internal/policy`: 明示承認とWorker失敗後の回復判断を提供する決定的Policy Domain
+- `go/internal/execution`: 1タスク実行のRequest、Result、Stage、型付きpartial failure契約
+- `go/internal/service`: Kernel向けProject/Workflow/Task/Event/Worker/Execution Facade
 - `go/internal/kernel`: サービス境界、ライフサイクル、Command調停
 - `go/internal/bootstrap`: 具体Serviceを登録するcomposition root
 - `go/cmd/workspace-core`: バージョン付きJSON契約を公開するCLI境界
@@ -111,6 +115,11 @@ Workspace Kernel
     ├── WorkflowService
     │       ↓
     │   Workflow Domain
+    ├── ExecutionService
+    │       ├── ApprovalPolicy
+    │       ├── ExecutionPolicy
+    │       ├── TaskService
+    │       └── WorkerService
     ├── TaskService
     │       ├── Task Domain
     │       ├── TaskStore
@@ -138,11 +147,11 @@ JSON契約v1は、`version`、`operation`、`payload`を標準入力で受け取
 
 対応operationは`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`です。ローカルバイナリは`make go-build`で`bin/workspace-core`へ生成し、`bin/`はGit管理しません。
 
-Worker Context、Prompt/Runner契約、モデルルーティング、WorkerServiceはGoへ移行済みです。Prompt本文の構築とProvider固有Runner、外部LLM SDKは移行期間中Pythonに残します。次の段階ではGo PromptBuilderとProvider Runner Adapterを実装し、PythonはVault I/Oとlegacy比較へさらに縮小します。
+Worker Context、Prompt/Runner契約、モデルルーティング、WorkerService、1タスクの承認・実行・失敗回復フローはGoへ移行済みです。Prompt本文の構築とProvider固有Runner、外部LLM SDKは移行期間中Pythonに残します。次の段階ではGo PromptBuilderとProvider Runner Adapterを実装し、PythonはVault I/Oとlegacy比較へさらに縮小します。
 
 ### Workspace Kernel v0.3
 
-`go/internal/kernel`はWorkspace OSの中心となる最小Kernelです。サービスの登録・参照、`started`/`stopped`ライフサイクル、状態snapshot、構造化Commandの受付だけを担当します。Project、Workflow、Task、Organizationのビジネスルールは各Domainへ委譲し、Kernel自身には持ち込みません。
+`go/internal/kernel`はWorkspace OSの中心となる最小Kernelです。サービスの登録・参照、`started`/`stopped`ライフサイクル、状態snapshot、構造化Commandの受付だけを担当します。Project、Workflow、Policy、Execution、Task、Organizationのビジネスルールは各Domain／Serviceへ委譲し、Kernel自身には持ち込みません。
 
 ```text
 workspace-core CLI (JSON Contract v1)
@@ -154,6 +163,9 @@ Workspace Kernel
     ├── WorkflowService
     │       ↓
     │   Workflow Domain
+    ├── ExecutionService
+    │       ├── ApprovalPolicy
+    │       └── ExecutionPolicy
     ├── TaskService
     │       ├── Task Domain
     │       ├── TaskStore
@@ -172,7 +184,7 @@ Workspace Kernel
     └── Audit
 ```
 
-`bootstrap.NewDefaultKernel`がProjectService、WorkflowService、TaskService、EventService、WorkerServiceの具体実装を登録します。Kernel StartはEventService、TaskService、WorkerServiceの順に有効化し、Kernel Stopは逆順に停止します。`kernel.status`には5 Serviceが表示されます。既存CLI Commandは従来どおり`CLI → Kernel → Service → Domain`を通り、JSON Contract v1のoperation、payload、result、error codeは変更していません。
+`bootstrap.NewDefaultKernel`がProjectService、WorkflowService、TaskService、EventService、WorkerService、ExecutionServiceの具体実装を登録します。Kernel StartはEventService、TaskService、WorkerService、ExecutionServiceの順に有効化し、Kernel Stopは逆順に停止します。`kernel.status`には6 Serviceが表示されます。既存CLI Commandは従来どおり`CLI → Kernel → Service → Domain`を通り、JSON Contract v1のoperation、payload、result、error codeは変更していません。
 
 EventServiceはKernelのライフサイクルに従います。購読はKernel起動前に構成でき、PublishはStart後のみ受け付け、Stop後は拒否します。Kernelが保持するのはEventService interfaceだけであり、Event Bus内部実装、handler、永続化を知りません。
 
@@ -193,7 +205,9 @@ TaskService.Complete / TaskService.Fail
 WorkerServiceはTask lifecycleから独立し、Employee/Task/Project Contextを受けて`PromptBuilder → RunnerRegistry → Runner`を実行します。RunnerはMarkdown、Task状態、承認、Retry Policyを知りません。KernelはWorkerService interfaceだけを保持し、Provider SDKやAPIキーを参照しません。`bootstrap.NewKernelWithWorkerRuntime`へPromptBuilderとRunner Resolverを渡すことでFakeまたは将来のProvider Adapterを注入できます。Default KernelはProvider未設定のため、実AI呼び出しを安全に拒否します。
 
 ```text
-Workflow / Policy (future)
+WorkflowService.Readiness
+    ↓
+ApprovalPolicy
     ↓
 TaskService.Start
     ↓
@@ -208,13 +222,27 @@ WorkerService.Execute
 TaskService.Complete / Fail
 ```
 
-Scheduler、Provider固有のLLM呼び出し、Obsidian I/OはKernelに含めません。Project/Workflow/Task/Event/Workerのビジネスルールと契約の正本は各Domainパッケージであり、Serviceは型付きFacade、Kernelは実行調停、CLIはJSON Adapterに限定します。
+失敗時はWorkerエラーをTaskService.Failで事実として記録した後、ExecutionPolicyがHoldを決定し、TaskService.Holdを呼びます。成功時のEvent順序は`TaskStarted → TaskCompleted`、失敗時は`TaskStarted → TaskFailed → TaskHeld`です。ExecutionService自身はTask Event、Workflow Event、Auditを発行しません。
+
+```text
+Worker failure / timeout / cancellation
+    ↓
+TaskService.Fail
+    ↓
+ExecutionPolicy
+    ↓ hold=true
+TaskService.Hold
+```
+
+通常のcontextはPolicy、TaskService、WorkerService、Runnerまで伝播します。Worker実行中のtimeout/cancel後に失敗記録を可能にするため、Fail/Holdだけは元contextの値を維持した5秒上限のrecovery contextを使用します。同一Taskの並行実行はTaskServiceのVersion/CASが防止し、ExecutionServiceは独自lockを持ちません。
+
+Scheduler、Provider固有のLLM呼び出し、Obsidian I/OはKernelに含めません。Project/Workflow/Policy/Execution/Task/Event/Workerのビジネスルールと契約の正本は各Domainパッケージであり、Serviceは型付きFacade、Kernelはライフサイクル調停、CLIはJSON Adapterに限定します。
 
 ## 主要な設計原則
 
 1. **Markdownを正とする**: 人間がObsidianで確認できるデータを永続状態とします。
 2. **IDを参照にする**: 社員名は表示情報、社員IDはタスクと監査の永続参照です。
-3. **明示的承認**: TaskExecutor、ReviewerWorker、RevisionTaskServiceは実行に承認を要求します。
+3. **明示的承認**: Go ExecutionServiceと既存Python実行系は、状態変更前に明示的承認を要求します。
 4. **dry-run優先**: API呼び出しやVault更新前に実行計画を確認できます。
 5. **原子的更新**: 一時ファイルと置換を用い、不完全なMarkdownを残しません。
 6. **失敗を状態へ残す**: タスク失敗は保留、レビュー失敗はAudit Logへ記録します。

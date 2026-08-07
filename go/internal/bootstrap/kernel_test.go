@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/runner"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
@@ -36,7 +37,7 @@ func TestNewDefaultKernelRegistersProductionServices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []kernel.ServiceKind{kernel.ServiceEvent, kernel.ServiceProject, kernel.ServiceTask, kernel.ServiceWorker, kernel.ServiceWorkflow}
+	want := []kernel.ServiceKind{kernel.ServiceEvent, kernel.ServiceExecution, kernel.ServiceProject, kernel.ServiceTask, kernel.ServiceWorker, kernel.ServiceWorkflow}
 	if status := workspaceKernel.Status(); status.State != kernel.StateStopped || !reflect.DeepEqual(status.RegisteredServices, want) {
 		t.Fatalf("Status() = %#v", status)
 	}
@@ -85,6 +86,13 @@ func TestNewDefaultKernelRegistersProductionServices(t *testing.T) {
 	}
 	if _, err := workerService.Execute(context.Background(), worker.ExecutionRequest{}); !errors.Is(err, service.ErrWorkerServiceNotActive) {
 		t.Fatalf("WorkerService.Execute() after Kernel stopped error = %v", err)
+	}
+	executionService, err := workspaceKernel.ExecutionService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executionService.Execute(context.Background(), execution.Request{}); !errors.Is(err, service.ErrExecutionServiceNotActive) {
+		t.Fatalf("ExecutionService.Execute() after Kernel stopped error = %v", err)
 	}
 }
 

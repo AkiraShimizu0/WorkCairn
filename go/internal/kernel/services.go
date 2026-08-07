@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
@@ -21,6 +22,7 @@ const (
 	ServiceProject      ServiceKind = "project"
 	ServiceWorkflow     ServiceKind = "workflow"
 	ServiceEvent        ServiceKind = "event"
+	ServiceExecution    ServiceKind = "execution"
 	ServiceOrganization ServiceKind = "organization"
 	ServiceTask         ServiceKind = "task"
 	ServiceWorker       ServiceKind = "worker"
@@ -86,6 +88,14 @@ type WorkerService interface {
 	Execute(ctx context.Context, request worker.ExecutionRequest) (worker.ExecutionResult, error)
 }
 
+// ExecutionService coordinates one ready, approved Task through TaskService
+// and WorkerService. Kernel knows only its lifecycle and typed contract.
+type ExecutionService interface {
+	Activate() error
+	Deactivate() error
+	Execute(ctx context.Context, request execution.Request) (execution.Result, error)
+}
+
 func (kernel *Kernel) RegisterProjectService(service ProjectService) error {
 	return kernel.registerService(ServiceProject, service)
 }
@@ -108,6 +118,10 @@ func (kernel *Kernel) RegisterTaskService(service TaskService) error {
 
 func (kernel *Kernel) RegisterWorkerService(service WorkerService) error {
 	return kernel.registerService(ServiceWorker, service)
+}
+
+func (kernel *Kernel) RegisterExecutionService(service ExecutionService) error {
+	return kernel.registerService(ServiceExecution, service)
 }
 
 func (kernel *Kernel) ProjectService() (ProjectService, error) {
@@ -156,6 +170,14 @@ func (kernel *Kernel) WorkerService() (WorkerService, error) {
 		return nil, err
 	}
 	return service.(WorkerService), nil
+}
+
+func (kernel *Kernel) ExecutionService() (ExecutionService, error) {
+	service, err := kernel.service(ServiceExecution)
+	if err != nil {
+		return nil, err
+	}
+	return service.(ExecutionService), nil
 }
 
 func (kernel *Kernel) registerService(kind ServiceKind, service any) error {

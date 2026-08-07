@@ -45,6 +45,7 @@ flowchart TD
 - [ADR-0004: Event DrivenをWorkspace OSの基本設計とする](docs/adr/ADR-0004-event-system.md)
 - [ADR-0005: Task lifecycleをGo TaskServiceの責務とする](docs/adr/ADR-0005-task-lifecycle.md)
 - [ADR-0006: WorkerとRunnerをProvider非依存の境界で分離する](docs/adr/ADR-0006-worker-runner-boundary.md)
+- [ADR-0007: Workflow executionとPolicyをTask lifecycleから分離する](docs/adr/ADR-0007-workflow-execution-policy.md)
 
 新しいADRは[ADRテンプレート](docs/adr/ADR-template.md)から作成します。
 
@@ -60,6 +61,7 @@ workspace-os/
 │   │   ├── ADR-0004-event-system.md
 │   │   ├── ADR-0005-task-lifecycle.md
 │   │   ├── ADR-0006-worker-runner-boundary.md
+│   │   ├── ADR-0007-workflow-execution-policy.md
 │   │   └── ADR-template.md
 │   ├── Architecture.md
 │   ├── IdentityPolicy.md

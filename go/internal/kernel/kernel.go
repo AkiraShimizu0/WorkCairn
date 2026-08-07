@@ -50,6 +50,7 @@ func (kernel *Kernel) Start() error {
 	eventService, hasEventService := kernel.services[ServiceEvent]
 	taskService, hasTaskService := kernel.services[ServiceTask]
 	workerService, hasWorkerService := kernel.services[ServiceWorker]
+	executionService, hasExecutionService := kernel.services[ServiceExecution]
 	kernel.mu.RUnlock()
 
 	if hasEventService {
@@ -76,6 +77,20 @@ func (kernel *Kernel) Start() error {
 			return fmt.Errorf("activate worker service: %w", err)
 		}
 	}
+	if hasExecutionService {
+		if err := executionService.(ExecutionService).Activate(); err != nil {
+			if hasWorkerService {
+				_ = workerService.(WorkerService).Deactivate()
+			}
+			if hasTaskService {
+				_ = taskService.(TaskService).Deactivate()
+			}
+			if hasEventService {
+				_ = eventService.(EventService).Stop()
+			}
+			return fmt.Errorf("activate execution service: %w", err)
+		}
+	}
 
 	kernel.mu.Lock()
 	kernel.state = StateStarted
@@ -96,8 +111,14 @@ func (kernel *Kernel) Stop() error {
 	eventService, hasEventService := kernel.services[ServiceEvent]
 	taskService, hasTaskService := kernel.services[ServiceTask]
 	workerService, hasWorkerService := kernel.services[ServiceWorker]
+	executionService, hasExecutionService := kernel.services[ServiceExecution]
 	kernel.mu.RUnlock()
 
+	if hasExecutionService {
+		if err := executionService.(ExecutionService).Deactivate(); err != nil {
+			return fmt.Errorf("deactivate execution service: %w", err)
+		}
+	}
 	if hasWorkerService {
 		if err := workerService.(WorkerService).Deactivate(); err != nil {
 			return fmt.Errorf("deactivate worker service: %w", err)

@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/policy"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/runner"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/taskstore"
@@ -43,7 +44,8 @@ func NewKernelWithWorkerRuntime(version string, runtime WorkerRuntime) (*kernel.
 	if err := workspaceKernel.RegisterProjectService(service.NewProjectService()); err != nil {
 		return nil, err
 	}
-	if err := workspaceKernel.RegisterWorkflowService(service.NewWorkflowService()); err != nil {
+	workflowService := service.NewWorkflowService()
+	if err := workspaceKernel.RegisterWorkflowService(workflowService); err != nil {
 		return nil, err
 	}
 	eventService := service.NewEventService(nil)
@@ -62,6 +64,19 @@ func NewKernelWithWorkerRuntime(version string, runtime WorkerRuntime) (*kernel.
 		return nil, err
 	}
 	if err := workspaceKernel.RegisterWorkerService(workerService); err != nil {
+		return nil, err
+	}
+	executionService, err := service.NewExecutionService(
+		workflowService,
+		taskService,
+		workerService,
+		policy.ExplicitApprovalPolicy{},
+		policy.HoldOnFailurePolicy{},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := workspaceKernel.RegisterExecutionService(executionService); err != nil {
 		return nil, err
 	}
 	return workspaceKernel, nil

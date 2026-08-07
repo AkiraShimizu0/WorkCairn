@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
@@ -36,6 +37,12 @@ type fakeWorkerService struct {
 	deactivateCalls int
 	executeCalls    int
 }
+type fakeExecutionService struct {
+	active          bool
+	activateCalls   int
+	deactivateCalls int
+	executeCalls    int
+}
 type fakeEventService struct {
 	started      bool
 	startCalls   int
@@ -46,6 +53,7 @@ type fakeEventService struct {
 var errFakeEventServiceStopped = errors.New("fake event service is stopped")
 var errFakeTaskServiceInactive = errors.New("fake task service is inactive")
 var errFakeWorkerServiceInactive = errors.New("fake worker service is inactive")
+var errFakeExecutionServiceInactive = errors.New("fake execution service is inactive")
 
 func (service *fakeProjectService) NextTaskID([]string) (string, error) {
 	service.nextCalls++
@@ -119,6 +127,23 @@ func (service *fakeWorkerService) Execute(_ context.Context, request worker.Exec
 		Content: "result", EmployeeID: request.Employee.EmployeeID, TaskID: request.Task.TaskID,
 		Runner: "FakeRunner", Model: request.Employee.Model, Status: worker.StatusCompleted,
 	}, nil
+}
+func (service *fakeExecutionService) Activate() error {
+	service.activateCalls++
+	service.active = true
+	return nil
+}
+func (service *fakeExecutionService) Deactivate() error {
+	service.deactivateCalls++
+	service.active = false
+	return nil
+}
+func (service *fakeExecutionService) Execute(_ context.Context, request execution.Request) (execution.Result, error) {
+	if !service.active {
+		return execution.Result{}, errFakeExecutionServiceInactive
+	}
+	service.executeCalls++
+	return execution.Result{ProjectID: request.ProjectID, TaskID: request.TaskID}, nil
 }
 func (service *fakeEventService) Start() error {
 	service.startCalls++
@@ -199,6 +224,7 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 	organization := &fakeOrganizationService{}
 	task := &fakeTaskService{}
 	workerService := &fakeWorkerService{}
+	executionService := &fakeExecutionService{}
 
 	registrations := []struct {
 		name string
@@ -210,6 +236,7 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 		{"organization", kernel.RegisterOrganizationService(organization)},
 		{"task", kernel.RegisterTaskService(task)},
 		{"worker", kernel.RegisterWorkerService(workerService)},
+		{"execution", kernel.RegisterExecutionService(executionService)},
 	}
 	for _, registration := range registrations {
 		if registration.err != nil {
@@ -241,9 +268,14 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 	if err != nil || gotWorker != workerService {
 		t.Fatalf("WorkerService() = %#v, %v", gotWorker, err)
 	}
+	gotExecution, err := kernel.ExecutionService()
+	if err != nil || gotExecution != executionService {
+		t.Fatalf("ExecutionService() = %#v, %v", gotExecution, err)
+	}
 
 	wantServices := []ServiceKind{
 		ServiceEvent,
+		ServiceExecution,
 		ServiceOrganization,
 		ServiceProject,
 		ServiceTask,
@@ -279,6 +311,9 @@ func TestUnregisteredServiceIsRejected(t *testing.T) {
 	}
 	if _, err := kernel.WorkerService(); !errors.Is(err, ErrServiceNotRegistered) {
 		t.Fatalf("WorkerService() error = %v, want ErrServiceNotRegistered", err)
+	}
+	if _, err := kernel.ExecutionService(); !errors.Is(err, ErrServiceNotRegistered) {
+		t.Fatalf("ExecutionService() error = %v, want ErrServiceNotRegistered", err)
 	}
 }
 
@@ -361,6 +396,33 @@ func TestKernelControlsWorkerServiceLifecycle(t *testing.T) {
 	}
 	if workers.activateCalls != 1 || workers.deactivateCalls != 1 || workers.executeCalls != 1 {
 		t.Fatalf("worker lifecycle calls = activate:%d deactivate:%d execute:%d", workers.activateCalls, workers.deactivateCalls, workers.executeCalls)
+	}
+}
+
+func TestKernelControlsExecutionServiceLifecycle(t *testing.T) {
+	kernel, _ := New("v0.3.0")
+	executions := &fakeExecutionService{}
+	if err := kernel.RegisterExecutionService(executions); err != nil {
+		t.Fatal(err)
+	}
+	request := execution.Request{ProjectID: "PROJECT-001", TaskID: "TASK-001"}
+	if _, err := executions.Execute(context.Background(), request); !errors.Is(err, errFakeExecutionServiceInactive) {
+		t.Fatalf("Execute() before Kernel.Start error = %v", err)
+	}
+	if err := kernel.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executions.Execute(context.Background(), request); err != nil {
+		t.Fatalf("Execute() while Kernel started error = %v", err)
+	}
+	if err := kernel.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executions.Execute(context.Background(), request); !errors.Is(err, errFakeExecutionServiceInactive) {
+		t.Fatalf("Execute() after Kernel.Stop error = %v", err)
+	}
+	if executions.activateCalls != 1 || executions.deactivateCalls != 1 || executions.executeCalls != 1 {
+		t.Fatalf("execution lifecycle calls = activate:%d deactivate:%d execute:%d", executions.activateCalls, executions.deactivateCalls, executions.executeCalls)
 	}
 }
 
