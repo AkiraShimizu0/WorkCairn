@@ -30,3 +30,6 @@ workspace/
 *.swp
 *.tmp
 *.log
+
+# Locally built Go Core binaries
+/bin/

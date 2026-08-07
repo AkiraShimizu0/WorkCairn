@@ -110,6 +110,57 @@ class ProjectManagerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "旧担当者形式"):
             self.manager.add_task("旧形式", "新タスク", "PLAN-001")
 
+    def test_injected_go_client_is_used_for_task_id_generation(self):
+        class FakeGoCoreClient:
+            def __init__(self):
+                self.calls = []
+
+            def next_task_id(self, existing_ids):
+                self.calls.append(existing_ids)
+                return "TASK-010"
+
+        client = FakeGoCoreClient()
+        manager = ProjectManager(Organization(), go_core_client=client)
+        manager.create_project("Go採番")
+
+        task = manager.add_task("Go採番", "採番を委譲する")
+
+        self.assertEqual(task["id"], "TASK-010")
+        self.assertEqual(task["task_id_source"], "go_core")
+        self.assertEqual(client.calls, [[]])
+
+    def test_go_failure_does_not_silently_fallback_or_write(self):
+        class FailingGoCoreClient:
+            def next_task_id(self, existing_ids):
+                raise RuntimeError("Go Core unavailable")
+
+        manager = ProjectManager(Organization(), go_core_client=FailingGoCoreClient())
+        manager.create_project("失敗時安全")
+        tasks_path = self.vault / "プロジェクト" / "失敗時安全" / "Tasks.md"
+        before = tasks_path.read_bytes()
+
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            manager.add_task("失敗時安全", "書き込まない")
+
+        self.assertEqual(tasks_path.read_bytes(), before)
+
+    def test_python_fallback_requires_explicit_setting(self):
+        class FailingGoCoreClient:
+            def next_task_id(self, existing_ids):
+                raise RuntimeError("Go Core unavailable")
+
+        manager = ProjectManager(
+            Organization(),
+            go_core_client=FailingGoCoreClient(),
+            allow_python_task_id_fallback=True,
+        )
+        manager.create_project("明示Fallback")
+
+        task = manager.add_task("明示Fallback", "明示的に採番する")
+
+        self.assertEqual(task["id"], "TASK-001")
+        self.assertEqual(task["task_id_source"], "python_explicit_fallback")
+
 
 if __name__ == "__main__":
     unittest.main()

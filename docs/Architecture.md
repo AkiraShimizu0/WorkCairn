@@ -54,7 +54,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 
 ### Python
 
-Python層はMarkdownの読み取り、検証、状態遷移、Runner呼び出しを担当します。Runner以外のコンポーネントは特定AI APIへ依存しません。
+Python層はMarkdownとObsidianのI/O、Adapter、Prompt、Runner、LLM SDKを担当します。新しいビジネスルールの正本はGo Coreへ寄せ、Python側にはI/Oとオーケストレーションの責務を残します。
 
 ### Go Coreへの段階移行
 
@@ -70,8 +70,29 @@ Workspace OSは、中核ロジックをPythonからGo Coreへ段階的に移行�
 
 - `go/internal/workflow`: 依存解析、循環検出、実行可否判定
 - `go/internal/project`: TASK-ID、Task Status、状態遷移、Task検証
+- `go/cmd/workspace-core`: バージョン付きJSON契約を公開するCLI境界
 
-PythonとGoは`fixtures/workflow`と`fixtures/project`のJSONを共通契約として使用します。Pythonの`ProjectManager`は移行期間中もMarkdown I/Oと既存Adapterとして維持し、Goバイナリとの実行時接続は後続段階で追加します。
+PythonとGoは`fixtures/workflow`、`fixtures/project`、`fixtures/go_core`のJSONを共通契約として使用します。実行時の境界は次のとおりです。
+
+```text
+Python Adapter (GoCoreClient / ProjectManager)
+    ↓ JSON stdin/stdout (contract v1)
+workspace-core
+    ↓
+Go Domain (project / workflow)
+```
+
+`ProjectManager`はMarkdown I/Oを維持し、注入された`GoCoreClient`を通じてTASK-ID採番をGoへ委譲できます。Go Coreが利用できない場合のPythonフォールバックは明示設定時だけ許可され、`task_id_source`で利用実装を追跡できます。`workspace-core`はファイルシステムや`.env`を読み書きせず、標準出力にはJSONだけを返します。
+
+JSON契約v1は、`version`、`operation`、`payload`を標準入力で受け取り、`version`、`ok`、`result`、`error`を標準出力へ1件だけ返します。エラーは内部例外文を公開せず、次の機械判定可能なコードを使用します。
+
+| 分類 | エラーコード |
+|---|---|
+| 契約 | `INVALID_REQUEST`, `UNSUPPORTED_VERSION`, `UNKNOWN_OPERATION`, `INTERNAL_ERROR` |
+| Project | `INVALID_TASK_ID`, `DUPLICATE_TASK_ID`, `INVALID_STATUS`, `INVALID_TRANSITION`, `INVALID_TASK_TITLE`, `INVALID_ASSIGNEE_ID` |
+| Workflow | `UNKNOWN_DEPENDENCY`, `CYCLIC_DEPENDENCY` |
+
+対応operationは`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`です。ローカルバイナリは`make go-build`で`bin/workspace-core`へ生成し、`bin/`はGit管理しません。
 
 ## 主要な設計原則
 

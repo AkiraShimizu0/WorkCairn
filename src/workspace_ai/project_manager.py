@@ -14,8 +14,16 @@ class ProjectManager:
     MANAGED_FILES = ("Project.md", "Tasks.md", "Decisions.md", "Progress.md")
     TASK_STATUSES = ("未着手", "進行中", "保留", "完了")
 
-    def __init__(self, organization=None):
+    def __init__(
+        self,
+        organization=None,
+        go_core_client=None,
+        allow_python_task_id_fallback=False,
+    ):
         self.organization = organization or Organization()
+        self.go_core_client = go_core_client
+        self.allow_python_task_id_fallback = allow_python_task_id_fallback
+        self.last_task_id_source = None
 
     def create_project(self, name, description=""):
         """管理用Markdown一式を作り、既存ファイルは上書きしない"""
@@ -60,7 +68,7 @@ class ProjectManager:
             )
         assignee_id = self._validate_assignee_id(assignee_id)
         tasks = self._parse_tasks(content)
-        task_id = self._next_task_id(tasks)
+        task_id = self._generate_task_id(tasks)
         created_at = self._timestamp()
         stored_assignee_id = assignee_id or "未割当"
         new_row = (
@@ -77,6 +85,7 @@ class ProjectManager:
             "status": "未着手",
             "assignee_id": assignee_id,
             "created_at": created_at,
+            "task_id_source": self.last_task_id_source,
         }
 
     def get_tasks(self, project_name):
@@ -99,7 +108,25 @@ class ProjectManager:
 
     def next_task_id(self, project_name):
         """Tasks.mdを変更せず、次に割り当てられるタスクIDを返す"""
-        return self._next_task_id(self.get_tasks(project_name))
+        return self._generate_task_id(self.get_tasks(project_name))
+
+    def _generate_task_id(self, tasks):
+        """Generate an ID through the configured domain implementation."""
+        if self.go_core_client is None:
+            self.last_task_id_source = "python_legacy"
+            return self._next_task_id(tasks)
+
+        existing_ids = [task["id"] for task in tasks]
+        try:
+            task_id = self.go_core_client.next_task_id(existing_ids)
+        except Exception:
+            if not self.allow_python_task_id_fallback:
+                raise
+            self.last_task_id_source = "python_explicit_fallback"
+            return self._next_task_id(tasks)
+
+        self.last_task_id_source = "go_core"
+        return task_id
 
     def get_project_path(self, project_name):
         """検証済みのプロジェクトフォルダを返す"""

@@ -145,7 +145,7 @@ func EvaluateReadiness(
 		return emptyResult(StateWaiting, "no_unstarted_tasks", "wait"), nil
 	}
 
-	dependencyIDs := append([]string(nil), graph[pendingTask.ID]...)
+	dependencyIDs := append([]string{}, graph[pendingTask.ID]...)
 	statusByID := make(map[string]string, len(tasks))
 	for _, task := range tasks {
 		statusByID[task.ID] = task.Status
