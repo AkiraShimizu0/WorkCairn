@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "deliverable_committed_before_task_complete",
+      "task_status": "進行中",
+      "deliverable": "matching",
+      "finding_kind": "task_completion_pending",
+      "certainty": "confirmed",
+      "recoverable": true,
+      "action": "complete_task"
+    },
+    {
+      "name": "process_stopped_before_deliverable",
+      "task_status": "進行中",
+      "deliverable": "missing",
+      "finding_kind": "task_execution_interrupted",
+      "certainty": "confirmed",
+      "recoverable": true,
+      "action": "fail_and_hold_task"
+    },
+    {
+      "name": "completed_task_without_evidence",
+      "task_status": "完了",
+      "deliverable": "missing",
+      "finding_kind": "completed_task_deliverable_missing",
+      "certainty": "confirmed",
+      "recoverable": false,
+      "action": "none"
+    }
+  ]
+}

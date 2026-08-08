@@ -1,3 +1,5 @@
+"""Frozen v0.1 PromptBuilder reference used by migration parity tests."""
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
 

@@ -16,6 +16,7 @@ import (
 type Request struct {
 	ProjectID         string                   `json:"project_id"`
 	ProjectName       string                   `json:"project_name"`
+	ProjectOverview   string                   `json:"project_overview,omitempty"`
 	TaskID            string                   `json:"task_id"`
 	Employee          worker.EmployeeContext   `json:"employee"`
 	Tasks             []workflow.Task          `json:"tasks"`

@@ -106,31 +106,51 @@ func (service *TaskService) Create(ctx context.Context, input task.CreateInput) 
 }
 
 func (service *TaskService) Start(ctx context.Context, taskID string) (task.Task, error) {
-	return service.mutate(ctx, taskID, event.TaskStarted, "", func(current task.Task) (task.Task, error) {
+	return service.mutate(ctx, taskID, 0, event.TaskStarted, "", func(current task.Task) (task.Task, error) {
 		return current.Start()
 	})
 }
 
 func (service *TaskService) Complete(ctx context.Context, taskID string) (task.Task, error) {
-	return service.mutate(ctx, taskID, event.TaskCompleted, "", func(current task.Task) (task.Task, error) {
+	return service.mutate(ctx, taskID, 0, event.TaskCompleted, "", func(current task.Task) (task.Task, error) {
+		return current.Complete()
+	})
+}
+
+// CompleteExpected applies an explicitly planned recovery only when the
+// persisted Task still has the inspected Version.
+func (service *TaskService) CompleteExpected(ctx context.Context, taskID string, expectedVersion uint64) (task.Task, error) {
+	return service.mutate(ctx, taskID, expectedVersion, event.TaskCompleted, "", func(current task.Task) (task.Task, error) {
 		return current.Complete()
 	})
 }
 
 func (service *TaskService) Fail(ctx context.Context, taskID, reason string) (task.Task, error) {
-	return service.mutate(ctx, taskID, event.TaskFailed, reason, func(current task.Task) (task.Task, error) {
+	return service.mutate(ctx, taskID, 0, event.TaskFailed, reason, func(current task.Task) (task.Task, error) {
+		return current.Fail(reason)
+	})
+}
+
+func (service *TaskService) FailExpected(ctx context.Context, taskID, reason string, expectedVersion uint64) (task.Task, error) {
+	return service.mutate(ctx, taskID, expectedVersion, event.TaskFailed, reason, func(current task.Task) (task.Task, error) {
 		return current.Fail(reason)
 	})
 }
 
 func (service *TaskService) Hold(ctx context.Context, taskID, reason string) (task.Task, error) {
-	return service.mutate(ctx, taskID, event.TaskHeld, reason, func(current task.Task) (task.Task, error) {
+	return service.mutate(ctx, taskID, 0, event.TaskHeld, reason, func(current task.Task) (task.Task, error) {
+		return current.Hold(reason)
+	})
+}
+
+func (service *TaskService) HoldExpected(ctx context.Context, taskID, reason string, expectedVersion uint64) (task.Task, error) {
+	return service.mutate(ctx, taskID, expectedVersion, event.TaskHeld, reason, func(current task.Task) (task.Task, error) {
 		return current.Hold(reason)
 	})
 }
 
 func (service *TaskService) Resume(ctx context.Context, taskID string) (task.Task, error) {
-	return service.mutate(ctx, taskID, event.TaskResumed, "", func(current task.Task) (task.Task, error) {
+	return service.mutate(ctx, taskID, 0, event.TaskResumed, "", func(current task.Task) (task.Task, error) {
 		return current.Resume()
 	})
 }
@@ -145,6 +165,7 @@ func (service *TaskService) Get(ctx context.Context, taskID string) (task.Task, 
 func (service *TaskService) mutate(
 	ctx context.Context,
 	taskID string,
+	expectedVersion uint64,
 	eventType event.Type,
 	reason string,
 	change func(task.Task) (task.Task, error),
@@ -155,6 +176,9 @@ func (service *TaskService) mutate(
 	current, err := service.store.Get(ctx, taskID)
 	if err != nil {
 		return task.Task{}, err
+	}
+	if expectedVersion != 0 && current.Version != expectedVersion {
+		return task.Task{}, fmt.Errorf("%w: %s expected=%d actual=%d", task.ErrVersionConflict, current.ID, expectedVersion, current.Version)
 	}
 	next, err := change(current)
 	if err != nil {

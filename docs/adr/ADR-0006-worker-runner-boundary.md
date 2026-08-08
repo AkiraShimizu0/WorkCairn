@@ -18,7 +18,7 @@ Python実装ではWorker、PromptBuilder、ModelRouter、ClaudeRunnerがAI実行
 - KernelはWorkerService interfaceだけを保持し、Claude、OpenAI、Gemini、Ollama、APIキー、`.env`を知りません。Provider設定は将来のRuntime／Config／Adapter層がcomposition時に注入します。
 - WorkerServiceはTask状態、Deliverable、Audit、承認、retryを扱いません。成功結果はTask完了を意味せず、呼び出し側がTaskServiceへ明示的に反映します。
 - 初期版では`WorkerStarted`等のEventを追加しません。Task lifecycle Eventとの意味の重複を避け、Worker固有の監視要件が確定してから追加を判断します。
-- Python Worker、PromptBuilder、ModelRouter、Runnerは移行期間中だけ維持し、対応するGo実装とRuntime Adapterの完成後に廃止します。
+- Python Worker、PromptBuilder、ModelRouter、Runner、ReviewerWorkerは通常TaskとReviewの製品実行経路から外し、公開互換referenceに限定します。公開API廃止条件が整った後に削除します。
 
 ## Consequences
 

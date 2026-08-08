@@ -53,6 +53,11 @@ class TaskExecutorTest(unittest.TestCase):
             return_value=self.vault / "プロジェクト",
         )
         self.projects_patch.start()
+        self.prompt_projects_patch = patch(
+            "workspace_ai.prompt_builder.projects_path",
+            return_value=self.vault / "プロジェクト",
+        )
+        self.prompt_projects_patch.start()
         self.organization_patch = patch(
             "workspace_ai.organization.get_vault_path",
             return_value=self.vault,
@@ -66,6 +71,7 @@ class TaskExecutorTest(unittest.TestCase):
 
     def tearDown(self):
         self.organization_patch.stop()
+        self.prompt_projects_patch.stop()
         self.projects_patch.stop()
         self.temporary_directory.cleanup()
 
@@ -127,6 +133,25 @@ class TaskExecutorTest(unittest.TestCase):
         self.assertIn("- 担当社員ID: PLAN-001", progress)
         self.assertIn("- 使用Runner: FakeAIRunner", progress)
         self.assertIn("- 結果: 成功", progress)
+
+    def test_deliverable_reference_matches_shared_golden(self):
+        executor = TaskExecutor(FakeAIRunner(), self.manager, self.organization)
+        rendered = executor._deliverable_content(
+            "ToDoアプリ",
+            {"id": "TASK-001", "title": "要件を整理する"},
+            {"id": "PLAN-001"},
+            "\n# 完成した仕様書\n\n本文\n",
+            "2026-08-06 16:30:00",
+            "ClaudeRunner",
+        )
+        fixture = (
+            Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "vault"
+            / "deliverable_task_execution.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertEqual(rendered, fixture)
 
     def test_runner_failure_holds_task_and_records_error(self):
         runner = FakeAIRunner(error=RuntimeError("テスト失敗"))

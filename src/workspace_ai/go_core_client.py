@@ -1,4 +1,4 @@
-"""Stable JSON stdin/stdout adapter for the Workspace OS Go Core."""
+"""Published v0.1 compatibility Adapter for the Workspace OS Go Core."""
 
 import json
 from pathlib import Path

@@ -23,9 +23,11 @@ type EmployeeContext struct {
 // TaskContext identifies the work to execute without exposing a storage
 // representation to a Runner.
 type TaskContext struct {
-	TaskID      string `json:"task_id"`
-	Title       string `json:"title"`
-	ProjectName string `json:"project_name"`
+	TaskID          string  `json:"task_id"`
+	Title           string  `json:"title"`
+	ProjectName     string  `json:"project_name"`
+	ProjectOverview string  `json:"project_overview,omitempty"`
+	AssigneeID      *string `json:"assignee_id,omitempty"`
 }
 
 // ExecutionRequest is the complete, immutable input for one Worker execution.

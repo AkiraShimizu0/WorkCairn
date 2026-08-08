@@ -1,3 +1,5 @@
+"""Frozen v0.1 ModelRouter compatibility implementation."""
+
 class UnknownModelError(ValueError):
     """社員のmodel値に対応する経路がないことを表す"""
 

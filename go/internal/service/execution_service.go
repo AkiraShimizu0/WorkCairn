@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/deliverable"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/policy"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
@@ -22,6 +23,7 @@ var (
 	ErrInvalidReadinessService       = errors.New("readiness service is required")
 	ErrInvalidTaskLifecycleService   = errors.New("task lifecycle service is required")
 	ErrInvalidWorkerExecutionService = errors.New("worker execution service is required")
+	ErrInvalidDeliverableStore       = errors.New("Deliverable Store is required")
 	ErrInvalidApprovalPolicy         = errors.New("approval policy is required")
 	ErrInvalidExecutionPolicy        = errors.New("execution policy is required")
 )
@@ -53,6 +55,7 @@ type ExecutionService struct {
 	readiness       ReadinessService
 	tasks           TaskLifecycleService
 	workers         WorkerExecutionService
+	deliverables    deliverable.Store
 	approvalPolicy  policy.ApprovalPolicy
 	executionPolicy policy.ExecutionPolicy
 	recoveryTimeout time.Duration
@@ -62,6 +65,7 @@ func NewExecutionService(
 	readiness ReadinessService,
 	tasks TaskLifecycleService,
 	workers WorkerExecutionService,
+	deliverables deliverable.Store,
 	approvalPolicy policy.ApprovalPolicy,
 	executionPolicy policy.ExecutionPolicy,
 ) (*ExecutionService, error) {
@@ -72,6 +76,7 @@ func NewExecutionService(
 		{readiness, ErrInvalidReadinessService},
 		{tasks, ErrInvalidTaskLifecycleService},
 		{workers, ErrInvalidWorkerExecutionService},
+		{deliverables, ErrInvalidDeliverableStore},
 		{approvalPolicy, ErrInvalidApprovalPolicy},
 		{executionPolicy, ErrInvalidExecutionPolicy},
 	}
@@ -84,6 +89,7 @@ func NewExecutionService(
 		readiness:       readiness,
 		tasks:           tasks,
 		workers:         workers,
+		deliverables:    deliverables,
 		approvalPolicy:  approvalPolicy,
 		executionPolicy: executionPolicy,
 		recoveryTimeout: defaultRecoveryTimeout,
@@ -172,9 +178,11 @@ func (service *ExecutionService) Execute(ctx context.Context, request execution.
 	workerResult, workerErr := service.workers.Execute(ctx, worker.ExecutionRequest{
 		Employee: request.Employee,
 		Task: worker.TaskContext{
-			TaskID:      request.TaskID,
-			Title:       readiness.Title,
-			ProjectName: request.ProjectName,
+			TaskID:          request.TaskID,
+			Title:           readiness.Title,
+			ProjectName:     request.ProjectName,
+			ProjectOverview: request.ProjectOverview,
+			AssigneeID:      readiness.AssigneeID,
 		},
 		CurrentTime: request.CurrentTime,
 		Metadata:    cloneMetadata(request.Metadata),
@@ -185,11 +193,66 @@ func (service *ExecutionService) Execute(ctx context.Context, request execution.
 		result.Model = workerResult.Model
 		result.Usage = workerResult.Usage
 		result.Duration = workerResult.Duration
+		record, saveErr := service.deliverables.Save(ctx, deliverable.Document{
+			ProjectID:   request.ProjectID,
+			ProjectName: request.ProjectName,
+			TaskTitle:   readiness.Title,
+			ExecutedAt:  request.CurrentTime,
+			Execution:   workerResult,
+		})
+		recordCommitted := false
+		if saveErr == nil {
+			if recordErr := record.Validate(request.TaskID); recordErr != nil {
+				saveErr = recordErr
+			} else {
+				recordCommitted = true
+			}
+		} else {
+			var saveFailure *deliverable.SaveError
+			if errors.As(saveErr, &saveFailure) && saveFailure.Committed {
+				if record.Validate(request.TaskID) != nil {
+					record = saveFailure.Record
+				}
+				if record.Validate(request.TaskID) == nil {
+					recordCommitted = true
+				}
+			}
+		}
+		if recordCommitted {
+			storedRecord := record
+			result.Deliverable = &storedRecord
+		}
+		if saveErr != nil {
+			failureCode := string(execution.ErrorDeliverableSaveFailed)
+			failureReason := "deliverable_save_failed"
+			failureKind := execution.ErrorDeliverableSaveFailed
+			if errors.Is(saveErr, context.DeadlineExceeded) {
+				failureCode = "TIMEOUT"
+				failureReason = "deliverable_save_timeout"
+				failureKind = execution.ErrorTimeout
+			} else if errors.Is(saveErr, context.Canceled) {
+				failureCode = "CANCELED"
+				failureReason = "deliverable_save_canceled"
+				failureKind = execution.ErrorCanceled
+			}
+			return service.recoverExecutionFailure(
+				ctx,
+				request,
+				result,
+				execution.StageDeliverable,
+				failureCode,
+				failureReason,
+				failureKind,
+				saveErr,
+			)
+		}
 		completed, completeErr := service.tasks.Complete(ctx, request.TaskID)
 		if completed.Status.Valid() {
 			result.FinalTaskStatus = completed.Status
 		}
 		if completeErr != nil {
+			result.Status = execution.StatusPartialFailure
+			result.FailureReason = "task_complete_failed_after_deliverable_commit"
 			return taskMutationFailure(execution.StageTaskComplete, execution.ErrorTaskCompleteFailed, result, completeErr)
 		}
 		result.Status = execution.StatusCompleted
@@ -206,6 +269,28 @@ func (service *ExecutionService) recoverWorkerFailure(
 	workerErr error,
 ) (execution.Result, error) {
 	failureCode, failureReason, finalKind := classifyWorkerFailure(workerErr)
+	return service.recoverExecutionFailure(
+		ctx,
+		request,
+		result,
+		execution.StageWorker,
+		failureCode,
+		failureReason,
+		finalKind,
+		workerErr,
+	)
+}
+
+func (service *ExecutionService) recoverExecutionFailure(
+	ctx context.Context,
+	request execution.Request,
+	result execution.Result,
+	failureStage execution.Stage,
+	failureCode string,
+	failureReason string,
+	finalKind execution.ErrorKind,
+	failureErr error,
+) (execution.Result, error) {
 	result.Status = execution.StatusFailed
 	result.FailureReason = failureReason
 
@@ -234,7 +319,7 @@ func (service *ExecutionService) recoverWorkerFailure(
 	if decision.Hold {
 		holdReason := strings.TrimSpace(decision.Reason)
 		if holdReason == "" {
-			holdReason = "hold_after_worker_failure"
+			holdReason = "hold_after_execution_failure"
 		}
 		held, holdErr := service.tasks.Hold(recoveryContext, request.TaskID, holdReason)
 		if held.Status.Valid() {
@@ -246,7 +331,7 @@ func (service *ExecutionService) recoverWorkerFailure(
 		result.Status = execution.StatusHeld
 		result.Held = true
 	}
-	return result, executionFailure(execution.StageWorker, finalKind, result, workerErr)
+	return result, executionFailure(failureStage, finalKind, result, failureErr)
 }
 
 func (service *ExecutionService) requireActive() error {

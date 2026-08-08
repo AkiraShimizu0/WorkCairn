@@ -1,3 +1,5 @@
+"""Frozen v0.1 ReviewerWorker compatibility implementation."""
+
 from datetime import datetime
 import json
 import os

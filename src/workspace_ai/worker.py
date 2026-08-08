@@ -1,3 +1,5 @@
+"""Frozen v0.1 Worker compatibility implementation; new execution lives in Go."""
+
 from datetime import datetime
 from inspect import Parameter, signature
 from zoneinfo import ZoneInfo

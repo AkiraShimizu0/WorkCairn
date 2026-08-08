@@ -111,6 +111,35 @@ class ProjectManagerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "旧担当者形式"):
             self.manager.add_task("旧形式", "新タスク", "PLAN-001")
 
+    def test_reads_go_managed_metadata_fixture_without_python_changes(self):
+        project_dir = self.vault / "プロジェクト" / "Go管理形式"
+        project_dir.mkdir(parents=True)
+        fixture = (
+            Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "vault"
+            / "tasks_managed_v1.md"
+        )
+        (project_dir / "Tasks.md").write_text(
+            fixture.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+        tasks = self.manager.get_tasks("Go管理形式")
+
+        self.assertEqual(
+            tasks,
+            [
+                {
+                    "id": "TASK-001",
+                    "title": "要件を整理する",
+                    "status": "未着手",
+                    "assignee_id": "PLAN-001",
+                    "created_at": "2026-08-06 16:00",
+                }
+            ],
+        )
+
     def test_injected_go_client_is_used_for_task_id_generation(self):
         class FakeGoCoreClient:
             def __init__(self):

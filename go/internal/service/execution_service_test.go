@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/deliverable"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/deliverablestore"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/policy"
@@ -108,6 +110,21 @@ type orchestrationWorker struct {
 	request worker.ExecutionRequest
 }
 
+type orchestrationDeliverables struct {
+	record deliverable.Record
+	err    error
+	calls  int
+	save   func(deliverable.Document)
+}
+
+func (fake *orchestrationDeliverables) Save(_ context.Context, document deliverable.Document) (deliverable.Record, error) {
+	fake.calls++
+	if fake.save != nil {
+		fake.save(document)
+	}
+	return fake.record, fake.err
+}
+
 func (fake *orchestrationWorker) Execute(ctx context.Context, request worker.ExecutionRequest) (worker.ExecutionResult, error) {
 	fake.calls++
 	fake.request = request
@@ -154,7 +171,7 @@ func readyResult() workflow.ReadinessResult {
 func executionRequest(approved bool) execution.Request {
 	assigneeID := "PLAN-001"
 	return execution.Request{
-		ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", TaskID: "TASK-001",
+		ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", ProjectOverview: "シンプルなToDoアプリ", TaskID: "TASK-001",
 		Employee: worker.EmployeeContext{
 			EmployeeID: assigneeID, Name: "山本 真帆", Department: "企画部",
 			Role: "Product Manager", Model: "Fake Model",
@@ -176,7 +193,28 @@ func activeExecutionService(
 	executionPolicy policy.ExecutionPolicy,
 ) *ExecutionService {
 	t.Helper()
-	service, err := NewExecutionService(readiness, tasks, workers, approvalPolicy, executionPolicy)
+	return activeExecutionServiceWithDeliverables(
+		t,
+		readiness,
+		tasks,
+		workers,
+		deliverablestore.NewInMemory(),
+		approvalPolicy,
+		executionPolicy,
+	)
+}
+
+func activeExecutionServiceWithDeliverables(
+	t *testing.T,
+	readiness ReadinessService,
+	tasks TaskLifecycleService,
+	workers WorkerExecutionService,
+	deliverables deliverable.Store,
+	approvalPolicy policy.ApprovalPolicy,
+	executionPolicy policy.ExecutionPolicy,
+) *ExecutionService {
+	t.Helper()
+	service, err := NewExecutionService(readiness, tasks, workers, deliverables, approvalPolicy, executionPolicy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,28 +235,96 @@ func defaultExecutionFakes() (*orchestrationReadiness, *orchestrationTasks, *orc
 			Duration: 250 * time.Millisecond, Status: worker.StatusCompleted,
 		}},
 		&orchestrationApprovalPolicy{decision: policy.ApprovalDecision{Outcome: policy.OutcomeApproved, Reason: "approved", Policy: "fake"}},
-		&orchestrationExecutionPolicy{decision: policy.FailureDecision{Hold: true, Reason: "hold_after_worker_failure", Policy: "fake"}}
+		&orchestrationExecutionPolicy{decision: policy.FailureDecision{Hold: true, Reason: "hold_after_execution_failure", Policy: "fake"}}
 }
 
 func TestExecutionServiceSuccessfulFlow(t *testing.T) {
 	readiness, tasks, workers, approvals, failures := defaultExecutionFakes()
-	service := activeExecutionService(t, readiness, tasks, workers, approvals, failures)
+	deliverables := &orchestrationDeliverables{
+		record: deliverable.Record{TaskID: "TASK-001", RelativePath: "Deliverables/TASK-001.md"},
+		save: func(document deliverable.Document) {
+			_, calls, _ := tasks.snapshot()
+			if !equalStrings(calls, []string{"start"}) {
+				t.Fatalf("Deliverable Save order calls = %v", calls)
+			}
+			if document.Execution.TaskID != workers.result.TaskID ||
+				document.Execution.Content != workers.result.Content || document.TaskTitle != "要件整理" {
+				t.Fatalf("Deliverable Document = %#v", document)
+			}
+		},
+	}
+	service := activeExecutionServiceWithDeliverables(t, readiness, tasks, workers, deliverables, approvals, failures)
 	result, err := service.Execute(context.Background(), executionRequest(true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != execution.StatusCompleted || result.FinalTaskStatus != task.StatusCompleted || result.Held {
+	if result.Status != execution.StatusCompleted || result.FinalTaskStatus != task.StatusCompleted || result.Held ||
+		result.Deliverable == nil || result.Deliverable.RelativePath != "Deliverables/TASK-001.md" {
 		t.Fatalf("Execute() = %#v", result)
 	}
 	if result.Runner != "FakeRunner" || result.Model != "Fake Model" || result.Usage.InputTokens == nil || *result.Usage.InputTokens != 11 || result.Duration != 250*time.Millisecond {
 		t.Fatalf("worker data = %#v", result)
 	}
 	_, calls, _ := tasks.snapshot()
-	if !equalStrings(calls, []string{"start", "complete"}) || workers.calls != 1 || failures.calls != 0 {
+	if !equalStrings(calls, []string{"start", "complete"}) || workers.calls != 1 || deliverables.calls != 1 || failures.calls != 0 {
 		t.Fatalf("calls = tasks:%v worker:%d failure-policy:%d", calls, workers.calls, failures.calls)
 	}
-	if workers.request.Task.Title != "要件整理" || workers.request.Employee.EmployeeID != "PLAN-001" {
+	if workers.request.Task.Title != "要件整理" || workers.request.Task.ProjectOverview != "シンプルなToDoアプリ" ||
+		workers.request.Task.AssigneeID == nil || *workers.request.Task.AssigneeID != "PLAN-001" ||
+		workers.request.Employee.EmployeeID != "PLAN-001" {
 		t.Fatalf("worker request = %#v", workers.request)
+	}
+}
+
+func TestExecutionServiceDeliverableFailureIsRecordedAndHeldWithoutComplete(t *testing.T) {
+	readiness, tasks, workers, approvals, failures := defaultExecutionFakes()
+	deliverables := &orchestrationDeliverables{err: deliverable.ErrAlreadyExists}
+	service := activeExecutionServiceWithDeliverables(t, readiness, tasks, workers, deliverables, approvals, failures)
+
+	result, err := service.Execute(context.Background(), executionRequest(true))
+	assertExecutionError(t, err, execution.StageDeliverable, execution.ErrorDeliverableSaveFailed)
+	status, calls, _ := tasks.snapshot()
+	if result.Status != execution.StatusHeld || !result.Held || result.Deliverable != nil ||
+		result.FailureReason != "deliverable_save_failed" || status != task.StatusOnHold ||
+		!equalStrings(calls, []string{"start", "fail", "hold"}) || deliverables.calls != 1 || failures.calls != 1 ||
+		failures.input.FailureCode != string(execution.ErrorDeliverableSaveFailed) {
+		t.Fatalf("result=%#v status=%s calls=%v deliverables=%d policy=%#v", result, status, calls, deliverables.calls, failures)
+	}
+}
+
+func TestExecutionServicePreservesCommittedDeliverableOnSavePartialFailure(t *testing.T) {
+	readiness, tasks, workers, approvals, failures := defaultExecutionFakes()
+	record := deliverable.Record{TaskID: "TASK-001", RelativePath: "Deliverables/TASK-001.md"}
+	deliverables := &orchestrationDeliverables{
+		err: &deliverable.SaveError{
+			Record: record, Committed: true, Err: errors.New("directory sync failed"),
+		},
+	}
+	service := activeExecutionServiceWithDeliverables(t, readiness, tasks, workers, deliverables, approvals, failures)
+
+	result, err := service.Execute(context.Background(), executionRequest(true))
+	assertExecutionError(t, err, execution.StageDeliverable, execution.ErrorDeliverableSaveFailed)
+	_, calls, _ := tasks.snapshot()
+	if result.Deliverable == nil || *result.Deliverable != record || result.Status != execution.StatusHeld ||
+		!equalStrings(calls, []string{"start", "fail", "hold"}) {
+		t.Fatalf("Execute() = %#v calls=%v", result, calls)
+	}
+}
+
+func TestExecutionServiceCompleteFailureKeepsCommittedDeliverableAsPartial(t *testing.T) {
+	readiness, tasks, workers, approvals, failures := defaultExecutionFakes()
+	tasks.completeErr = errors.New("Task Store unavailable")
+	record := deliverable.Record{TaskID: "TASK-001", RelativePath: "Deliverables/TASK-001.md"}
+	deliverables := &orchestrationDeliverables{record: record}
+	service := activeExecutionServiceWithDeliverables(t, readiness, tasks, workers, deliverables, approvals, failures)
+
+	result, err := service.Execute(context.Background(), executionRequest(true))
+	assertExecutionError(t, err, execution.StageTaskComplete, execution.ErrorTaskCompleteFailed)
+	status, calls, _ := tasks.snapshot()
+	if result.Status != execution.StatusPartialFailure || result.Deliverable == nil || *result.Deliverable != record ||
+		result.FailureReason != "task_complete_failed_after_deliverable_commit" || status != task.StatusInProgress ||
+		!equalStrings(calls, []string{"start", "complete"}) || failures.calls != 0 {
+		t.Fatalf("Execute() = %#v status=%s calls=%v policy=%d", result, status, calls, failures.calls)
 	}
 }
 
@@ -413,7 +519,7 @@ func publicationFailure(status task.Status, eventType event.Type) error {
 func TestExecutionServiceApprovalPolicyErrorAndLifecycle(t *testing.T) {
 	readiness, tasks, workers, approvals, failures := defaultExecutionFakes()
 	approvals.err = errors.New("approval unavailable")
-	service, err := NewExecutionService(readiness, tasks, workers, approvals, failures)
+	service, err := NewExecutionService(readiness, tasks, workers, deliverablestore.NewInMemory(), approvals, failures)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -569,7 +675,14 @@ func newExecutionIntegrationWithRunner(t *testing.T, registered runner.Runner) *
 		t.Fatal(err)
 	}
 	_ = workers.Activate()
-	executionService, err := NewExecutionService(NewWorkflowService(), tasks, workers, policy.ExplicitApprovalPolicy{}, policy.HoldOnFailurePolicy{})
+	executionService, err := NewExecutionService(
+		NewWorkflowService(),
+		tasks,
+		workers,
+		deliverablestore.NewInMemory(),
+		policy.ExplicitApprovalPolicy{},
+		policy.HoldOnFailurePolicy{},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

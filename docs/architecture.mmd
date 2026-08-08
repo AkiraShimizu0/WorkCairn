@@ -1,8 +1,16 @@
 flowchart TD
-    CEO["CEO"] --> Manager["Workspace Manager"]
-    Manager --> Workflow["Workflow Engine"]
-    Workflow --> Executor["TaskExecutor"]
-    Executor --> Worker["Worker"]
-    Worker --> Prompt["PromptBuilder"]
-    Prompt --> Router["ModelRouter"]
-    Router --> Claude["ClaudeRunner"]
+    CEO["CEO"] --> CEOPlan["Go CEO Plan Service"]
+    CEOPlan --> CEOApply["Go CEO Plan Apply"]
+    CEOApply --> Managed["Go managed Project / Task"]
+    Managed --> Run["Go workspace-run"]
+    API["workspace-daemon / Command API v1"] --> Run
+    Run --> WorkflowRun["Sequential Workflow Run Service"]
+    WorkflowRun --> Execution
+    Run --> Kernel["Workspace Kernel"]
+    Kernel --> Execution["ExecutionService"]
+    Execution --> GoWorker["Go WorkerService / Claude Adapter"]
+    Execution --> Task["TaskService / Deliverable / Audit"]
+    Task -. partial state .-> Recovery["Recovery inspect / approved apply"]
+    Recovery --> Task
+    Run --> Review["Go ReviewService / ReviewStore"]
+    Review --> Revision["Go Revision orchestration / TaskService"]

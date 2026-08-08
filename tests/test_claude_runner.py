@@ -125,7 +125,10 @@ class ClaudeRunnerTest(unittest.TestCase):
             router = ModelRouter()
             router.register_runner("ClaudeRunner", runner)
 
-            with patch("workspace_ai.organization.get_vault_path", return_value=vault):
+            with patch("workspace_ai.organization.get_vault_path", return_value=vault), patch(
+                "workspace_ai.prompt_builder.projects_path",
+                return_value=vault / "プロジェクト",
+            ):
                 organization = Organization()
                 worker = Worker("PLAN-001", organization=organization, router=router)
                 result = worker.execute(

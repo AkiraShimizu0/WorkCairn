@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from datetime import datetime
@@ -6,6 +7,15 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from workspace_ai.prompt_builder import PromptBuilder
+
+
+FIXTURE_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "fixtures"
+    / "prompt"
+    / "task_execution.json"
+)
+REVIEW_FIXTURE_PATH = FIXTURE_PATH.with_name("review_execution.json")
 
 
 class PromptBuilderTest(unittest.TestCase):
@@ -94,6 +104,73 @@ class PromptBuilderTest(unittest.TestCase):
             "担当タスク: 要件を整理する\n\n"
             "この担当タスクの成果物を作成してください。",
         )
+
+    def test_task_execution_prompt_matches_shared_golden_fixture(self):
+        fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+        fixture_input = fixture["input"]
+        employee = fixture_input["employee"]
+        task = fixture_input["task"]
+
+        prompts = PromptBuilder().build(
+            employee={
+                "id": employee["employee_id"],
+                "name": employee["name"],
+                "department": employee["department"],
+                "role": employee["role"],
+                "model": employee["model"],
+            },
+            project={
+                "name": task["project_name"],
+                "overview": task.get("project_overview"),
+            },
+            task={
+                "id": task["task_id"],
+                "title": task["title"],
+                "assignee_id": task.get("assignee_id"),
+            },
+            current_datetime=datetime.fromisoformat(
+                fixture_input["current_datetime"]
+            ),
+        )
+
+        self.assertEqual(prompts["system_prompt"], fixture["expected"]["system"])
+        self.assertEqual(prompts["user_prompt"], fixture["expected"]["user"])
+
+    def test_review_prompt_matches_shared_golden_fixture(self):
+        fixture = json.loads(REVIEW_FIXTURE_PATH.read_text(encoding="utf-8"))
+        fixture_input = fixture["input"]
+        reviewer = fixture_input["reviewer"]
+        source = fixture_input["source_employee"]
+        task = fixture_input["task"]
+        deliverable = fixture_input["deliverable"]
+
+        prompts = PromptBuilder().build_review(
+            employee={"id": reviewer["employee_id"], **{
+                key: reviewer[key]
+                for key in ("name", "department", "role", "model")
+            }},
+            source_employee={"id": source["employee_id"], **{
+                key: source[key]
+                for key in ("name", "department", "role", "model")
+            }},
+            project={
+                "name": task["project_name"],
+                "overview": task.get("project_overview"),
+            },
+            task={
+                "id": task["task_id"],
+                "title": task["title"],
+                "assignee_id": task.get("assignee_id"),
+            },
+            deliverable=deliverable["content"],
+            deliverable_frontmatter=deliverable["frontmatter"],
+            current_datetime=datetime.fromisoformat(
+                fixture_input["current_datetime"]
+            ),
+        )
+
+        self.assertEqual(prompts["system_prompt"], fixture["expected"]["system"])
+        self.assertEqual(prompts["user_prompt"], fixture["expected"]["user"])
 
 
 if __name__ == "__main__":

@@ -1,3 +1,5 @@
+"""Frozen v0.1 Employee writer compatibility implementation."""
+
 from pathlib import Path
 
 from dotenv import load_dotenv

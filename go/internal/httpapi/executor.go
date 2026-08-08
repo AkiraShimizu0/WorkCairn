@@ -1,0 +1,245 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/organization"
+	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
+)
+
+type Executor interface {
+	Execute(ctx context.Context, command Command) (any, error)
+}
+
+type Inspector interface {
+	Inspect(ctx context.Context, scope, projectName, commandID string) (commandledger.Record, error)
+}
+
+type ProcessExecutor struct {
+	vaultRoot  string
+	provider   workspaceprocess.ClaudeProcessConfig
+	httpClient claude.HTTPDoer
+}
+
+func NewProcessExecutor(vaultRoot string, provider workspaceprocess.ClaudeProcessConfig, httpClient claude.HTTPDoer) (*ProcessExecutor, error) {
+	if strings.TrimSpace(vaultRoot) == "" || httpClient == nil {
+		return nil, fmt.Errorf("Vault root and HTTP client are required")
+	}
+	vaultRoot = strings.TrimSpace(vaultRoot)
+	info, err := os.Stat(vaultRoot)
+	if err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("Vault root directory is required")
+	}
+	return &ProcessExecutor{vaultRoot: vaultRoot, provider: provider, httpClient: httpClient}, nil
+}
+
+type taskExecutePayload struct {
+	ProjectID         string    `json:"project_id"`
+	ProjectName       string    `json:"project_name"`
+	TaskID            string    `json:"task_id"`
+	CurrentTime       time.Time `json:"current_time"`
+	ApprovalReference string    `json:"approval_reference,omitempty"`
+	ExecutionID       string    `json:"execution_id,omitempty"`
+}
+
+type reviewExecutePayload struct {
+	ProjectID     string    `json:"project_id"`
+	ProjectName   string    `json:"project_name"`
+	TaskID        string    `json:"task_id"`
+	ReviewerID    string    `json:"reviewer_id"`
+	ReviewVersion string    `json:"review_version,omitempty"`
+	CurrentTime   time.Time `json:"current_time"`
+}
+
+type revisionExecutePayload struct {
+	ProjectID     string    `json:"project_id"`
+	ProjectName   string    `json:"project_name"`
+	SourceTaskID  string    `json:"source_task_id"`
+	ReviewVersion string    `json:"review_version,omitempty"`
+	CurrentTime   time.Time `json:"current_time"`
+}
+
+type workflowExecutePayload struct {
+	ProjectID         string    `json:"project_id"`
+	ProjectName       string    `json:"project_name"`
+	CurrentTime       time.Time `json:"current_time"`
+	ApprovalReference string    `json:"approval_reference,omitempty"`
+	MaxTasks          int       `json:"max_tasks"`
+}
+
+type ceoApplyPayload struct {
+	ProjectID   string       `json:"project_id"`
+	Plan        ceoplan.Plan `json:"plan"`
+	CurrentTime time.Time    `json:"current_time"`
+}
+
+type projectBootstrapPayload struct {
+	ProjectID   string    `json:"project_id"`
+	ProjectName string    `json:"project_name"`
+	Description string    `json:"description,omitempty"`
+	CurrentTime time.Time `json:"current_time"`
+}
+
+type taskCreatePayload struct {
+	ProjectName string    `json:"project_name"`
+	Title       string    `json:"title"`
+	AssigneeID  *string   `json:"assignee_id,omitempty"`
+	CurrentTime time.Time `json:"current_time"`
+}
+
+type projectDependenciesPayload struct {
+	ProjectName string                   `json:"project_name"`
+	Rows        []project.TaskDependency `json:"rows"`
+	CurrentTime time.Time                `json:"current_time"`
+}
+
+type employeeHirePayload struct {
+	Candidate   organization.EmployeeCandidate `json:"candidate"`
+	CurrentTime time.Time                      `json:"current_time"`
+}
+
+type employeeRenamePayload struct {
+	Request     organization.RenameRequest `json:"request"`
+	CurrentTime time.Time                  `json:"current_time"`
+}
+
+type employeeIDRepairPayload struct {
+	Expected    []organization.IDRepair `json:"expected"`
+	CurrentTime time.Time               `json:"current_time"`
+}
+
+type organizationSyncPayload struct {
+	CurrentTime time.Time `json:"current_time"`
+}
+
+func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (any, error) {
+	if err := command.Validate(); err != nil || !command.Approved {
+		return nil, ErrInvalidCommand
+	}
+	switch command.Operation {
+	case "task.execute":
+		var payload taskExecutePayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteTask(ctx, workspaceprocess.ExecuteTaskInput{
+			ExecutionPlanInput: workspaceprocess.ExecutionPlanInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, TaskID: payload.TaskID, CurrentTime: payload.CurrentTime},
+			Approved:           true, ApprovalSource: "http-api", ApprovalReference: payload.ApprovalReference,
+			ExecutionID: payload.ExecutionID, CommandID: command.CommandID,
+		}, executor.provider, executor.httpClient)
+	case "review.execute":
+		var payload reviewExecutePayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteReview(ctx, workspaceprocess.ExecuteReviewInput{
+			ReviewPlanInput: workspaceprocess.ReviewPlanInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, TaskID: payload.TaskID, ReviewerID: payload.ReviewerID, ReviewVersion: payload.ReviewVersion, CurrentTime: payload.CurrentTime},
+			Approved:        true, CommandID: command.CommandID,
+		}, executor.provider, executor.httpClient)
+	case "revision.execute":
+		var payload revisionExecutePayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteRevision(ctx, workspaceprocess.ExecuteRevisionInput{
+			RevisionPlanInput: workspaceprocess.RevisionPlanInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, SourceTaskID: payload.SourceTaskID, ReviewVersion: payload.ReviewVersion, CurrentTime: payload.CurrentTime},
+			Approved:          true, CommandID: command.CommandID,
+		})
+	case "workflow.execute":
+		var payload workflowExecutePayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteWorkflow(ctx, workspaceprocess.ExecuteWorkflowInput{
+			WorkflowPlanInput: workspaceprocess.WorkflowPlanInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, CurrentTime: payload.CurrentTime},
+			Approved:          true, ApprovalReference: payload.ApprovalReference, CommandID: command.CommandID, MaxTasks: payload.MaxTasks,
+		}, executor.provider, executor.httpClient)
+	case "ceo_plan.apply":
+		var payload ceoApplyPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteCEOPlanApply(ctx, workspaceprocess.CEOPlanApplyInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, Plan: payload.Plan, CurrentTime: payload.CurrentTime, CommandID: command.CommandID}, true)
+	case "project.bootstrap":
+		var payload projectBootstrapPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteProjectBootstrap(ctx, workspaceprocess.ProjectBootstrapInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, Description: payload.Description, CurrentTime: payload.CurrentTime, CommandID: command.CommandID}, true)
+	case "task.create":
+		var payload taskCreatePayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteTaskCreation(ctx, workspaceprocess.TaskCreationInput{VaultRoot: executor.vaultRoot, ProjectName: payload.ProjectName, Title: payload.Title, AssigneeID: payload.AssigneeID, CurrentTime: payload.CurrentTime, CommandID: command.CommandID}, true)
+	case "project.dependencies.create":
+		var payload projectDependenciesPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteProjectDependencies(ctx, workspaceprocess.ProjectDependenciesInput{VaultRoot: executor.vaultRoot, ProjectName: payload.ProjectName, Rows: payload.Rows, CurrentTime: payload.CurrentTime, CommandID: command.CommandID}, true)
+	case "organization.employee_hire":
+		var payload employeeHirePayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteEmployeeHire(ctx, workspaceprocess.EmployeeHireInput{VaultRoot: executor.vaultRoot, Candidate: payload.Candidate, CurrentTime: payload.CurrentTime, CommandID: command.CommandID}, true)
+	case "organization.employee_rename":
+		var payload employeeRenamePayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteEmployeeRename(ctx, workspaceprocess.EmployeeRenameInput{VaultRoot: executor.vaultRoot, Request: payload.Request, CurrentTime: payload.CurrentTime, CommandID: command.CommandID}, true)
+	case "organization.employee_id_repair":
+		var payload employeeIDRepairPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteEmployeeIDRepairs(ctx, workspaceprocess.EmployeeIDRepairInput{VaultRoot: executor.vaultRoot, Expected: payload.Expected, CurrentTime: payload.CurrentTime, CommandID: command.CommandID}, true)
+	case "organization.sync":
+		var payload organizationSyncPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteOrganizationSync(ctx, workspaceprocess.OrganizationSyncInput{VaultRoot: executor.vaultRoot, CurrentTime: payload.CurrentTime, CommandID: command.CommandID}, true)
+	default:
+		return nil, ErrUnsupportedCommand
+	}
+}
+
+func (executor *ProcessExecutor) Inspect(ctx context.Context, scope, projectName, commandID string) (commandledger.Record, error) {
+	var store *vault.CommandLedgerStore
+	var err error
+	switch strings.TrimSpace(scope) {
+	case "workspace":
+		store, err = vault.NewWorkspaceCommandLedgerStore(executor.vaultRoot)
+	case "project":
+		store, err = vault.NewCommandLedgerStore(executor.vaultRoot, projectName)
+	default:
+		return commandledger.Record{}, ErrInvalidCommand
+	}
+	if err != nil {
+		return commandledger.Record{}, err
+	}
+	return store.Get(ctx, commandID)
+}
+
+var _ Executor = (*ProcessExecutor)(nil)
+var _ Inspector = (*ProcessExecutor)(nil)
+
+func marshalResult(result any) (json.RawMessage, error) {
+	if result == nil {
+		return json.RawMessage(`null`), nil
+	}
+	return json.Marshal(result)
+}

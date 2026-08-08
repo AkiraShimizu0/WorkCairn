@@ -1,3 +1,5 @@
+"""Frozen v0.1 ProjectManager compatibility implementation."""
+
 from datetime import datetime
 from pathlib import Path
 import os

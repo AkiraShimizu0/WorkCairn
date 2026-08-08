@@ -1,3 +1,5 @@
+"""Frozen v0.1 Organization compatibility implementation."""
+
 from pathlib import Path
 from collections import Counter
 from datetime import datetime

@@ -1,11 +1,13 @@
+"""Frozen v0.1 manager sample and public compatibility helpers."""
+
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from pathlib import Path
 import os
 from workspace_ai.utils.obsidian import get_vault_path
-from workspace_ai.recruiter import Recruiter
 from workspace_ai.identity_policy import IdentityPolicy
 from workspace_ai.organization import Organization
+from workspace_ai.workspace_run_gateway import WorkspaceRunRecruiterGateway
 from datetime import datetime
 import json
 import re
@@ -170,10 +172,11 @@ def update_manager_status(status: str, current_task: str) -> None:
 
     path.write_text(updated_content + "\n", encoding="utf-8")
 
-def recruit_required_employee():
+def recruit_required_employee(recruiter=None):
     """必要な社員を採用する"""
 
-    recruiter = Recruiter()
+    if recruiter is None:
+        recruiter = WorkspaceRunRecruiterGateway(vault_root=get_vault_path())
 
     path = recruiter.hire(
         employee_id="DEV-001",
@@ -185,10 +188,11 @@ def recruit_required_employee():
 
     return path
 
-def recruit_employees(employees: list[dict]):
+def recruit_employees(employees: list[dict], recruiter=None):
     """社員リストから採用する"""
 
-    recruiter = Recruiter()
+    if recruiter is None:
+        recruiter = WorkspaceRunRecruiterGateway(vault_root=get_vault_path())
 
     # 途中まで採用してから重複に気づくことを避ける。
     recruiter.validate_candidates(employees)

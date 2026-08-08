@@ -6,38 +6,66 @@ from unittest.mock import patch
 
 from workspace_ai.organization import Organization
 from workspace_ai.project_manager import ProjectManager
-from workspace_ai.reviewer import ReviewerWorker
-from workspace_ai.revision_task_service import RevisionTaskService
-from workspace_ai.task_executor import TaskExecutor
 from workspace_ai.workflow_engine import WorkflowEngine
 
 
-class TaskFakeRunner:
-    name = "TaskFakeRunner"
-
-    def __init__(self, *, fail=False):
+class ExecutionFakeGateway:
+    def __init__(self, project_manager, *, fail=False):
+        self.project_manager = project_manager
         self.fail = fail
         self.calls = 0
 
-    def run(self, **kwargs):
+    def execute(self, project_name, task_id, *, approved=False):
         self.calls += 1
+        if not approved:
+            raise PermissionError("approval required")
+        task = self.project_manager.get_task(project_name, task_id)
+        self.project_manager.update_task_status(project_name, task_id, "進行中")
         if self.fail:
+            self.project_manager.update_task_status(project_name, task_id, "保留")
             raise RuntimeError("task runner failed")
-        return "## 成果物\n\nFakeRunnerで作成しました。"
+        project_path = self.project_manager.get_project_path(project_name)
+        deliverables = project_path / "Deliverables"
+        deliverables.mkdir(exist_ok=True)
+        (deliverables / f"{task_id}.md").write_text(
+            "---\n"
+            "type: task-deliverable\n"
+            f"project: {project_name}\n"
+            f"task_id: {task_id}\n"
+            f"assignee_id: {task['assignee_id']}\n"
+            "runner: GoFakeRunner\n"
+            "executed_at: 2026-08-06 16:30:00\n"
+            "---\n\n"
+            f"# {task['title']}\n\n"
+            "## 成果物\n\nFake Go executionで作成しました。\n",
+            encoding="utf-8",
+        )
+        self.project_manager.update_task_status(project_name, task_id, "完了")
+        return {
+            "task_id": task_id,
+            "execution_status": "completed",
+            "execution_source": "go_workspace_run",
+        }
 
 
-class ReviewFakeRunner:
-    name = "ReviewFakeRunner"
-
+class ReviewFakeGateway:
     def __init__(self, verdict="Approve", *, invalid=False):
         self.verdict = verdict
         self.invalid = invalid
         self.calls = 0
 
-    def run(self, **kwargs):
+    def review(
+        self,
+        project_name,
+        task_id,
+        reviewer_employee_id,
+        *,
+        approved=False,
+        review_version=None,
+    ):
         self.calls += 1
         if self.invalid:
-            return "構造化されていないレビュー"
+            raise ValueError("構造化されていないレビュー")
         issues = []
         if self.verdict == "Request Changes":
             issues.append({
@@ -47,12 +75,41 @@ class ReviewFakeRunner:
                 "suggested_action": "要件の根拠を追記してください。",
             })
         result = {"verdict": self.verdict, "issues": issues}
-        return (
-            "## レビュー\n\nFakeRunnerで確認しました。\n\n"
-            "REVIEW_RESULT_JSON_START\n"
-            f"{json.dumps(result, ensure_ascii=False)}\n"
-            "REVIEW_RESULT_JSON_END"
+        return {
+            "status": "reviewed",
+            "decision": self.verdict,
+            "review_result": result,
+            "review_source": "go_workspace_run",
+        }
+
+
+class RevisionFakeGateway:
+    def __init__(self, project_manager):
+        self.project_manager = project_manager
+
+    def create_revision_task(
+        self,
+        project_name,
+        source_task_id,
+        *,
+        approved=False,
+        review_version=None,
+    ):
+        if not approved:
+            raise PermissionError("approval required")
+        source = self.project_manager.get_task(project_name, source_task_id)
+        task = self.project_manager.add_task(
+            project_name,
+            f"{source_task_id}のレビュー指摘を反映する",
+            source["assignee_id"],
         )
+        revisions = self.project_manager.get_project_path(project_name) / "Revisions"
+        revisions.mkdir(exist_ok=True)
+        (revisions / f"{task['id']}.revision.md").write_text(
+            f"source_task_id: {source_task_id}\n",
+            encoding="utf-8",
+        )
+        return {"status": "created", "task": task}
 
 
 class WorkflowEngineTest(unittest.TestCase):
@@ -102,9 +159,9 @@ class WorkflowEngineTest(unittest.TestCase):
         self.temporary_directory.cleanup()
 
     def test_approve_processes_only_one_task_and_returns_next(self):
-        task_runner = TaskFakeRunner()
-        review_runner = ReviewFakeRunner("Approve")
-        result = self._engine(task_runner, review_runner).start_project(
+        execution_gateway = ExecutionFakeGateway(self.manager)
+        review_runner = ReviewFakeGateway("Approve")
+        result = self._engine(execution_gateway, review_runner).start_project(
             "ToDoアプリ",
             "QA-001",
             approved=True,
@@ -114,16 +171,17 @@ class WorkflowEngineTest(unittest.TestCase):
         self.assertEqual(result["processed_task_id"], "TASK-001")
         self.assertEqual(result["review"]["decision"], "Approve")
         self.assertEqual(result["next_task_id"], "TASK-002")
-        self.assertEqual(task_runner.calls, 1)
+        self.assertEqual(execution_gateway.calls, 1)
+        self.assertEqual(result["execution"]["execution_source"], "go_workspace_run")
         self.assertEqual(review_runner.calls, 1)
         self.assertEqual(self.manager.get_task("ToDoアプリ", "TASK-001")["status"], "完了")
         self.assertEqual(self.manager.get_task("ToDoアプリ", "TASK-002")["status"], "未着手")
         self.assertEqual(len(self.manager.get_tasks("ToDoアプリ")), 2)
 
     def test_request_changes_creates_revision_task_for_source_assignee(self):
-        task_runner = TaskFakeRunner()
-        review_runner = ReviewFakeRunner("Request Changes")
-        result = self._engine(task_runner, review_runner).start_project(
+        execution_gateway = ExecutionFakeGateway(self.manager)
+        review_runner = ReviewFakeGateway("Request Changes")
+        result = self._engine(execution_gateway, review_runner).start_project(
             "ToDoアプリ",
             "QA-001",
             approved=True,
@@ -142,9 +200,9 @@ class WorkflowEngineTest(unittest.TestCase):
         )
 
     def test_task_failure_stops_and_preserves_component_state(self):
-        task_runner = TaskFakeRunner(fail=True)
-        review_runner = ReviewFakeRunner("Approve")
-        result = self._engine(task_runner, review_runner).start_project(
+        execution_gateway = ExecutionFakeGateway(self.manager, fail=True)
+        review_runner = ReviewFakeGateway("Approve")
+        result = self._engine(execution_gateway, review_runner).start_project(
             "ToDoアプリ",
             "QA-001",
             approved=True,
@@ -158,9 +216,9 @@ class WorkflowEngineTest(unittest.TestCase):
         self.assertFalse((self._project_path() / "Reviews").exists())
 
     def test_review_failure_stops_after_completed_task_without_revision(self):
-        task_runner = TaskFakeRunner()
-        review_runner = ReviewFakeRunner(invalid=True)
-        result = self._engine(task_runner, review_runner).start_project(
+        execution_gateway = ExecutionFakeGateway(self.manager)
+        review_runner = ReviewFakeGateway(invalid=True)
+        result = self._engine(execution_gateway, review_runner).start_project(
             "ToDoアプリ",
             "QA-001",
             approved=True,
@@ -173,35 +231,93 @@ class WorkflowEngineTest(unittest.TestCase):
         self.assertFalse((self._project_path() / "Revisions").exists())
 
     def test_requires_workflow_approval_without_changes(self):
-        task_runner = TaskFakeRunner()
-        review_runner = ReviewFakeRunner("Approve")
+        execution_gateway = ExecutionFakeGateway(self.manager)
+        review_runner = ReviewFakeGateway("Approve")
         tasks_before = (self._project_path() / "Tasks.md").read_bytes()
 
-        result = self._engine(task_runner, review_runner).start_project(
+        result = self._engine(execution_gateway, review_runner).start_project(
             "ToDoアプリ",
             "QA-001",
         )
 
         self.assertEqual(result["status"], "approval_required")
         self.assertEqual(result["processed_task_id"], "TASK-001")
-        self.assertEqual(task_runner.calls, 0)
+        self.assertEqual(execution_gateway.calls, 0)
         self.assertEqual(review_runner.calls, 0)
         self.assertEqual((self._project_path() / "Tasks.md").read_bytes(), tasks_before)
 
-    def _engine(self, task_runner, review_runner):
+    def test_legacy_task_executor_keyword_is_only_a_compatibility_alias(self):
+        gateway = ExecutionFakeGateway(self.manager)
+        engine = WorkflowEngine(
+            project_manager=self.manager,
+            task_executor=gateway,
+            reviewer_worker=object(),
+            revision_task_service=object(),
+        )
+
+        self.assertIs(engine.execution_gateway, gateway)
+        self.assertIs(engine.task_executor, gateway)
+
+    def test_legacy_reviewer_keyword_is_only_a_compatibility_alias(self):
+        gateway = ReviewFakeGateway()
+        engine = WorkflowEngine(
+            project_manager=self.manager,
+            execution_gateway=object(),
+            reviewer_worker=gateway,
+            revision_gateway=object(),
+        )
+
+        self.assertIs(engine.review_gateway, gateway)
+        self.assertIs(engine.reviewer_worker, gateway)
+
+    def test_legacy_revision_service_keyword_is_only_a_compatibility_alias(self):
+        gateway = RevisionFakeGateway(self.manager)
+        engine = WorkflowEngine(
+            project_manager=self.manager,
+            execution_gateway=object(),
+            reviewer_worker=object(),
+            revision_task_service=gateway,
+        )
+
+        self.assertIs(engine.revision_gateway, gateway)
+        self.assertIs(engine.revision_task_service, gateway)
+
+    def test_execution_gateway_and_legacy_alias_cannot_be_mixed(self):
+        with self.assertRaisesRegex(ValueError, "同時に指定"):
+            WorkflowEngine(
+                project_manager=self.manager,
+                execution_gateway=object(),
+                task_executor=object(),
+                reviewer_worker=object(),
+                revision_task_service=object(),
+            )
+
+    def test_revision_gateway_and_legacy_alias_cannot_be_mixed(self):
+        with self.assertRaisesRegex(ValueError, "同時に指定"):
+            WorkflowEngine(
+                project_manager=self.manager,
+                execution_gateway=object(),
+                reviewer_worker=object(),
+                revision_gateway=object(),
+                revision_task_service=object(),
+            )
+
+    def test_review_gateway_and_legacy_alias_cannot_be_mixed(self):
+        with self.assertRaisesRegex(ValueError, "同時に指定"):
+            WorkflowEngine(
+                project_manager=self.manager,
+                execution_gateway=object(),
+                review_gateway=object(),
+                reviewer_worker=object(),
+                revision_gateway=object(),
+            )
+
+    def _engine(self, execution_gateway, review_runner):
         return WorkflowEngine(
             project_manager=self.manager,
-            task_executor=TaskExecutor(
-                runner=task_runner,
-                project_manager=self.manager,
-                organization=self.organization,
-            ),
-            reviewer_worker=ReviewerWorker(
-                runner=review_runner,
-                project_manager=self.manager,
-                organization=self.organization,
-            ),
-            revision_task_service=RevisionTaskService(self.manager),
+            execution_gateway=execution_gateway,
+            review_gateway=review_runner,
+            revision_gateway=RevisionFakeGateway(self.manager),
         )
 
     def _project_path(self):

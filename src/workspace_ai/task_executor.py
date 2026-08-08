@@ -1,3 +1,5 @@
+"""Frozen v0.1 TaskExecutor compatibility implementation; use Go workspace-run."""
+
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -14,7 +16,7 @@ class TaskExecutionError(RuntimeError):
 
 
 class TaskExecutor:
-    """承認済みタスクを注入されたRunnerで1件だけ実行する"""
+    """Legacy/reference executor; normal product execution uses workspace-run."""
 
     def __init__(
         self,

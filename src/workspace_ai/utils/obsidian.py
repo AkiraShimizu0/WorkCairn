@@ -1,3 +1,5 @@
+"""Frozen v0.1 Obsidian path compatibility helpers."""
+
 from pathlib import Path
 import os
 

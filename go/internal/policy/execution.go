@@ -34,5 +34,5 @@ func (HoldOnFailurePolicy) EvaluateFailure(ctx context.Context, input FailureInp
 	if strings.TrimSpace(input.TaskID) == "" || strings.TrimSpace(input.FailureReason) == "" {
 		return FailureDecision{}, fmt.Errorf("%w: task and failure reason are required", ErrInvalidFailureInput)
 	}
-	return FailureDecision{Hold: true, Reason: "hold_after_worker_failure", Policy: "hold_on_failure"}, nil
+	return FailureDecision{Hold: true, Reason: "hold_after_execution_failure", Policy: "hold_on_failure"}, nil
 }

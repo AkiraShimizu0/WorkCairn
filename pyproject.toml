@@ -1,15 +1,15 @@
 [project]
 name = "workspace-ai"
 version = "0.1.0"
-description = "Add your description here"
+description = "Workspace OS v0.1 Python compatibility surface; product runtime is Go"
 readme = "README.md"
 authors = [
     { name = "AkiraShimizu", email = "cwvzzsyt2c@privaterelay.appleid.com" }
 ]
 requires-python = ">=3.9"
 dependencies = [
+    # Compatibility-only dependencies. The Go product runtime installs neither.
     "anthropic>=0.120.2",
-    "crewai>=0.5.0",
     "python-dotenv>=1.2.1",
 ]
 

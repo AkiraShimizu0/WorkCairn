@@ -56,7 +56,7 @@ print(audit["warnings"])
 
 ## 安全な改名
 
-EmployeeRenameServiceは次を一括検証してから改名します。
+通常経路では`WorkspaceRunEmployeeRenameGateway`がGo batch planで次を一括検証し、ADR-0015の単一renameを順次commitします。Python `EmployeeRenameService`は公開互換referenceです。
 
 - 社員IDが社員Markdownと全組織Identityで一意
 - 現在氏名が想定どおり
@@ -65,6 +65,6 @@ EmployeeRenameServiceは次を一括検証してから改名します。
 - Workspace StateのIDと氏名が一致
 - 更新するプロジェクト参照でIDと氏名の対応を確認可能
 
-実行時は全対象をバックアップし、一時ファイルで更新します。途中失敗時は全件を逆順で復元します。社員ID、自由文章、過去のDeliverables、Reviews、Audit Log、Progress、Decisions、Revisions、既存バックアップは変更しません。
+実行時は社員ごとにimmutable intentを先行保存します。途中失敗時は成立済みIdentityを逆順復元せず、完了済みrenameと失敗stageをpartial stateとして返します。社員ID、自由文章、過去のDeliverables、Reviews、Audit Log、Progress、Decisions、Revisions、既存バックアップは変更しません。
 
 改名履歴は`会社/Identity History.md`へ`employee_id`、`old_name`、`new_name`、`renamed_at`、`reason`とともに記録します。

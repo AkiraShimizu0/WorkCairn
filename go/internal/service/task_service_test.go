@@ -217,6 +217,25 @@ func TestTaskServiceEventFailureReportsCommittedTask(t *testing.T) {
 	}
 }
 
+func TestTaskServiceExpectedVersionRejectsStaleRecoveryMutation(t *testing.T) {
+	service, _ := activeTaskService(t)
+	created, err := service.Create(context.Background(), task.CreateInput{ID: "TASK-001", Title: "Task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := service.Start(context.Background(), created.ID)
+	if err != nil || started.Version != 2 {
+		t.Fatalf("started=%#v err=%v", started, err)
+	}
+	if _, err := service.CompleteExpected(context.Background(), created.ID, 1); !errors.Is(err, task.ErrVersionConflict) {
+		t.Fatalf("CompleteExpected stale error = %v", err)
+	}
+	stored, err := service.store.Get(context.Background(), created.ID)
+	if err != nil || stored.Status != task.StatusInProgress || stored.Version != 2 {
+		t.Fatalf("stored=%#v err=%v", stored, err)
+	}
+}
+
 func TestTaskServiceStoreFailureDoesNotPublish(t *testing.T) {
 	storeError := errors.New("store unavailable")
 	publisher := &recordingEventPublisher{}

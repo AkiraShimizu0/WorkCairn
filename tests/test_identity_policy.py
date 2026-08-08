@@ -1,9 +1,14 @@
+import json
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 from workspace_ai.identity_policy import IdentityPolicy
-from workspace_ai.manager import build_manager_prompt
+from workspace_ai.manager import (
+    build_manager_prompt,
+    recruit_employees,
+    recruit_required_employee,
+)
 from workspace_ai.recruiter import Recruiter
 
 
@@ -35,6 +40,44 @@ class IdentityPolicyTest(unittest.TestCase):
 
         self.assertFalse(result["allowed"])
         self.assertIn("exact_match", self._types(result["errors"]))
+
+    def test_policy_matches_shared_go_migration_fixture(self):
+        fixture_path = (
+            Path(__file__).resolve().parent.parent
+            / "fixtures"
+            / "organization"
+            / "identity_parity_v1.json"
+        )
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        employees = fixture["employees"]
+        typed_employees = [
+            {
+                **employee,
+                "identity_type": "employee",
+                "identity_source": "employee_markdown",
+            }
+            for employee in employees
+        ]
+        organization = FakeOrganization(
+            employees,
+            [
+                *fixture["workspace_managers"],
+                *fixture["reserved_identities"],
+            ],
+        )
+        organization.get_all_identities = lambda: [
+            *typed_employees,
+            *fixture["workspace_managers"],
+            *fixture["reserved_identities"],
+        ]
+        policy = IdentityPolicy(organization)
+
+        self.assertEqual(
+            policy.audit_all_identities(),
+            fixture["identity_audit"],
+        )
+        for expected in fixture["name_validations"]:
+            self.assertEqual(policy.validate_name(expected["name"]), expected)
 
     def test_same_given_name_is_warning_and_rejected(self):
         result = self.policy.validate_name("佐藤 美咲")
@@ -213,6 +256,44 @@ class IdentityPolicyTest(unittest.TestCase):
                 "id": "MGR-001",
                 "name": "佐藤 蓮",
             }])
+
+    def test_manager_batch_recruitment_uses_injected_go_gateway_contract(self):
+        recruiter = Mock()
+        recruiter.hire.side_effect = [Path("/tmp/one.md"), Path("/tmp/two.md")]
+        candidates = [
+            {"id": "PLAN-002", "name": "佐藤 蓮", "role": "Planner"},
+            {
+                "id": "DEV-002", "name": "高橋 陽菜", "department": "開発部",
+                "role": "Engineer", "model": "Claude Sonnet 5",
+            },
+        ]
+
+        paths = recruit_employees(candidates, recruiter=recruiter)
+
+        recruiter.validate_candidates.assert_called_once_with(candidates)
+        self.assertEqual(paths, [Path("/tmp/one.md"), Path("/tmp/two.md")])
+        self.assertEqual(recruiter.hire.call_args_list, [
+            call(
+                employee_id="PLAN-002", name="佐藤 蓮", department="未設定",
+                role="Planner", model="Claude Sonnet 5",
+            ),
+            call(
+                employee_id="DEV-002", name="高橋 陽菜", department="開発部",
+                role="Engineer", model="Claude Sonnet 5",
+            ),
+        ])
+
+    def test_manager_single_recruitment_uses_injected_go_gateway_contract(self):
+        recruiter = Mock()
+        recruiter.hire.return_value = Path("/tmp/employee.md")
+
+        path = recruit_required_employee(recruiter=recruiter)
+
+        self.assertEqual(path, Path("/tmp/employee.md"))
+        recruiter.hire.assert_called_once_with(
+            employee_id="DEV-001", name="高橋 拓海", department="開発部",
+            role="Backend Engineer", model="Claude Sonnet 5",
+        )
 
     @staticmethod
     def _types(issues):

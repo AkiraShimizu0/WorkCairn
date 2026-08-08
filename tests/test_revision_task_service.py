@@ -205,6 +205,32 @@ class RevisionTaskServiceTest(unittest.TestCase):
             "TASK-002.revision.md",
         )
 
+    def test_python_legacy_duplicate_reader_recognizes_go_intent_metadata(self):
+        revisions = self.project / "Revisions"
+        revisions.mkdir()
+        go_intent = revisions / "TASK-002.revision.md"
+        go_intent.write_text(
+            "---\n"
+            "type: revision-task\n"
+            "metadata_version: 1\n"
+            "project: ToDoアプリ\n"
+            "source_task_id: TASK-001\n"
+            "source_review: Reviews/TASK-001.review.md\n"
+            "source_review_path: Reviews/TASK-001.review.md\n"
+            "source_review_canonical: Reviews/TASK-001.review.json\n"
+            "revision_task_id: TASK-002\n"
+            "state: intent_committed\n"
+            "---\n",
+            encoding="utf-8",
+        )
+
+        found = RevisionTaskService._find_revision_for_source(
+            revisions,
+            "Reviews/TASK-001.review.md",
+        )
+
+        self.assertEqual(found, go_intent)
+
     def _write_result(self, verdict, issues):
         self.structured_path.write_text(
             json.dumps(

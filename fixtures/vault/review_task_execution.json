@@ -1,0 +1,11 @@
+{
+  "verdict": "Request Changes",
+  "issues": [
+    {
+      "category": "requirements",
+      "severity": "medium",
+      "description": "要件の説明が不足しています。",
+      "suggested_action": "要件の根拠を追記してください。"
+    }
+  ]
+}

@@ -4,16 +4,32 @@
 
 ## Mission
 
-Workspace OSは、会社のProject、Task、AI社員、Workflow、Eventを管理するWorkspace Kernelを構築するプロジェクトです。最終形はGoのみで動作し、Pythonは移行期間中のlegacy/reference、Adapter、LLM連携としてのみ維持します。
+Workspace OSは、会社のProject、Task、AI社員、Workflow、Eventを管理するWorkspace Kernelを構築するプロジェクトです。製品RuntimeはGo Onlyです。Pythonは公開v0.1利用者向けcompatibility／legacy／referenceとしてのみ維持します。
 
 ## Current State
 
-- リリース済みのPython v0.1.0は、Obsidian Vault、AI社員、Project、Task実行、Review、Revisionを扱います。
-- Go Core v0.3系は、Workspace Kernelを中心にProject、Workflow readiness、Event、Task lifecycle、Worker/Runner境界、Approval/Execution Policyを実装済みです。
+- `workspace-run`は通常運用、CEO plan、Project／Task、Organization／Identity、Task execution、Review、Revision、Deliverable／AuditをPython interpreterなしで提供します。
+- ADR-0020に基づく`recovery-inspect|plan|apply`は、Task／artifact／Audit／temporary stateをread-only診断し、証拠SHA-256とTask Versionに拘束された2つの明示Task recoveryだけを提供します。Event replayやartifact adoptionはしません。
+- ADR-0021のCommand Ledger foundationは、明示Command ID付き通常Task／Review／Revision、CEO apply、Project／Task writer、Organization writer、Sequential Workflow executionで副作用前claim、request digest、terminal outcomeを永続化し、同一requestを副作用なしでreplayします。Project作成前／Organization commandはworkspace scope、既存Project内commandはproject scopeを使い、running recordはRecoveryで診断し自動resumeしません。
+- ADR-0022の`workspace-daemon`はloopback既定の`workspace-command.v1`を提供し、HTTPではCommand IDを必須化します。CLIと同じGo process／Serviceを直接利用し、graceful shutdownとread-only Ledger statusを持ちます。remote公開、認証／TLS、非同期queueは未実装です。
+- ADR-0023の順次Multi-task Workflowは各Task後にdependency readinessを再planし、outer workflow claimと決定的child Task Command IDを使って既存Task executionを最大100件まで実行します。自動resume、並列実行、Review／Revision分岐は未実装です。
+- Workspace Kernel、Project／Workflow／Task／Event／Worker／Policy Domain、PromptBuilder、Claude Adapter、Vault Adapter、Runtime compositionはGoです。temporary VaultとMock ProviderでEnd-to-End検証します。
+- Python TaskExecutor／Worker／ModelRouter／ClaudeRunner／ReviewerWorker／RevisionTaskService／ProjectManager／Organization writerは全て通常製品経路から外れ、公開互換referenceだけに残ります。
+- WorkflowEngineのRevision呼出しは`WorkspaceRunRevisionGateway`からGo `workspace-run revision-*`へ切替済みです。ADR-0012のimmutable intent、TaskService.Create、`revision.created`、Auditをtemporary VaultでEnd-to-End検証済みです。Python RevisionTaskServiceは公開互換legacyだけに残ります。
+- Go Review PromptBuilder、構造化結果parser、ReviewService、ADR-0010 Vault Review Store、`workspace-run review-*`は実装済みです。WorkflowEngineは`review_gateway`へ切替済みで、Python ReviewerWorkerは公開互換referenceだけに残ります。
+- ADR-0011 Review orchestrationがcanonical JSON commit後だけ`review.completed`を発行し、Vault Audit subscriberが保存します。projection／Event失敗はartifactを保持したpartial failureです。
+- Organization／Identity inventory、構造検証、氏名policy、採用、改名、ID repair、Workspace State同期はGo Domain／Vault Adapterへ移行済みです。
+- ADR-0013に基づくProject directory単位bootstrapと、TaskService／Task Event／Auditを通る通常Task作成を`workspace-run project-bootstrap-*|task-create-*`で利用できます。
+- ADR-0014に基づく単一Employee採用はEmployee Markdownをcanonical commit後、Workspace Stateをprojectionし、partial failureを保持します。`workspace-run employee-hire-*|organization-sync-*`とPython互換gatewayを利用できます。batch候補はGoで全件検査後、Manager callerが同gatewayから1社員ずつGoへ採用を委譲し、Python Recruiter writerへfallbackしません。
+- ADR-0015/0017に基づくEmployee renameはbatch全件をread-only preflight後、単一renameのimmutable intent、filename Identity commit、検証済みprojectionを順次実行します。historical recordと自由文章を変更せず、partial failureを明示し、Python writerへfallbackしません。
+- ADR-0016に基づく重複Employee ID repairは確認済みplanの再検証、immutable intent、Employee Markdown canonical commit、明確に特定できるprojectionの順でGo化済みです。Task assigneeや自由文章は推測更新せず、Python Organization writerへfallbackしません。
+- ADR-0018/0019に基づき、CEOの自然言語依頼はGoのProvider-neutral CEO Plan Service、既存Claude Runner Adapter、strict typed validationを通り、別承認のapplyでProject、TaskService.Create、immutable Task Dependencies projectionへ渡ります。Python gatewayは公開互換だけを担い、Python Provider／writerへfallbackしません。
 - Kernelの標準ライフサイクル順は`Event → Task → Worker → Execution`、停止時は逆順です。
 - PythonとGoの移行境界はJSON Contract v1です。対応operationは`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`です。
 - 共有fixtureは`fixtures/go_core/`、`fixtures/project/`、`fixtures/workflow/`にあります。
-- 現在の詳細と次の移行対象は`docs/Architecture.md`と`docs/ROADMAP.md`を正とします。
+- 現在の全体像は`docs/SystemOverview.md`、詳細は`docs/Architecture.md`、次期優先順位は`docs/ROADMAP.md`を正とします。
+- Python製品caller、legacy公開API、依存、共有fixture、package削除条件は`docs/PythonRuntimeInventory.md`に固定しています。未使用CrewAI依存は削除済みです。
+- Python packageはv0.1 compatibility distributionとしてmanifest化し、既存import／CLIを維持したままlegacy implementationを凍結しています。`make go-only-release-gate`はPythonなしの製品Gate、`make v1-release-gate`はPython compatibilityまで含む候補Release Gateです。
 
 ## Architecture at a Glance
 
@@ -33,24 +49,25 @@ Go CoreはObsidian、Python runtime、CrewAI、LLM SDK、`.env`、APIキーへ�
 
 ## Repository Map
 
-- `go/internal/*`: Go Domain、Service、Kernel、Adapter境界。新しい中核ルールの実装先
+- `go/internal/*`: Go Domain、Service、Kernel、Adapter境界、通常Task PromptBuilder、Claude Runner Adapter、Vault Context／TaskStore／Deliverable／Audit Adapter、Go Runtime composition。新しい中核ルールの実装先
 - `go/cmd/workspace-core`: JSON Contract v1を公開するCLI
-- `src/workspace_ai/*`: 移行期間中のPython legacy/reference、Vault Adapter、Prompt、Provider Runner
+- `go/cmd/workspace-run`: Organization参照、CEO plan生成／適用、Project／Task作成、Task metadata migration、通常Task／Review／Revision、明示Recoveryを提供するGo運用CLI
+- `go/cmd/workspace-daemon`: 必須Command IDの同期HTTP v1とgraceful shutdownを提供するloopback Go daemon
+- `go/internal/httpapi`: HTTP contract／handlerと、既存Go process compositionへのAdapter
+- `docs/Recovery.md`: partial state inventory、診断certainty、安全な明示Recovery操作
+- `src/workspace_ai/*`: 公開v0.1 compatibilityのGo process gateway、凍結Python legacy/reference
 - `tests/`: Python互換性・Adapterテスト
 - `fixtures/`: Python／Go共有契約データ
 - `docs/adr/`: Acceptedな設計判断
 - `docs/CONSTITUTION.md`: 変更時に守る不変条件
-- `docs/ROADMAP.md`: 移行状況と次の優先順位
+- `docs/SystemOverview.md`: 現在の利用フローと保証
+- `docs/ROADMAP.md`: v1.0安定化とGo Only後の優先順位
 
 ## Standard Validation
 
 ```bash
-make go-build
-cd go && go test ./...
-cd go && go test -race ./...
-cd go && go vet ./...
-PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests
-PYTHONPYCACHEPREFIX=/tmp/workspace-os-pycache .venv/bin/python -m compileall -q src tests
+make go-only-release-gate
+make v1-release-gate
 ```
 
 ドキュメントだけの変更では、リンク、差分、機密ファイル非変更を確認し、必要性に応じてテスト範囲を調整します。

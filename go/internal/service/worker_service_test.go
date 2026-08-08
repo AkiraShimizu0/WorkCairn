@@ -2,15 +2,24 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	promptbuilder "github.com/AkiraShimizu0/workspace-os/go/internal/prompt"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/runner"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
 )
+
+type workerPromptFixture struct {
+	Input    worker.PromptInput `json:"input"`
+	Expected worker.Prompt      `json:"expected"`
+}
 
 type fakePromptBuilder struct {
 	prompt worker.Prompt
@@ -107,6 +116,51 @@ func TestWorkerServiceExecutesWithSelectedRunner(t *testing.T) {
 	}
 	if fake.calls != 1 || fake.request.SystemPrompt != "system" || fake.request.UserPrompt != "user" || fake.request.Model != "Fake Model" {
 		t.Fatalf("Runner request = %#v", fake.request)
+	}
+}
+
+func TestWorkerServicePassesConcreteBuilderGoldenPromptToRunner(t *testing.T) {
+	fixturePath := filepath.Join("..", "..", "..", "fixtures", "prompt", "task_execution.json")
+	content, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatalf("read prompt fixture: %v", err)
+	}
+	var fixture workerPromptFixture
+	if err := json.Unmarshal(content, &fixture); err != nil {
+		t.Fatalf("decode prompt fixture: %v", err)
+	}
+
+	fake := &fakeWorkerRunner{
+		name: "FakeRunner",
+		result: worker.RunResult{
+			Content: "# deliverable", Runner: "FakeRunner", Model: fixture.Input.Employee.Model,
+		},
+	}
+	registry := runner.NewRegistry()
+	if err := registry.Register(fake); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.MapModel(fixture.Input.Employee.Model, fake.Name()); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewWorkerService(promptbuilder.NewBuilder(), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Activate(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = service.Execute(context.Background(), worker.ExecutionRequest{
+		Employee:    fixture.Input.Employee,
+		Task:        fixture.Input.Task,
+		CurrentTime: fixture.Input.CurrentTime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.request.SystemPrompt != fixture.Expected.System || fake.request.UserPrompt != fixture.Expected.User {
+		t.Fatalf("Runner prompt = %#v, want %#v", fake.request, fixture.Expected)
 	}
 }
 

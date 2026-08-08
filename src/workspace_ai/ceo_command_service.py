@@ -1,3 +1,5 @@
+"""Frozen v0.1 CEO API; normal planning and apply dispatch to Go gateways."""
+
 import json
 from datetime import datetime
 import os
@@ -20,6 +22,7 @@ class CEOCommandService:
         organization=None,
         project_manager=None,
         workflow_engine=None,
+        apply_gateway=None,
     ):
         if not callable(getattr(planner, "run", None)):
             raise ValueError("plannerにはrunメソッドが必要です。")
@@ -29,10 +32,18 @@ class CEOCommandService:
         self.project_manager = project_manager or ProjectManager(self.organization)
         # apply()実装時に既存WorkflowEngineを再利用するための拡張点。
         self.workflow_engine = workflow_engine
+        if apply_gateway is not None and not callable(getattr(apply_gateway, "apply", None)):
+            raise ValueError("apply_gatewayにはapplyメソッドが必要です。")
+        self.apply_gateway = apply_gateway
 
     def plan(self, request):
         """Vaultを変更せず、CEO依頼から検証済み計画を返す。"""
         request = self._required_text(request, "CEO依頼")
+        if getattr(self.planner, "go_validated_plans", False) is True:
+            # Goがstructured Organization inventoryからcanonical Promptを構築する。
+            # 空のsystem_promptは公開Python planner protocolの互換引数に限る。
+            return self.planner.run(system_prompt="", user_prompt=request)
+
         employees = self.organization.get_all_employees()
         employees_by_id = self._employees_by_id(employees)
 
@@ -100,6 +111,9 @@ class CEOCommandService:
         if not approved:
             raise PermissionError("Planの適用にはapproved=Trueが必要です。")
 
+        if self.apply_gateway is not None:
+            return self.apply_gateway.apply(plan, approved=True)
+
         validated = self._validate_apply_plan(plan)
         project_name = validated["project_name"]
         self._ensure_project_absent(project_name)
@@ -121,14 +135,16 @@ class CEOCommandService:
 
         created_project = {}
         dependency_path = None
+        created_tasks = []
+        go_managed_apply = (
+            getattr(self.project_manager, "go_managed_writes", False) is True
+        )
         try:
             created_project = self.project_manager.create_project(
                 project_name,
                 self._project_description(validated),
             )
             proposed_to_task_id_map = {}
-            created_tasks = []
-
             for proposed_task in validated["proposed_tasks"]:
                 created = self.project_manager.add_task(
                     project_name,
@@ -153,12 +169,35 @@ class CEOCommandService:
 
             project_dir = next(iter(created_project.values())).parent
             dependency_path = project_dir / self.DEPENDENCY_METADATA_FILENAME
-            self._write_dependency_metadata(
-                dependency_path,
-                project_name,
-                created_tasks,
-            )
-        except Exception:
+            create_dependencies = getattr(self.project_manager, "create_task_dependencies", None)
+            if go_managed_apply and callable(create_dependencies):
+                dependency_path = create_dependencies(
+                    project_name,
+                    [{
+                        "task_id": task["id"],
+                        "proposal_id": task["proposal_id"],
+                        "depends_on": task["dependency_ids"],
+                        "rationale": task["rationale"],
+                    } for task in created_tasks],
+                )
+            else:
+                # 公開Python API互換のlegacy ProjectManagerだけが使用する。
+                self._write_dependency_metadata(
+                    dependency_path,
+                    project_name,
+                    created_tasks,
+                )
+        except Exception as apply_error:
+            if go_managed_apply:
+                partial_state = dict(getattr(apply_error, "partial_state", {}))
+                partial_state.setdefault("project_committed", bool(created_project))
+                partial_state.setdefault("task_commit_count", len(created_tasks))
+                partial_state.setdefault(
+                    "dependencies_committed",
+                    bool(partial_state.get("canonical_committed", False)),
+                )
+                apply_error.partial_state = partial_state
+                raise
             self._rollback_project(
                 project_name,
                 created_project,

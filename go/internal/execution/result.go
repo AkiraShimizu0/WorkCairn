@@ -3,6 +3,7 @@ package execution
 import (
 	"time"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/deliverable"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/policy"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
@@ -32,6 +33,7 @@ type Result struct {
 	Readiness       workflow.ReadinessResult `json:"readiness"`
 	Status          Status                   `json:"execution_status"`
 	WorkerResult    *worker.ExecutionResult  `json:"worker_result,omitempty"`
+	Deliverable     *deliverable.Record      `json:"deliverable,omitempty"`
 	FinalTaskStatus task.Status              `json:"final_task_status,omitempty"`
 	Runner          string                   `json:"runner,omitempty"`
 	Model           string                   `json:"model,omitempty"`

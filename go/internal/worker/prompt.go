@@ -22,8 +22,8 @@ type Prompt struct {
 	User   string `json:"user"`
 }
 
-// PromptBuilder is a port. Prompt content remains outside WorkerService and
-// can later move from the Python implementation into a Go Adapter.
+// PromptBuilder is a port. Prompt content remains outside WorkerService and is
+// supplied by an injected provider-neutral implementation.
 type PromptBuilder interface {
 	Build(ctx context.Context, input PromptInput) (Prompt, error)
 }

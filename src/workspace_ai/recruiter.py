@@ -1,3 +1,5 @@
+"""Frozen v0.1 Recruiter compatibility implementation."""
+
 from workspace_ai.employee import Employee
 from workspace_ai.identity_policy import IdentityPolicy
 from workspace_ai.organization import Organization

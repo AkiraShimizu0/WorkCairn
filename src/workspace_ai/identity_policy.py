@@ -1,3 +1,5 @@
+"""Frozen v0.1 IdentityPolicy reference used by Go parity fixtures."""
+
 from collections import defaultdict
 from difflib import SequenceMatcher
 import re

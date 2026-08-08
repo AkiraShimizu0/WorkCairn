@@ -8,12 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/deliverablestore"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/runner"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/taskstore"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
 )
 
@@ -133,5 +135,44 @@ func TestKernelBootstrapAcceptsFakeWorkerRuntime(t *testing.T) {
 	}
 	if err := workspaceKernel.Stop(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestKernelBootstrapUsesInjectedTaskStore(t *testing.T) {
+	registry := runner.NewRegistry()
+	if err := registry.Register(bootstrapRunner{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.MapModel("Fake Model", "FakeRunner"); err != nil {
+		t.Fatal(err)
+	}
+	store := taskstore.NewInMemory()
+	assigneeID := "PLAN-001"
+	stored, err := task.New(task.CreateInput{ID: "TASK-001", Title: "既存Task", AssigneeID: &assigneeID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+	workspaceKernel, err := NewKernelWithDependencies(DefaultKernelVersion, KernelDependencies{
+		WorkerRuntime: WorkerRuntime{PromptBuilder: bootstrapPromptBuilder{}, Runners: registry},
+		TaskStore:     store,
+		Deliverables:  deliverablestore.NewInMemory(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := workspaceKernel.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer workspaceKernel.Stop()
+	tasks, err := workspaceKernel.TaskService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := tasks.Get(context.Background(), stored.ID)
+	if err != nil || !reflect.DeepEqual(loaded, stored) {
+		t.Fatalf("TaskService.Get() = %#v, %v", loaded, err)
 	}
 }

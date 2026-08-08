@@ -44,6 +44,52 @@ class FakePlanningRunner:
         return self.response
 
 
+class FakeGoValidatedPlanner(FakePlanningRunner):
+    go_validated_plans = True
+
+
+class FakeGoManagedProjectGateway:
+    go_managed_writes = True
+
+    def __init__(self, vault, *, fail_dependencies=False):
+        self.vault = vault
+        self.fail_dependencies = fail_dependencies
+        self.tasks = []
+        self.dependency_rows = None
+
+    def get_project_path(self, project_name):
+        path = self.vault / "プロジェクト" / project_name
+        if not path.is_dir():
+            raise FileNotFoundError(project_name)
+        return path
+
+    def create_project(self, project_name, description):
+        path = self.vault / "プロジェクト" / project_name
+        path.mkdir(parents=True)
+        result = {}
+        for filename in ProjectManager.MANAGED_FILES:
+            target = path / filename
+            target.write_text(description, encoding="utf-8")
+            result[filename] = target
+        return result
+
+    def add_task(self, project_name, title, assignee_id=None):
+        task = {
+            "id": f"TASK-{len(self.tasks) + 1:03d}", "title": title,
+            "assignee_id": assignee_id, "status": "未着手", "version": 1,
+        }
+        self.tasks.append(task)
+        return dict(task)
+
+    def create_task_dependencies(self, project_name, rows):
+        if self.fail_dependencies:
+            raise RuntimeError("dependency projection failed")
+        self.dependency_rows = list(rows)
+        path = self.get_project_path(project_name) / "Task Dependencies.md"
+        path.write_text("go projection", encoding="utf-8")
+        return path
+
+
 def base_plan():
     return {
         "project_name": "家計簿Webアプリ",
@@ -169,6 +215,29 @@ class CEOCommandServiceTest(unittest.TestCase):
             self.project_manager.assert_not_called()
             self.workflow_engine.assert_not_called()
 
+    def test_plan_generation_matches_shared_migration_fixture(self):
+        fixture_path = (
+            Path(__file__).resolve().parents[1]
+            / "fixtures" / "ceo" / "plan_generation_v1.json"
+        )
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        organization = StubOrganization()
+        organization.employees = fixture["employees"]
+        service = CEOCommandService(
+            planner=FakePlanningRunner(fixture["runner_output"]),
+            organization=organization,
+            project_manager=self.project_manager,
+            workflow_engine=self.workflow_engine,
+        )
+
+        plan = service.plan(fixture["request"])
+
+        self.assertEqual(
+            service._build_system_prompt(fixture["employees"]),
+            fixture["system_prompt"],
+        )
+        self.assertEqual(plan, fixture["expected_plan"])
+
     def test_apply_without_approval_is_rejected(self):
         service, _ = self.service(base_plan())
 
@@ -177,6 +246,31 @@ class CEOCommandServiceTest(unittest.TestCase):
 
         self.project_manager.assert_not_called()
         self.workflow_engine.assert_not_called()
+
+    def test_go_validated_plan_and_apply_gateway_bypass_legacy_rules(self):
+        validated = applicable_plan()
+        apply_gateway = Mock()
+        apply_gateway.apply.return_value = {
+            "status": "applied", "apply_source": "go_workspace_run"
+        }
+        legacy_organization = Mock()
+        service = CEOCommandService(
+            planner=FakeGoValidatedPlanner(validated),
+            organization=legacy_organization,
+            project_manager=self.project_manager,
+            workflow_engine=self.workflow_engine,
+            apply_gateway=apply_gateway,
+        )
+
+        plan = service.plan("Goで計画する")
+        result = service.apply(plan, approved=True)
+
+        self.assertIs(plan, validated)
+        self.assertEqual(service.planner.calls[0]["system_prompt"], "")
+        legacy_organization.get_all_employees.assert_not_called()
+        apply_gateway.apply.assert_called_once_with(validated, approved=True)
+        self.assertEqual(result["apply_source"], "go_workspace_run")
+        self.project_manager.assert_not_called()
 
 
 class CEOCommandServiceApplyTest(unittest.TestCase):
@@ -362,6 +456,36 @@ class CEOCommandServiceApplyTest(unittest.TestCase):
                 self.service.apply(applicable_plan(), approved=True)
 
         self.assertFalse(self._project_dir().exists())
+
+    def test_go_managed_apply_uses_dependency_adapter_without_python_writer(self):
+        gateway = FakeGoManagedProjectGateway(self.vault)
+        service = CEOCommandService(
+            planner=self.runner, organization=self.organization,
+            project_manager=gateway, workflow_engine=self.workflow_engine,
+        )
+
+        result = service.apply(applicable_plan(), approved=True)
+
+        self.assertEqual(len(gateway.dependency_rows), 2)
+        self.assertEqual(gateway.dependency_rows[1]["depends_on"], ["TASK-001"])
+        self.assertEqual(len(result["created_tasks"]), 2)
+
+    def test_go_managed_apply_keeps_committed_project_on_dependency_failure(self):
+        gateway = FakeGoManagedProjectGateway(self.vault, fail_dependencies=True)
+        service = CEOCommandService(
+            planner=self.runner, organization=self.organization,
+            project_manager=gateway, workflow_engine=self.workflow_engine,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "dependency projection") as raised:
+            service.apply(applicable_plan(), approved=True)
+
+        self.assertTrue(self._project_dir().is_dir())
+        self.assertEqual(raised.exception.partial_state, {
+            "project_committed": True,
+            "task_commit_count": 2,
+            "dependencies_committed": False,
+        })
 
     def _project_dir(self):
         return self.vault / "プロジェクト" / "家計簿Webアプリ"

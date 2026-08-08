@@ -1,3 +1,5 @@
+"""Frozen v0.1 workflow compatibility API over the Go JSON v1 core."""
+
 import re
 
 from workspace_ai.go_core_client import GoCoreClient

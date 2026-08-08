@@ -31,6 +31,7 @@ const (
 	WorkerErrorTimeout             WorkerErrorKind = "TIMEOUT"
 	WorkerErrorCanceled            WorkerErrorKind = "CANCELED"
 	WorkerErrorInvalidRunnerResult WorkerErrorKind = "INVALID_RUNNER_RESULT"
+	WorkerErrorInvalidReviewResult WorkerErrorKind = "INVALID_REVIEW_RESULT"
 )
 
 // WorkerExecutionError exposes a stable error kind while retaining the cause

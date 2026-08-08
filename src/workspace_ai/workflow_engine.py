@@ -1,27 +1,64 @@
+"""Published v0.1 compatibility orchestration over explicit Go gateways."""
+
 class WorkflowEngine:
-    """Workspace Manager向けに1タスク分の業務フローを調整する"""
+    """Go Task execution／Review／Revisionをgateway経由で1件分調整する。"""
 
     def __init__(
         self,
         *,
         project_manager,
-        task_executor,
-        reviewer_worker,
-        revision_task_service,
+        review_gateway=None,
+        reviewer_worker=None,
+        execution_gateway=None,
+        task_executor=None,
+        revision_gateway=None,
+        revision_task_service=None,
     ):
+        if execution_gateway is not None and task_executor is not None:
+            raise ValueError(
+                "execution_gatewayとlegacy task_executorは同時に指定できません。"
+            )
+        selected_gateway = (
+            execution_gateway if execution_gateway is not None else task_executor
+        )
+        if revision_gateway is not None and revision_task_service is not None:
+            raise ValueError(
+                "revision_gatewayとlegacy revision_task_serviceは同時に指定できません。"
+            )
+        selected_revision_gateway = (
+            revision_gateway
+            if revision_gateway is not None
+            else revision_task_service
+        )
+        if review_gateway is not None and reviewer_worker is not None:
+            raise ValueError(
+                "review_gatewayとlegacy reviewer_workerは同時に指定できません。"
+            )
+        selected_review_gateway = (
+            review_gateway if review_gateway is not None else reviewer_worker
+        )
         dependencies = {
             "project_manager": project_manager,
-            "task_executor": task_executor,
-            "reviewer_worker": reviewer_worker,
-            "revision_task_service": revision_task_service,
+            "execution_gateway": selected_gateway,
+            "review_gateway": selected_review_gateway,
+            "revision_gateway": selected_revision_gateway,
         }
         missing = [name for name, value in dependencies.items() if value is None]
         if missing:
             raise ValueError(f"WorkflowEngineの依存が不足しています: {', '.join(missing)}")
         self.project_manager = project_manager
-        self.task_executor = task_executor
-        self.reviewer_worker = reviewer_worker
-        self.revision_task_service = revision_task_service
+        self.execution_gateway = selected_gateway
+        # Published attribute retained for callers inspecting the injected
+        # dependency. start_project() no longer dispatches through this alias.
+        self.task_executor = selected_gateway
+        self.review_gateway = selected_review_gateway
+        # Published attribute retained as an explicit legacy compatibility
+        # alias. Normal product Review dispatches through review_gateway.
+        self.reviewer_worker = selected_review_gateway
+        self.revision_gateway = selected_revision_gateway
+        # Published attribute retained as an explicit legacy compatibility
+        # alias. Normal managed Tasks.md dispatch uses revision_gateway.
+        self.revision_task_service = selected_revision_gateway
 
     def start_project(
         self,
@@ -52,7 +89,7 @@ class WorkflowEngine:
             return {"status": "approval_required", **plan}
 
         try:
-            execution = self.task_executor.execute(
+            execution = self.execution_gateway.execute(
                 project_name,
                 task["id"],
                 approved=True,
@@ -61,7 +98,7 @@ class WorkflowEngine:
             return self._stopped_result(plan, "task_execution", error)
 
         try:
-            review = self.reviewer_worker.review(
+            review = self.review_gateway.review(
                 project_name,
                 task["id"],
                 reviewer_employee_id,
@@ -78,7 +115,7 @@ class WorkflowEngine:
 
         if review["decision"] == "Request Changes":
             try:
-                revision = self.revision_task_service.create_revision_task(
+                revision = self.revision_gateway.create_revision_task(
                     project_name,
                     task["id"],
                     approved=True,

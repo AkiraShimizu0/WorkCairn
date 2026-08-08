@@ -5,10 +5,13 @@ import (
 	"context"
 	"errors"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/deliverable"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/deliverablestore"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/policy"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/runner"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/taskstore"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
 )
@@ -24,19 +27,41 @@ type WorkerRuntime struct {
 	Runners       runner.Resolver
 }
 
+// KernelDependencies contains replaceable Adapter ports needed by the
+// composition root. Provider and storage configuration stay outside Kernel.
+type KernelDependencies struct {
+	WorkerRuntime WorkerRuntime
+	TaskStore     task.Store
+	Deliverables  deliverable.Store
+}
+
 // NewDefaultKernel registers production services without starting the Kernel.
 // Worker execution is safely unavailable until Runtime dependencies are
 // supplied through NewKernelWithWorkerRuntime.
 func NewDefaultKernel(version string) (*kernel.Kernel, error) {
-	return NewKernelWithWorkerRuntime(version, WorkerRuntime{
-		PromptBuilder: unconfiguredPromptBuilder{},
-		Runners:       runner.NewRegistry(),
+	return NewKernelWithDependencies(version, KernelDependencies{
+		WorkerRuntime: WorkerRuntime{
+			PromptBuilder: unconfiguredPromptBuilder{},
+			Runners:       runner.NewRegistry(),
+		},
+		TaskStore:    taskstore.NewInMemory(),
+		Deliverables: deliverablestore.NewInMemory(),
 	})
 }
 
 // NewKernelWithWorkerRuntime is the composition root used by tests today and
 // by a future CLI/API Runtime when provider Adapters are available.
 func NewKernelWithWorkerRuntime(version string, runtime WorkerRuntime) (*kernel.Kernel, error) {
+	return NewKernelWithDependencies(version, KernelDependencies{
+		WorkerRuntime: runtime,
+		TaskStore:     taskstore.NewInMemory(),
+		Deliverables:  deliverablestore.NewInMemory(),
+	})
+}
+
+// NewKernelWithDependencies is the Runtime composition point for replaceable
+// Worker and TaskStore Adapters. It does not read files, environment, or keys.
+func NewKernelWithDependencies(version string, dependencies KernelDependencies) (*kernel.Kernel, error) {
 	workspaceKernel, err := kernel.New(version)
 	if err != nil {
 		return nil, err
@@ -52,14 +77,17 @@ func NewKernelWithWorkerRuntime(version string, runtime WorkerRuntime) (*kernel.
 	if err := workspaceKernel.RegisterEventService(eventService); err != nil {
 		return nil, err
 	}
-	taskService, err := service.NewTaskService(taskstore.NewInMemory(), eventService)
+	taskService, err := service.NewTaskService(dependencies.TaskStore, eventService)
 	if err != nil {
 		return nil, err
 	}
 	if err := workspaceKernel.RegisterTaskService(taskService); err != nil {
 		return nil, err
 	}
-	workerService, err := service.NewWorkerService(runtime.PromptBuilder, runtime.Runners)
+	workerService, err := service.NewWorkerService(
+		dependencies.WorkerRuntime.PromptBuilder,
+		dependencies.WorkerRuntime.Runners,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -70,6 +98,7 @@ func NewKernelWithWorkerRuntime(version string, runtime WorkerRuntime) (*kernel.
 		workflowService,
 		taskService,
 		workerService,
+		dependencies.Deliverables,
 		policy.ExplicitApprovalPolicy{},
 		policy.HoldOnFailurePolicy{},
 	)

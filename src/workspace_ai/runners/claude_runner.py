@@ -1,3 +1,5 @@
+"""Frozen v0.1 Python ClaudeRunner compatibility implementation."""
+
 from math import ceil
 import os
 from time import perf_counter

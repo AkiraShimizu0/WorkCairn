@@ -2,7 +2,7 @@
 
 ## 概要
 
-ReviewerWorkerは、タスクの作成担当者とは別のAI社員として成果物を確認します。Worker、PromptBuilder、ModelRouter、Runnerを再利用し、人間向けMarkdownと検証可能な構造化JSONを生成します。
+通常製品Reviewは、`workspace-run review-*`からGo ReviewServiceを呼び、タスクの作成担当者とは別のAI社員Contextで成果物を確認します。Go PromptBuilder、Runner Registry、Runner Adapterを再利用し、検証可能な構造化JSONと人間向けMarkdownを生成します。WorkspaceRunReviewGatewayは公開Python caller向けAdapter、Python ReviewerWorkerは公開互換referenceです。
 
 ## 事前検証
 
@@ -14,7 +14,7 @@ ReviewerWorkerは、タスクの作成担当者とは別のAI社員として成�
 - 同じ版のレビューMarkdownとJSONが未作成
 - 明示的承認がある
 
-`dry_run=True`では、成果物、担当者、Runner、モデル、プロンプト、保存予定パスを返し、RunnerやVaultを変更しません。
+`workspace-run review-plan`では、対象、担当者、モデル、保存予定path、blocking reasonを返し、RunnerやVaultを変更しません。
 
 ## Reviewer Prompt
 
@@ -73,23 +73,24 @@ REVIEW_RESULT_JSON_END
 - 構造化結果: `Reviews/TASK-XXX.review.json`
 - バージョン付き: `TASK-XXX.review.v2.md`と`TASK-XXX.review.v2.json`
 
-既存レビューと衝突する場合は上書きせず拒否します。バージョン付きレビューによりlegacyレビューを保持できます。
+ADR-0010に従い、構造化JSONをimmutable canonical evidenceとして先にcommitし、Markdownをhuman-readable projectionとして後にcommitします。JSON成功後のMarkdown失敗はpartial failureであり、JSONを削除しません。既存レビューと衝突する場合は上書き、adopt、自動修復をせず拒否します。
 
 ## 判定後
 
 ### Approve
 
-レビューを保存し、WorkflowEngineは次の未着手タスクIDを返します。
+レビューを保存し、製品callerは次のTaskへ進めます。公開Python compatibility WorkflowEngineは次の未着手タスクIDを返します。
 
 ### Request Changes
 
-RevisionTaskServiceがJSONのissuesから修正タスクを1件作成します。
+Request Changesでは注入された`WorkspaceRunRevisionGateway`が`workspace-run revision-*`を呼びます。ADR-0012に従いimmutable intentを先にcommitし、TaskService.Create、`revision.created`、Audit subscriberの順で確定します。
 
 - 担当者は元タスクの`assignee_id`
 - 元タスクID、元レビュー、判定、指摘一覧をRevisionsへ保存
-- 同じレビューからの重複作成をロックとメタデータで拒否
-- Tasks.mdへの追加とRevisionメタデータ作成を失敗時にロールバック
+- 同じレビューからの重複作成を既存metadata検査と原子的createで拒否
+- Python RevisionTaskServiceは旧5列形式向け公開互換legacyであり、通常製品経路やADR-0008 managed Tasks.mdには使用しない
+- intent後のTask作成失敗、Task後のEvent失敗はrollbackせずpartial failureとして返す
 
 ## 監査と失敗
 
-レビュー実行はAudit LogへRunner、モデル、入出力トークン数、実行時間、状態を記録します。失敗時は不完全なレビューを残さず、元成果物とTasks.mdを変更しません。自動再実行は行いません。
+Review artifactはTask状態とTasks.mdを変更しません。ADR-0011 Review orchestrationはcanonical JSON commit後だけ`review.completed`を発行し、Vault Audit subscriberが保存します。projection失敗でもReview factは成立し、Event配送失敗もartifactを保持したpartial publication failureです。Review Store／orchestration自身は自動再実行、reconciliation、artifact adoptionを行いません。ADR-0021により、process edgeで明示Command IDを指定した場合だけterminal resultの再送を副作用なしで返します。

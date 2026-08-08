@@ -1,0 +1,73 @@
+{
+  "version": "v1",
+  "request": "シンプルな家計簿Webアプリを作りたい",
+  "employees": [
+    {
+      "id": "PLAN-001",
+      "name": "山本 真帆",
+      "department": "企画部",
+      "role": "Product Manager",
+      "model": "Claude Sonnet 5"
+    },
+    {
+      "id": "DEV-001",
+      "name": "高橋 拓海",
+      "department": "開発部",
+      "role": "Backend Engineer",
+      "model": "Claude Sonnet 5"
+    }
+  ],
+  "system_prompt": "あなたはWorkspace社のWorkspace Managerです。CEOの自然言語依頼を実行せずに会社の計画へ変換してください。Project、Task、社員を作成せず、Workflowも実行しないでください。割当には次の既存社員IDだけを使用し、担当不在のタスクはassignee_idをnullにしてください。正式なTASK-IDは発行せず、JSONオブジェクトだけを返してください。\n既存社員:\n[{\"department\": \"企画部\", \"id\": \"PLAN-001\", \"role\": \"Product Manager\"}, {\"department\": \"開発部\", \"id\": \"DEV-001\", \"role\": \"Backend Engineer\"}]\n必須キー: project_name, objective, summary, required_departments, required_roles, assigned_existing_employees, proposed_tasks, risks, ceo_questions。proposed_tasksの各要素にはtitle, assignee_id, dependency_ids, rationaleを含めてください。",
+  "runner_output": {
+    "project_name": "家計簿Webアプリ",
+    "objective": "日々の収支を簡単に記録できるようにする",
+    "summary": "MVPとして収支登録と一覧表示を提供する",
+    "required_departments": ["企画部", "開発部", "デザイン部"],
+    "required_roles": ["Product Manager", "Backend Engineer", "UI/UX Designer"],
+    "assigned_existing_employees": ["PLAN-001"],
+    "proposed_tasks": [
+      {
+        "title": "MVP要件を整理する",
+        "assignee_id": "PLAN-001",
+        "dependency_ids": [],
+        "rationale": "実装範囲を先に合意するため"
+      },
+      {
+        "title": "画面を設計する",
+        "assignee_id": null,
+        "dependency_ids": ["PROPOSED-001"],
+        "rationale": "UI/UX Designerが現在不在のため"
+      }
+    ],
+    "risks": ["MVP範囲が拡大する可能性"],
+    "ceo_questions": ["対象端末はWebブラウザのみですか"]
+  },
+  "expected_plan": {
+    "project_name": "家計簿Webアプリ",
+    "objective": "日々の収支を簡単に記録できるようにする",
+    "summary": "MVPとして収支登録と一覧表示を提供する",
+    "required_departments": ["企画部", "開発部", "デザイン部"],
+    "required_roles": ["Product Manager", "Backend Engineer", "UI/UX Designer"],
+    "assigned_existing_employees": ["PLAN-001"],
+    "missing_roles": ["UI/UX Designer"],
+    "proposed_tasks": [
+      {
+        "proposal_id": "PROPOSED-001",
+        "title": "MVP要件を整理する",
+        "assignee_id": "PLAN-001",
+        "dependency_ids": [],
+        "rationale": "実装範囲を先に合意するため"
+      },
+      {
+        "proposal_id": "PROPOSED-002",
+        "title": "画面を設計する",
+        "assignee_id": null,
+        "dependency_ids": ["PROPOSED-001"],
+        "rationale": "UI/UX Designerが現在不在のため"
+      }
+    ],
+    "risks": ["MVP範囲が拡大する可能性"],
+    "ceo_questions": ["対象端末はWebブラウザのみですか"],
+    "plan_only": true
+  }
+}
