@@ -59,7 +59,7 @@ v1.0候補の完了条件：
 4. JSON Contract v1、既存Vault表示、公開Python v0.1 import surfaceを破壊しない。
 5. Python compatibility distributionが製品artifact／通常運用手順から分離され、物理削除条件が明文化されている。
 
-v1.0候補安定化の完了条件として先取りしなかったもの：永続Outbox、Command Ledger、Scheduler、distributed execution、汎用workflow engine、常駐daemon。次期RoadmapではRecovery完了後にADR-0021の通常Task／Review Command Ledger foundationへ着手していますが、v1.0判定自体の前提にはしません。
+v1.0候補安定化の完了条件として先取りしなかったもの：永続Outbox、Command Ledger、Scheduler、distributed execution、汎用workflow engine、常駐daemon。その後の次期RoadmapでRecovery、Command Ledger、loopback daemon、bounded Multi-task Workflowを段階的に実装済みですが、これらはv1.0判定自体の前提へ遡及追加しません。永続Outbox、Scheduler、distributed execution、汎用workflow engineは引き続き未実装です。
 
 ## Completed — Durability and Recovery Foundation
 
@@ -127,18 +127,20 @@ CLIとAPIはビジネスルールを二重実装せず、client retryとprocess�
 
 workflow orchestrationはTask状態を直接変更せず、各Task executionを既存Service境界で実行します。途中停止は自動resumeせずouter／child LedgerとRecoveryから判断します。
 
-## Next 1 — Review and Revision Workflow Branches
+## Completed — Review and Revision Workflow Branches
 
-候補：
+ADR-0024に基づき実装済み：
 
-- Task完了後のreviewer選択をtyped input／policyとして明示
-- 既存Review executionとRevision intent／Task作成のworkflow composition
-- Approve／Request Changes分岐とrun partial result
-- 人間へ返す質問／承認境界をworkflow resultへ統合
+- reviewer IDと条件付きRevisionを明示するread-only plan
+- 既存Task execution、Review、Revision processのcomposition
+- Approveならdependency再plan、Request ChangesならRevision Task実行後に再Review
+- outer claimと役割付き決定的child Command ID
+- Revision Taskに限定したtargeted readiness
+- canonical evidenceを保持するblocked／limit／partial result
 
-完了条件：Review／Revision orchestrationを再実装せず既存Serviceを利用し、承認・blocked・partial stateを推測せずに自然言語依頼からのloopへ接続できること。
+Review／Revision orchestration、Task lifecycle、artifact orderingを再実装せず、temporary VaultとMock Providerで`Task → Request Changes → Revision → Approve → 次Task`をEnd-to-End検証します。自動resume、並列実行、Schedulerは含めません。
 
-## Next 2 — Scheduler and Automation
+## Next 1 — Scheduler and Automation
 
 durable commandとworkflow runが成立してから時間駆動実行を追加します。
 
@@ -150,7 +152,7 @@ durable commandとworkflow runが成立してから時間駆動実行を追加�
 
 完了条件：SchedulerがTask状態やProviderを直接操作せず、再起動や重複triggerで二重実行しないこと。
 
-## Next 3 — Notification and Metrics
+## Next 2 — Notification and Metrics
 
 Event subscriberとして観測性を追加します。
 
@@ -163,7 +165,7 @@ Event subscriberとして観測性を追加します。
 
 完了条件：通知やMetricsの失敗がbusiness factをrollbackせず、Event／Auditの責務を侵食しないこと。
 
-## Next 4 — External Action Adapters
+## Next 3 — External Action Adapters
 
 WordPress等への公開は、Provider Runnerとは別の明示的Action Adapterとして追加します。
 

@@ -22,6 +22,7 @@ const (
 
 var (
 	ErrUnknownDependency = errors.New("unknown dependency")
+	ErrUnknownTask       = errors.New("unknown task")
 	ErrCyclicDependency  = errors.New("cyclic dependency")
 	ErrDuplicateTaskID   = errors.New("duplicate task ID")
 )
@@ -190,6 +191,61 @@ func EvaluateReadiness(
 		[]string{},
 		"workflow_execute",
 	), nil
+}
+
+// EvaluateTaskReadiness validates one explicitly selected Task without
+// changing the default first-unstarted selection rule. It is used by a
+// reviewed Workflow only for the Revision Task proven by its immutable intent.
+func EvaluateTaskReadiness(
+	taskID string,
+	tasks []Task,
+	dependencies []Dependency,
+	existingEmployees map[string]bool,
+) (ReadinessResult, error) {
+	graph, err := ValidateDependencies(tasks, dependencies)
+	if err != nil {
+		return ReadinessResult{}, err
+	}
+	var selected *Task
+	for index := range tasks {
+		if tasks[index].ID == taskID {
+			selected = &tasks[index]
+			break
+		}
+	}
+	if selected == nil {
+		return ReadinessResult{}, fmt.Errorf("%w: %s", ErrUnknownTask, taskID)
+	}
+	dependencyIDs := append([]string{}, graph[selected.ID]...)
+	if selected.Status == StatusCompleted {
+		return taskResult(*selected, dependencyIDs, []string{}, false, StateCompleted, "task_completed", []string{}, "none"), nil
+	}
+	if selected.Status != StatusUnstarted {
+		return taskResult(*selected, dependencyIDs, []string{}, false, StateWaiting, "task_not_unstarted", []string{"task_not_unstarted"}, "wait"), nil
+	}
+	statusByID := make(map[string]string, len(tasks))
+	for _, current := range tasks {
+		statusByID[current.ID] = current.Status
+	}
+	blockedBy := make([]string, 0)
+	for _, dependencyID := range dependencyIDs {
+		if statusByID[dependencyID] != StatusCompleted {
+			blockedBy = append(blockedBy, dependencyID)
+		}
+	}
+	blockingReasons := make([]string, 0)
+	if selected.AssigneeID == nil {
+		blockingReasons = append(blockingReasons, "assignee_missing")
+	} else if !existingEmployees[*selected.AssigneeID] {
+		blockingReasons = append(blockingReasons, "assignee_not_found")
+	}
+	if len(blockedBy) > 0 {
+		blockingReasons = append(blockingReasons, "dependencies_incomplete")
+	}
+	if len(blockingReasons) > 0 {
+		return taskResult(*selected, dependencyIDs, blockedBy, false, StateBlocked, blockingReasons[0], blockingReasons, "resolve_blockers"), nil
+	}
+	return taskResult(*selected, dependencyIDs, []string{}, true, StateReady, "ready", []string{}, "workflow_execute"), nil
 }
 
 func taskResult(

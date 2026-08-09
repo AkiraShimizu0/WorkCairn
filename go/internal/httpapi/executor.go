@@ -77,6 +77,15 @@ type workflowExecutePayload struct {
 	MaxTasks          int       `json:"max_tasks"`
 }
 
+type reviewedWorkflowExecutePayload struct {
+	ProjectID         string    `json:"project_id"`
+	ProjectName       string    `json:"project_name"`
+	ReviewerID        string    `json:"reviewer_id"`
+	CurrentTime       time.Time `json:"current_time"`
+	ApprovalReference string    `json:"approval_reference,omitempty"`
+	MaxTasks          int       `json:"max_tasks"`
+}
+
 type ceoApplyPayload struct {
 	ProjectID   string       `json:"project_id"`
 	Plan        ceoplan.Plan `json:"plan"`
@@ -163,6 +172,20 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		return workspaceprocess.ExecuteWorkflow(ctx, workspaceprocess.ExecuteWorkflowInput{
 			WorkflowPlanInput: workspaceprocess.WorkflowPlanInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, CurrentTime: payload.CurrentTime},
 			Approved:          true, ApprovalReference: payload.ApprovalReference, CommandID: command.CommandID, MaxTasks: payload.MaxTasks,
+		}, executor.provider, executor.httpClient)
+	case "workflow.reviewed.execute":
+		var payload reviewedWorkflowExecutePayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteReviewedWorkflow(ctx, workspaceprocess.ExecuteReviewedWorkflowInput{
+			ReviewedWorkflowPlanInput: workspaceprocess.ReviewedWorkflowPlanInput{
+				WorkflowPlanInput: workspaceprocess.WorkflowPlanInput{
+					VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, CurrentTime: payload.CurrentTime,
+				},
+				ReviewerID: payload.ReviewerID,
+			},
+			Approved: true, ApprovalReference: payload.ApprovalReference, CommandID: command.CommandID, MaxTasks: payload.MaxTasks,
 		}, executor.provider, executor.httpClient)
 	case "ceo_plan.apply":
 		var payload ceoApplyPayload

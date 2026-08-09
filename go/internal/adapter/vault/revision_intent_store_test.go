@@ -44,6 +44,28 @@ func TestRevisionIntentStoreCommitsPythonCompatibleImmutableMetadata(t *testing.
 	if _, exists, err := store.ExistingForSource(context.Background(), "Reviews/TASK-001.review.json", "Reviews/TASK-001.review.md"); err != nil || !exists {
 		t.Fatalf("ExistingForSource() exists=%t err=%v", exists, err)
 	}
+	references, err := store.ListReferences(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(references) != 1 || references[0].SourceTaskID != "TASK-001" || references[0].RevisionTaskID != "TASK-002" || references[0].RelativePath != "Revisions/TASK-002.revision.md" {
+		t.Fatalf("ListReferences() = %#v", references)
+	}
+}
+
+func TestRevisionIntentStoreListReferencesRejectsDuplicateSource(t *testing.T) {
+	root := revisionVault(t)
+	store := newTestRevisionIntentStore(t, root)
+	if _, err := store.Save(context.Background(), testRevisionIntent()); err != nil {
+		t.Fatal(err)
+	}
+	duplicate := strings.ReplaceAll(renderRevisionIntent(testRevisionIntent()), "revision_task_id: TASK-002", "revision_task_id: TASK-003")
+	if err := os.WriteFile(filepath.Join(root, "プロジェクト", "ToDoアプリ", "Revisions", "TASK-003.revision.md"), []byte(duplicate), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ListReferences(context.Background()); !errors.Is(err, ErrInvalidDocument) {
+		t.Fatalf("ListReferences() error = %v", err)
+	}
 }
 
 func TestRevisionIntentStoreRejectsLegacyDuplicateSource(t *testing.T) {
@@ -62,6 +84,10 @@ func TestRevisionIntentStoreRejectsLegacyDuplicateSource(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(directory, "TASK-002.revision.md")); !os.IsNotExist(err) {
 		t.Fatalf("duplicate source created intent: %v", err)
+	}
+	references, err := store.ListReferences(context.Background())
+	if err != nil || len(references) != 0 {
+		t.Fatalf("legacy metadata was adopted as Go intent: %#v, %v", references, err)
 	}
 }
 

@@ -146,6 +146,30 @@ func (loader *Loader) LoadReviewPromptInput(ctx context.Context, input ReviewInp
 	return promptInput, nil
 }
 
+// LoadEmployeeContext validates the complete employee inventory using the
+// same rules as Task and Review context loading, then selects by immutable ID.
+func (loader *Loader) LoadEmployeeContext(ctx context.Context, employeeID string) (worker.EmployeeContext, error) {
+	if ctx == nil {
+		return worker.EmployeeContext{}, fmt.Errorf("%w: context is required", ErrInvalidInput)
+	}
+	if err := ctx.Err(); err != nil {
+		return worker.EmployeeContext{}, err
+	}
+	employeeID = strings.TrimSpace(employeeID)
+	if employeeID == "" {
+		return worker.EmployeeContext{}, fmt.Errorf("%w: employee ID is required", ErrInvalidInput)
+	}
+	employees, err := loader.loadEmployees(ctx)
+	if err != nil {
+		return worker.EmployeeContext{}, err
+	}
+	employee, found := employees[employeeID]
+	if !found {
+		return worker.EmployeeContext{}, fmt.Errorf("%w: employee", ErrDocumentNotFound)
+	}
+	return employee, nil
+}
+
 func (loader *Loader) LoadExecutionRequest(ctx context.Context, input ExecutionInput) (execution.Request, error) {
 	if ctx == nil {
 		return execution.Request{}, fmt.Errorf("%w: context is required", ErrInvalidInput)

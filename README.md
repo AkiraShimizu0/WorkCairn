@@ -65,6 +65,7 @@ flowchart TD
 - [ADR-0021: Command claimを副作用より先にcommitし同一IDの再送を判定する](docs/adr/ADR-0021-command-ledger-claim-before-effects.md)
 - [ADR-0022: version付き同期Command APIをGo daemonの最初の外部入口とする](docs/adr/ADR-0022-versioned-http-command-api-and-daemon.md)
 - [ADR-0023: Multi-task Workflowは再planする順次Task commandとして構成する](docs/adr/ADR-0023-sequential-workflow-command-composition.md)
+- [ADR-0024: Reviewed Workflowは既存Task、Review、Revision commandを決定的に構成する](docs/adr/ADR-0024-reviewed-workflow-branch-composition.md)
 
 新しいADRは[ADRテンプレート](docs/adr/ADR-template.md)から作成します。
 
@@ -338,7 +339,7 @@ Python Worker／PromptBuilder／ModelRouter／ClaudeRunnerは通常Task経路か
 
 ## Roadmap
 
-現在はGo Only Runtime、v1.0候補安定化、Durability／Recovery、主要commandへのLedger適用、loopback HTTP API／daemon、順次Multi-task Workflow foundationまで完了しています。次はReview／Revision分岐を既存Serviceからcompositionし、その後Scheduler、通知／Metrics、外部Action Adapterへ進みます。順序と完了条件は[docs/ROADMAP.md](docs/ROADMAP.md)を参照してください。
+現在はGo Only Runtime、v1.0候補安定化、Durability／Recovery、主要commandへのLedger適用、loopback HTTP API／daemon、Review／Revision分岐を含むMulti-task Workflowまで完了しています。次はScheduler、通知／Metrics、外部Action Adapterへ進みます。順序と完了条件は[docs/ROADMAP.md](docs/ROADMAP.md)を参照してください。
 
 ## ライセンス
 

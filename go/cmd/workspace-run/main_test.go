@@ -69,6 +69,32 @@ func TestWorkflowPlanIsReadOnlyAndNeedsNoProviderConfig(t *testing.T) {
 	}
 }
 
+func TestReviewedWorkflowPlanIsReadOnlyAndNeedsNoProviderConfig(t *testing.T) {
+	root := writeCommandVault(t)
+	writeCommandFile(t, filepath.Join(root, "社員", "伊藤 健太.md"), "---\nid: QA-001\ndepartment: 品質保証部\nrole: QA Engineer\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n")
+	before := commandVaultSnapshot(t, root)
+	var output bytes.Buffer
+	exit := run(context.Background(), []string{
+		"workflow-reviewed-plan", "--vault", root, "--project-id", "PROJECT-001", "--project", "ToDoアプリ", "--reviewer", "QA-001",
+	}, &output, commandDependencies{
+		lookupEnv: func(string) (string, bool) {
+			t.Fatal("reviewed Workflow plan read Provider environment")
+			return "", false
+		},
+		now: commandTestTime,
+		newHTTPClient: func(time.Duration) claude.HTTPDoer {
+			t.Fatal("reviewed Workflow plan constructed HTTP client")
+			return nil
+		},
+	})
+	response := decodeCommandResponse(t, output.Bytes())
+	encoded, _ := json.Marshal(response.Result)
+	if exit != 0 || !response.OK || !bytes.Contains(encoded, []byte(`"review_after_every_task":true`)) ||
+		!reflect.DeepEqual(before, commandVaultSnapshot(t, root)) {
+		t.Fatalf("reviewed Workflow plan exit=%d response=%#v", exit, response)
+	}
+}
+
 func TestOrganizationCommandsNeedNoClockProviderOrEffects(t *testing.T) {
 	root := writeCommandVault(t)
 	before := commandVaultSnapshot(t, root)
@@ -435,6 +461,7 @@ func TestEveryMutatingCommandRequiresApprovalBeforeIO(t *testing.T) {
 		{"review", "APPROVAL_REQUIRED", []string{"review-execute", "--vault", missingVault, "--project-id", "PROJECT-001", "--project", "P", "--task", "TASK-001", "--reviewer", "REV-001"}},
 		{"revision", "APPROVAL_REQUIRED", []string{"revision-execute", "--vault", missingVault, "--project-id", "PROJECT-001", "--project", "P", "--task", "TASK-001"}},
 		{"workflow", "APPROVAL_REQUIRED", []string{"workflow-execute", "--vault", missingVault, "--project-id", "PROJECT-001", "--project", "P", "--command-id", "CMD-WORKFLOW-001"}},
+		{"reviewed workflow", "APPROVAL_REQUIRED", []string{"workflow-reviewed-execute", "--vault", missingVault, "--project-id", "PROJECT-001", "--project", "P", "--reviewer", "QA-001", "--command-id", "CMD-REVIEWED-WORKFLOW-001"}},
 		{"organization sync", "APPROVAL_REQUIRED", []string{"organization-sync-execute", "--vault", missingVault}},
 		{"employee hire", "APPROVAL_REQUIRED", []string{"employee-hire-execute", "--vault", missingVault, "--employee-id", "DEV-001", "--name", "佐藤 蓮", "--department", "開発部", "--role", "Engineer", "--model", "Claude Sonnet 5"}},
 		{"employee rename", "APPROVAL_REQUIRED", []string{"employee-rename-execute", "--vault", missingVault, "--employee-id", "DEV-001", "--old-name", "佐藤 蓮", "--new-name", "鈴木 陽菜", "--reason", "類似名の解消"}},

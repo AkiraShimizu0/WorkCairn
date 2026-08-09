@@ -13,8 +13,11 @@ flowchart TD
     Apply --> Workflow["Go managed Project / Task"]
     Workflow --> Run["Go workspace-run"]
     API["workspace-daemon / Command API v1"] --> Run
-    Run --> WorkflowRun["Sequential Workflow Run Service"]
+    Run --> WorkflowRun["Reviewed Workflow Run Service"]
     WorkflowRun --> Execution
+    WorkflowRun --> Review
+    Review --> Revision
+    Revision --> WorkflowRun
     Run --> Kernel["Workspace Kernel"]
     Kernel --> Execution["ExecutionService"]
     Execution --> GoWorker["Go WorkerService / Claude Adapter"]
@@ -54,6 +57,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0021: Command claimを副作用より先にcommitし同一IDの再送を判定する](adr/ADR-0021-command-ledger-claim-before-effects.md)
 - [ADR-0022: version付き同期Command APIをGo daemonの最初の外部入口とする](adr/ADR-0022-versioned-http-command-api-and-daemon.md)
 - [ADR-0023: Multi-task Workflowは再planする順次Task commandとして構成する](adr/ADR-0023-sequential-workflow-command-composition.md)
+- [ADR-0024: Reviewed Workflowは既存Task、Review、Revision commandを決定的に構成する](adr/ADR-0024-reviewed-workflow-branch-composition.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -108,6 +112,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Process／workspace-run | Vault AdapterとRuntimeをprocess edgeでcompositionし、Task metadata migration、read-only execution／recovery plan、明示承認付きexecute／recoveryを提供する |
 | Go HTTP API／workspace-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger inspection、graceful shutdownを提供し、workspace-runと同じprocess／Serviceを利用するloopback入口 |
 | Go Workflow Run Service | dependency readinessを各Task後に再planし、決定的child Command IDで既存Task executionを順次調停する。Task状態やEventは変更しない |
+| Go Reviewed Workflow Run Service | 各Task後に既存Reviewを実行し、Request Changes時は既存Revisionで作成したTaskをtargeted readinessで実行・再Reviewしてから本流へ戻す |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
@@ -161,7 +166,7 @@ Workspace OSの製品Runtime移行は完了しています。通常Task、Review
 - `go/internal/adapter/claude`: Anthropic Messages APIを既存Runner契約へ変換するProvider Adapter
 - `go/internal/adapter/vault`: read-only Context／Organization Loader、Project／Task／Deliverable／Review／Revision intent Store、Audit Event subscriber
 - `go/internal/runtime`: Provider／Storage AdapterをServiceへ注入するprocess-neutral execution／Review／Revision composition
-- `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／Recoveryのread-only planと明示承認付きexecute
+- `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／reviewed Workflow／Recoveryのread-only planと明示承認付きexecute
 - `go/internal/httpapi`: version付きCommand HTTP contract、必須Command ID、同期handler、Ledger inspection、graceful server lifecycle
 - `go/internal/policy`: 明示承認とWorker失敗後の回復判断を提供する決定的Policy Domain
 - `go/internal/execution`: 1タスク実行のRequest、Result、Stage、型付きpartial failure契約
@@ -169,7 +174,7 @@ Workspace OSの製品Runtime移行は完了しています。通常Task、Review
 - `go/internal/kernel`: サービス境界、ライフサイクル、Command調停
 - `go/internal/bootstrap`: 具体Serviceを登録するcomposition root
 - `go/cmd/workspace-core`: バージョン付きJSON契約を公開するCLI境界
-- `go/cmd/workspace-run`: Organization参照、Project／Task作成、migration、通常Task／Review／Revision、Recoveryを公開するGo運用CLI
+- `go/cmd/workspace-run`: Organization参照、Project／Task作成、migration、通常Task／Review／Revision／reviewed Workflow、Recoveryを公開するGo運用CLI
 - `go/cmd/workspace-daemon`: 同じprocess／Service compositionをloopback HTTPで公開するGo daemon
 
 PythonとGoは`fixtures/workflow`、`fixtures/project`、`fixtures/go_core`のJSONを共有する互換契約を維持します。次は公開Python callerがGo Core互換operationを使う場合のcompatibility境界であり、Go製品Runtimeの内部経路ではありません。
@@ -218,7 +223,7 @@ JSON契約v1は、`version`、`operation`、`payload`を標準入力で受け取
 
 対応operationは`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`です。ローカルバイナリは`make go-build`で`bin/workspace-core`へ生成し、`bin/`はGit管理しません。
 
-通常Task、Review、Revision、Organization／Identity writer、Project／Task writer、CEO plan生成／適用のprocess入口はGoへ移行済みです。CEO planはADR-0019に従い、明示承認後に構造化Employee inventoryからProvider-neutral Serviceと既存Runnerを通ってtyped planとなり、別の明示承認付きapplyでADR-0018のwriterへ渡ります。LLM出力を直接Vaultへ書かず、Project IDと正式Task IDをProvider出力から分離します。mock Providerとtemporary Vaultで生成からTask Dependency作成までEnd-to-End検証済みです。Python gatewayはGo failure時にlegacy Provider／writerへfallbackしません。ADR-0021により、明示Command ID付き主要副作用commandとADR-0023のSequential Workflow executionは副作用前にdurable claimを保存し、同一requestのterminal resultを副作用なしでreplayします。既存`workspace-core` JSON Contract v1は変更していません。
+通常Task、Review、Revision、Organization／Identity writer、Project／Task writer、CEO plan生成／適用のprocess入口はGoへ移行済みです。CEO planはADR-0019に従い、明示承認後に構造化Employee inventoryからProvider-neutral Serviceと既存Runnerを通ってtyped planとなり、別の明示承認付きapplyでADR-0018のwriterへ渡ります。LLM出力を直接Vaultへ書かず、Project IDと正式Task IDをProvider出力から分離します。mock Providerとtemporary Vaultで生成からTask Dependency作成までEnd-to-End検証済みです。Python gatewayはGo failure時にlegacy Provider／writerへfallbackしません。ADR-0021により、明示Command ID付き主要副作用command、ADR-0023のSequential Workflow、ADR-0024のReviewed Workflowは副作用前にdurable claimを保存し、同一requestのterminal resultを副作用なしでreplayします。既存`workspace-core` JSON Contract v1は変更していません。
 
 ### Workspace Kernel
 

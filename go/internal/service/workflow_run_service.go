@@ -11,10 +11,12 @@ import (
 const MaxWorkflowTasks = 100
 
 type WorkflowStepPlan struct {
-	TaskID          string   `json:"task_id,omitempty"`
-	Ready           bool     `json:"ready"`
-	Completed       bool     `json:"completed"`
-	BlockingReasons []string `json:"blocking_reasons"`
+	TaskID           string   `json:"task_id,omitempty"`
+	SourceTaskID     string   `json:"source_task_id,omitempty"`
+	TargetedRevision bool     `json:"targeted_revision,omitempty"`
+	Ready            bool     `json:"ready"`
+	Completed        bool     `json:"completed"`
+	BlockingReasons  []string `json:"blocking_reasons"`
 }
 
 type WorkflowRunPlanner interface {

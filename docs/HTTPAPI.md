@@ -39,6 +39,7 @@ daemonは`.env` fileを読みません。Provider commandに必要な設定はRu
 | `review.execute` | project | Project、Task、Reviewer ID、Review version、時刻 |
 | `revision.execute` | project | Project、source Task、Review version、時刻 |
 | `workflow.execute` | project | Project、時刻、approval reference、1〜100のTask上限 |
+| `workflow.reviewed.execute` | project | Project、Reviewer ID、時刻、approval reference、1〜100のTask上限 |
 | `ceo_plan.apply` | workspace | Project ID、validated CEO Plan、時刻 |
 | `project.bootstrap` | workspace | Project ID／name、description、時刻 |
 | `task.create` | project | Project name、title、assignee ID、時刻 |

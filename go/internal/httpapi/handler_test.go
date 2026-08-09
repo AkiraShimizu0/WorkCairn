@@ -117,6 +117,32 @@ func TestProcessExecutorHTTPProjectCommandReplayConflictAndInspect(t *testing.T)
 	}
 }
 
+func TestProcessExecutorRecognizesReviewedWorkflowV1Command(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "プロジェクト", "P"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"project_id": "PROJECT-001", "project_name": "P", "reviewer_id": "QA-001",
+		"current_time": "2026-08-09T10:00:00+09:00", "max_tasks": 10,
+	})
+	_, err = executor.Execute(context.Background(), Command{
+		Version: ContractVersion, CommandID: "CMD-HTTP-REVIEWED-WORKFLOW-001",
+		Operation: "workflow.reviewed.execute", Approved: true, Payload: payload,
+	})
+	if err == nil || errors.Is(err, ErrUnsupportedCommand) {
+		t.Fatalf("reviewed Workflow dispatch error = %v", err)
+	}
+	record, inspectErr := executor.Inspect(context.Background(), "project", "P", "CMD-HTTP-REVIEWED-WORKFLOW-001")
+	if inspectErr != nil || record.Operation != "workflow.reviewed.execute" || record.State != commandledger.StateFailed {
+		t.Fatalf("reviewed Workflow command record = %#v, %v", record, inspectErr)
+	}
+}
+
 func TestServerGracefulShutdownWaitsForRunningCommand(t *testing.T) {
 	backend := &fakeCommandBackend{result: map[string]string{"status": "ok"}, started: make(chan struct{}), release: make(chan struct{})}
 	handler, _ := NewHandler(backend, backend)

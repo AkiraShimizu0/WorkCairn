@@ -1,0 +1,208 @@
+package process
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+)
+
+func TestReviewedWorkflowTemporaryVaultRequestChangesRevisionReReviewAndReplay(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	beforePlan := planVaultSnapshot(t, root)
+	plan, err := PlanReviewedWorkflow(context.Background(), ReviewedWorkflowPlanInput{
+		WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+		ReviewerID:        "QA-001",
+	})
+	if err != nil || plan.Next.TaskID != "TASK-001" || !plan.Next.Ready || plan.ReviewerID != "QA-001" ||
+		!plan.ReviewAfterEveryTask || !plan.RevisionOnRequestChange || !plan.ApprovalRequired {
+		t.Fatalf("PlanReviewedWorkflow() = %#v, %v", plan, err)
+	}
+	if !reflect.DeepEqual(beforePlan, planVaultSnapshot(t, root)) {
+		t.Fatal("reviewed Workflow plan changed temporary Vault")
+	}
+
+	providerOutputs := []string{
+		"# TASK-001 deliverable\n\n本文",
+		reviewProviderOutput(review.VerdictRequestChanges),
+		"# TASK-003 revision deliverable\n\n修正版",
+		reviewProviderOutput(review.VerdictApprove),
+		"# TASK-002 deliverable\n\n本文",
+		reviewProviderOutput(review.VerdictApprove),
+	}
+	providerCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		if providerCalls >= len(providerOutputs) {
+			t.Fatal("unexpected Provider call")
+		}
+		output := providerOutputs[providerCalls]
+		providerCalls++
+		encoded, _ := json.Marshal(map[string]any{
+			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": output}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+		response.Header().Set("content-type", "application/json")
+		_, _ = response.Write(encoded)
+	}))
+	defer server.Close()
+
+	input := ExecuteReviewedWorkflowInput{
+		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
+			WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+			ReviewerID:        "QA-001",
+		},
+		Approved: true, ApprovalReference: "approval-reviewed-workflow", CommandID: "CMD-REVIEWED-WORKFLOW-001", MaxTasks: 10,
+	}
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL}
+	result, err := ExecuteReviewedWorkflow(context.Background(), input, provider, server.Client())
+	if err != nil || result.Status != "completed" || len(result.Tasks) != 3 || providerCalls != len(providerOutputs) {
+		t.Fatalf("ExecuteReviewedWorkflow() = %#v, %v calls=%d", result, err, providerCalls)
+	}
+	if result.Tasks[0].TaskID != "TASK-001" || result.Tasks[0].Verdict != review.VerdictRequestChanges || result.Tasks[0].Revision == nil ||
+		result.Tasks[1].TaskID != "TASK-003" || !result.Tasks[1].Targeted || result.Tasks[1].Verdict != review.VerdictApprove ||
+		result.Tasks[2].TaskID != "TASK-002" || result.Tasks[2].Targeted || result.Tasks[2].Verdict != review.VerdictApprove {
+		t.Fatalf("reviewed Workflow branch = %#v", result.Tasks)
+	}
+	store, _ := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: root, ProjectName: "ToDoアプリ"})
+	for _, taskID := range []string{"TASK-001", "TASK-002", "TASK-003"} {
+		stored, getErr := store.Get(context.Background(), taskID)
+		if getErr != nil || stored.Status != task.StatusCompleted {
+			t.Fatalf("Task %s = %#v, %v", taskID, stored, getErr)
+		}
+	}
+	projectDirectory := filepath.Join(root, "プロジェクト", "ToDoアプリ")
+	for _, relative := range []string{
+		"Deliverables/TASK-001.md", "Deliverables/TASK-002.md", "Deliverables/TASK-003.md",
+		"Reviews/TASK-001.review.json", "Reviews/TASK-002.review.json", "Reviews/TASK-003.review.json",
+		"Revisions/TASK-003.revision.md", "Audit Log.md",
+	} {
+		if _, statErr := os.Stat(filepath.Join(projectDirectory, filepath.FromSlash(relative))); statErr != nil {
+			t.Fatalf("missing %s: %v", relative, statErr)
+		}
+	}
+	beforeReplay := planVaultSnapshot(t, root)
+	replayed, err := ExecuteReviewedWorkflow(context.Background(), input, provider, server.Client())
+	if err != nil || !reflect.DeepEqual(result, replayed) || providerCalls != len(providerOutputs) || !reflect.DeepEqual(beforeReplay, planVaultSnapshot(t, root)) {
+		t.Fatalf("reviewed Workflow replay = %#v, %v calls=%d", replayed, err, providerCalls)
+	}
+	input.ReviewerID = "PLAN-001"
+	if _, err := ExecuteReviewedWorkflow(context.Background(), input, provider, server.Client()); !errors.Is(err, commandledger.ErrRequestConflict) {
+		t.Fatalf("reviewed Workflow conflict error = %v", err)
+	}
+}
+
+func TestReviewedWorkflowRequiresApprovalAndCommandIDBeforeEffects(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	input := ExecuteReviewedWorkflowInput{
+		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
+			WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: time.Now()},
+			ReviewerID:        "QA-001",
+		},
+		MaxTasks: 10,
+	}
+	before := planVaultSnapshot(t, root)
+	if _, err := ExecuteReviewedWorkflow(context.Background(), input, ClaudeProcessConfig{}, nil); !errors.Is(err, ErrReviewedWorkflowApprovalRequired) {
+		t.Fatalf("unapproved error = %v", err)
+	}
+	input.Approved = true
+	if _, err := ExecuteReviewedWorkflow(context.Background(), input, ClaudeProcessConfig{}, nil); !errors.Is(err, ErrReviewedWorkflowCommandIDRequired) {
+		t.Fatalf("missing Command ID error = %v", err)
+	}
+	if !reflect.DeepEqual(before, planVaultSnapshot(t, root)) {
+		t.Fatal("rejected reviewed Workflow changed Vault")
+	}
+}
+
+func TestReviewedWorkflowNewApprovedCommandContinuesCommittedRevisionAfterLimit(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 11, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	outputs := []string{
+		"# TASK-001 deliverable\n\n本文", reviewProviderOutput(review.VerdictRequestChanges),
+		"# TASK-003 revision deliverable\n\n修正版", reviewProviderOutput(review.VerdictApprove),
+		"# TASK-002 deliverable\n\n本文", reviewProviderOutput(review.VerdictApprove),
+	}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		encoded, _ := json.Marshal(map[string]any{
+			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": outputs[calls]}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+		calls++
+		response.Header().Set("content-type", "application/json")
+		_, _ = response.Write(encoded)
+	}))
+	defer server.Close()
+	base := ExecuteReviewedWorkflowInput{
+		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
+			WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+			ReviewerID:        "QA-001",
+		},
+		Approved: true, ApprovalReference: "approval-limit", CommandID: "CMD-REVIEWED-LIMIT-001", MaxTasks: 1,
+	}
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL}
+	limited, err := ExecuteReviewedWorkflow(context.Background(), base, provider, server.Client())
+	if err != nil || limited.Status != "limit_reached" || limited.Next == nil || limited.Next.TaskID != "TASK-003" || calls != 2 {
+		t.Fatalf("limited run = %#v, %v calls=%d", limited, err, calls)
+	}
+	plan, err := PlanReviewedWorkflow(context.Background(), base.ReviewedWorkflowPlanInput)
+	if err != nil || !plan.Next.TargetedRevision || plan.Next.TaskID != "TASK-003" || plan.Next.SourceTaskID != "TASK-001" {
+		t.Fatalf("continuation plan = %#v, %v", plan, err)
+	}
+	base.CommandID = "CMD-REVIEWED-LIMIT-002"
+	base.MaxTasks = 10
+	continued, err := ExecuteReviewedWorkflow(context.Background(), base, provider, server.Client())
+	if err != nil || continued.Status != "completed" || len(continued.Tasks) != 2 ||
+		continued.Tasks[0].TaskID != "TASK-003" || !continued.Tasks[0].Targeted || continued.Tasks[1].TaskID != "TASK-002" || calls != len(outputs) {
+		t.Fatalf("continued run = %#v, %v calls=%d", continued, err, calls)
+	}
+}
+
+func writeReviewedWorkflowVault(t *testing.T) string {
+	t.Helper()
+	root := writePlanVault(t)
+	writePlanFile(t, filepath.Join(root, "社員", "伊藤 健太.md"), "---\nid: QA-001\ndepartment: 品質保証部\nrole: QA Engineer\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n")
+	at := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	assignee := "PLAN-001"
+	created, err := ExecuteTaskCreation(context.Background(), TaskCreationInput{
+		VaultRoot: root, ProjectName: "ToDoアプリ", Title: "次の機能を実装する", AssigneeID: &assignee, CurrentTime: at,
+	}, true)
+	if err != nil || created.Task.ID != "TASK-002" {
+		t.Fatalf("create second Task = %#v, %v", created, err)
+	}
+	dependencyPath := filepath.Join(root, "プロジェクト", "ToDoアプリ", "Task Dependencies.md")
+	if err := os.Remove(dependencyPath); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ExecuteProjectDependencies(context.Background(), ProjectDependenciesInput{
+		VaultRoot: root, ProjectName: "ToDoアプリ", CurrentTime: at,
+		Rows: []project.TaskDependency{
+			{TaskID: "TASK-001", ProposalID: "PROPOSED-001", DependsOn: []string{}, Rationale: "first"},
+			{TaskID: "TASK-002", ProposalID: "PROPOSED-002", DependsOn: []string{"TASK-001"}, Rationale: "after accepted first"},
+		},
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func reviewProviderOutput(verdict review.Verdict) string {
+	issues := `[]`
+	if verdict == review.VerdictRequestChanges {
+		issues = `[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}]`
+	}
+	return "# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"" + string(verdict) + "\",\"issues\":" + issues + "}\nREVIEW_RESULT_JSON_END"
+}

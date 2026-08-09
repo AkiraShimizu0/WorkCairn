@@ -109,20 +109,22 @@ func claimExecutionCommand(
 		return executionCommandClaim{}, nil
 	}
 	digest, err := commandledger.RequestDigest(struct {
-		ProjectID         string    `json:"project_id"`
-		ProjectName       string    `json:"project_name"`
-		TaskID            string    `json:"task_id"`
-		CurrentTime       time.Time `json:"current_time"`
-		ApprovalSource    string    `json:"approval_source"`
-		ApprovalReference string    `json:"approval_reference,omitempty"`
-		ExecutionID       string    `json:"execution_id,omitempty"`
-		ProviderModel     string    `json:"provider_model,omitempty"`
-		MaxTokens         int       `json:"max_tokens,omitempty"`
+		ProjectID         string                 `json:"project_id"`
+		ProjectName       string                 `json:"project_name"`
+		TaskID            string                 `json:"task_id"`
+		CurrentTime       time.Time              `json:"current_time"`
+		ApprovalSource    string                 `json:"approval_source"`
+		ApprovalReference string                 `json:"approval_reference,omitempty"`
+		ExecutionID       string                 `json:"execution_id,omitempty"`
+		ProviderModel     string                 `json:"provider_model,omitempty"`
+		MaxTokens         int                    `json:"max_tokens,omitempty"`
+		ReadinessMode     ExecutionReadinessMode `json:"readiness_mode,omitempty"`
 	}{
 		ProjectID: input.ProjectID, ProjectName: input.ProjectName, TaskID: input.TaskID,
 		CurrentTime: input.CurrentTime, ApprovalSource: approvalSource,
 		ApprovalReference: strings.TrimSpace(input.ApprovalReference), ExecutionID: strings.TrimSpace(input.ExecutionID),
 		ProviderModel: strings.TrimSpace(provider.ProviderModel), MaxTokens: provider.MaxTokens,
+		ReadinessMode: digestReadinessMode(input.ReadinessMode),
 	})
 	if err != nil {
 		return executionCommandClaim{}, err
@@ -260,7 +262,7 @@ func executeClaimedTask(
 		},
 	}, workspaceruntime.Dependencies{
 		HTTPClient: httpClient, TaskStore: taskStore,
-		Deliverables: deliverables, AuditHandler: audit.Handler(),
+		Deliverables: deliverables, AuditHandler: audit.Handler(), Readiness: executionReadinessService(input.ExecutionPlanInput),
 	})
 	if err != nil {
 		return execution.Result{}, fmt.Errorf("execute Runtime composition: %w", err)
@@ -277,4 +279,29 @@ func executeClaimedTask(
 		return result, fmt.Errorf("execute Runtime stop: %w", stopErr)
 	}
 	return result, nil
+}
+
+func normalizedReadinessMode(mode ExecutionReadinessMode) ExecutionReadinessMode {
+	if mode == "" {
+		return ExecutionReadinessSequential
+	}
+	return mode
+}
+
+func digestReadinessMode(mode ExecutionReadinessMode) ExecutionReadinessMode {
+	if normalizedReadinessMode(mode) == ExecutionReadinessSequential {
+		return ""
+	}
+	return mode
+}
+
+func executionReadinessService(input ExecutionPlanInput) service.ReadinessService {
+	if normalizedReadinessMode(input.ReadinessMode) != ExecutionReadinessTargeted {
+		return nil
+	}
+	targeted, err := service.NewTargetedWorkflowService(input.TaskID)
+	if err != nil {
+		return nil
+	}
+	return targeted
 }

@@ -17,6 +17,7 @@
 | Review | `review-plan`、`review-execute` | OK | canonical JSON、Markdown projection、Review Event／Audit、Command replay |
 | Revision | `revision-plan`、`revision-execute` | OK | immutable intent、TaskService.Create、Revision Event／Audit |
 | Multi-task Workflow | `workflow-plan`、`workflow-execute` | OK | readiness再plan、決定的child Command、順次Task E2E、replay／conflict |
+| Reviewed Multi-task Workflow | `workflow-reviewed-plan`、`workflow-reviewed-execute` | OK | Approve／Request Changes、Revision Task targeted readiness、再Review、replay／conflict |
 | Deliverable／Audit | Execution／Review／Revision composition | OK | immutable Store、Event subscriber、partial failure tests |
 | Recovery | `recovery-inspect`、`recovery-plan`、`recovery-apply` | OK | read-only inventory、evidence digest、Task CAS、temporary Vault E2E |
 

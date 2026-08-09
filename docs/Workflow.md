@@ -44,6 +44,8 @@ Mermaidソース: [workflow.mmd](workflow.mmd)
 
 `workspace-run workflow-plan`は次の1 Taskだけをread-onlyで示します。`workflow-execute`は`--command-id`を必須とし、明示承認後に各Task完了ごとにreadinessを再評価して、既存の単一Task executionを順次呼びます。outer workflowと各child Taskは別のdurable Command recordを持ち、途中停止を自動resumeしません。
 
+`workspace-run workflow-reviewed-plan`はreviewer IDと条件付きRevisionを含むbounded runをread-onlyで示します。`workflow-reviewed-execute`は1回の明示承認後、各TaskをReviewし、`Approve`なら次Task、`Request Changes`なら既存Revision orchestrationで修正Taskを作成して実行・再Reviewします。通常Taskの順序は変更せず、Revision Taskだけをimmutable Revision結果に基づくtargeted readinessで先行させます。Task、Review、Revisionには役割別の決定的child Command IDを使い、partial failureや`running`を自動resumeしません。
+
 本実行には`approved=True`が必要です。WorkflowEngineにも承認を渡さない場合、`approval_required`を返して停止します。
 
 ## 失敗時の挙動

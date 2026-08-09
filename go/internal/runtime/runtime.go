@@ -17,6 +17,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
 	promptbuilder "github.com/AkiraShimizu0/workspace-os/go/internal/prompt"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/runner"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 )
 
@@ -39,6 +40,7 @@ type Dependencies struct {
 	TaskStore    task.Store
 	Deliverables deliverable.Store
 	AuditHandler event.Handler
+	Readiness    service.ReadinessService
 }
 
 // Runtime owns one composed Kernel lifecycle and exposes the typed single-Task
@@ -87,6 +89,7 @@ func New(config Config, dependencies Dependencies) (*Runtime, error) {
 			},
 			TaskStore:    dependencies.TaskStore,
 			Deliverables: dependencies.Deliverables,
+			Readiness:    dependencies.Readiness,
 		},
 	)
 	if err != nil {

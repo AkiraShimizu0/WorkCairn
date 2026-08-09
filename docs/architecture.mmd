@@ -4,8 +4,11 @@ flowchart TD
     CEOApply --> Managed["Go managed Project / Task"]
     Managed --> Run["Go workspace-run"]
     API["workspace-daemon / Command API v1"] --> Run
-    Run --> WorkflowRun["Sequential Workflow Run Service"]
+    Run --> WorkflowRun["Reviewed Workflow Run Service"]
     WorkflowRun --> Execution
+    WorkflowRun --> Review
+    Review --> Revision
+    Revision --> WorkflowRun
     Run --> Kernel["Workspace Kernel"]
     Kernel --> Execution["ExecutionService"]
     Execution --> GoWorker["Go WorkerService / Claude Adapter"]

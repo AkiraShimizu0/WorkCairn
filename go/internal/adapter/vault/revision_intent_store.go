@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/revision"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 )
 
 const maxRevisionIntentBytes = 1 << 20
@@ -21,6 +22,12 @@ type RevisionIntentStore struct {
 	projectName string
 	directory   string
 	creator     atomicCreator
+}
+
+type RevisionIntentReference struct {
+	SourceTaskID   string `json:"source_task_id"`
+	RevisionTaskID string `json:"revision_task_id"`
+	RelativePath   string `json:"relative_path"`
 }
 
 func NewRevisionIntentStore(root, projectName string) (*RevisionIntentStore, error) {
@@ -75,6 +82,60 @@ func (store *RevisionIntentStore) ExistingForSource(ctx context.Context, canonic
 		}
 	}
 	return "", false, nil
+}
+
+// ListReferences exposes only the immutable identity link needed by reviewed
+// Workflow planning. It rejects malformed or duplicate committed intents and
+// never adopts or modifies them.
+func (store *RevisionIntentStore) ListReferences(ctx context.Context) ([]RevisionIntentReference, error) {
+	if err := taskStoreContextError(ctx); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(store.directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return []RevisionIntentReference{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read Revisions directory: %w", err)
+	}
+	references := make([]RevisionIntentReference, 0)
+	seenRevision := make(map[string]bool)
+	seenSource := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "TASK-") || !strings.HasSuffix(entry.Name(), ".revision.md") {
+			continue
+		}
+		fields, err := readRevisionFrontmatter(filepath.Join(store.directory, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		metadataVersion := strings.TrimSpace(fields["metadata_version"])
+		if metadataVersion == "" {
+			// Python legacy metadata has no schema version or canonical intent
+			// commit marker. Keep it readable by the compatibility surface, but
+			// never infer that it authorizes targeted Go execution.
+			continue
+		}
+		revisionTaskID := strings.TrimSpace(fields["revision_task_id"])
+		sourceTaskID := strings.TrimSpace(fields["source_task_id"])
+		if metadataVersion != "1" || fields["type"] != "revision-task" || fields["project"] != store.projectName || fields["state"] != "intent_committed" ||
+			entry.Name() != revisionTaskID+".revision.md" || seenRevision[revisionTaskID] || seenSource[sourceTaskID] {
+			return nil, fmt.Errorf("%w: invalid or duplicate Revision intent identity", ErrInvalidDocument)
+		}
+		if _, err := task.ParseTaskID(sourceTaskID); err != nil {
+			return nil, fmt.Errorf("%w: source Task ID", ErrInvalidDocument)
+		}
+		if _, err := task.ParseTaskID(revisionTaskID); err != nil || sourceTaskID == revisionTaskID {
+			return nil, fmt.Errorf("%w: Revision Task ID", ErrInvalidDocument)
+		}
+		seenRevision[revisionTaskID] = true
+		seenSource[sourceTaskID] = true
+		references = append(references, RevisionIntentReference{
+			SourceTaskID: sourceTaskID, RevisionTaskID: revisionTaskID,
+			RelativePath: filepath.ToSlash(filepath.Join("Revisions", entry.Name())),
+		})
+	}
+	return references, nil
 }
 
 func (store *RevisionIntentStore) Save(ctx context.Context, intent revision.Intent) (revision.Record, error) {

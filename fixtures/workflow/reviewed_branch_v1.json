@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "parent_command_id": "CMD-REVIEWED-WORKFLOW-001",
+  "reviewer_id": "QA-001",
+  "verdicts": ["Request Changes", "Approve", "Approve"],
+  "expected": {
+    "status": "completed",
+    "task_order": ["TASK-001", "TASK-002", "TASK-004"],
+    "targeted_revision": [false, true, false]
+  }
+}

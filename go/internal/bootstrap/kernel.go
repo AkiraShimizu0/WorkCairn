@@ -33,6 +33,7 @@ type KernelDependencies struct {
 	WorkerRuntime WorkerRuntime
 	TaskStore     task.Store
 	Deliverables  deliverable.Store
+	Readiness     service.ReadinessService
 }
 
 // NewDefaultKernel registers production services without starting the Kernel.
@@ -94,8 +95,12 @@ func NewKernelWithDependencies(version string, dependencies KernelDependencies) 
 	if err := workspaceKernel.RegisterWorkerService(workerService); err != nil {
 		return nil, err
 	}
+	readiness := dependencies.Readiness
+	if readiness == nil {
+		readiness = workflowService
+	}
 	executionService, err := service.NewExecutionService(
-		workflowService,
+		readiness,
 		taskService,
 		workerService,
 		dependencies.Deliverables,

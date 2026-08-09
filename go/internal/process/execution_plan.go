@@ -19,14 +19,22 @@ import (
 
 var ErrExecutionPlanSnapshotChanged = errors.New("execution plan source changed while reading")
 
+type ExecutionReadinessMode string
+
+const (
+	ExecutionReadinessSequential ExecutionReadinessMode = "sequential"
+	ExecutionReadinessTargeted   ExecutionReadinessMode = "targeted_revision"
+)
+
 // ExecutionPlanInput identifies one prospective Task execution. CurrentTime is
 // injected so planning is deterministic and never consults a global clock.
 type ExecutionPlanInput struct {
-	VaultRoot   string
-	ProjectID   string
-	ProjectName string
-	TaskID      string
-	CurrentTime time.Time
+	VaultRoot     string
+	ProjectID     string
+	ProjectName   string
+	TaskID        string
+	CurrentTime   time.Time
+	ReadinessMode ExecutionReadinessMode
 }
 
 // ExecutionPlan is a read-only preflight result. It is not approval evidence
@@ -58,6 +66,12 @@ func PlanExecution(ctx context.Context, input ExecutionPlanInput) (ExecutionPlan
 	input.ProjectID = strings.TrimSpace(input.ProjectID)
 	input.ProjectName = strings.TrimSpace(input.ProjectName)
 	input.TaskID = strings.TrimSpace(input.TaskID)
+	if input.ReadinessMode == "" {
+		input.ReadinessMode = ExecutionReadinessSequential
+	}
+	if input.ReadinessMode != ExecutionReadinessSequential && input.ReadinessMode != ExecutionReadinessTargeted {
+		return ExecutionPlan{}, fmt.Errorf("plan execution: invalid readiness mode")
+	}
 
 	store, err := vault.NewTaskStore(vault.TaskStoreConfig{
 		VaultRoot: input.VaultRoot, ProjectName: input.ProjectName,
@@ -84,9 +98,16 @@ func PlanExecution(ctx context.Context, input ExecutionPlanInput) (ExecutionPlan
 	if !found || !sameTaskSnapshot(persisted, requested) {
 		return ExecutionPlan{}, ErrExecutionPlanSnapshotChanged
 	}
-	readiness, err := service.NewWorkflowService().Readiness(
-		request.Tasks, request.Dependencies, request.ExistingEmployees,
-	)
+	var readiness workflow.ReadinessResult
+	if input.ReadinessMode == ExecutionReadinessTargeted {
+		targeted, targetErr := service.NewTargetedWorkflowService(input.TaskID)
+		if targetErr != nil {
+			return ExecutionPlan{}, fmt.Errorf("plan execution readiness: %w", targetErr)
+		}
+		readiness, err = targeted.Readiness(request.Tasks, request.Dependencies, request.ExistingEmployees)
+	} else {
+		readiness, err = service.NewWorkflowService().Readiness(request.Tasks, request.Dependencies, request.ExistingEmployees)
+	}
 	if err != nil {
 		return ExecutionPlan{}, fmt.Errorf("plan execution readiness: %w", err)
 	}

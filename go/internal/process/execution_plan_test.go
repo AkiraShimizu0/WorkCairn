@@ -33,6 +33,38 @@ func TestExecuteTaskRequiresApprovalBeforeCompositionOrEffects(t *testing.T) {
 	}
 }
 
+func TestSequentialExecutionCommandDigestRemainsCheckpointCompatible(t *testing.T) {
+	root := writePlanVault(t)
+	input := ExecuteTaskInput{
+		ExecutionPlanInput: planInput(root), Approved: true, ApprovalSource: "process-test",
+		ApprovalReference: "approval-001", ExecutionID: "EXEC-001", CommandID: "CMD-DIGEST-COMPAT-001",
+	}
+	provider := ClaudeProcessConfig{ProviderModel: "claude-test", MaxTokens: 128}
+	claim, err := claimExecutionCommand(context.Background(), input, provider, input.ApprovalSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := commandledger.RequestDigest(struct {
+		ProjectID         string    `json:"project_id"`
+		ProjectName       string    `json:"project_name"`
+		TaskID            string    `json:"task_id"`
+		CurrentTime       time.Time `json:"current_time"`
+		ApprovalSource    string    `json:"approval_source"`
+		ApprovalReference string    `json:"approval_reference,omitempty"`
+		ExecutionID       string    `json:"execution_id,omitempty"`
+		ProviderModel     string    `json:"provider_model,omitempty"`
+		MaxTokens         int       `json:"max_tokens,omitempty"`
+	}{
+		ProjectID: input.ProjectID, ProjectName: input.ProjectName, TaskID: input.TaskID,
+		CurrentTime: input.CurrentTime, ApprovalSource: input.ApprovalSource,
+		ApprovalReference: input.ApprovalReference, ExecutionID: input.ExecutionID,
+		ProviderModel: provider.ProviderModel, MaxTokens: provider.MaxTokens,
+	})
+	if err != nil || claim.running.RequestDigest != expected {
+		t.Fatalf("sequential digest = %s, want checkpoint digest %s, err=%v", claim.running.RequestDigest, expected, err)
+	}
+}
+
 func TestRunningCommandClaimBlocksAutomaticResumeAndIsRecoveryVisible(t *testing.T) {
 	root := writePlanVault(t)
 	input := ExecuteTaskInput{

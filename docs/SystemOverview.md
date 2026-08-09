@@ -34,7 +34,7 @@ flowchart LR
 
 1. CEO依頼は、構造化Employee inventoryとProvider-neutralなPromptからtyped planへ変換します。
 2. Provider出力は未知field、未知社員、不正な依存、循環依存をGoで拒否します。生成と適用は分離され、LLM出力を直接Vaultへ書きません。
-3. 承認済みplanだけがGo Project／Task writerへ渡り、Project、Task、Task Dependenciesを作成します。承認済みWorkflow commandはdependency readinessをTaskごとに再planし、決定的child Command IDで通常Taskを順次実行します。
+3. 承認済みplanだけがGo Project／Task writerへ渡り、Project、Task、Task Dependenciesを作成します。承認済みReviewed Workflow commandはdependency readinessをTaskごとに再planし、各TaskをReviewして、Request ChangesならRevision Taskを実行・再Reviewしてから本流へ戻ります。
 4. 通常Taskはread-only planで対象、依存、既存成果物を確認した後、別の明示承認で実行します。主要な副作用commandは、Command IDを指定すると副作用前にdurable claimを保存し、同一requestの完了応答を再送しても処理を重複実行しません。
 5. Workerは構造化ContextからPromptを作り、Runner RegistryがProvider Adapterを選びます。RunnerはTask状態や保存形式を知りません。
 6. 成果物を保存してからTaskを完了します。Reviewはcanonical JSON、Markdown表示、Eventの順で成立させます。
@@ -111,7 +111,7 @@ Vaultは現在の運用データの正ですが、Go Coreからはport越しに�
 
 retry時に既存artifactを推測してadoptせず、自動削除・上書きもしません。ADR-0020のRecovery foundationは、再起動後のTask／Deliverable／Review／Revision／Audit／temporary stateをread-onlyで診断します。確定証拠に拘束した`complete_task`と`fail_and_hold_task`だけを、plan再検証、明示承認、Task CASを経て実行します。Event replay、Review／Revision reconciliationは行いません。運用詳細は[Recovery.md](Recovery.md)を参照してください。
 
-ADR-0021のCommand Ledger foundationは、明示Command ID付き通常Task／Review／Revision、CEO apply、Project／Task writer、Organization writer、Sequential Workflow executionで、`running` claimを業務副作用より先にcommitします。同じID・digestのterminal outcomeは保存済みResultを返し、異なるdigestは拒否します。Project作成前とOrganization commandはworkspace scope、既存Project内commandはproject scopeへ記録します。`running` recordはcrashか実行中かを推測せず、Recoveryで診断して自動resumeしません。
+ADR-0021のCommand Ledger foundationは、明示Command ID付き通常Task／Review／Revision、CEO apply、Project／Task writer、Organization writer、Sequential／Reviewed Workflow executionで、`running` claimを業務副作用より先にcommitします。同じID・digestのterminal outcomeは保存済みResultを返し、異なるdigestは拒否します。Project作成前とOrganization commandはworkspace scope、既存Project内commandはproject scopeへ記録します。`running` recordはcrashか実行中かを推測せず、Recoveryで診断して自動resumeしません。
 
 ## Go Only RuntimeとPython compatibility
 
@@ -126,9 +126,9 @@ Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ�
 - Event配送は永続化されず、process crash後の自動再配送はない。欠落は原因不明として診断する
 - 既存artifactを使った自動retry／adoption／projection再構成はない。安全なTask partial stateだけ明示Recoveryできる
 - Durable Command判定は明示Command ID付き主要writerへ適用済み。ID未指定実行と専用migration／Recovery操作は再送保証を持たない
-- 単一Task中心で、durableな複数Task orchestrationやSchedulerはない
+- 複数Task orchestrationはboundedな同期runであり、durable queue、自動resume、Schedulerはない
 - HTTP daemonのremote公開、認証／TLS、非同期queueは未実装。現在はloopback同期Command APIだけ
-- Multi-task Workflowは通常Taskの順次実行まで。Review／Revision分岐と自動resumeは未実装
+- Reviewed Multi-task WorkflowはTaskごとにReviewし、Request ChangesならRevision Taskを実行・再Reviewする。自動resume、並列実行、Schedulerは未実装
 - 外部Action Adapterはまだ製品入口ではない
 - Python compatibility APIは公開互換方針が終了するまでrepositoryに残る
 

@@ -537,6 +537,20 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: plan})
 		return 0
 	}
+	if operation == "workflow-reviewed-plan" {
+		plan, err := workspaceprocess.PlanReviewedWorkflow(ctx, workspaceprocess.ReviewedWorkflowPlanInput{
+			WorkflowPlanInput: workspaceprocess.WorkflowPlanInput{
+				VaultRoot: options.vaultRoot, ProjectID: options.projectID, ProjectName: options.projectName, CurrentTime: currentTime,
+			},
+			ReviewerID: options.reviewerID,
+		})
+		if err != nil {
+			writeCommandResponse(output, failureResponse("REVIEWED_WORKFLOW_PLAN_FAILED", ""))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: plan})
+		return 0
+	}
 	if operation == "plan" {
 		plan, err := workspaceprocess.PlanExecution(ctx, planInput)
 		if err != nil {
@@ -579,6 +593,25 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		}, dependencies.newHTTPClient(options.timeout))
 		if err != nil {
 			writeCommandResponse(output, durableCommandFailureResponse(err, "WORKFLOW_EXECUTION_FAILED", "workflow_execute"))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
+		return 0
+	}
+	if operation == "workflow-reviewed-execute" {
+		result, err := workspaceprocess.ExecuteReviewedWorkflow(ctx, workspaceprocess.ExecuteReviewedWorkflowInput{
+			ReviewedWorkflowPlanInput: workspaceprocess.ReviewedWorkflowPlanInput{
+				WorkflowPlanInput: workspaceprocess.WorkflowPlanInput{
+					VaultRoot: options.vaultRoot, ProjectID: options.projectID, ProjectName: options.projectName, CurrentTime: currentTime,
+				},
+				ReviewerID: options.reviewerID,
+			},
+			Approved: true, ApprovalReference: options.approvalReference, CommandID: options.commandID, MaxTasks: options.maxTasks,
+		}, workspaceprocess.ClaudeProcessConfig{
+			APIKey: apiKey, ProviderModel: providerModel, BaseURL: baseURL,
+		}, dependencies.newHTTPClient(options.timeout))
+		if err != nil {
+			writeCommandResponse(output, durableCommandFailureResponse(err, "REVIEWED_WORKFLOW_FAILED", "workflow_reviewed_execute"))
 			return 1
 		}
 		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
@@ -663,10 +696,10 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	if operation == "plan" || operation == "execute" || operation == "review-plan" || operation == "review-execute" || operation == "revision-plan" || operation == "revision-execute" {
 		required = append(required, options.projectID, options.taskID)
 	}
-	if operation == "workflow-plan" || operation == "workflow-execute" {
+	if operation == "workflow-plan" || operation == "workflow-execute" || operation == "workflow-reviewed-plan" || operation == "workflow-reviewed-execute" {
 		required = append(required, options.projectID)
 	}
-	if operation == "review-plan" || operation == "review-execute" {
+	if operation == "review-plan" || operation == "review-execute" || operation == "workflow-reviewed-plan" || operation == "workflow-reviewed-execute" {
 		required = append(required, options.reviewerID)
 	}
 	if operation == "migrate-apply" {
@@ -708,10 +741,10 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	if operation == "employee-rename-batch-plan" && len(options.renameJSONs) == 0 {
 		return commandOptions{}, errors.New("rename JSON is required")
 	}
-	if operation == "workflow-execute" && strings.TrimSpace(options.commandID) == "" {
+	if (operation == "workflow-execute" || operation == "workflow-reviewed-execute") && strings.TrimSpace(options.commandID) == "" {
 		return commandOptions{}, errors.New("Workflow Command ID is required")
 	}
-	if (operation == "workflow-plan" || operation == "workflow-execute") && (options.maxTasks <= 0 || options.maxTasks > service.MaxWorkflowTasks) {
+	if (operation == "workflow-plan" || operation == "workflow-execute" || operation == "workflow-reviewed-plan" || operation == "workflow-reviewed-execute") && (options.maxTasks <= 0 || options.maxTasks > service.MaxWorkflowTasks) {
 		return commandOptions{}, errors.New("invalid Workflow Task limit")
 	}
 	if (operation == "project-dependencies-plan" || operation == "project-dependencies-create") && len(options.dependencyJSONs) == 0 {
@@ -727,7 +760,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply":
+	case "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply":
 		return true
 	default:
 		return false

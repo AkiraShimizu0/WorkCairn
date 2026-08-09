@@ -21,6 +21,7 @@ func TestGoOnlyReleaseGateCoversProductCapabilities(t *testing.T) {
 		"organization_identity": {"organization-inspect", "identity-validate", "employee-candidates-validate", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "organization-sync-plan", "organization-sync-execute"},
 		"review":                {"review-plan", "review-execute"},
 		"revision":              {"revision-plan", "revision-execute"},
+		"reviewed_workflow":     {"workflow-reviewed-plan", "workflow-reviewed-execute"},
 		"deliverable_audit":     {"plan", "execute"},
 		"recovery":              {"recovery-inspect", "recovery-plan", "recovery-apply"},
 	}

@@ -82,6 +82,29 @@ func TestSharedErrorFixture(t *testing.T) {
 	}
 }
 
+func TestEvaluateTaskReadinessSelectsRevisionAheadOfEarlierUnrelatedTask(t *testing.T) {
+	employeeID := "PLAN-001"
+	tasks := []Task{
+		{ID: "TASK-001", Title: "source", AssigneeID: &employeeID, Status: StatusCompleted},
+		{ID: "TASK-002", Title: "next main task", AssigneeID: &employeeID, Status: StatusUnstarted},
+		{ID: "TASK-003", Title: "revision", AssigneeID: &employeeID, Status: StatusUnstarted},
+	}
+	result, err := EvaluateTaskReadiness("TASK-003", tasks, []Dependency{
+		{TaskID: "TASK-002", DependsOn: []string{"TASK-001"}},
+		{TaskID: "TASK-003", DependsOn: []string{}},
+	}, map[string]bool{employeeID: true})
+	if err != nil || !result.Ready || result.TaskID != "TASK-003" || result.State != StateReady {
+		t.Fatalf("EvaluateTaskReadiness() = %#v, %v", result, err)
+	}
+	sequential, err := EvaluateReadiness(tasks, []Dependency{
+		{TaskID: "TASK-002", DependsOn: []string{"TASK-001"}},
+		{TaskID: "TASK-003", DependsOn: []string{}},
+	}, map[string]bool{employeeID: true})
+	if err != nil || sequential.TaskID != "TASK-002" {
+		t.Fatalf("EvaluateReadiness() = %#v, %v", sequential, err)
+	}
+}
+
 func loadReadinessFixture(t *testing.T) readinessFixture {
 	t.Helper()
 	path := filepath.Join(
