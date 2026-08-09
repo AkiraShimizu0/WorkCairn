@@ -39,6 +39,8 @@ Workspace OSは、会社のProject、Task、AI社員、Workflow、Eventを管理
 - 現在の全体像は`docs/SystemOverview.md`、詳細は`docs/Architecture.md`、次期優先順位は`docs/ROADMAP.md`を正とします。
 - 移行完了と削除資産、残したlanguage-neutral fixtureは`docs/MigrationHistory.md`に記録しています。
 - `make v1-release-gate`がPublic Beta／v1候補の正式な単一Release Gateです。
+- Public Beta候補は`v1.0.0-beta.1`です。macOS／arm64をTier 1とし、他のmacOS／Linux targetはnative smoke前のcandidate、WindowsはVault file lock未対応です。
+- `make public-beta-smoke`はtemporary VaultとMock ProviderでTask、Review／Revision、mobile Interaction完了を検証します。
 
 ## Architecture at a Glance
 

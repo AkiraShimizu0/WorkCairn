@@ -147,6 +147,8 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 
 Workspace OSの移行は完了しています。`workspace-run`、`workspace-daemon`、`workspace-core`が正式surfaceであり、他言語のcompatibility package、fallback、SDK、build metadataはありません。経緯は[MigrationHistory.md](MigrationHistory.md)、自動判定は[GoOnlyReleaseGate.md](GoOnlyReleaseGate.md)を参照してください。
 
+Public BetaではmacOS／arm64をTier 1とし、macOS／amd64、Linux／amd64、Linux／arm64はcross-build後に各native smokeを要求します。WindowsはVault file lockが未対応のためsupportしません。このplatform境界はAdapterの制約であり、Domain／Service契約は変更しません。
+
 - 依存解析や実行可否判定などの副作用のないCoreを含め、中核ルールはGoを正本とします。
 - MarkdownやObsidianのファイルI/OはCoreの外側に置きます。
 - 通常Task、Review、Revisionのprocess入口はGoです。RevisionはADR-0012に従ってimmutable intentを先行commitし、TaskService.Create後に`revision.created`を発行します。AuditはEvent subscriberであり、partial failureを隠しません。Go Claude Adapterは`.env`を読まず、APIキー、Provider model、HTTP clientをRuntimeから受け取ります。

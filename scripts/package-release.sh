@@ -47,7 +47,8 @@ for command in workspace-core workspace-run workspace-daemon; do
   )
 done
 
-cp "$repository_root/LICENSE" "$repository_root/README.md" "$repository_root/CHANGELOG.md" "$package_dir/"
+cp "$repository_root/LICENSE" "$repository_root/README.md" "$repository_root/CHANGELOG.md" \
+  "$repository_root/VERSION" "$repository_root/SECURITY.md" "$repository_root/CONTRIBUTING.md" "$package_dir/"
 cp "$repository_root"/docs/*.md "$repository_root"/docs/*.mmd "$package_dir/docs/"
 mkdir -p "$package_dir/docs/adr"
 cp "$repository_root"/docs/adr/*.md "$package_dir/docs/adr/"
@@ -55,7 +56,14 @@ cp "$repository_root"/docs/adr/*.md "$package_dir/docs/adr/"
 (
   cd "$dist_root"
   tar -czf "$archive_name.tar.gz" "$archive_name"
-  shasum -a 256 "$archive_name.tar.gz" > "$archive_name.tar.gz.sha256"
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$archive_name.tar.gz" > "$archive_name.tar.gz.sha256"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$archive_name.tar.gz" > "$archive_name.tar.gz.sha256"
+  else
+    echo "shasum or sha256sum is required" >&2
+    exit 1
+  fi
 )
 
 echo "$archive_path"

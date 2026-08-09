@@ -17,6 +17,8 @@
 - Interaction stateから次の質問、承認、operation、Recovery参照を導出するread-only next-action projectionを追加。
 - `workspace-daemon`へiPhone基準のLocal Web UI、trusted-LAN pairing、Reviewer inventory、Task／Deliverable／Review evidence inspectionを追加。
 - mobile Interaction commandへbounded acceptanceとLedger pollingを追加し、受理後の実行をSafari接続から分離。
+- `v1.0.0-beta.1`のversion source、macOS／Linux build matrix、temporary Vault + Mock Provider smokeを追加。
+- Public Beta Quickstart、Security Policy、Contributing guide、native実機項目を分離したRelease Checklistを追加。
 
 ### Removed
 

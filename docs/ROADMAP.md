@@ -188,7 +188,7 @@ ADR-0027に基づき、WordPress公開をProvider Runnerとは別のAction Adapt
 
 HTML変換、update／delete、media upload、external reconciliation、自動retry、複数Action Providerは含めません。
 
-## Completed — Public Release Preparation
+## Completed — Release Engineering Foundation
 
 Go Onlyの閉ループが自然言語依頼から外部公開まで成立したため、新機能追加より配布・運用理解を優先します。
 
@@ -202,7 +202,7 @@ Go Onlyの閉ループが自然言語依頼から外部公開まで成立した�
 
 `OperatorGuide.md`はtemporary Vaultからapproved Vaultへの導線、backup、plan／approval／execute、daemon、Scheduler、Notification、Recovery、WordPress partial failure、upgradeを一貫して説明します。release packageはversion／commit metadataを持つ3つのGo binary、必要docs、LICENSEだけをarchiveし、SHA-256 checksumを生成します。daemonはremote公開の注意書きだけでなく非loopback bindをcodeで拒否します。
 
-完了条件を満たしました。新規利用者は実Vaultを誤変更せずplan／approval／execute／inspect／recoveryを再現でき、remote公開、automatic retry、WordPress変換機能の未実装保証を確認できます。製品名は互換性を優先して当面`Workspace OS`を推奨し、名称変更そのものは商標・市場判断後の独立migrationとします。
+基礎条件を満たしました。新規利用者は実Vaultを誤変更せずplan／approval／execute／inspect／recoveryを再現でき、remote公開、automatic retry、WordPress変換機能の未実装保証を確認できます。公開名称の最終判断とnative platform smokeはPublic Beta Preparationで扱います。
 
 ## Completed — Interaction and Approval Session Foundation
 
@@ -298,6 +298,26 @@ mobile attention表示は現在outer／child Command IDとLedger stateまでで�
 ## Completed — Public Beta Go Only Repository
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。
+
+## Current — Public Beta Preparation
+
+大規模機能追加を止め、第三者がclone／installして安全に試せる状態を固定します。候補versionは`v1.0.0-beta.1`です。
+
+実装済み：
+
+- macOS／Linux 4 targetのCGOなしcross-build gate
+- temporary Vault + Mock ProviderのTask／Review／Revision／mobile Interaction smoke target
+- clean install、temporary Vault、iPhone到達手順
+- `VERSION`、SECURITY、CONTRIBUTING、Public Beta Release Checklist
+- archive allow-listとmacOS／Linux checksum生成
+
+Public Beta公開前に残る人間／実環境確認：
+
+- 公開名称、repository slug、security reporting、support窓口
+- macOS／arm64のnative CLI／daemon／iPhone実機smoke
+- 配布する追加targetごとのnative filesystem／daemon smoke
+- temporary Vaultとtest credentialによる最小Provider smoke
+- tag、Release note、archive checksumの最終sign-off
 
 ## Cross-Cutting Gates
 

@@ -2,7 +2,7 @@
 
 ## 判定
 
-Workspace OSのrepository、build、test、release、distributionはGo Onlyです。正式な製品surfaceは`workspace-run`、`workspace-daemon`、JSON Contract v1の`workspace-core`であり、clone後の検証にGo toolchain以外の言語runtimeやpackage managerを必要としません。
+Workspace OSのrepository、build、test、release、distributionはGo Onlyです。正式な製品surfaceは`workspace-run`、`workspace-daemon`、JSON Contract v1の`workspace-core`であり、clone後の検証にGo toolchain以外の言語runtimeやpackage managerを必要としません。Public Beta候補versionは`VERSION`の`v1.0.0-beta.1`です。
 
 ## Capability matrix
 
@@ -25,13 +25,14 @@ make v1-release-gate
 
 この単一targetは次を実行します。
 
-1. 3つのGo binaryをbuildする。
-2. 全Go testsをcacheなしで実行する。
-3. 全Go race testsをcacheなしで実行する。
-4. `go vet ./...`を実行する。
-5. `gofmt`差分がないことを検査する。
-6. release packaging scriptの実行権限とshell syntaxを検査する。
-7. `git diff --check`で差分衛生を検査する。
+1. native向け3つのGo binaryをbuildする。
+2. macOS／Linuxの4 targetで3 binaryをCGOなしcross-buildする。
+3. 全Go testsをcacheなしで実行する。
+4. 全Go race testsをcacheなしで実行する。
+5. `go vet ./...`を実行する。
+6. `gofmt`差分がないことを検査する。
+7. release packaging scriptの実行権限とshell syntaxを検査する。
+8. `git diff --check`で差分衛生を検査する。
 
 Go test内のRelease Gateはさらに次を拒否します。
 
@@ -47,7 +48,7 @@ Provider APIはMock HTTP serverだけ、Vaultはtemporary directoryだけで検�
 
 ```bash
 make release-package \
-  RELEASE_VERSION=v1.0.0 \
+  RELEASE_VERSION=v1.0.0-beta.1 \
   BUILD_DATE=2026-08-09T12:00:00Z
 ```
 
@@ -56,10 +57,16 @@ packaging scriptはallow-listで次だけをarchiveへ含めます。
 - `workspace-run`
 - `workspace-daemon`
 - `workspace-core`
-- `LICENSE`、`README.md`、`CHANGELOG.md`
+- `VERSION`、`LICENSE`、`README.md`、`CHANGELOG.md`、`SECURITY.md`、`CONTRIBUTING.md`
 - `docs/`
 
 `.env`、Vault、source tree、test data、cache、local build directory、他言語runtime資産は含めません。archiveとSHA-256 checksumは既存同名fileを上書きしません。
+
+生成後は隣接checksum、必須asset、allow-list外file、archive名と`VERSION`の一致を検証します。
+
+```bash
+make verify-release-package ARCHIVE=/absolute/path/to/workspace-os_v1.0.0-beta.1_darwin_arm64.tar.gz
+```
 
 ## Historical migration
 

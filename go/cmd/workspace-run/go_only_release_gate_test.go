@@ -5,7 +5,9 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -108,6 +110,27 @@ func TestRepositoryHasNoRetiredRuntimeAssets(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPublicBetaRepositoryMetadata(t *testing.T) {
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"VERSION", "LICENSE", "README.md", "CHANGELOG.md", "SECURITY.md", "CONTRIBUTING.md"} {
+		info, statErr := os.Stat(filepath.Join(repositoryRoot, name))
+		if statErr != nil || info.IsDir() {
+			t.Errorf("Public Beta repository file is missing: %s", name)
+		}
+	}
+	content, err := os.ReadFile(filepath.Join(repositoryRoot, "VERSION"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := strings.TrimSpace(string(content))
+	if !regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$`).MatchString(version) {
+		t.Fatalf("Public Beta VERSION is not a SemVer prerelease: %q", version)
 	}
 }
 

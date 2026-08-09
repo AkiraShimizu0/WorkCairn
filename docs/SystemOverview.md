@@ -2,9 +2,9 @@
 
 ## Workspace OSとは
 
-Workspace OSは、会社、AI社員、Project、Task、成果物、Review、Revision、監査証跡を、人間が読めるWorkspaceと型付きの実行系で一貫して扱うシステムです。現在の製品RuntimeはGo Onlyです。正本の運用入口は`workspace-run`と`workspace-daemon`のLocal Web UI、中核のビジネスルールはGo Domain／Service、運用データはVault Adapterが管理します。
+Workspace OSは、会社、AI社員、Project、Task、成果物、Review、Revision、監査証跡を、人間が読めるWorkspaceと型付きの実行系で一貫して扱うシステムです。現在の製品RuntimeはGo Only、Public Beta候補は`v1.0.0-beta.1`です。正本の運用入口は`workspace-run`と`workspace-daemon`のLocal Web UI、中核のビジネスルールはGo Domain／Service、運用データはVault Adapterが管理します。
 
-この文書は「現在どう動くか」を説明します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、個別判断の理由は[ADR](adr/)、詳細なpackage構造は[Architecture.md](Architecture.md)、安全な導入は[OperatorGuide.md](OperatorGuide.md)、HTTP運用は[HTTPAPI.md](HTTPAPI.md)、今後の順序は[ROADMAP.md](ROADMAP.md)を正とします。
+この文書は「現在どう動くか」を説明します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、個別判断の理由は[ADR](adr/)、詳細なpackage構造は[Architecture.md](Architecture.md)、安全な導入は[PublicBetaQuickstart.md](PublicBetaQuickstart.md)と[OperatorGuide.md](OperatorGuide.md)、HTTP運用は[HTTPAPI.md](HTTPAPI.md)、今後の順序は[ROADMAP.md](ROADMAP.md)を正とします。
 
 ## 外側から見た利用フロー
 
