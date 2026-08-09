@@ -31,6 +31,8 @@ daemonは`.env` fileを読みません。Provider commandに必要な設定はRu
 
 `POST /v1/commands`は`application/json`だけを受け付けます。Command ID、version、operation、`approved: true`は必須です。同じscopeで同じCommand ID／requestを再送すると保存済みresultを返し、異なるrequestは`COMMAND_ID_CONFLICT`、未確定の`running`は`COMMAND_IN_PROGRESS`で拒否します。
 
+Interaction Sessionの開始前planだけはread-only `POST /v1/interaction-plans`を使います。`workspace-interaction.v1`のSession ID、自然言語request、logical model、時刻を受け、承認対象`request_digest`を返します。planはVault、Provider、credentialを変更・読込しません。その後の`interaction.*`は通常の承認済み`workspace-command.v1`です。
+
 対応operation：
 
 | operation | scope | payloadの主なidentity |
@@ -50,8 +52,14 @@ daemonは`.env` fileを読みません。Provider commandに必要な設定はRu
 | `organization.employee_id_repair` | workspace | approved ID repair list、時刻 |
 | `organization.sync` | workspace | 時刻 |
 | `action.wordpress.publish` | project | Project、Task、logical target ID、承認済みsource SHA-256、時刻。credentialはpayload外 |
+| `interaction.start` | workspace | Session ID、自然言語request、logical model、承認済みrequest digest、時刻 |
+| `interaction.plan.generate` | workspace | Session ID、expected Version、時刻。Provider credentialはpayload外 |
+| `interaction.answer` | workspace | Session ID、expected Version、全質問へのtyped回答、時刻 |
+| `interaction.plan.apply` | workspace | Session ID、expected Version、Project ID、承認済みplan digest、時刻 |
 
 Payloadはunknown fieldを拒否します。CEO plan generation、read-only plan／inspection、migration、Recovery applyはこのeffect Command endpointへ含めません。
+
+`GET /v1/interactions`と`GET /v1/interactions/{session_id}`はappend-only turn、state、Versionをread-onlyで返します。Sessionには自然言語requestとplanが含まれるため、Notificationと異なりredacted endpointではありません。loopback外へ公開しないでください。Interaction commandは人間の質問回答・承認を必要とするためScheduler対象ではありません。
 
 `GET /v1/schedules`と`GET /v1/schedules/{schedule_id}`はone-shot Scheduleのpending／dispatching／terminal stateをread-onlyで返します。daemonは`--scheduler-interval`ごとにdueまたはmissed pending Scheduleを確認し、保存済みの同一Command ID／payloadを既存Processへ配送します。`dispatching`は自動resumeしません。
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/metrics"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/notification"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
@@ -89,6 +91,56 @@ func TestServerRejectsNonLoopbackExposure(t *testing.T) {
 	for _, address := range []string{"127.0.0.1:0", "localhost:8787", "[::1]:0"} {
 		if _, err := NewServer(address, handler); err != nil {
 			t.Fatalf("NewServer(%q): %v", address, err)
+		}
+	}
+}
+
+func TestInteractionPlanStartReplayAndReadOnlyInspectionHTTP(t *testing.T) {
+	root := t.TempDir()
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(executor, executor)
+	planBody := `{"version":"workspace-interaction.v1","session_id":"SESSION-HTTP-001","request":"Webアプリを作りたい","model":"Claude Sonnet 5","current_time":"2026-08-09T12:00:00Z"}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/interaction-plans", bytes.NewBufferString(planBody))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("plan response = %d %s", response.Code, response.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, ".workspace-os")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read-only Interaction plan changed Vault: %v", err)
+	}
+	var envelope Response
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var plan workspaceprocess.InteractionStartPlan
+	if err := json.Unmarshal(envelope.Result, &plan); err != nil || plan.Session.RequestDigest == "" {
+		t.Fatalf("plan = %#v, %v", plan, err)
+	}
+	command := map[string]any{
+		"version": ContractVersion, "command_id": "CMD-INTERACTION-HTTP-START", "operation": "interaction.start", "approved": true,
+		"payload": map[string]any{
+			"session_id": plan.Session.SessionID, "request": plan.Session.Request, "request_digest": plan.Session.RequestDigest,
+			"model": plan.Session.Model, "current_time": plan.Session.CreatedAt.Format(time.RFC3339),
+		},
+	}
+	first := performCommand(t, handler, command)
+	if first.Code != http.StatusOK {
+		t.Fatalf("start response = %d %s", first.Code, first.Body.String())
+	}
+	second := performCommand(t, handler, command)
+	if second.Code != http.StatusOK || second.Body.String() != first.Body.String() {
+		t.Fatalf("start replay = %d %s", second.Code, second.Body.String())
+	}
+	for _, path := range []string{"/v1/interactions", "/v1/interactions/SESSION-HTTP-001"} {
+		inspection := httptest.NewRecorder()
+		handler.ServeHTTP(inspection, httptest.NewRequest(http.MethodGet, path, nil))
+		if inspection.Code != http.StatusOK || !strings.Contains(inspection.Body.String(), string(interaction.StatePlanGenerationApprovalRequired)) {
+			t.Fatalf("inspection %s = %d %s", path, inspection.Code, inspection.Body.String())
 		}
 	}
 }

@@ -65,6 +65,53 @@ func TestVersionDoesNotRequireVaultOrRuntimeDependencies(t *testing.T) {
 	}
 }
 
+func TestInteractionStartPlanIsReadOnlyAndGenerationNeedsApprovalBeforeProviderConfig(t *testing.T) {
+	root := t.TempDir()
+	before := commandVaultSnapshot(t, root)
+	var output bytes.Buffer
+	planArgs := []string{
+		"interaction-start-plan", "--vault", root, "--session-id", "SESSION-CLI-001",
+		"--request", "Webアプリを作りたい", "--model", "Claude Sonnet 5", "--at", "2026-08-09T12:00:00Z",
+	}
+	exitCode := run(context.Background(), planArgs, &output, commandDependencies{
+		lookupEnv:     func(string) (string, bool) { t.Fatal("Interaction plan read Provider environment"); return "", false },
+		newHTTPClient: func(time.Duration) claude.HTTPDoer { t.Fatal("Interaction plan constructed HTTP client"); return nil },
+	})
+	response := decodeCommandResponse(t, output.Bytes())
+	if exitCode != 0 || !response.OK || !reflect.DeepEqual(before, commandVaultSnapshot(t, root)) {
+		t.Fatalf("Interaction plan exit=%d response=%#v", exitCode, response)
+	}
+	encoded, _ := json.Marshal(response.Result)
+	var plan workspaceprocess.InteractionStartPlan
+	if err := json.Unmarshal(encoded, &plan); err != nil || plan.Session.RequestDigest == "" {
+		t.Fatalf("Interaction plan = %#v, %v", plan, err)
+	}
+
+	output.Reset()
+	startArgs := []string{
+		"interaction-start", "--vault", root, "--session-id", "SESSION-CLI-001", "--request", "Webアプリを作りたい",
+		"--request-sha256", plan.Session.RequestDigest, "--model", "Claude Sonnet 5", "--at", "2026-08-09T12:00:00Z",
+		"--command-id", "CMD-INTERACTION-CLI-START", "--approved",
+	}
+	if exit := run(context.Background(), startArgs, &output, commandDependencies{}); exit != 0 {
+		t.Fatalf("Interaction start exit=%d response=%s", exit, output.String())
+	}
+
+	environmentRead, httpConstructed := false, false
+	output.Reset()
+	exitCode = run(context.Background(), []string{
+		"interaction-plan-generate", "--vault", root, "--session-id", "SESSION-CLI-001", "--expected-version", "1",
+		"--at", "2026-08-09T12:01:00Z", "--command-id", "CMD-INTERACTION-CLI-PLAN",
+	}, &output, commandDependencies{
+		lookupEnv:     func(string) (string, bool) { environmentRead = true; return "", false },
+		newHTTPClient: func(time.Duration) claude.HTTPDoer { httpConstructed = true; return nil },
+	})
+	response = decodeCommandResponse(t, output.Bytes())
+	if exitCode != 1 || response.Error == nil || response.Error.Code != "APPROVAL_REQUIRED" || environmentRead || httpConstructed {
+		t.Fatalf("unapproved generation exit=%d response=%#v env=%t http=%t", exitCode, response, environmentRead, httpConstructed)
+	}
+}
+
 func TestWorkflowPlanIsReadOnlyAndNeedsNoProviderConfig(t *testing.T) {
 	root := writeCommandVault(t)
 	before := commandVaultSnapshot(t, root)

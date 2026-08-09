@@ -17,6 +17,7 @@ v0.1.0 Python APIは公開互換専用のcompatibility surfaceとして残りま
 - Go Claude AdapterとFake Runner／Mock HTTP serverの差し替え
 - 別AI社員による構造化レビューと修正タスク生成
 - Go process／Serviceによる実行・レビュー・修正フローの調整
+- 自然言語依頼、必要質問、再plan、digest承認をつなぐtyped Interaction Session
 - dry-run、明示的承認、二重実行防止、原子的更新、partial failureの明示
 - commit済み証拠とTask Versionに拘束されたread-only診断／明示Recovery
 - 社員IDを維持した安全な改名とIdentity履歴
@@ -25,7 +26,9 @@ v0.1.0 Python APIは公開互換専用のcompatibility surfaceとして残りま
 
 ```mermaid
 flowchart TD
-    CEO["CEO"] --> CEOPlan["Go CEO Plan Service"]
+    CEO["CEO"] --> Interaction["Typed Interaction Session"]
+    Interaction --> CEOPlan["Go CEO Plan Service"]
+    CEOPlan -. questions / answers .-> Interaction
     CEOPlan --> CEOApply["Go CEO Plan Apply"]
     CEOApply --> Workflow["Go managed Project / Task"]
     Workflow --> Run["Go workspace-run"]
@@ -69,6 +72,7 @@ flowchart TD
 - [ADR-0025: Schedulerは承認済みone-shot CommandをLedger経路へ配送する](docs/adr/ADR-0025-one-shot-scheduler-command-dispatch.md)
 - [ADR-0026: NotificationとMetricsをredacted Event subscriberとして接続する](docs/adr/ADR-0026-redacted-notification-and-metrics-subscribers.md)
 - [ADR-0027: External Actionはimmutable request evidenceを先行commitして公開する](docs/adr/ADR-0027-external-action-evidence-and-publication.md)
+- [ADR-0028: Interaction Sessionは質問回答と承認対象digestをappend-only turnで保持する](docs/adr/ADR-0028-interaction-session-clarification-and-approval.md)
 
 新しいADRは[ADRテンプレート](docs/adr/ADR-template.md)から作成します。
 
@@ -268,6 +272,38 @@ bin/workspace-run ceo-plan-apply \
 ```
 
 生成と適用は分離されます。Provider出力は未知field、未知社員、循環dependencyなどをGoで拒否します。Project、Task、Task Dependenciesの途中失敗では成立済みfactを削除せず、partial stateを返します。公開Python caller向け`WorkspaceRunCEOPlanGateway`／`WorkspaceRunCEOApplyGateway`にもPython fallbackはありません。
+
+### Interaction Sessionで質問と承認を継続する
+
+新しい通常導線では、まずread-only planの`request_digest`を確認してSessionを作成します。plan生成後に`ceo_questions`があれば全件へ回答し、別の承認で再生成します。質問ゼロの最新`plan_digest`だけをProject／Taskへ適用できます。
+
+```bash
+bin/workspace-run interaction-start-plan --vault /path/to/vault \
+  --session-id SESSION-001 --request "Webアプリを作りたい" \
+  --model "Claude Sonnet 5" --at 2026-08-09T12:00:00Z
+
+bin/workspace-run interaction-start --vault /path/to/vault \
+  --session-id SESSION-001 --request "Webアプリを作りたい" \
+  --request-sha256 '<planのrequest_digest>' --model "Claude Sonnet 5" \
+  --at 2026-08-09T12:00:00Z --command-id CMD-SESSION-START-001 --approved
+
+ANTHROPIC_API_KEY=... WORKSPACE_CLAUDE_PROVIDER_MODEL=claude-sonnet-5 \
+bin/workspace-run interaction-plan-generate --vault /path/to/vault \
+  --session-id SESSION-001 --expected-version 1 --at 2026-08-09T12:01:00Z \
+  --command-id CMD-SESSION-PLAN-001 --approved
+
+bin/workspace-run interaction-answer --vault /path/to/vault \
+  --session-id SESSION-001 --expected-version 2 \
+  --answer-json '{"question":"対象端末はWebだけですか","answer":"はい"}' \
+  --at 2026-08-09T12:02:00Z --command-id CMD-SESSION-ANSWER-001 --approved
+
+bin/workspace-run interaction-plan-apply --vault /path/to/vault \
+  --session-id SESSION-001 --expected-version 4 --project-id PROJECT-001 \
+  --plan-sha256 '<質問ゼロplanのplan_digest>' --at 2026-08-09T12:04:00Z \
+  --command-id CMD-SESSION-APPLY-001 --approved
+```
+
+各実行前に`interaction-inspect`でstateとVersionを確認します。公開互換の直接`ceo-plan-*`は残りますが、Interaction経路は未回答質問をblockします。自動resumeや既存Project adoptionは行いません。
 
 ### Partial stateを診断・明示Recoveryする
 

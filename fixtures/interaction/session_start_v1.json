@@ -1,0 +1,23 @@
+{
+  "plan_request": {
+    "version": "workspace-interaction.v1",
+    "session_id": "SESSION-001",
+    "request": "Webアプリを作りたい",
+    "model": "Claude Sonnet 5",
+    "current_time": "2026-08-09T12:00:00Z"
+  },
+  "expected_request_digest": "sha256:3c8f6dc8dde25e7cad6814e9ee01b8efabe7451719fafa18c84792eb35aa8bbe",
+  "start_command": {
+    "version": "workspace-command.v1",
+    "command_id": "CMD-INTERACTION-START-001",
+    "operation": "interaction.start",
+    "approved": true,
+    "payload": {
+      "session_id": "SESSION-001",
+      "request": "Webアプリを作りたい",
+      "request_digest": "sha256:3c8f6dc8dde25e7cad6814e9ee01b8efabe7451719fafa18c84792eb35aa8bbe",
+      "model": "Claude Sonnet 5",
+      "current_time": "2026-08-09T12:00:00Z"
+    }
+  }
+}

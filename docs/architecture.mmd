@@ -1,5 +1,7 @@
 flowchart TD
-    CEO["CEO"] --> CEOPlan["Go CEO Plan Service"]
+    CEO["CEO"] --> Interaction["Typed Interaction Session"]
+    Interaction --> CEOPlan["Go CEO Plan Service"]
+    CEOPlan -. questions / answers .-> Interaction
     CEOPlan --> CEOApply["Go CEO Plan Apply"]
     CEOApply --> Managed["Go managed Project / Task"]
     Managed --> Run["Go workspace-run"]

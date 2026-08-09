@@ -54,6 +54,10 @@ read-only plan
 → Notification／Auditを確認
 ```
 
+自然言語依頼を継続して扱う場合はInteraction Sessionを使います。`interaction-start-plan`のrequest digestを確認してstartし、Provider呼出し前にSession Versionを承認します。`clarification_required`では表示された全質問へ`interaction-answer`で回答し、再度`interaction-plan-generate`します。`plan_approval_required`になった最新plan digestだけを`interaction-plan-apply`へ渡します。
+
+Sessionは回答と承認を調停するevidenceであり、Project／Taskの正本ではありません。Provider成功後またはProject／Task commit後にSession CASが失敗した場合、既存効果を削除せずworkspace Command Ledgerと`interaction-inspect`を確認します。同じCommand IDで推測再実行せず、自動adoptionもしません。
+
 自然言語の依頼は`ceo-plan-generate`でtyped planへ変換します。生成は適用ではありません。未知社員、循環dependency、未知fieldをGo validationで拒否した後、別の`ceo-plan-apply-plan`と明示承認でProject／Task writerへ渡します。
 
 複数Taskでは`workflow-reviewed-plan`を先に実行します。実行経路はTask実行後にReviewし、Acceptなら次Taskへ、Request ChangesならRevision Taskを作成・実行して再Reviewします。上限、blocked、partial resultで停止した場合は自動resumeせず、outer／child Command Ledgerとcanonical evidenceを確認します。

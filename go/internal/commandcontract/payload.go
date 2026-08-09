@@ -12,6 +12,7 @@ import (
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/organization"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
 )
@@ -133,6 +134,35 @@ func ValidatePayload(operation string, content json.RawMessage) error {
 			CurrentTime  time.Time `json:"current_time"`
 			SourceSHA256 string    `json:"source_sha256"`
 		}{}
+	case "interaction.start":
+		target = &struct {
+			SessionID     string    `json:"session_id"`
+			Request       string    `json:"request"`
+			RequestDigest string    `json:"request_digest"`
+			Model         string    `json:"model"`
+			CurrentTime   time.Time `json:"current_time"`
+		}{}
+	case "interaction.plan.generate":
+		target = &struct {
+			SessionID       string    `json:"session_id"`
+			ExpectedVersion uint64    `json:"expected_version"`
+			CurrentTime     time.Time `json:"current_time"`
+		}{}
+	case "interaction.answer":
+		target = &struct {
+			SessionID       string               `json:"session_id"`
+			ExpectedVersion uint64               `json:"expected_version"`
+			Answers         []interaction.Answer `json:"answers"`
+			CurrentTime     time.Time            `json:"current_time"`
+		}{}
+	case "interaction.plan.apply":
+		target = &struct {
+			SessionID       string    `json:"session_id"`
+			ExpectedVersion uint64    `json:"expected_version"`
+			ProjectID       string    `json:"project_id"`
+			PlanDigest      string    `json:"plan_digest"`
+			CurrentTime     time.Time `json:"current_time"`
+		}{}
 	default:
 		return ErrInvalidPayload
 	}
@@ -167,6 +197,10 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 		"organization.employee_id_repair": {},
 		"organization.sync":               {},
 		"action.wordpress.publish":        {"project_id", "project_name", "task_id", "target_id", "source_sha256"},
+		"interaction.start":               {"session_id", "request", "request_digest", "model"},
+		"interaction.plan.generate":       {"session_id"},
+		"interaction.answer":              {"session_id"},
+		"interaction.plan.apply":          {"session_id", "project_id", "plan_digest"},
 	}
 	stringsRequired, supported := requiredStrings[operation]
 	if !supported {
@@ -188,6 +222,7 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 		"organization.employee_hire":      {"candidate"},
 		"organization.employee_rename":    {"request"},
 		"organization.employee_id_repair": {"expected"},
+		"interaction.answer":              {"answers"},
 	}
 	for _, name := range requiredValues[operation] {
 		raw, ok := fields[name]
@@ -204,6 +239,43 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 	if operation == "action.wordpress.publish" {
 		var digest string
 		if json.Unmarshal(fields["source_sha256"], &digest) != nil || action.ValidateSourceDigest(digest) != nil {
+			return ErrInvalidPayload
+		}
+	}
+	if strings.HasPrefix(operation, "interaction.") {
+		var sessionID string
+		if json.Unmarshal(fields["session_id"], &sessionID) != nil || interaction.ValidateSessionID(sessionID) != nil {
+			return ErrInvalidPayload
+		}
+	}
+	if operation == "interaction.start" {
+		var sessionID, request, digest, model string
+		var currentTime time.Time
+		_ = json.Unmarshal(fields["session_id"], &sessionID)
+		_ = json.Unmarshal(fields["request"], &request)
+		_ = json.Unmarshal(fields["request_digest"], &digest)
+		_ = json.Unmarshal(fields["model"], &model)
+		_ = json.Unmarshal(fields["current_time"], &currentTime)
+		record, err := interaction.New(sessionID, request, model, currentTime)
+		if err != nil || record.RequestDigest != digest {
+			return ErrInvalidPayload
+		}
+	}
+	if operation == "interaction.plan.generate" || operation == "interaction.answer" || operation == "interaction.plan.apply" {
+		var expected uint64
+		if raw, ok := fields["expected_version"]; !ok || json.Unmarshal(raw, &expected) != nil || expected == 0 {
+			return ErrInvalidPayload
+		}
+	}
+	if operation == "interaction.plan.apply" {
+		var digest string
+		if json.Unmarshal(fields["plan_digest"], &digest) != nil || interaction.ValidateDigest(digest) != nil {
+			return ErrInvalidPayload
+		}
+	}
+	if operation == "interaction.answer" {
+		var answers []interaction.Answer
+		if json.Unmarshal(fields["answers"], &answers) != nil || interaction.ValidateAnswerPayload(answers) != nil {
 			return ErrInvalidPayload
 		}
 	}

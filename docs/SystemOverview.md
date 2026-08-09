@@ -10,8 +10,11 @@ Workspace OSは、会社、AI社員、Project、Task、成果物、Review、Revi
 
 ```mermaid
 flowchart LR
-    Request["CEOの自然言語依頼"] --> ApproveGenerate{"Provider呼出しを承認"}
+    Request["CEOの自然言語依頼"] --> Session["Interaction request digest"]
+    Session --> ApproveGenerate{"Provider呼出しを承認"}
     ApproveGenerate --> Generate["Plan生成"]
+    Generate -->|questions| Answer["全質問へtyped回答"]
+    Answer --> ApproveGenerate
     Generate --> Validate["typed plan検証"]
     Validate --> ApproveApply{"適用を承認"}
     ApproveApply --> Project["Project / Task作成"]
@@ -134,6 +137,8 @@ ADR-0026のNotification／Metricsは既存Task／Review／Revision EventへRunti
 
 ADR-0027のExternal Actionは既存Deliverableをread-onlyで読み、source digestに拘束したrequest evidenceを先に保存してからWordPress Adapterを呼びます。remote公開後はresult evidenceを保存し、その後だけ`action.completed`をAudit／Notificationへ流します。credentialはRuntime edgeだけにあり、Task状態やDeliverableを変更しません。
 
+ADR-0028のInteraction Sessionは、自然言語requestをimmutable digestへ固定し、CEO Planの質問をtyped回答としてappendしてから再planします。質問が残るplanは適用できず、質問ゼロの最新plan SHA-256とSession Versionへの別承認後だけ既存CEO applyへ渡します。Provider成功後やProject／Task commit後にSession CASが失敗しても成立済み効果をrollbackせず、Command Ledgerのpartial failureとして残します。
+
 ## Go Only RuntimeとPython compatibility
 
 製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／Metrics、External ActionにPython interpreterは不要です。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。Go sourceが外部interpreterを起動しないことをRelease Gateで検査します。
@@ -153,6 +158,7 @@ Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ�
 - Schedulerはone-shotだけで、cron／recurrence、並列配送、`dispatching` reconciliationは未実装
 - Notificationはlocal read-only Inboxだけで、外部channel配送、未読／ack、Event replayは未実装。Metricsはprocess再起動でresetされる
 - External ActionはWordPress post publishだけで、HTML変換、update／delete、media upload、remote reconciliation、自動retryは未実装
+- Interaction SessionはProject／Task作成までを扱い、Reviewed Workflow実行、Review／Revision分岐、External Action完了を同じSessionへ記録するcompositionは未実装
 - Python compatibility APIは公開互換方針が終了するまでrepositoryに残る
 
 これらはGo Only Runtimeの不足ではなく、次期Roadmapで段階的に扱う耐久性・運用機能です。

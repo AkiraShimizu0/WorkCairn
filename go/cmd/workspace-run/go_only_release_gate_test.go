@@ -27,6 +27,7 @@ func TestGoOnlyReleaseGateCoversProductCapabilities(t *testing.T) {
 		"recovery":              {"recovery-inspect", "recovery-plan", "recovery-apply"},
 		"scheduler":             {"schedule-plan", "schedule-create", "schedule-list"},
 		"external_action":       {"action-wordpress-plan", "action-wordpress-publish"},
+		"interaction_session":   {"interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply"},
 	}
 	for capability, operations := range capabilities {
 		for _, operation := range operations {
@@ -79,7 +80,7 @@ func TestGoProductSourcesCannotLaunchPython(t *testing.T) {
 
 func TestV1ArchitectureLayerDependencies(t *testing.T) {
 	domainPackages := map[string]bool{
-		"ceoplan": true, "commandcontract": true, "commandledger": true, "deliverable": true, "event": true, "execution": true,
+		"action": true, "ceoplan": true, "commandcontract": true, "commandledger": true, "deliverable": true, "event": true, "execution": true, "interaction": true,
 		"organization": true, "policy": true, "project": true, "prompt": true,
 		"recovery": true, "review": true, "revision": true, "runner": true, "scheduler": true, "task": true,
 		"worker": true, "workflow": true,

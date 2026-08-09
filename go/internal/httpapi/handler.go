@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/metrics"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/notification"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
@@ -25,6 +26,8 @@ type Handler struct {
 	scheduleInspector     ScheduleInspector
 	metricsInspector      MetricsInspector
 	notificationInspector NotificationInspector
+	interactionInspector  InteractionInspector
+	interactionPlanner    InteractionPlanner
 	mux                   *http.ServeMux
 }
 
@@ -40,6 +43,15 @@ type MetricsInspector interface {
 type NotificationInspector interface {
 	InspectNotifications(ctx context.Context) ([]notification.Record, error)
 	InspectNotification(ctx context.Context, eventID string) (notification.Record, error)
+}
+
+type InteractionInspector interface {
+	InspectInteractions(ctx context.Context) ([]interaction.Record, error)
+	InspectInteraction(ctx context.Context, sessionID string) (interaction.Record, error)
+}
+
+type InteractionPlanner interface {
+	PlanInteraction(ctx context.Context, request InteractionPlanRequest) (workspaceprocess.InteractionStartPlan, error)
 }
 
 func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
@@ -65,7 +77,78 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 		handler.mux.HandleFunc("GET /v1/notifications", handler.inspectNotifications)
 		handler.mux.HandleFunc("GET /v1/notifications/{event_id}", handler.inspectNotification)
 	}
+	if interactionInspector, ok := executor.(InteractionInspector); ok {
+		handler.interactionInspector = interactionInspector
+		handler.mux.HandleFunc("GET /v1/interactions", handler.inspectInteractions)
+		handler.mux.HandleFunc("GET /v1/interactions/{session_id}", handler.inspectInteraction)
+	}
+	if interactionPlanner, ok := executor.(InteractionPlanner); ok {
+		handler.interactionPlanner = interactionPlanner
+		handler.mux.HandleFunc("POST /v1/interaction-plans", handler.planInteraction)
+	}
 	return handler, nil
+}
+
+func (handler *Handler) planInteraction(response http.ResponseWriter, request *http.Request) {
+	if !strings.HasPrefix(strings.ToLower(request.Header.Get("Content-Type")), "application/json") {
+		writeCommandResponse(response, http.StatusUnsupportedMediaType, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "UNSUPPORTED_MEDIA_TYPE"}})
+		return
+	}
+	content, err := io.ReadAll(http.MaxBytesReader(response, request.Body, maxCommandRequestBytes))
+	if err != nil {
+		writeCommandResponse(response, http.StatusRequestEntityTooLarge, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "INVALID_INTERACTION_PLAN"}})
+		return
+	}
+	var planRequest InteractionPlanRequest
+	if err := decodePayload(content, &planRequest); err != nil || planRequest.Validate() != nil {
+		writeCommandResponse(response, http.StatusBadRequest, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "INVALID_INTERACTION_PLAN"}})
+		return
+	}
+	plan, err := handler.interactionPlanner.PlanInteraction(request.Context(), planRequest)
+	if err != nil {
+		writeCommandResponse(response, http.StatusUnprocessableEntity, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "INTERACTION_PLAN_FAILED"}})
+		return
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: InteractionContractVersion, OK: true, Result: encoded})
+}
+
+func (handler *Handler) inspectInteractions(response http.ResponseWriter, request *http.Request) {
+	records, err := handler.interactionInspector.InspectInteractions(request.Context())
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "INTERACTION_INSPECTION_FAILED", RecoveryRequired: true}})
+		return
+	}
+	encoded, err := json.Marshal(records)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, OK: true, Result: encoded})
+}
+
+func (handler *Handler) inspectInteraction(response http.ResponseWriter, request *http.Request) {
+	record, err := handler.interactionInspector.InspectInteraction(request.Context(), request.PathValue("session_id"))
+	if err != nil {
+		status, code := http.StatusInternalServerError, "INTERACTION_INSPECTION_FAILED"
+		if errors.Is(err, interaction.ErrNotFound) {
+			status, code = http.StatusNotFound, "INTERACTION_NOT_FOUND"
+		} else if errors.Is(err, interaction.ErrInvalidSession) {
+			status, code = http.StatusBadRequest, "INVALID_SESSION_ID"
+		}
+		writeCommandResponse(response, status, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: code, RecoveryRequired: status == http.StatusInternalServerError}})
+		return
+	}
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, OK: true, Result: encoded})
 }
 
 func (handler *Handler) inspectMetrics(response http.ResponseWriter, _ *http.Request) {

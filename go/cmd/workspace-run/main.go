@@ -19,6 +19,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/organization"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
@@ -55,13 +56,16 @@ type commandOptions struct {
 	ceoRequest, planJSON, scheduleJSON        string
 	actionTarget                              string
 	actionSourceSHA256                        string
+	sessionID, requestDigest, planDigest      string
 	candidateJSONs                            stringListFlag
+	answerJSONs                               stringListFlag
 	repairJSONs                               stringListFlag
 	renameJSONs                               stringListFlag
 	dependencyJSONs                           stringListFlag
 	approved                                  bool
 	timeout                                   time.Duration
 	maxTasks                                  int
+	expectedVersion                           uint64
 }
 
 type commandResponse struct {
@@ -91,6 +95,7 @@ type commandError struct {
 	FailureCommitted    bool   `json:"failure_committed,omitempty"`
 	HoldCommitted       bool   `json:"hold_committed,omitempty"`
 	CommandClaimed      bool   `json:"command_claimed,omitempty"`
+	SessionCommitted    bool   `json:"session_committed,omitempty"`
 }
 
 type stringListFlag []string
@@ -206,6 +211,24 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: report})
 		return 0
 	}
+	if operation == "interaction-list" {
+		records, err := workspaceprocess.InspectInteractions(ctx, options.vaultRoot)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("INTERACTION_INSPECTION_FAILED", ""))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: map[string]any{"sessions": records}})
+		return 0
+	}
+	if operation == "interaction-inspect" {
+		record, err := workspaceprocess.InspectInteraction(ctx, options.vaultRoot, options.sessionID)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("INTERACTION_INSPECTION_FAILED", ""))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		return 0
+	}
 	if operation == "recovery-plan" {
 		plan, err := workspaceprocess.PlanTaskRecovery(ctx, workspaceprocess.RecoveryInput{
 			VaultRoot: options.vaultRoot, ProjectName: options.projectName,
@@ -247,6 +270,101 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 	planInput := workspaceprocess.ExecutionPlanInput{
 		VaultRoot: options.vaultRoot, ProjectID: options.projectID,
 		ProjectName: options.projectName, TaskID: options.taskID, CurrentTime: currentTime,
+	}
+	if operation == "interaction-start-plan" || operation == "interaction-start" {
+		input := workspaceprocess.InteractionStartInput{
+			VaultRoot: options.vaultRoot, SessionID: options.sessionID, Request: options.ceoRequest,
+			RequestDigest: options.requestDigest, Model: options.model, CurrentTime: currentTime, CommandID: options.commandID,
+		}
+		if operation == "interaction-start-plan" {
+			plan, err := workspaceprocess.PlanInteractionStart(ctx, input)
+			if err != nil {
+				writeCommandResponse(output, failureResponse("INTERACTION_START_PLAN_FAILED", "interaction_preflight"))
+				return 1
+			}
+			writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: plan})
+			return 0
+		}
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		result, err := workspaceprocess.ExecuteInteractionStart(ctx, input, true)
+		if err != nil {
+			response := durableCommandFailureResponse(err, "INTERACTION_START_FAILED", "interaction_commit")
+			response.Error.SessionCommitted = result.SessionCommitted
+			writeCommandResponse(output, response)
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
+		return 0
+	}
+	if operation == "interaction-plan-generate" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
+		providerModel, _ := dependencies.lookupEnv("WORKSPACE_CLAUDE_PROVIDER_MODEL")
+		baseURL, _ := dependencies.lookupEnv("WORKSPACE_CLAUDE_BASE_URL")
+		result, err := workspaceprocess.ExecuteInteractionPlanGeneration(ctx, workspaceprocess.InteractionPlanGenerationInput{
+			VaultRoot: options.vaultRoot, SessionID: options.sessionID, ExpectedVersion: options.expectedVersion,
+			CurrentTime: currentTime, CommandID: options.commandID,
+		}, workspaceprocess.ClaudeProcessConfig{
+			APIKey: apiKey, ProviderModel: providerModel, BaseURL: baseURL,
+		}, dependencies.newHTTPClient(options.timeout), true)
+		if err != nil {
+			response := durableCommandFailureResponse(err, "INTERACTION_PLAN_FAILED", "interaction_plan_generation")
+			response.Error.SessionCommitted = result.SessionCommitted
+			writeCommandResponse(output, response)
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
+		return 0
+	}
+	if operation == "interaction-answer" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		answers, err := decodeInteractionAnswers(options.answerJSONs)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("INVALID_ARGUMENT", ""))
+			return 2
+		}
+		result, err := workspaceprocess.ExecuteInteractionAnswer(ctx, workspaceprocess.InteractionAnswerInput{
+			VaultRoot: options.vaultRoot, SessionID: options.sessionID, ExpectedVersion: options.expectedVersion,
+			Answers: answers, CurrentTime: currentTime, CommandID: options.commandID,
+		}, true)
+		if err != nil {
+			response := durableCommandFailureResponse(err, "INTERACTION_ANSWER_FAILED", "interaction_answer_commit")
+			response.Error.SessionCommitted = result.SessionCommitted
+			writeCommandResponse(output, response)
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
+		return 0
+	}
+	if operation == "interaction-plan-apply" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		result, err := workspaceprocess.ExecuteInteractionPlanApply(ctx, workspaceprocess.InteractionApplyInput{
+			VaultRoot: options.vaultRoot, SessionID: options.sessionID, ExpectedVersion: options.expectedVersion,
+			ProjectID: options.projectID, PlanDigest: options.planDigest, CurrentTime: currentTime, CommandID: options.commandID,
+		}, true)
+		if err != nil {
+			response := durableCommandFailureResponse(err, "INTERACTION_APPLY_FAILED", "interaction_plan_apply")
+			response.Error.SessionCommitted = result.SessionCommitted
+			response.Error.ProjectCommitted = result.Apply.Project != nil && result.Apply.Project.Committed
+			response.Error.TaskCommitCount = len(result.Apply.Tasks)
+			response.Error.DependenciesCommit = result.Apply.Dependencies != nil && result.Apply.Dependencies.Committed
+			writeCommandResponse(output, response)
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
+		return 0
 	}
 	if operation == "schedule-list" {
 		records, err := workspaceprocess.InspectSchedules(ctx, options.vaultRoot)
@@ -777,17 +895,22 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	set.StringVar(&options.scheduleJSON, "schedule-json", "", "one-shot Schedule definition JSON")
 	set.StringVar(&options.actionTarget, "target", "", "logical external Action target ID")
 	set.StringVar(&options.actionSourceSHA256, "source-sha256", "", "approved Deliverable SHA-256 for external Action")
+	set.StringVar(&options.sessionID, "session-id", "", "Interaction Session ID")
+	set.StringVar(&options.requestDigest, "request-sha256", "", "approved Interaction request digest")
+	set.StringVar(&options.planDigest, "plan-sha256", "", "approved Interaction plan digest")
 	set.Var(&options.candidateJSONs, "candidate-json", "candidate JSON; repeat for batch validation")
+	set.Var(&options.answerJSONs, "answer-json", "Interaction clarification answer JSON; repeat for each answer")
 	set.Var(&options.repairJSONs, "repair-json", "expected Employee ID repair JSON; repeat for apply")
 	set.Var(&options.renameJSONs, "rename-json", "Employee rename request JSON; repeat for batch plan")
 	set.Var(&options.dependencyJSONs, "dependency-json", "Project Task dependency JSON; repeat for each Task")
 	set.DurationVar(&options.timeout, "timeout", options.timeout, "Provider HTTP timeout")
 	set.IntVar(&options.maxTasks, "max-tasks", 100, "maximum Tasks in one Workflow run")
+	set.Uint64Var(&options.expectedVersion, "expected-version", 0, "expected Interaction Session Version")
 	if err := set.Parse(args); err != nil || set.NArg() != 0 || options.timeout <= 0 {
 		return commandOptions{}, errors.New("invalid command arguments")
 	}
 	required := []string{options.vaultRoot}
-	if operation != "organization-inspect" && operation != "identity-validate" && operation != "employee-candidates-validate" && operation != "employee-hire-plan" && operation != "employee-hire-execute" && operation != "employee-rename-plan" && operation != "employee-rename-execute" && operation != "employee-rename-batch-plan" && operation != "employee-id-repair-plan" && operation != "employee-id-repair-execute" && operation != "organization-sync-plan" && operation != "organization-sync-execute" && operation != "ceo-plan-generate" && operation != "ceo-plan-apply-plan" && operation != "ceo-plan-apply" && operation != "schedule-plan" && operation != "schedule-create" && operation != "schedule-list" {
+	if operation != "organization-inspect" && operation != "identity-validate" && operation != "employee-candidates-validate" && operation != "employee-hire-plan" && operation != "employee-hire-execute" && operation != "employee-rename-plan" && operation != "employee-rename-execute" && operation != "employee-rename-batch-plan" && operation != "employee-id-repair-plan" && operation != "employee-id-repair-execute" && operation != "organization-sync-plan" && operation != "organization-sync-execute" && operation != "ceo-plan-generate" && operation != "ceo-plan-apply-plan" && operation != "ceo-plan-apply" && operation != "schedule-plan" && operation != "schedule-create" && operation != "schedule-list" && !strings.HasPrefix(operation, "interaction-") {
 		required = append(required, options.projectName)
 	}
 	if operation == "plan" || operation == "execute" || operation == "review-plan" || operation == "review-execute" || operation == "revision-plan" || operation == "revision-execute" {
@@ -816,6 +939,27 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	}
 	if operation == "ceo-plan-generate" {
 		required = append(required, options.ceoRequest, options.model)
+	}
+	if operation == "interaction-start-plan" || operation == "interaction-start" {
+		required = append(required, options.sessionID, options.ceoRequest, options.model, options.at)
+	}
+	if operation == "interaction-start" {
+		required = append(required, options.requestDigest, options.commandID)
+	}
+	if operation == "interaction-inspect" || operation == "interaction-plan-generate" || operation == "interaction-answer" || operation == "interaction-plan-apply" {
+		required = append(required, options.sessionID)
+	}
+	if operation == "interaction-plan-generate" || operation == "interaction-answer" || operation == "interaction-plan-apply" {
+		if options.expectedVersion == 0 {
+			return commandOptions{}, errors.New("expected Interaction Version is required")
+		}
+		required = append(required, options.commandID, options.at)
+	}
+	if operation == "interaction-answer" && len(options.answerJSONs) == 0 {
+		return commandOptions{}, errors.New("Interaction answers are required")
+	}
+	if operation == "interaction-plan-apply" {
+		required = append(required, options.projectID, options.planDigest)
 	}
 	if operation == "ceo-plan-apply-plan" || operation == "ceo-plan-apply" {
 		required = append(required, options.projectID, options.planJSON)
@@ -872,7 +1016,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish":
+	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply":
 		return true
 	default:
 		return false
@@ -1003,6 +1147,29 @@ func decodeCEOPlan(content string) (ceoplan.Plan, error) {
 		return ceoplan.Plan{}, errors.New("trailing CEO plan data")
 	}
 	return plan, nil
+}
+
+func decodeInteractionAnswers(values []string) ([]interaction.Answer, error) {
+	if len(values) == 0 {
+		return nil, errors.New("Interaction answers are required")
+	}
+	answers := make([]interaction.Answer, 0, len(values))
+	for _, content := range values {
+		if len(content) > maxMigrationPlanBytes {
+			return nil, errors.New("Interaction answer is too large")
+		}
+		decoder := json.NewDecoder(strings.NewReader(content))
+		decoder.DisallowUnknownFields()
+		var answer interaction.Answer
+		if err := decoder.Decode(&answer); err != nil {
+			return nil, err
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			return nil, errors.New("trailing Interaction answer data")
+		}
+		answers = append(answers, answer)
+	}
+	return answers, nil
 }
 
 type scheduleDefinition struct {

@@ -14,6 +14,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandcontract"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/metrics"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/notification"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/organization"
@@ -182,11 +183,41 @@ type actionPublishPayload struct {
 	SourceSHA256 string    `json:"source_sha256"`
 }
 
+type interactionStartPayload struct {
+	SessionID     string    `json:"session_id"`
+	Request       string    `json:"request"`
+	RequestDigest string    `json:"request_digest"`
+	Model         string    `json:"model"`
+	CurrentTime   time.Time `json:"current_time"`
+}
+
+type interactionPlanGenerationPayload struct {
+	SessionID       string    `json:"session_id"`
+	ExpectedVersion uint64    `json:"expected_version"`
+	CurrentTime     time.Time `json:"current_time"`
+}
+
+type interactionAnswerPayload struct {
+	SessionID       string               `json:"session_id"`
+	ExpectedVersion uint64               `json:"expected_version"`
+	Answers         []interaction.Answer `json:"answers"`
+	CurrentTime     time.Time            `json:"current_time"`
+}
+
+type interactionPlanApplyPayload struct {
+	SessionID       string    `json:"session_id"`
+	ExpectedVersion uint64    `json:"expected_version"`
+	ProjectID       string    `json:"project_id"`
+	PlanDigest      string    `json:"plan_digest"`
+	CurrentTime     time.Time `json:"current_time"`
+}
+
 func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (any, error) {
 	if err := command.Validate(); err != nil || !command.Approved {
 		return nil, ErrInvalidCommand
 	}
-	if commandcontract.Schedulable(command.Operation) && commandcontract.ValidatePayload(command.Operation, command.Payload) != nil {
+	if (commandcontract.Schedulable(command.Operation) || strings.HasPrefix(command.Operation, "interaction.")) &&
+		commandcontract.ValidatePayload(command.Operation, command.Payload) != nil {
 		return nil, ErrInvalidCommand
 	}
 	switch command.Operation {
@@ -249,6 +280,43 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 			return nil, err
 		}
 		return workspaceprocess.ExecuteCEOPlanApply(ctx, workspaceprocess.CEOPlanApplyInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, Plan: payload.Plan, CurrentTime: payload.CurrentTime, CommandID: command.CommandID, EventObservers: executor.observers}, true)
+	case "interaction.start":
+		var payload interactionStartPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteInteractionStart(ctx, workspaceprocess.InteractionStartInput{
+			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, Request: payload.Request,
+			RequestDigest: payload.RequestDigest, Model: payload.Model, CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
+		}, true)
+	case "interaction.plan.generate":
+		var payload interactionPlanGenerationPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteInteractionPlanGeneration(ctx, workspaceprocess.InteractionPlanGenerationInput{
+			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
+			CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
+		}, executor.provider, executor.httpClient, true)
+	case "interaction.answer":
+		var payload interactionAnswerPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteInteractionAnswer(ctx, workspaceprocess.InteractionAnswerInput{
+			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
+			Answers: payload.Answers, CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
+		}, true)
+	case "interaction.plan.apply":
+		var payload interactionPlanApplyPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteInteractionPlanApply(ctx, workspaceprocess.InteractionApplyInput{
+			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
+			ProjectID: payload.ProjectID, PlanDigest: payload.PlanDigest, CurrentTime: payload.CurrentTime,
+			CommandID: command.CommandID, EventObservers: executor.observers,
+		}, true)
 	case "project.bootstrap":
 		var payload projectBootstrapPayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -349,6 +417,21 @@ func (executor *ProcessExecutor) InspectSchedule(ctx context.Context, scheduleID
 		return scheduler.Record{}, err
 	}
 	return store.Get(ctx, scheduleID)
+}
+
+func (executor *ProcessExecutor) InspectInteractions(ctx context.Context) ([]interaction.Record, error) {
+	return workspaceprocess.InspectInteractions(ctx, executor.vaultRoot)
+}
+
+func (executor *ProcessExecutor) InspectInteraction(ctx context.Context, sessionID string) (interaction.Record, error) {
+	return workspaceprocess.InspectInteraction(ctx, executor.vaultRoot, sessionID)
+}
+
+func (executor *ProcessExecutor) PlanInteraction(ctx context.Context, request InteractionPlanRequest) (workspaceprocess.InteractionStartPlan, error) {
+	return workspaceprocess.PlanInteractionStart(ctx, workspaceprocess.InteractionStartInput{
+		VaultRoot: executor.vaultRoot, SessionID: request.SessionID, Request: request.Request,
+		Model: request.Model, CurrentTime: request.CurrentTime,
+	})
 }
 
 func (executor *ProcessExecutor) InspectMetrics() metrics.Snapshot {

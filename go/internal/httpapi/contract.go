@@ -8,11 +8,16 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
 )
 
-const ContractVersion = "workspace-command.v1"
+const (
+	ContractVersion            = "workspace-command.v1"
+	InteractionContractVersion = "workspace-interaction.v1"
+)
 
 var (
 	ErrInvalidCommand     = errors.New("invalid HTTP command")
@@ -48,6 +53,23 @@ type Response struct {
 	OK        bool            `json:"ok"`
 	Result    json.RawMessage `json:"result,omitempty"`
 	Error     *CommandError   `json:"error,omitempty"`
+}
+
+type InteractionPlanRequest struct {
+	Version     string    `json:"version"`
+	SessionID   string    `json:"session_id"`
+	Request     string    `json:"request"`
+	Model       string    `json:"model"`
+	CurrentTime time.Time `json:"current_time"`
+}
+
+func (request InteractionPlanRequest) Validate() error {
+	if request.Version != InteractionContractVersion || interaction.ValidateSessionID(request.SessionID) != nil ||
+		strings.TrimSpace(request.Request) == "" || len(request.Request) > 32<<10 ||
+		strings.TrimSpace(request.Model) == "" || strings.ContainsAny(request.Model, "\r\n") || request.CurrentTime.IsZero() {
+		return ErrInvalidCommand
+	}
+	return nil
 }
 
 func decodePayload(content json.RawMessage, target any) error {

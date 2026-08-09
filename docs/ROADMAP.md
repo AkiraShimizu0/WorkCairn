@@ -204,19 +204,35 @@ Go Onlyの閉ループが自然言語依頼から外部公開まで成立した�
 
 完了条件を満たしました。新規利用者は実Vaultを誤変更せずplan／approval／execute／inspect／recoveryを再現でき、remote公開、automatic retry、WordPress変換機能の未実装保証を確認できます。製品名は互換性を優先して当面`Workspace OS`を推奨し、名称変更そのものは商標・市場判断後の独立migrationとします。
 
-## Next 1 — Interaction and Approval Session Foundation
+## Completed — Interaction and Approval Session Foundation
 
 現在のCLI／HTTPは自然言語依頼から実行までの閉ループを持ちますが、必要な質問、plan提示、承認待ち、partial failure後の次の安全な選択を1つの継続sessionとして表現していません。
 
-次の候補：
+ADR-0028に基づく実装済みfoundation：
 
-- natural-language request、clarification required、plan ready、approval required、running、terminal／recovery requiredのclosed typed state
+- natural-language request、plan generation approval required、clarification required、plan approval required、ready to executeのclosed typed state。running／recovery requiredはCommand Ledgerで分離
 - immutable requestと承認対象digestに拘束されたsession evidence
-- CEO plan、Reviewed Workflow、Actionを既存Commandへ変換する薄いorchestration
+- CEO plan生成と既存Project／Task writer適用を既存Commandへ変換する薄いorchestration
 - CLIとloopback APIが同じsession Serviceを利用するread／respond境界
 - credential、Vault root、Provider生responseをsession contractへ入れないredaction
 
 最初はsingle-user、single active step、手動応答だけを扱います。chat UI、remote exposure、parallel workflow、automatic approval、automatic resume、recurring Schedulerは先取りしません。
+
+自然言語requestはimmutable digest、Provider plan／質問回答／Project適用はappend-only turnとしてVersion/CAS保存します。未回答質問をblockし、回答後の再planで質問ゼロになった最新plan SHA-256だけを別承認で適用します。CLIとloopback APIは同じDomain／Service／Processを使い、全writerはworkspace Command Ledgerを通ります。
+
+## Next 1 — Interaction Workflow Execution Composition
+
+`ready_to_execute` Sessionから既存Reviewed Workflowを開始し、Accept／Request Changes／Revision／再Reviewの結果をSessionへ記録します。
+
+候補：
+
+- reviewer ID、最大Task数、approval referenceを含むread-only execution plan
+- approved Session VersionとProject identityに拘束したouter Interaction Command
+- 既存`ExecuteReviewedWorkflow`のResultをappend-only turnへ保存
+- blocked／limit／partial resultをSessionから観測し、自動resumeしない
+- Workflow完了後だけExternal Action planへ進めるclosed next action
+
+Reviewed Workflow、TaskService、Review／Revision、child Command IDを再実装しません。External Actionの自動承認、remote reconciliation、parallel Sessionは含めません。
 
 ## Python Compatibility End of Life
 
