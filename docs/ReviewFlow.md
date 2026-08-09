@@ -2,7 +2,7 @@
 
 ## 概要
 
-通常製品Reviewは、`workspace-run review-*`からGo ReviewServiceを呼び、タスクの作成担当者とは別のAI社員Contextで成果物を確認します。Go PromptBuilder、Runner Registry、Runner Adapterを再利用し、検証可能な構造化JSONと人間向けMarkdownを生成します。WorkspaceRunReviewGatewayは公開Python caller向けAdapter、Python ReviewerWorkerは公開互換referenceです。
+通常製品Reviewは、`workspace-run review-*`からGo ReviewServiceを呼び、タスクの作成担当者とは別のAI社員Contextで成果物を確認します。Go PromptBuilder、Runner Registry、Runner Adapterを再利用し、検証可能な構造化JSONと人間向けMarkdownを生成します。
 
 ## 事前検証
 
@@ -79,16 +79,15 @@ ADR-0010に従い、構造化JSONをimmutable canonical evidenceとして先にc
 
 ### Approve
 
-レビューを保存し、製品callerは次のTaskへ進めます。公開Python compatibility WorkflowEngineは次の未着手タスクIDを返します。
+レビューを保存し、Reviewed Workflowは次のTaskへ進みます。
 
 ### Request Changes
 
-Request Changesでは注入された`WorkspaceRunRevisionGateway`が`workspace-run revision-*`を呼びます。ADR-0012に従いimmutable intentを先にcommitし、TaskService.Create、`revision.created`、Audit subscriberの順で確定します。
+Request ChangesではReviewed Workflowが既存Go Revision orchestrationを呼びます。ADR-0012に従いimmutable intentを先にcommitし、TaskService.Create、`revision.created`、Audit subscriberの順で確定します。
 
 - 担当者は元タスクの`assignee_id`
 - 元タスクID、元レビュー、判定、指摘一覧をRevisionsへ保存
 - 同じレビューからの重複作成を既存metadata検査と原子的createで拒否
-- Python RevisionTaskServiceは旧5列形式向け公開互換legacyであり、通常製品経路やADR-0008 managed Tasks.mdには使用しない
 - intent後のTask作成失敗、Task後のEvent失敗はrollbackせずpartial failureとして返す
 
 ## 監査と失敗

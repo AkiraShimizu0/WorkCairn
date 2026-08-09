@@ -13,7 +13,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 )
 
-func TestProjectDependencyStoreCreatesImmutablePythonCompatibleProjection(t *testing.T) {
+func TestProjectDependencyStoreCreatesImmutableStableProjection(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "プロジェクト"), 0o755); err != nil {
 		t.Fatal(err)

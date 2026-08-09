@@ -1,18 +1,6 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
+# Build and test output
 build/
 dist/
-wheels/
-*.egg-info
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-
-# Virtual environments
-.venv/
 
 # Local configuration and secrets
 .env

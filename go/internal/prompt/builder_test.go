@@ -20,7 +20,7 @@ type taskExecutionFixture struct {
 	Expected worker.Prompt      `json:"expected"`
 }
 
-func TestBuilderMatchesPythonGoldenFixture(t *testing.T) {
+func TestBuilderMatchesGoldenFixture(t *testing.T) {
 	fixture := loadTaskExecutionFixture(t)
 	built, err := NewBuilder().Build(context.Background(), fixture.Input)
 	if err != nil {

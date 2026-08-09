@@ -4,7 +4,7 @@
 
 Workspace OSは、Obsidian Vaultをデータストアとして、AI社員・プロジェクト・タスク実行・レビュー・修正フローを管理します。現在の通常Task実行入口はGo Workspace Kernel上の`workspace-run`です。
 
-v0.1.0 Python APIは公開互換専用のcompatibility surfaceとして残ります。既存importと`workspace-ai` entry pointは維持しますが、通常製品Runtimeではありません。正本のGo実行経路は実行前plan、明示的承認、Version/CAS、immutable Deliverable、Task lifecycle Event Auditを組み合わせ、人間が確認できるMarkdownを維持します。全体像は[System Overview](docs/SystemOverview.md)、安全な導入と運用は[Operator Guide](docs/OperatorGuide.md)、HTTP入口は[HTTP Command API](docs/HTTPAPI.md)、判定根拠は[Go Only Release Gate](docs/GoOnlyReleaseGate.md)、残存Python callerと削除条件は[Python Runtime Inventory](docs/PythonRuntimeInventory.md)を参照してください。
+repository、build、test、release、distributionはGo Onlyです。正本の実行経路は実行前plan、明示的承認、Version/CAS、immutable Deliverable、Task lifecycle Event Auditを組み合わせ、人間が確認できるMarkdownを維持します。全体像は[System Overview](docs/SystemOverview.md)、安全な導入と運用は[Operator Guide](docs/OperatorGuide.md)、HTTP入口は[HTTP Command API](docs/HTTPAPI.md)、判定根拠は[Go Only Release Gate](docs/GoOnlyReleaseGate.md)、移行履歴は[Migration History](docs/MigrationHistory.md)を参照してください。
 
 ## 特徴
 
@@ -82,6 +82,7 @@ flowchart TD
 - [ADR-0030: Interactionは明示Deliverableを既存External Actionへ引き渡す](docs/adr/ADR-0030-interaction-external-action-handoff.md)
 - [ADR-0031: iPhone向けLocal Web UIはdaemon同一originと明示LAN pairingで提供する](docs/adr/ADR-0031-mobile-local-web-interaction-client.md)
 - [ADR-0032: mobile Interaction Commandをclient接続から切り離して追跡する](docs/adr/ADR-0032-mobile-command-continuity.md)
+- [ADR-0033: Public Beta前にrepositoryとdistributionをGo Onlyへ確定する](docs/adr/ADR-0033-public-beta-go-only-repository.md)
 
 新しいADRは[ADRテンプレート](docs/adr/ADR-template.md)から作成します。
 
@@ -99,7 +100,7 @@ workspace-os/
 │   ├── CONSTITUTION.md
 │   ├── ROADMAP.md
 │   ├── GoOnlyReleaseGate.md
-│   └── PythonRuntimeInventory.md
+│   └── MigrationHistory.md
 ├── go/
 │   ├── cmd/workspace-core/
 │   ├── cmd/workspace-run/
@@ -110,13 +111,7 @@ workspace-os/
 │       ├── runtime/
 │       └── <domain packages>/
 ├── fixtures/
-├── src/workspace_ai/
-│   ├── compatibility.py
-│   ├── workspace_run_gateway.py
-│   └── <v0.1 legacy/reference modules>/
-├── tests/
 ├── Makefile
-├── pyproject.toml
 └── README.md
 ```
 
@@ -159,11 +154,9 @@ make release-package RELEASE_VERSION=v1.0.0 BUILD_DATE=2026-08-09T12:00:00Z
 
 公開前の全確認項目は[Public Release Checklist](docs/PublicReleaseChecklist.md)を参照してください。
 
-公開Python v0.1 compatibility APIを利用・検証する場合だけ、Python 3.9以上と[uv](https://docs.astral.sh/uv/)で`uv sync`を実行します。
-
 ## Claude API設定
 
-Go `workspace-run`は`.env`を自動読込しません。Providerを使う承認済みcommandに限り、process環境から`ANTHROPIC_API_KEY`等を受け取ります。次の`.env`形式はPython v0.1 legacy compatibility向けだけです。
+`workspace-run`は`.env`を自動読込しません。Providerを使う承認済みcommandに限り、process環境から`ANTHROPIC_API_KEY`等を受け取ります。
 
 ```dotenv
 WORKSPACE_VAULT_PATH=/absolute/path/to/your/obsidian/vault
@@ -253,7 +246,7 @@ bin/workspace-run task-create-plan --vault /absolute/path/to/vault --project "�
 bin/workspace-run task-create-execute --vault /absolute/path/to/vault --project "新規プロジェクト" --title "要件を整理する" --assignee PLAN-001 --approved
 ```
 
-Python callerとの互換境界には`WorkspaceRunOrganizationGateway`、`WorkspaceRunRecruiterGateway`、`WorkspaceRunProjectGateway`を使用します。Managerのbatch採用は候補全体をGoで検査してから単一EmployeeをGo writerで順次作成します。Python `Organization`、`Recruiter`のwriterと`ProjectManager`は公開互換legacyです。
+Managerのbatch採用は候補全体をGoで検査してから単一EmployeeをGo writerで順次作成します。
 
 ### GoでCEO planを生成・適用する
 
@@ -280,7 +273,7 @@ bin/workspace-run ceo-plan-apply \
   --approved
 ```
 
-生成と適用は分離されます。Provider出力は未知field、未知社員、循環dependencyなどをGoで拒否します。Project、Task、Task Dependenciesの途中失敗では成立済みfactを削除せず、partial stateを返します。公開Python caller向け`WorkspaceRunCEOPlanGateway`／`WorkspaceRunCEOApplyGateway`にもPython fallbackはありません。
+生成と適用は分離されます。Provider出力は未知field、未知社員、循環dependencyなどをGoで拒否します。Project、Task、Task Dependenciesの途中失敗では成立済みfactを削除せず、partial stateを返します。
 
 ### Interaction Sessionで質問と承認を継続する
 
@@ -333,7 +326,7 @@ bin/workspace-run interaction-action-wordpress-publish --vault /path/to/vault \
   --command-id CMD-SESSION-ACTION-001 --approved
 ```
 
-各実行前に`interaction-next`で、次のoperation、expected Version、必要field、質問、承認要否、attention時のLedger参照を確認できます。Workflowは既存Reviewed Workflowを使い、Acceptなら次Task、Request ChangesならRevisionと再Reviewへ進みます。`blocked`／`limit_reached`は新しいplanと承認で継続でき、`workflow_attention_required`はLedger／Recovery確認までSessionから再実行しません。Workflow完了後のWordPress公開は任意で、明示Task／targetと別のsource digest承認を要求します。公開互換の直接`ceo-plan-*`は残りますが、Interaction経路は未回答質問をblockします。自動resumeや既存Project adoptionは行いません。
+各実行前に`interaction-next`で、次のoperation、expected Version、必要field、質問、承認要否、attention時のLedger参照を確認できます。Workflowは既存Reviewed Workflowを使い、Acceptなら次Task、Request ChangesならRevisionと再Reviewへ進みます。`blocked`／`limit_reached`は新しいplanと承認で継続でき、`workflow_attention_required`はLedger／Recovery確認までSessionから再実行しません。Workflow完了後のWordPress公開は任意で、明示Task／targetと別のsource digest承認を要求します。automation向けの直接`ceo-plan-*`も正式surfaceとして残りますが、Interaction経路は未回答質問をblockします。自動resumeや既存Project adoptionは行いません。
 
 ### Partial stateを診断・明示Recoveryする
 
@@ -349,39 +342,9 @@ bin/workspace-run recovery-apply --vault /absolute/path/to/vault --project "新�
 
 plan後にartifact、Task Version、理由が変わった場合はstaleとして拒否します。Audit欠落、Review Markdown欠落、Revision intentだけの状態、temporary残存は診断しますが、Event replay、再生成、adoption、削除を推測で行いません。詳細は[Recovery](docs/Recovery.md)を参照してください。
 
-### Python legacy API（reference）
-
-```python
-from workspace_ai.organization import Organization
-from workspace_ai.project_manager import ProjectManager
-
-organization = Organization()
-projects = ProjectManager(organization)
-
-projects.create_project("新規プロジェクト", "プロジェクト概要")
-projects.add_task("新規プロジェクト", "要件を整理する", "PLAN-001")
-```
-
-### Python legacy TaskExecutorについて
-
-`workspace_ai.task_executor.TaskExecutor`、Python Worker、ModelRouter、ClaudeRunnerは公開Python API互換性とreference testのため残していますが、通常Taskの製品実行入口ではありません。通常運用は上記`workspace-run plan|execute`を使用してください。Python `WorkflowEngine`からReviewを続ける場合も、通常Task executionには`WorkspaceRunExecutionGateway`を明示注入し、Go失敗時のPython fallbackは行いません。`revision_task_service=`も公開互換aliasに限定し、ADR-0008 managed Tasks.mdへは使用しません。
-
 ### テストする
 
-```bash
-uv run python -m unittest discover -s tests -v
-uv run python -m compileall -q src tests
-```
-
-テストはFake RunnerまたはMock APIクライアントを使用します。テスト実行だけでは実AI APIや実Vaultのタスクを実行しません。
-
-通常製品Runtimeのrelease gateはPythonを使わず実行できます。
-
-```bash
-make go-only-release-gate
-```
-
-Go製品Runtimeに加えて公開Python compatibility、lockfile、compile、差分衛生まで含むv1.0候補gateは次です。
+テストはFake Runner、Mock HTTP server、temporary Vaultだけを使用します。実AI APIや実Vaultのタスクは実行しません。Public Beta／v1候補の正式なgateは次です。
 
 ```bash
 make v1-release-gate
@@ -397,23 +360,21 @@ make v1-release-gate
 4. ExecutionServiceがTaskService、DeliverableStore、Policyを調停します。
 5. Task lifecycle EventをAudit subscriberが保存します。
 
-Python Worker／PromptBuilder／ModelRouter／ClaudeRunnerは通常Task経路から外れています。Reviewは`workspace-run review-plan|review-execute`、Revisionは`workspace-run revision-plan|revision-execute`を通り、Python ReviewerWorkerとRevisionTaskServiceは公開互換reference／legacyだけに残ります。RevisionはADR-0012のintent先行commit、TaskService.Create、`revision.created`、Audit subscriberの順で確定します。
+Reviewは`workspace-run review-plan|review-execute`、Revisionは`workspace-run revision-plan|revision-execute`を通ります。RevisionはADR-0012のintent先行commit、TaskService.Create、`revision.created`、Audit subscriberの順で確定します。
 
 社員名は表示情報、社員IDは永続的な参照です。タスク、レビュー、修正タスクは氏名ではなく社員IDで担当者を保持します。詳細は[docs/IdentityPolicy.md](docs/IdentityPolicy.md)を参照してください。
 
-## Python compatibility workflow
+## Reviewed workflow
 
-公開v0.1互換のWorkflowEngineは、Go gatewayを通して最初の未着手タスクを1件だけ調整します。これは製品Runtimeではありません。
+Go Reviewed Workflowは、最初の実行可能Taskから順に既存Serviceを調停します。
 
 ```text
 未着手タスク取得
-  → WorkspaceRunExecutionGatewayからGo workspace-runで実行
-  → WorkspaceRunReviewGatewayからGo Reviewでレビュー
+  → Go ExecutionServiceで実行
+  → Go ReviewServiceでレビュー
   → Approveなら次タスクを返す
-  → Request ChangesならWorkspaceRunRevisionGatewayからGo Revisionへ委譲
+  → Request ChangesならGo Revision orchestrationへ委譲
 ```
-
-従来の`task_executor=`、`reviewer_worker=`、`revision_task_service=`は公開Python API互換aliasです。通常製品構成では3つのWorkspaceRun gatewayを注入し、Go失敗時にPython legacyへfallbackしません。
 
 途中で失敗した場合は後続処理を停止し、各コンポーネントが確定した状態を保持してWorkspace Managerへ返します。詳細は[docs/Workflow.md](docs/Workflow.md)と[docs/ReviewFlow.md](docs/ReviewFlow.md)を参照してください。
 

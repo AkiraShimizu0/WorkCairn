@@ -17,7 +17,7 @@ type identityParityFixture struct {
 	NameValidations []NameValidation `json:"name_validations"`
 }
 
-func TestIdentityPolicyMatchesPythonGoldenFixture(t *testing.T) {
+func TestIdentityPolicyMatchesGoldenFixture(t *testing.T) {
 	fixture := loadIdentityParityFixture(t)
 	if fixture.Version != "v1" {
 		t.Fatalf("fixture version = %q", fixture.Version)
@@ -37,7 +37,7 @@ func TestIdentityPolicyMatchesPythonGoldenFixture(t *testing.T) {
 	}
 }
 
-func TestValidateInventoryPreservesPythonOrganizationOrdering(t *testing.T) {
+func TestValidateInventoryPreservesCanonicalOrganizationOrdering(t *testing.T) {
 	inventory := NewInventory([]Identity{
 		{ID: "DEV-001", Name: "佐藤 蓮", Department: "開発部", Role: "Engineer", Model: "Claude Sonnet 5", Status: "待機中"},
 		{ID: "DEV-001", Name: "鈴木 陽菜", Department: "開発部", Role: "Engineer", Status: "待機中"},
@@ -53,7 +53,7 @@ func TestValidateInventoryPreservesPythonOrganizationOrdering(t *testing.T) {
 	}
 }
 
-func TestIdentityNamePolicyMatchesPythonReferenceCases(t *testing.T) {
+func TestIdentityNamePolicyMatchesReferenceCases(t *testing.T) {
 	existing := []string{"田中 美咲", "高橋 拓海", "佐々木 健太郎"}
 	tests := []struct {
 		name       string
@@ -115,7 +115,7 @@ func TestValidateCandidatesChecksCandidateToCandidateNamesAndAllIdentityIDs(t *t
 	}
 }
 
-func TestBuildIDRepairPlanMatchesPythonAndReservesAllIdentityIDs(t *testing.T) {
+func TestBuildIDRepairPlanIsDeterministicAndReservesAllIdentityIDs(t *testing.T) {
 	inventory := NewInventory(
 		[]Identity{
 			{ID: "DEV-002", Name: "佐藤 蓮"},

@@ -72,7 +72,7 @@ type ExecutionResult struct {
 }
 
 // ParseOutput separates human Markdown from the marked JSON result and
-// applies the same allow-list normalization as the legacy Python parser.
+// applies the versioned allow-list normalization fixed by golden tests.
 func ParseOutput(output string) (string, Decision, error) {
 	if strings.TrimSpace(output) == "" {
 		return "", Decision{}, fmt.Errorf("%w: output is required", ErrInvalidResult)

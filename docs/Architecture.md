@@ -2,7 +2,7 @@
 
 ## 概要
 
-Workspace OSは、Obsidian Vault上のMarkdownを人間とAIが共有できる永続データとして扱います。Interaction Session、通常Task execution、Review、Revision、Organization／Identity、Project bootstrap、通常Task作成、CEO plan生成／適用、one-shot Scheduler、Notification／Metrics、External ActionはGoです。PythonはGo process gatewayと公開API referenceに限定していきます。
+Workspace OSは、Obsidian Vault上のMarkdownを人間とAIが共有できる永続データとして扱います。Interaction Session、通常Task execution、Review、Revision、Organization／Identity、Project bootstrap、通常Task作成、CEO plan生成／適用、one-shot Scheduler、Notification／Metrics、External ActionはGoです。repository、build、test、release、distributionもGo Onlyです。
 
 現在のシステムを利用フローから一貫して読む場合は[System Overview](SystemOverview.md)を参照してください。この文書はpackage、port、compositionの詳細を補足します。
 
@@ -79,6 +79,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0030: Interactionは明示Deliverableを既存External Actionへ引き渡す](adr/ADR-0030-interaction-external-action-handoff.md)
 - [ADR-0031: iPhone向けLocal Web UIはdaemon同一originと明示LAN pairingで提供する](adr/ADR-0031-mobile-local-web-interaction-client.md)
 - [ADR-0032: mobile Interaction Commandをclient接続から切り離して追跡する](adr/ADR-0032-mobile-command-continuity.md)
+- [ADR-0033: Public Beta前にrepositoryとdistributionをGo Onlyへ確定する](adr/ADR-0033-public-beta-go-only-repository.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -86,36 +87,19 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | コンポーネント | 責務 |
 |---|---|
 | Workspace Manager | CEO依頼と承認を担う外部actor。Go CEO Plan入口を利用する |
-| Python Organization | 公開Python API互換のlegacy writer。通常ID repairでは使用しない |
 | Go Organization／Identity | 社員Markdown、Workspace Manager、予約Identityを構造化inventoryへ読み、構造・氏名policyを検査する |
-| Recruiter | 公開Python API互換のlegacy。通常Manager callerはGo候補一括検査と単一Employee採用を使用する |
-| IdentityPolicy | Go Organization Domainが全組織のID、氏名、姓、名、類似度を診断する。Python版はreference |
-| ProjectManager | 公開Python API互換のlegacy facade。製品writerはGo Project／Task process |
-| WorkflowEngine | Go通常Task execution、Review、Revisionの各gatewayを1件分調停する公開Python compatibility orchestration |
-| WorkspaceRunExecutionGateway | `workspace-run`をshellなしで呼ぶPython process Adapter。Python execution fallbackを持たない |
-| TaskExecutor | 公開Python API互換と通常Task reference testだけに残るlegacy実装 |
-| Worker／PromptBuilder／ModelRouter／ClaudeRunner | 通常Task／Review製品経路から外れ、公開互換とreference testだけに残るlegacy実装 |
-| ReviewerWorker | 公開Python API互換とreference testだけに残るlegacy Review実装 |
-| WorkspaceRunReviewGateway | `workspace-run review-*`を呼び、Go Review結果をWorkflowEngineへ返すPython process Adapter |
-| WorkspaceRunRevisionGateway | `workspace-run revision-*`を呼び、Go Revision結果をWorkflowEngineへ返すPython process Adapter。legacy fallbackを持たない |
-| WorkspaceRunOrganizationGateway | GoのOrganization inventory／Identity検査と、確認済みID repair planをPython互換形へ変換する |
-| WorkspaceRunProjectGateway | GoのProject bootstrap／通常Task作成／Task Dependency projectionをPython `ProjectManager`互換形へ変換する |
-| WorkspaceRunRecruiterGateway | batch候補全件をGoで検査し、単一Employee採用をGoのcanonical Employee／Workspace State projectionへ渡す。legacy fallbackを持たない |
-| WorkspaceRunEmployeeRenameGateway | batch全件をGoでpreflightし、IDを維持する単一Employee renameをGo intent／projectionへ順次渡す。legacyへfallbackしない |
-| WorkspaceRunCEOPlanGateway／WorkspaceRunCEOApplyGateway | GoのCEO plan生成／適用を公開Python planner／apply protocolへ変換する。Python Provider／writerへfallbackしない |
-| RevisionTaskService | 旧5列Tasks.md向けの公開互換legacy。ADR-0008 managed metadataのwriterには使わない |
-| EmployeeRenameService | 公開Python API互換／reference用legacy。通常の単一／batch rename writerには使用しない |
+| Go Identity Policy | 全組織のID、氏名、姓、名、類似度を診断するProvider／Vault-neutral Domain |
 | Workspace Kernel | Goサービスの登録・参照、ライフサイクル、Command実行を調停する |
 | Go Event Service | 型付きBusiness Eventを検証し、in-process Busで同期配信する |
 | Go Task Service | Task lifecycle、Version/CAS、Store境界、Event発行を管理する |
 | Go Worker Service | AI社員の実行ContextからPromptを構築し、登録済みRunnerを選択して構造化結果を返す |
 | Go PromptBuilder | 構造化された会社・社員・日時・Project・Task Contextから通常Task用Promptを決定的に構築する |
-| Go Review PromptBuilder／ReviewService | 構造化Review ContextからPython互換Promptを構築し、Runner結果のmarked JSONをallow-list検証する。Task変更は行わない |
+| Go Review PromptBuilder／ReviewService | 構造化Review Contextからversioned Promptを構築し、Runner結果のmarked JSONをallow-list検証する。Task変更は行わない |
 | Go CEO Plan Domain／Service | 構造化Employee inventoryからcanonical Promptを作り、既存RunnerのJSON出力をtyped planへ正規化・検証する。Vault I/O、Provider設定、適用を知らない |
 | Go Vault Review Store | ADR-0010に従いcanonical JSONを先行commitし、Markdown projectionとpartial failureを保存する |
 | Go Review Orchestration Service | Review実行、artifact保存、`review.completed`発行の順序を調停し、Task状態やAudit形式を知らない |
 | Go Revision Orchestration Service | immutable intent、TaskService.Create、`revision.created`の順序とpartial failureを調停する |
-| Go Vault Revision Intent Store | ADR-0012のimmutable intentを原子的に作成し、canonical Review参照とPython legacy重複検知互換を保持する |
+| Go Vault Revision Intent Store | ADR-0012のimmutable intentを原子的に作成し、canonical Review参照と既存metadata重複検知を保持する |
 | Go Runner Registry | 社員model値をProvider非依存のRunner Adapterへ明示的に解決する |
 | Go Claude Runner Adapter | Provider設定を注入され、Anthropic Messages APIとProvider非依存Runner契約を相互変換する |
 | Go Runtime | PromptBuilder、Runner Registry、Claude Adapter、TaskStore、DeliverableStore、Audit Handlerをcompositionし、明示承認付きExecution入口を提供する |
@@ -123,7 +107,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Vault TaskStore Adapter | 5列Tasks.mdとmanaged metadataを単一ファイルで原子的に置換し、永続Version/CASとfailure／hold reasonを提供する |
 | Go Vault Project Store | 4 managed fileをstagingで完成後、Project directoryを一度だけ公開する |
 | Go Vault Employee Store | Identity検証後にEmployee Markdownを先行commitし、Workspace Stateをprojectionする |
-| Go Vault Deliverable Adapter | 構造化WorkerResultをPython互換のimmutable Deliverableへ変換し、既存成果物を上書きせず原子的に作成する |
+| Go Vault Deliverable Adapter | 構造化WorkerResultを安定したimmutable Deliverableへ変換し、既存成果物を上書きせず原子的に作成する |
 | Go Vault Audit Subscriber | Task lifecycle Event全体をEvent Handlerとして受け、既存Audit本文を保持したまま原子的に追記する |
 | Go Execution Service | readiness、承認、Task lifecycle、Worker実行、失敗Policyを1タスク単位で調停する |
 | Go Recovery Domain／Service | storage-neutralなSnapshot、finding、version付きplanと、期待Version付きTask recoveryを提供する。推測replayやartifact修復はしない |
@@ -159,20 +143,14 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - `プロジェクト/<name>/.workspace-os/actions/`: source digestに拘束されたimmutable external Action request／result evidence
 - `Progress.md`と`Audit Log.md`: 実行・レビュー履歴
 
-### Python
+### Go Only Repository and Runtime
 
-Python package全体はv0.1公開compatibility distributionです。既存module path、class、関数、console scriptを維持しますが、製品Runtimeではありません。`workspace_ai.compatibility`がGo process Adapter、凍結legacy implementation、reference module、Provider依存をmachine-readableに分類します。Go process Adapterはlegacy implementationをimportせず、Go failure時にPython Provider／writer／workerへfallbackしません。
-
-CEO plan生成／適用を含む通常の社員候補検査／単一採用／単一・batch rename／ID repair／Workspace State同期、Project bootstrap／Task作成／Task Dependency projection、Task execution、Review、RevisionはGo `workspace-run`が正本です。Go Only Release Gateと現在のPython削除条件は[GoOnlyReleaseGate.md](GoOnlyReleaseGate.md)と[PythonRuntimeInventory.md](PythonRuntimeInventory.md)を参照してください。
-
-### Go Only Runtime
-
-Workspace OSの製品Runtime移行は完了しています。通常Task、Review、RevisionのPython実装は公開互換referenceとして維持し、managed Vaultの製品writerには使用しません。
+Workspace OSの移行は完了しています。`workspace-run`、`workspace-daemon`、`workspace-core`が正式surfaceであり、他言語のcompatibility package、fallback、SDK、build metadataはありません。経緯は[MigrationHistory.md](MigrationHistory.md)、自動判定は[GoOnlyReleaseGate.md](GoOnlyReleaseGate.md)を参照してください。
 
 - 依存解析や実行可否判定などの副作用のないCoreを含め、中核ルールはGoを正本とします。
 - MarkdownやObsidianのファイルI/OはCoreの外側に置きます。
-- 通常Task、Review、Revisionのprocess入口とPython Workflow caller cutoverはGoへ移行済みです。RevisionはADR-0012に従ってimmutable intentを先行commitし、TaskService.Create後に`revision.created`を発行します。AuditはEvent subscriberであり、partial failureを隠しません。Go Claude Adapterは`.env`を読まず、APIキー、Provider model、HTTP clientをRuntimeから受け取ります。
-- Go CoreはCrewAI、外部LLM SDK、Pythonランタイム、`.env`へ依存しません。
+- 通常Task、Review、Revisionのprocess入口はGoです。RevisionはADR-0012に従ってimmutable intentを先行commitし、TaskService.Create後に`revision.created`を発行します。AuditはEvent subscriberであり、partial failureを隠しません。Go Claude Adapterは`.env`を読まず、APIキー、Provider model、HTTP clientをRuntimeから受け取ります。
+- Go Coreは外部LLM SDK、別言語runtime、`.env`へ依存しません。
 - Rustへの主移行は行わず、GoをWorkspace OSの中核実装として育てます。
 
 現在のGo Coreは次のパッケージで構成します。
@@ -209,12 +187,12 @@ Workspace OSの製品Runtime移行は完了しています。通常Task、Review
 - `go/cmd/workspace-run`: Organization参照、Project／Task作成、migration、通常Task／Review／Revision／reviewed Workflow、one-shot Schedule、Interaction、Recoveryを公開するGo運用CLI
 - `go/cmd/workspace-daemon`: 同じprocess／Service compositionをloopback既定HTTPと、明示pairing済みtrusted-LAN mobile UIで公開するGo daemon
 - `go/internal/buildinfo`: release時にlinkerから注入するversion／commit／build date。DomainやRuntime設定ではない
-- `scripts/package-release.sh`: Pythonを含まないGo binary、LICENSE、docsをversion付きarchiveとSHA-256 checksumへ構成するdistribution edge
+- `scripts/package-release.sh`: allow-listされたGo binary、LICENSE、docsをversion付きarchiveとSHA-256 checksumへ構成するdistribution edge
 
-PythonとGoは`fixtures/workflow`、`fixtures/project`、`fixtures/go_core`のJSONを共有する互換契約を維持します。次は公開Python callerがGo Core互換operationを使う場合のcompatibility境界であり、Go製品Runtimeの内部経路ではありません。
+`fixtures/workflow`、`fixtures/project`、`fixtures/go_core`のJSONはGo testsが直接検証するlanguage-neutralな契約資産です。JSON Contract v1は外部process client向けの安定した境界です。
 
 ```text
-Python Adapter (GoCoreClient / ProjectManager / ProjectWorkflowService)
+External process client
     ↓ JSON Contract v1 (stdin/stdout)
 workspace-core CLI
     ↓
@@ -243,9 +221,7 @@ Workspace Kernel
         Event Bus
 ```
 
-Go CoreはProject/Workflow領域のビジネスルールの正本です。公開互換の`ProjectManager`と`ProjectWorkflowService`は`GoCoreClient`を通じてTASK-ID採番、Task検証、状態遷移、readinessをGoへ委譲し、Python側では同じルールを新規実装しません。
-
-公開v0.1 Python API内の旧Core互換設定は既存caller互換のため残りますが、製品Runtimeのfallbackではありません。`workspace-run`およびPython Go process AdapterはGo失敗時にlegacy Python Provider、Worker、writerへfallbackしません。`workspace-core`はファイルシステムや`.env`を読み書きせず、標準出力にはJSONだけを返します。
+Go CoreはProject/Workflow領域のビジネスルールの正本です。`workspace-core`はファイルシステムや`.env`を読み書きせず、標準出力にはJSONだけを返します。外部clientは同じ規則を再実装せず、このversioned contractを利用できます。
 
 JSON契約v1は、`version`、`operation`、`payload`を標準入力で受け取り、`version`、`ok`、`result`、`error`を標準出力へ1件だけ返します。エラーは内部例外文を公開せず、次の機械判定可能なコードを使用します。
 
@@ -257,7 +233,7 @@ JSON契約v1は、`version`、`operation`、`payload`を標準入力で受け取
 
 対応operationは`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`です。ローカルバイナリは`make go-build`で`bin/workspace-core`へ生成し、`bin/`はGit管理しません。
 
-通常Task、Review、Revision、Organization／Identity writer、Project／Task writer、CEO plan生成／適用のprocess入口はGoへ移行済みです。CEO planはADR-0019に従い、明示承認後に構造化Employee inventoryからProvider-neutral Serviceと既存Runnerを通ってtyped planとなり、別の明示承認付きapplyでADR-0018のwriterへ渡ります。LLM出力を直接Vaultへ書かず、Project IDと正式Task IDをProvider出力から分離します。mock Providerとtemporary Vaultで生成からTask Dependency作成までEnd-to-End検証済みです。Python gatewayはGo failure時にlegacy Provider／writerへfallbackしません。ADR-0021により、明示Command ID付き主要副作用command、ADR-0023のSequential Workflow、ADR-0024のReviewed Workflowは副作用前にdurable claimを保存し、同一requestのterminal resultを副作用なしでreplayします。既存`workspace-core` JSON Contract v1は変更していません。
+通常Task、Review、Revision、Organization／Identity writer、Project／Task writer、CEO plan生成／適用のprocess入口はGoです。CEO planはADR-0019に従い、明示承認後に構造化Employee inventoryからProvider-neutral Serviceと既存Runnerを通ってtyped planとなり、別の明示承認付きapplyでADR-0018のwriterへ渡ります。LLM出力を直接Vaultへ書かず、Project IDと正式Task IDをProvider出力から分離します。Mock Providerとtemporary Vaultで生成からTask Dependency作成までEnd-to-End検証済みです。ADR-0021により、明示Command ID付き主要副作用command、ADR-0023のSequential Workflow、ADR-0024のReviewed Workflowは副作用前にdurable claimを保存し、同一requestのterminal resultを副作用なしでreplayします。`workspace-core` JSON Contract v1は変更していません。
 
 ### Workspace Kernel
 
@@ -364,16 +340,6 @@ Provider固有のLLM呼び出し、Schedule永続形式、Obsidian I/OはKernel�
 
 ## Runner拡張
 
-Python ModelRouterは公開v0.1互換にだけ残ります。Go製品Runtimeは論理model値を`runner.Registry`でRunner Adapterへ解決し、未知のモデル値や未登録Runnerを安全に拒否します。
-
-```python
-router.register_runner(
-    "ClaudeRunner",
-    claude_runner,
-    model_values=("Claude Sonnet 5",),
-)
-```
-
-Go側も同じ論理model値を`runner.Registry`で`ClaudeRunner`へ解決します。Provider model ID、APIキー、HTTP timeoutはClaude AdapterのconstructorへRuntimeから注入し、Kernel、WorkerService、Employee Contextへ持ち込みません。Adapterは自動retry、Task状態変更、成果物保存、Auditを行いません。
+Go製品Runtimeは論理model値を`runner.Registry`でRunner Adapterへ解決し、未知のモデル値や未登録Runnerを安全に拒否します。Provider model ID、APIキー、HTTP timeoutはClaude AdapterのconstructorへRuntimeから注入し、Kernel、WorkerService、Employee Contextへ持ち込みません。Adapterは自動retry、Task状態変更、成果物保存、Auditを行いません。
 
 OpenAI、Gemini、Ollamaなどは、同じ`run()`契約を実装して登録する拡張を想定しています。

@@ -14,7 +14,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
 )
 
-func TestDeliverableStoreMatchesPythonGoldenAndNeverOverwrites(t *testing.T) {
+func TestDeliverableStoreMatchesGoldenAndNeverOverwrites(t *testing.T) {
 	root := deliverableVault(t)
 	store := newTestDeliverableStore(t, root)
 	document := testDeliverableDocument()

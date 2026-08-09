@@ -53,7 +53,7 @@ func TestExecuteReviewRequiresApprovalBeforeProviderOrArtifacts(t *testing.T) {
 	}
 }
 
-func TestExecuteReviewUsesGoRuntimeAndCommitsPythonCompatibleArtifacts(t *testing.T) {
+func TestExecuteReviewUsesGoRuntimeAndCommitsCanonicalArtifacts(t *testing.T) {
 	root := writeReviewProcessVault(t)
 	completeReviewSourceTask(t, root)
 	var providerCalls atomic.Int32

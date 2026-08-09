@@ -12,7 +12,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/deliverable"
 )
 
-// DeliverableStore persists immutable Python-compatible Task Deliverables in
+// DeliverableStore persists immutable, version-stable Task Deliverables in
 // one explicitly configured project. It does not mutate Tasks or Audit files.
 type DeliverableStore struct {
 	projectName string

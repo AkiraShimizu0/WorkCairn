@@ -6,7 +6,7 @@
 - clean checkoutから`make release-package RELEASE_VERSION=vX.Y.Z BUILD_DATE=<RFC3339>`が成功する。
 - archive名、`workspace-run version`、Git tag候補、CHANGELOGのversionが一致する。
 - `.tar.gz.sha256`を別processで検証する。
-- archiveにGo binary、LICENSE、README、CHANGELOG、Operator／HTTP／Recovery docsだけが含まれ、Python package、`.env`、Vault、cache、test outputを含まない。
+- archiveにallow-listされたGo binary、LICENSE、README、CHANGELOG、docsだけが含まれ、source、`.env`、Vault、cache、test outputを含まない。
 - supported GOOS／GOARCHごとのtemporary directoryで展開・version smoke testを行う。
 
 ## Runtime safety
@@ -20,10 +20,9 @@
 
 ## Compatibility and upgrade
 
-- JSON Contract v1 shared fixtureとVault managed metadata fixtureが成功する。
-- 公開Python v0.1 compatibility import／console script testが成功する。
-- Go製品artifactがPython interpreter、Python SDK、python-dotenvを含まない。
-- Python compatibilityの終了条件は`PythonRuntimeInventory.md`から変更しない。
+- JSON Contract v1とVault managed metadata fixtureが成功する。
+- repository asset guardが撤去済みruntime source、metadata、lockfileの再混入を拒否する。
+- release archiveに3つのGo binaryとallow-listされた文書以外がない。
 - unknown metadata versionを暗黙解釈しない。schema変更があれば別version、migration、fixture、ADRを用意する。
 - upgrade前backupと、old binaryへ戻してもcanonical dataを自動downgradeしない手順をRelease noteへ含める。
 
@@ -47,4 +46,4 @@ v1の技術artifact名は既存caller、docs、Go module、Vault運用語との�
 | Work Operator | 承認後に仕事を調停・実行する体験が直接的 | 固有性と商標の確認が必要 |
 | Agent Workspace | AI社員と人間可読Workspaceの組合せを表せる | 類似名称が多い可能性がある |
 
-名称変更はcode-only判断では確定せず、決定時にbinary名、module path、CLI、Vault schema、公開Python APIのうち何を維持するかをmigration planとして分離します。
+名称変更はcode-only判断では確定せず、決定時にbinary名、module path、CLI、Vault schemaのうち何を維持するかをmigration planとして分離します。

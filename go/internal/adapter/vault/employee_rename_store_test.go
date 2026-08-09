@@ -12,7 +12,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/organization"
 )
 
-func TestEmployeeRenameStoreMatchesPythonStructuredReferencePolicy(t *testing.T) {
+func TestEmployeeRenameStoreMatchesStructuredReferencePolicy(t *testing.T) {
 	root := renameStoreVault(t)
 	store, err := NewEmployeeStore(root)
 	if err != nil {

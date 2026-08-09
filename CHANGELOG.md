@@ -18,6 +18,10 @@
 - `workspace-daemon`へiPhone基準のLocal Web UI、trusted-LAN pairing、Reviewer inventory、Task／Deliverable／Review evidence inspectionを追加。
 - mobile Interaction commandへbounded acceptanceとLedger pollingを追加し、受理後の実行をSafari接続から分離。
 
+### Removed
+
+- Public Beta前に旧compatibility package、console entry point、tests、package metadata、lockfile、Provider SDK依存、専用build／release toolingを撤去し、repositoryとdistributionをGo Onlyへ確定。
+
 ### Security
 
 - daemonは既定で非loopback bindを拒否し、明示mobile modeだけprivate／link-local IP、process-local pairing、same-origin effect requestを許可。

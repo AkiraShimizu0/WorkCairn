@@ -103,7 +103,7 @@ flowchart TB
 | Adapter | Vault形式、atomic file operation、Anthropic HTTP変換 | Task状態変更、承認判断、Audit直書き |
 | Runtime／Process | 具体Adapterの注入、Event subscriber接続、CLI境界 | 新しいビジネスルール |
 
-GoのRelease Gateは、Domain／Service／KernelからAdapter／Runtime／Processへの逆向き依存を禁止します。CoreはObsidian、Vault path、Anthropic、APIキー、`.env`、Python runtimeを知りません。
+GoのRelease Gateは、Domain／Service／KernelからAdapter／Runtime／Processへの逆向き依存を禁止します。CoreはObsidian、Vault path、Anthropic、APIキー、`.env`、外部runtimeを知りません。
 
 ## Task、Event、Audit
 
@@ -168,13 +168,13 @@ ADR-0030のExternal Action handoffは任意です。completed Workflowに含ま�
 
 `interaction-next`／HTTP next endpointは、Sessionのstateと最新turnだけから次のoperation、expected Version、必要field、質問、承認要否、Recoveryで確認するouter／child Ledgerを返します。これはread-only projectionであり、自動承認、自動実行、自動Recoveryを行いません。
 
-## Go Only RuntimeとPython compatibility
+## Go Only Repository and Runtime
 
-製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／Metrics、External Action、Local Web UIにPython interpreterは不要です。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。Go sourceが外部interpreterを起動しないことをRelease Gateで検査します。
+製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／Metrics、External Action、Local Web UIはGoだけで構成されます。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。
 
-Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ残します。既存import pathと`workspace-ai` entry pointを維持しますが、製品Runtimeではありません。Python gatewayはGo JSON v1 processへ明示的に接続し、失敗時にPython Worker、Provider、writerへfallbackしません。legacy moduleは新規機能追加禁止のreference実装です。
+Public Beta前に移行用compatibility distributionを撤去しました。repository、test、release、distributionにも別言語runtimeやSDKはありません。JSON Contract v1とgolden／migration fixtureはGoが直接検証するlanguage-neutralな契約資産です。
 
-製品Runtimeの判定は[GoOnlyReleaseGate.md](GoOnlyReleaseGate.md)、Pythonの分類と物理削除条件は[PythonRuntimeInventory.md](PythonRuntimeInventory.md)を参照してください。
+正式な判定は[GoOnlyReleaseGate.md](GoOnlyReleaseGate.md)、移行履歴は[MigrationHistory.md](MigrationHistory.md)を参照してください。
 
 ## 現在の意図的な限界
 
@@ -188,6 +188,6 @@ Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ�
 - Notificationはlocal read-only Inboxだけで、外部channel配送、未読／ack、Event replayは未実装。Metricsはprocess再起動でresetされる
 - External ActionはWordPress post publishだけで、HTML変換、update／delete、media upload、remote reconciliation、自動retryは未実装
 - Interaction SessionはReviewed Workflow完了と任意の単一WordPress Action handoffまでを扱う。複数Action、公開意図の推測、automatic approvalは未実装
-- Python compatibility APIは公開互換方針が終了するまでrepositoryに残る
+- remote authentication／TLS／internet公開とPush通知は未実装
 
 これらはGo Only Runtimeの不足ではなく、次期Roadmapで段階的に扱う耐久性・運用機能です。

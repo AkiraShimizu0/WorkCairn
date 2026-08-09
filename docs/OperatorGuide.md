@@ -18,7 +18,7 @@ Workspace OSのread-only操作とwriter操作は分離されています。`*-pl
 
 ## 配布物の確認
 
-配布archiveはPython packageを含まないGo Only artifactです。展開前に同梱checksumを検証し、実行binaryのversionを確認します。
+配布archiveはallow-listされたGo Only artifactです。展開前に同梱checksumを検証し、実行binaryのversionを確認します。
 
 ```bash
 shasum -a 256 -c workspace-os_v1.0.0_darwin_arm64.tar.gz.sha256
@@ -28,7 +28,7 @@ workspace-os_v1.0.0_darwin_arm64/bin/workspace-daemon --version
 workspace-os_v1.0.0_darwin_arm64/bin/workspace-core --version
 ```
 
-`version`結果のrelease versionとcommitをRelease noteに記録します。sourceからbuildする場合はGo 1.23以上で`make go-build`を使用します。Python 3.9、`uv`、Python Provider SDKはGo製品Runtimeには不要です。
+`version`結果のrelease versionとcommitをRelease noteに記録します。sourceからbuildする場合はGo 1.23以上で`make go-build`を使用します。別言語runtimeやpackage managerは不要です。
 
 ## Temporary Vaultでの初回確認
 

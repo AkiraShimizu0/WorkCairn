@@ -6,7 +6,7 @@ IdentityPolicyは、AI社員のIDと氏名が既存組織メンバーと紛ら�
 
 ## 診断対象
 
-`Organization.get_all_identities()`は次を区別したまま返します。
+Go Organization inventoryは次を区別したまま返します。
 
 - 社員Markdownの通常社員
 - Workspace State.mdの`MGR-*`行
@@ -38,25 +38,19 @@ v0.1.0のリリース時点では、運用上のIdentity整理により全組織
 
 ## 採用時の利用
 
-Recruiterは書き込み前にIdentityPolicyを実行します。完全一致、同じ名、形式不正、不正語を含む候補は拒否します。同姓や高類似の警告は`return_result=True`で呼び出し側へ返せます。
+Employee採用processは書き込み前にIdentityPolicyを実行します。完全一致、同じ名、形式不正、不正語を含む候補は拒否します。同姓や高類似の警告は構造化結果で呼び出し側へ返します。
 
 複数候補の採用では、既存社員と候補同士を全件検証してから保存します。1件でもIDまたは氏名に問題があれば、採用処理を開始しません。
 
 ## 既存組織の診断
 
-```python
-from workspace_ai.identity_policy import IdentityPolicy
-
-audit = IdentityPolicy().audit_all_identities()
-print(audit["errors"])
-print(audit["warnings"])
-```
+`workspace-run identity-validate --vault /path/to/vault`でread-only診断を実行します。
 
 診断結果にはID重複、完全一致、正規化一致、同じ名、同じ姓、高類似、不正名、改名候補が含まれます。診断だけではVaultを変更しません。
 
 ## 安全な改名
 
-通常経路では`WorkspaceRunEmployeeRenameGateway`がGo batch planで次を一括検証し、ADR-0015の単一renameを順次commitします。Python `EmployeeRenameService`は公開互換referenceです。
+Go batch rename processが次を一括検証し、ADR-0015の単一renameを順次commitします。
 
 - 社員IDが社員Markdownと全組織Identityで一意
 - 現在氏名が想定どおり

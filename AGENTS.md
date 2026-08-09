@@ -17,8 +17,8 @@
 
 ## Architecture Rules
 
-- 最終実装はGo 100%、Python 0%です。新しい中核ビジネスルールはGoへ実装します。
-- Pythonは移行期間中のlegacy/reference、Vault Adapter、Prompt、Provider Runner、LLM SDKに限定します。暗黙のPython fallbackは禁止です。
+- 製品コード、build、test、release、distributionはGo Onlyです。中核ビジネスルールはGoへ実装します。
+- repositoryへ別言語Runtime、legacy implementation、暗黙fallbackを再導入しません。
 - KernelはService登録、ライフサイクル、Command調停に限定し、DomainロジックやProvider固有処理を持たせません。
 - DomainはObsidian、Markdown、外部LLM SDK、`.env`、APIキーを知りません。
 - ServiceはDomainとportを調停し、Adapterの保存形式へ依存しません。
@@ -29,8 +29,7 @@
 ## Contracts and Compatibility
 
 - JSON Contract v1を壊しません。変更はoptionalかつadditiveを優先し、破壊的変更は新versionとADRを必要とします。
-- Python／Go共有fixtureを契約として維持します。
-- 公開済みPython APIは、移行対象として明示されるまで互換性を維持します。
+- JSON Contract v1、Prompt／Markdown／migration fixtureをlanguage-neutralな契約として維持します。
 - エラーは機械判定可能な型・code・stageへ変換し、Providerの生エラーを公開契約へ漏らしません。
 - Event Typeは閉じた型とし、Task Eventを複数コンポーネントから二重発行しません。
 
@@ -49,7 +48,7 @@
 2. 最小のDomain／Service／Adapter境界を決める。新しい重大判断はADRへ記録する。
 3. Fake、in-memory、temporary directoryを使って先にテスト可能な境界を作る。
 4. 正常系に加え、拒否、partial failure、timeout、cancellation、並行実行をリスクに応じてテストする。
-5. `gofmt`、`go vet`、race test、Python互換テスト、fixtureを変更範囲に応じて実行する。
+5. `gofmt`、`go vet`、race test、fixture contract testを変更範囲に応じて実行する。
 6. `git diff --check`と`git status`で、対象外・機密・生成物の差分がないことを確認する。
 7. コミットやpushは依頼された場合だけ行う。push禁止の依頼ではローカルコミットまでに留める。
 
@@ -57,18 +56,17 @@
 
 ```bash
 make go-build
-cd go && go test ./...
-cd go && go test -race ./...
+cd go && go test -count=1 ./...
+cd go && go test -race -count=1 ./...
 cd go && go vet ./...
-PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests
-PYTHONPYCACHEPREFIX=/tmp/workspace-os-pycache .venv/bin/python -m compileall -q src tests
+make v1-release-gate
 ```
 
-Go生成物`bin/workspace-core`はGit管理しません。テストは実Vaultや実APIへ接続しない構成にしてください。
+Go生成物`bin/workspace-core`、`bin/workspace-run`、`bin/workspace-daemon`はGit管理しません。テストは実Vaultや実APIへ接続しない構成にしてください。
 
 ## Documentation
 
 - 現在の構造は`docs/Architecture.md`、規範は`docs/CONSTITUTION.md`、計画は`docs/ROADMAP.md`を正とします。
 - 重大な設計判断は`docs/adr/ADR-template.md`からADRを作成します。
-- 実装完了時は、移行済み責務、残存Python責務、互換性、次の移行候補を明記します。
+- 実装完了時は、現在の責務境界、互換契約、次の開発候補を明記します。
 - README、Architecture、ADR、Starter Kit間で事実や用語が矛盾しないようにします。

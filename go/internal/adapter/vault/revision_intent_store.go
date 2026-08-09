@@ -53,8 +53,8 @@ func NewRevisionIntentStore(root, projectName string) (*RevisionIntentStore, err
 }
 
 // ExistingForSource checks immutable metadata without creating a directory.
-// Both the canonical Go field and the legacy Python projection field are
-// considered so the two implementations cannot silently create duplicates.
+// Both the canonical field and the legacy projection field are considered so
+// existing Vault data cannot silently create duplicates.
 func (store *RevisionIntentStore) ExistingForSource(ctx context.Context, canonicalPath, projectionPath string) (string, bool, error) {
 	if err := taskStoreContextError(ctx); err != nil {
 		return "", false, err
@@ -111,8 +111,8 @@ func (store *RevisionIntentStore) ListReferences(ctx context.Context) ([]Revisio
 		}
 		metadataVersion := strings.TrimSpace(fields["metadata_version"])
 		if metadataVersion == "" {
-			// Python legacy metadata has no schema version or canonical intent
-			// commit marker. Keep it readable by the compatibility surface, but
+			// Legacy metadata has no schema version or canonical intent commit
+			// marker. Keep it readable for existing Vault data, but
 			// never infer that it authorizes targeted Go execution.
 			continue
 		}

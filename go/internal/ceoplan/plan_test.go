@@ -20,7 +20,7 @@ type generationFixture struct {
 	ExpectedPlan Plan                    `json:"expected_plan"`
 }
 
-func TestCEOPlanMatchesPythonMigrationFixture(t *testing.T) {
+func TestCEOPlanMatchesMigrationFixture(t *testing.T) {
 	fixture := loadGenerationFixture(t)
 	prompt, err := BuildPrompt(fixture.Request, fixture.Employees)
 	if err != nil || prompt.System != fixture.SystemPrompt || prompt.User != fixture.Request {
@@ -90,7 +90,7 @@ func TestCEOPlanPromptIsDeterministicAndPreservesUnicodeJSON(t *testing.T) {
 	}
 }
 
-func TestCEOPlanRoleMatchingUsesPythonCompatibleUnicodeCaseFold(t *testing.T) {
+func TestCEOPlanRoleMatchingUsesCanonicalUnicodeCaseFold(t *testing.T) {
 	fixture := loadGenerationFixture(t)
 	var candidate map[string]any
 	if err := json.Unmarshal(fixture.RunnerOutput, &candidate); err != nil {

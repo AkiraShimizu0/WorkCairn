@@ -20,7 +20,7 @@ type reviewExecutionFixture struct {
 	Expected worker.Prompt      `json:"expected"`
 }
 
-func TestReviewBuilderMatchesPythonGoldenFixture(t *testing.T) {
+func TestReviewBuilderMatchesGoldenFixture(t *testing.T) {
 	fixture := loadReviewExecutionFixture(t)
 	built, err := NewBuilder().BuildReview(context.Background(), fixture.Input)
 	if err != nil {
@@ -64,7 +64,7 @@ func TestReviewBuilderIsDeterministicAndKeepsSectionOrder(t *testing.T) {
 	}
 }
 
-func TestReviewBuilderHandlesOptionalContextExactlyLikePython(t *testing.T) {
+func TestReviewBuilderHandlesOptionalContextDeterministically(t *testing.T) {
 	fixture := loadReviewExecutionFixture(t)
 	input := fixture.Input
 	input.Deliverable.Frontmatter = review.DeliverableFrontmatter{}

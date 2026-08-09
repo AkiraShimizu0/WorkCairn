@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestParseOutputMatchesPythonNormalization(t *testing.T) {
+func TestParseOutputMatchesCanonicalNormalization(t *testing.T) {
 	human, decision, err := ParseOutput(
 		"## レビュー\n\n日付を修正してください。\n\n" + ResultJSONStart + "\n" +
 			`{"verdict":"Request Changes","ignored":true,"issues":[{` +

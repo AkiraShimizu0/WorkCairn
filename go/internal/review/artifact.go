@@ -27,7 +27,7 @@ func ValidateVersion(value string) error {
 }
 
 // Document combines a validated Review execution with the human context
-// needed to render Python-compatible immutable artifacts.
+// needed to render stable immutable artifacts.
 type Document struct {
 	ProjectID     string          `json:"project_id"`
 	ProjectName   string          `json:"project_name"`

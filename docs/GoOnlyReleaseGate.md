@@ -2,61 +2,65 @@
 
 ## 判定
 
-通常製品RuntimeについてGo Only Release Gateは成立しています。正本の配布物と運用入口は`bin/workspace-run`、loopback既定HTTP／Local Web UI入口は`bin/workspace-daemon`です。公開v0.1 Python packageは別のcompatibility surfaceであり、Go製品Runtimeの依存ではありません。
+Workspace OSのrepository、build、test、release、distributionはGo Onlyです。正式な製品surfaceは`workspace-run`、`workspace-daemon`、JSON Contract v1の`workspace-core`であり、clone後の検証にGo toolchain以外の言語runtimeやpackage managerを必要としません。
 
-## Capability Matrix
+## Capability matrix
 
-| Capability | Go製品入口／実装 | Python interpreterなし | 検証 |
-|---|---|---|---|
-| 通常運用 | `workspace-run` plan／execute／migration | OK | CLI、Runtime、temporary Vault E2E |
-| HTTP／daemon／Local Web UI | `workspace-command.v1`、必須Command ID、Ledger status、mobile Interaction client | OK | loopback既定、private IP pairing、same-origin effect、bounded async acceptance、request cancellation分離、graceful shutdown、390×844 browser flow |
-| CEO plan | `ceo-plan-generate`、`ceo-plan-apply-*` | OK | Mock Provider、typed plan、Go writer E2E |
-| Project／Task管理 | `project-bootstrap-*`、`task-create-*`、`project-dependencies-*` | OK | temporary Vault、TaskService Event／Audit |
-| Organization／Identity | `organization-inspect`、`identity-validate`、`employee-*`、`organization-sync-*` | OK | shared fixture、temporary Vault、partial failure tests |
-| Task execution | `plan`、`execute` | OK | Go Runtime、Claude Adapter mock、Task lifecycle、Command ID replay tests |
-| Review | `review-plan`、`review-execute` | OK | canonical JSON、Markdown projection、Review Event／Audit、Command replay |
-| Revision | `revision-plan`、`revision-execute` | OK | immutable intent、TaskService.Create、Revision Event／Audit |
-| Multi-task Workflow | `workflow-plan`、`workflow-execute` | OK | readiness再plan、決定的child Command、順次Task E2E、replay／conflict |
-| Reviewed Multi-task Workflow | `workflow-reviewed-plan`、`workflow-reviewed-execute` | OK | Approve／Request Changes、Revision Task targeted readiness、再Review、replay／conflict |
-| Scheduler／Automation | `schedule-plan`、`schedule-create`、`schedule-list`、daemon poller | OK | typed one-shot、明示承認、Schedule CAS、target Ledger、missed／duplicate E2E |
-| Notification／Metrics | daemon read-only Inbox／Metrics inspection | OK | Event subscriber、payload redaction、immutable atomic record、replay非重複、partial failure |
-| External Action | `action-wordpress-plan`、`action-wordpress-publish`、HTTP／Scheduler command | OK | 明示承認、Mock WordPress、request／result evidence、Ledger replay、Event／Audit／Notification |
-| Interaction Session | `interaction-start-*`、`interaction-next`、`interaction-plan-generate`、`interaction-answer`、`interaction-plan-apply`、`interaction-workflow-*`、`interaction-action-*` | OK | typed next-action projection、request／plan／Workflow／Action digest承認、既存Workflow／Action child composition、Session CAS、Ledger replay、temporary Vault／Mock Provider E2E |
-| Deliverable／Audit | Execution／Review／Revision composition | OK | immutable Store、Event subscriber、partial failure tests |
-| Recovery | `recovery-inspect`、`recovery-plan`、`recovery-apply` | OK | read-only inventory、evidence digest、Task CAS、temporary Vault E2E |
+| Capability | Go製品入口／実装 | 主な検証 |
+|---|---|---|
+| CEO依頼／Plan／Apply | `workspace-run ceo-plan-*`、Interaction Session | typed validation、approval、temporary Vault、Mock Provider |
+| Project／Task／Organization／Identity | Go process／Service／Vault Adapter | plan/execute分離、CAS、atomic write、partial failure |
+| Task execution／Deliverable／Audit | ExecutionService、WorkerService、TaskService | commit ordering、Event ownership、Fake Runner |
+| Review／Revision／Reviewed Workflow | Go Review／Revision／Workflow services | canonical evidence、child Command Ledger、branch E2E |
+| Recovery／Command Ledger | `recovery-*`、durable Ledger | evidence-bound recovery、replay、ID conflict rejection |
+| HTTP／Local Web UI | `workspace-daemon` | loopback default、pairing、graceful shutdown、mobile flow |
+| Scheduler／Notification／Metrics／External Action | Go Kernel／Adapter | approved command dispatch、redaction、Mock transport |
+| JSON Contract v1 | `workspace-core` | golden fixtures、strict request／response envelope |
 
-## Automated Gate
-
-```bash
-make go-only-release-gate
-```
-
-このtargetはGo binaryをbuildし、全Go test、race test、vetだけを実行します。Python、`.venv`、Python Provider SDK、python-dotenvを起動・importしません。
-
-`go_only_release_gate_test.go`は、上表の製品operationがGo CLIに存在することと、production／testを含む全Go sourceが`os/exec`または`os.StartProcess`を使ってPythonを含む外部interpreterを起動できないことを検査します。さらに、Domain／Service／Kernelからedge layerへの逆向き依存、Task lifecycle EventのTaskService外生成、全書込みcommandの承認前Vault／Provider I/Oを拒否します。Provider APIはGo Claude AdapterのMock HTTP testだけで検証し、実APIを呼びません。
-
-Public Release Preparationでは、既定daemonが非loopback addressを拒否するtest、明示mobile modeがunspecified／public addressを拒否してprocess-local pairingを要求するtest、linker注入するversion／commit metadata、Pythonを含まないGo Only archiveとSHA-256 checksumの作成手順も追加しています。配布手順は[OperatorGuide.md](OperatorGuide.md)と[PublicReleaseChecklist.md](PublicReleaseChecklist.md)を参照してください。
-
-明示`--command-id`付き通常Task／Review executionは、temporary Vault E2Eで同一requestの2回目がProviderを呼ばず保存済みresultを返すこと、異なるrequestでのID再利用を拒否することを検証します。これは現在まだ全mutating commandのidempotency保証ではありません。
-
-## v1.0 Candidate Gate
+## Official gate
 
 ```bash
 make v1-release-gate
 ```
 
-これはGo Only製品Gateをそのまま実行した後、公開Python compatibility surfaceについて次も確認します。
+この単一targetは次を実行します。
 
-- `uv.lock`が`pyproject.toml`と一致すること（offline check）
-- `PYTHON_DOTENV_DISABLED=1`で全Python compatibility／migration testが成功すること
-- Python source／testがrepository外のtemporary cacheだけを使ってcompileできること
-- `git diff --check`が成功すること
+1. 3つのGo binaryをbuildする。
+2. 全Go testsをcacheなしで実行する。
+3. 全Go race testsをcacheなしで実行する。
+4. `go vet ./...`を実行する。
+5. `gofmt`差分がないことを検査する。
+6. release packaging scriptの実行権限とshell syntaxを検査する。
+7. `git diff --check`で差分衛生を検査する。
 
-Pythonを実行するのは公開互換distributionのRelease確認だけです。Go製品artifactがPythonに依存することを意味しません。実Vault、`.env`、実APIはどちらのGateでも使用しません。
+Go test内のRelease Gateはさらに次を拒否します。
 
-## Remaining Separation Work
+- Domain／Service／KernelからAdapter／Runtime／Processへの逆向き依存
+- Task lifecycle EventのTaskService外生成
+- 書込みcommandの承認前Vault／Provider I/O
+- Go製品sourceからの外部process起動
+- `.py`、`.python-version`、`.venv`、`pyproject.toml`、`uv.lock`等、撤去済みruntime資産のrepository再混入
 
-- Python compatibility packageは公開API維持のためrepositoryとPython dependency lockに残りますが、Go製品配布物には含めません。
-- `workspace-ai` console scriptはv0.1 compatibility placeholderです。通常運用手順とrelease artifactでは`workspace-run`とloopback既定／paired mobile `workspace-daemon`を案内します。
-- Python packageの物理削除は公開caller移行後の別Release Gateです。現在の削除対象と条件は`PythonRuntimeInventory.md`を正とします。
-- daemon、自動retry／reconciliationはGo Only成立の前提ではありません。明示Recoveryと主要な副作用commandのLedger foundationは追加済みですが、Event replayやartifact adoptionは行いません。
+Provider APIはMock HTTP serverだけ、Vaultはtemporary directoryだけで検証し、実API、実Vault、`.env`を使用しません。
+
+## Release artifact
+
+```bash
+make release-package \
+  RELEASE_VERSION=v1.0.0 \
+  BUILD_DATE=2026-08-09T12:00:00Z
+```
+
+packaging scriptはallow-listで次だけをarchiveへ含めます。
+
+- `workspace-run`
+- `workspace-daemon`
+- `workspace-core`
+- `LICENSE`、`README.md`、`CHANGELOG.md`
+- `docs/`
+
+`.env`、Vault、source tree、test data、cache、local build directory、他言語runtime資産は含めません。archiveとSHA-256 checksumは既存同名fileを上書きしません。
+
+## Historical migration
+
+Public Beta前に旧compatibility distributionを撤去した経緯と、意図的に残したlanguage-neutral fixtureは[MigrationHistory.md](MigrationHistory.md)および[ADR-0033](adr/ADR-0033-public-beta-go-only-repository.md)を参照してください。過去ADRの移行記述は当時の判断記録であり、現在利用可能なruntime surfaceではありません。

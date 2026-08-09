@@ -38,7 +38,7 @@ func TestGoOnlyReleaseGateCoversProductCapabilities(t *testing.T) {
 	}
 }
 
-func TestGoProductSourcesCannotLaunchPython(t *testing.T) {
+func TestGoProductSourcesCannotLaunchExternalProcesses(t *testing.T) {
 	goRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +71,39 @@ func TestGoProductSourcesCannotLaunchPython(t *testing.T) {
 			}
 			return true
 		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepositoryHasNoRetiredRuntimeAssets(t *testing.T) {
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbiddenNames := map[string]bool{
+		".python-version": true,
+		".venv":           true,
+		"__pycache__":     true,
+		"pyproject.toml":  true,
+		"uv.lock":         true,
+	}
+	err = filepath.WalkDir(repositoryRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, relErr := filepath.Rel(repositoryRoot, path)
+		if relErr != nil {
+			return relErr
+		}
+		if entry.IsDir() && (relative == ".git" || relative == "work" || relative == "workspace" || relative == "bin" || relative == "dist") {
+			return filepath.SkipDir
+		}
+		if forbiddenNames[entry.Name()] || (!entry.IsDir() && filepath.Ext(entry.Name()) == ".py") {
+			t.Errorf("retired runtime asset remains in repository: %s", relative)
+		}
 		return nil
 	})
 	if err != nil {

@@ -35,7 +35,7 @@ type Task struct {
 	Status     string  `json:"status"`
 }
 
-// ReadinessResult is independent of Python, Obsidian, and any AI SDK.
+// ReadinessResult is independent of storage, presentation, and any AI SDK.
 type ReadinessResult struct {
 	TaskID          string   `json:"task_id"`
 	Title           string   `json:"title"`

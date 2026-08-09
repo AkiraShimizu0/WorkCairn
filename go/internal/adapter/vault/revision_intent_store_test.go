@@ -14,7 +14,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/revision"
 )
 
-func TestRevisionIntentStoreCommitsPythonCompatibleImmutableMetadata(t *testing.T) {
+func TestRevisionIntentStoreCommitsStableImmutableMetadata(t *testing.T) {
 	root := revisionVault(t)
 	store := newTestRevisionIntentStore(t, root)
 	record, err := store.Save(context.Background(), testRevisionIntent())

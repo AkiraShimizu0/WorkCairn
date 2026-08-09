@@ -205,15 +205,15 @@ func newTestAuditSubscriber(t *testing.T, root string) *AuditSubscriber {
 	return subscriber
 }
 
-func TestAuditSubscriberPreservesExistingPythonAuditText(t *testing.T) {
+func TestAuditSubscriberPreservesExistingAuditText(t *testing.T) {
 	root := deliverableVault(t)
 	audit := newTestAuditSubscriber(t, root)
-	existing := "---\ntype: audit-log\nproject: ToDoアプリ\n---\n\n# legacy\n\n## Python entry\n\n- result: success\n"
+	existing := "---\ntype: audit-log\nproject: ToDoアプリ\n---\n\n# legacy\n\n## Existing entry\n\n- result: success\n"
 	writeTestFile(t, filepath.Join(root, "プロジェクト", "ToDoアプリ", "Audit Log.md"), existing)
 	if err := audit.Handle(context.Background(), fixedAuditEvent("event-001", event.TaskStarted, time.Now())); err != nil {
 		t.Fatal(err)
 	}
 	if content := readTestFile(t, audit.path); !strings.HasPrefix(content, strings.TrimRight(existing, "\n")) {
-		t.Fatal("Audit subscriber rewrote existing Python Audit text")
+		t.Fatal("Audit subscriber rewrote existing Audit text")
 	}
 }

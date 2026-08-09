@@ -70,7 +70,7 @@ type ValidationIssue struct {
 	Employees []string `json:"employees,omitempty"`
 }
 
-// ValidateInventory preserves Python Organization.validate ordering: missing
+// ValidateInventory preserves the versioned validation ordering: missing
 // fields in employee file order, followed by duplicate employee IDs in first
 // occurrence order. Managers and reservations participate in Identity policy,
 // not employee Markdown structural validation.

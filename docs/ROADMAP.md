@@ -6,16 +6,16 @@ Workspace OSは、Workspace Kernelを中心とするGo Only製品Runtimeです�
 
 ロードマップは現在地、次の順序、完了条件を示します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、現在構造は[SystemOverview.md](SystemOverview.md)と[Architecture.md](Architecture.md)、確定した設計判断は[ADR](adr/)を参照してください。
 
-## Completed — Python Foundation and Go Migration
+## Completed — Foundation and Go Migration
 
-### v0.1 Python Foundation
+### v0.1 Initial Foundation
 
-Obsidian Vaultを利用した社員、組織、Project、Task、Deliverable、Review、Revisionの初期製品を構築しました。この実装は現在、公開API互換とmigration referenceです。新しい中核ルールは追加しません。
+Obsidian Vaultを利用した社員、組織、Project、Task、Deliverable、Review、Revisionの初期製品を構築しました。移行元実装はPublic Beta前に撤去し、現在の正本はGoです。
 
 ### v0.2 Go Core Foundation
 
 - Project／Workflowの純粋ルールをGoへ移植
-- Python／Go間のJSON Contract v1と共有fixture
+- JSON Contract v1とlanguage-neutral fixture
 - Workspace Kernel、Service lifecycle、typed Event、Task Domain、Version/CAS
 - Worker／RunnerのProvider-neutral境界、Approval／Execution Policy
 
@@ -29,9 +29,9 @@ Obsidian Vaultを利用した社員、組織、Project、Task、Deliverable、Re
 - Project bootstrap、Task creation、Task Dependencies
 - Organization inventory、Identity validation、採用、改名、ID repair、同期
 - CEO自然言語依頼からtyped plan生成、検証、承認、Go writer適用
-- `workspace-run`への通常製品cutoverとPython legacy fallback除去
-- Python compatibility manifest、Provider依存隔離、削除条件inventory
-- Python interpreterを使用しない`go-only-release-gate`
+- `workspace-run`への通常製品cutoverとlegacy fallback除去
+- Provider依存をRuntime／Adapterへ隔離
+- Go toolchainだけで成立する`v1-release-gate`
 
 Go Onlyの詳細なcapability判定は[GoOnlyReleaseGate.md](GoOnlyReleaseGate.md)を参照してください。
 
@@ -48,16 +48,16 @@ Go Onlyの詳細なcapability判定は[GoOnlyReleaseGate.md](GoOnlyReleaseGate.m
 - Task lifecycle Event生成をTaskServiceへ限定
 - 全書込みCLIの承認前Vault／Provider I/O禁止
 - JSON Contract v1と共有fixtureの互換test
-- Python compatibility import、legacy marker、Provider依存allow-list
-- lockfile整合、Python compile、差分whitespace検査を含む`v1-release-gate`
+- 撤去済みruntime assetの再混入防止
+- `gofmt`、release script、差分whitespace検査を含む`v1-release-gate`
 
 v1.0候補の完了条件：
 
 1. `make v1-release-gate`が実Vault、`.env`、実Providerなしで成功する。
-2. 通常運用、CEO plan、Project／Task、Organization／Identity、Execution、Review、Revision、Deliverable／AuditがPython interpreterなしで実行可能である。
+2. 通常運用、CEO plan、Project／Task、Organization／Identity、Execution、Review、Revision、Deliverable／AuditがGoだけで実行可能である。
 3. 承認前副作用ゼロ、Task／Event ownership、partial failure、Vault／Provider neutralityを自動testで固定する。
-4. JSON Contract v1、既存Vault表示、公開Python v0.1 import surfaceを破壊しない。
-5. Python compatibility distributionが製品artifact／通常運用手順から分離され、物理削除条件が明文化されている。
+4. JSON Contract v1と既存Vault表示を破壊しない。
+5. repository、build、test、release、distributionがGo toolchainだけで成立する。
 
 v1.0候補安定化の完了条件として先取りしなかったもの：永続Outbox、Command Ledger、Scheduler、distributed execution、汎用workflow engine、常駐daemon。その後の次期RoadmapでRecovery、Command Ledger、loopback daemon、bounded Multi-task Workflow、one-shot Schedulerを段階的に実装済みですが、これらはv1.0判定自体の前提へ遡及追加しません。永続Outbox、cron／recurring Scheduler、distributed execution、汎用workflow engineは引き続き未実装です。
 
@@ -295,9 +295,9 @@ mobile attention表示は現在outer／child Command IDとLedger stateまでで�
 - Vault path、秘密情報、Prompt、Provider responseをclientへ出さない
 - normal Workflowのbusiness ruleやSession stateを変更しない
 
-## Python Compatibility End of Life
+## Completed — Public Beta Go Only Repository
 
-Pythonの物理削除は新機能ではなく、公開互換方針を終了できる時点のrelease作業です。外部callerのGo CLI／将来API移行、reference fixtureのGo化、console script廃止方針を満たした後に実施します。詳細な対象、順序、削除時検証は[PythonRuntimeInventory.md](PythonRuntimeInventory.md)を正とします。
+ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。
 
 ## Cross-Cutting Gates
 

@@ -1,5 +1,5 @@
 {
-  "name": "python_task_execution_prompt_v1",
+  "name": "task_execution_prompt_v1",
   "input": {
     "employee": {
       "employee_id": "PLAN-001",

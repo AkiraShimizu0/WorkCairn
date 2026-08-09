@@ -9,8 +9,8 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/organization"
 )
 
-// OrganizationInspection is a read-only projection of the legacy Python
-// Organization and IdentityPolicy contracts. No repair or synchronization is
+// OrganizationInspection is a read-only projection of the stable Organization
+// and IdentityPolicy contracts. No repair or synchronization is
 // attempted by this process.
 type OrganizationInspection struct {
 	Inventory        organization.Inventory         `json:"inventory"`

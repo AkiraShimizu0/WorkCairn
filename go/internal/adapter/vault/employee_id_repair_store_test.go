@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestEmployeeIDRepairMatchesPythonPlanAndCommitsProjections(t *testing.T) {
+func TestEmployeeIDRepairMatchesPlanAndCommitsProjections(t *testing.T) {
 	root := idRepairVault(t)
 	store, err := NewEmployeeStore(root)
 	if err != nil {

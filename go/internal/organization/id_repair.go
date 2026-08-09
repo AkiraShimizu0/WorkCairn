@@ -27,7 +27,7 @@ func (repair IDRepair) Validate() error {
 	return nil
 }
 
-// BuildIDRepairPlan preserves Python's deterministic rule: employee filename
+// BuildIDRepairPlan preserves the migration contract's deterministic rule: employee filename
 // order decides which duplicate keeps its ID, and later employees receive the
 // next available numeric suffix. All identity types reserve IDs.
 func BuildIDRepairPlan(inventory Inventory) []IDRepair {

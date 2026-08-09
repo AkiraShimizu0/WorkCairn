@@ -1,5 +1,5 @@
 {
-  "name": "python_review_prompt_v1",
+  "name": "review_execution_prompt_v1",
   "input": {
     "reviewer": {
       "employee_id": "QA-001",

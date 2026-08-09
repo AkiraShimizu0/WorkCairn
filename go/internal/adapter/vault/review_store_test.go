@@ -14,7 +14,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
 )
 
-func TestReviewStoreMatchesPythonArtifactsAndNeverOverwrites(t *testing.T) {
+func TestReviewStoreMatchesGoldenArtifactsAndNeverOverwrites(t *testing.T) {
 	root := reviewVault(t)
 	store := newTestReviewStore(t, root)
 	record, err := store.Save(context.Background(), testReviewDocument())
@@ -43,7 +43,7 @@ func TestReviewStoreMatchesPythonArtifactsAndNeverOverwrites(t *testing.T) {
 	}
 }
 
-func TestReviewStoreUsesPythonCompatibleVersionedNames(t *testing.T) {
+func TestReviewStoreUsesStableVersionedNames(t *testing.T) {
 	root := reviewVault(t)
 	store := newTestReviewStore(t, root)
 	document := testReviewDocument()

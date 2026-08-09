@@ -26,7 +26,7 @@ type DeliverableContext struct {
 	Frontmatter DeliverableFrontmatter `json:"frontmatter"`
 }
 
-// PromptInput contains all context needed to reproduce the legacy review
+// PromptInput contains all context needed to reproduce the versioned review
 // prompt without reading Vault files or selecting a Provider.
 type PromptInput struct {
 	Reviewer       worker.EmployeeContext  `json:"reviewer"`

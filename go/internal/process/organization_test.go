@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestOrganizationProcessesAreReadOnlyAndKeepPythonParityShape(t *testing.T) {
+func TestOrganizationProcessesAreReadOnlyAndKeepStableResultShape(t *testing.T) {
 	root := t.TempDir()
 	writeOrganizationProcessFile(t, filepath.Join(root, "社員", "田中 美咲.md"), "---\nid: PLAN-001\ndepartment: 企画部\nrole: Product Manager\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n")
 	writeOrganizationProcessFile(t, filepath.Join(root, "会社", "Workspace State.md"), "## Workspace Manager\n\n| ID | 氏名 | 役割 | 状態 | 現在の作業 |\n|---|---|---|---|---|\n| MGR-001 | 中村 美咲 | Workspace Manager | 待機中 | なし |\n")

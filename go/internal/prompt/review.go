@@ -11,8 +11,8 @@ import (
 
 var _ review.PromptBuilder = Builder{}
 
-// BuildReview reproduces the legacy Python review prompt from structured
-// context. It performs no filesystem, Vault, Provider, Runner, or Task work.
+// BuildReview renders the versioned review prompt from structured context. It
+// performs no filesystem, Vault, Provider, Runner, or Task work.
 func (builder Builder) BuildReview(ctx context.Context, input review.PromptInput) (worker.Prompt, error) {
 	if ctx == nil {
 		return worker.Prompt{}, fmt.Errorf("build review prompt: nil context")

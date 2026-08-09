@@ -99,8 +99,7 @@
       ],
       "dependencies": [{"task_id": "TASK-001", "depends_on": ["TASK-999"]}],
       "existing_employee_ids": ["PLAN-001"],
-      "error_kind": "unknown_dependency",
-      "python_error_pattern": "不明なdependency"
+      "error_kind": "unknown_dependency"
     },
     {
       "name": "cyclic_dependency",
@@ -113,8 +112,7 @@
         {"task_id": "TASK-002", "depends_on": ["TASK-001"]}
       ],
       "existing_employee_ids": ["PLAN-001", "DEV-001"],
-      "error_kind": "cyclic_dependency",
-      "python_error_pattern": "循環"
+      "error_kind": "cyclic_dependency"
     }
   ]
 }

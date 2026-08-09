@@ -12,8 +12,8 @@ import (
 
 var jst = time.FixedZone("JST", 9*60*60)
 
-// Builder reproduces the legacy Python task-execution prompt from structured
-// context. It performs no filesystem, Vault, Provider, or Runner operations.
+// Builder renders the versioned task-execution prompt from structured context.
+// It performs no filesystem, Vault, Provider, or Runner operations.
 type Builder struct{}
 
 var _ worker.PromptBuilder = Builder{}

@@ -22,7 +22,7 @@ import (
 const maxDocumentBytes = 1 << 20
 
 // Loader reads the existing Vault layout and returns structured Go context. It
-// never writes Markdown or keeps a hidden fallback to Python.
+// never writes Markdown or keeps a hidden runtime fallback.
 type Loader struct {
 	root string
 }
