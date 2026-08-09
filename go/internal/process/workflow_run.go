@@ -9,6 +9,7 @@ import (
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
@@ -39,6 +40,7 @@ type ExecuteWorkflowInput struct {
 	ApprovalReference string
 	CommandID         string
 	MaxTasks          int
+	EventObservers    []event.Observer
 }
 
 func PlanWorkflow(ctx context.Context, input WorkflowPlanInput) (WorkflowPlan, error) {
@@ -136,7 +138,7 @@ func ExecuteWorkflow(
 		return ExecuteTask(runContext, ExecuteTaskInput{
 			ExecutionPlanInput: ExecutionPlanInput{VaultRoot: input.VaultRoot, ProjectID: input.ProjectID, ProjectName: input.ProjectName, TaskID: taskID, CurrentTime: input.CurrentTime},
 			Approved:           true, ApprovalSource: "workflow", ApprovalReference: strings.TrimSpace(input.ApprovalReference),
-			ExecutionID: childCommandID, CommandID: childCommandID,
+			ExecutionID: childCommandID, CommandID: childCommandID, EventObservers: input.EventObservers,
 		}, provider, httpClient)
 	})
 	runService, err := service.NewWorkflowRunService(planner, executor)

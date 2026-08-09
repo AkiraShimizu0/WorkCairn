@@ -34,6 +34,9 @@ flowchart LR
     ScheduleApproval --> Scheduler["Kernel-managed Scheduler"]
     Scheduler --> ScheduledCommand["既存Command経路"]
     ScheduledCommand --> Execute
+    Execute --> Observe["Redacted Notification / Metrics"]
+    Review --> Observe
+    Revision --> Observe
 ```
 
 1. CEO依頼は、構造化Employee inventoryとProvider-neutralなPromptからtyped planへ変換します。
@@ -114,6 +117,7 @@ Vaultは現在の運用データの正ですが、Go Coreからはport越しに�
 | Organization writer | ADRで定めたcanonical commit → projection | commit済み段階をResultに保持 |
 | Recovery | read-only evidence → plan再検証 → TaskService | stale evidenceを拒否し、成立済みartifactを保持 |
 | Scheduler | pending Schedule → dispatching CAS → target Command Ledger → terminal Schedule | target factをrollbackせず、曖昧なdispatchingを自動resumeしない |
+| Notification | business Event → Audit → immutable redacted Inbox | payloadを保存せず、失敗時もcanonical factをrollbackしない |
 
 retry時に既存artifactを推測してadoptせず、自動削除・上書きもしません。ADR-0020のRecovery foundationは、再起動後のTask／Deliverable／Review／Revision／Audit／temporary stateをread-onlyで診断します。確定証拠に拘束した`complete_task`と`fail_and_hold_task`だけを、plan再検証、明示承認、Task CASを経て実行します。Event replay、Review／Revision reconciliationは行いません。運用詳細は[Recovery.md](Recovery.md)を参照してください。
 
@@ -121,9 +125,11 @@ ADR-0021のCommand Ledger foundationは、明示Command ID付き通常Task／Rev
 
 ADR-0025のSchedulerは、明示承認されたone-shot `workspace-command.v1`を`.workspace-os/schedules`へ保存します。dueまたはmissed tickではScheduleを`dispatching`へCAS commitしてから、同じtarget Command ID／payloadを既存Processへ渡します。targetのTask／Review／Revision／Audit規則を再実装せず、crash後の`dispatching`、failure、recovery requiredをread-only inspectionへ残します。
 
+ADR-0026のNotification／Metricsは既存Task／Review／Revision EventへRuntime edgeから接続します。NotificationはEvent envelopeのidentityだけを`.workspace-os/notifications`へimmutable保存し、payload／metadata／Promptを複製しません。MetricsはEvent type別counterだけをprocess memoryへ保持します。subscriber失敗は成立済みfactを削除せず、既存partial publication errorとして返ります。
+
 ## Go Only RuntimeとPython compatibility
 
-製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot SchedulerにPython interpreterは不要です。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。Go sourceが外部interpreterを起動しないことをRelease Gateで検査します。
+製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／MetricsにPython interpreterは不要です。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。Go sourceが外部interpreterを起動しないことをRelease Gateで検査します。
 
 Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ残します。既存import pathと`workspace-ai` entry pointを維持しますが、製品Runtimeではありません。Python gatewayはGo JSON v1 processへ明示的に接続し、失敗時にPython Worker、Provider、writerへfallbackしません。legacy moduleは新規機能追加禁止のreference実装です。
 
@@ -138,6 +144,7 @@ Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ�
 - HTTP daemonのremote公開、認証／TLS、非同期queueは未実装。現在はloopback同期Command APIだけ
 - Reviewed Multi-task WorkflowはTaskごとにReviewし、Request ChangesならRevision Taskを実行・再Reviewする。自動resume、並列実行は未実装
 - Schedulerはone-shotだけで、cron／recurrence、並列配送、`dispatching` reconciliationは未実装
+- Notificationはlocal read-only Inboxだけで、外部channel配送、未読／ack、Event replayは未実装。Metricsはprocess再起動でresetされる
 - 外部Action Adapterはまだ製品入口ではない
 - Python compatibility APIは公開互換方針が終了するまでrepositoryに残る
 

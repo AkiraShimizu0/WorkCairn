@@ -6,6 +6,7 @@ flowchart TD
     API["workspace-daemon / Command API v1"] --> Run
     API --> Scheduler["Kernel-managed one-shot Scheduler"]
     Scheduler --> Run
+    API -. inspect .-> Observe["Redacted Notification / Metrics"]
     Run --> WorkflowRun["Reviewed Workflow Run Service"]
     WorkflowRun --> Execution
     WorkflowRun --> Review
@@ -15,6 +16,9 @@ flowchart TD
     Kernel --> Execution["ExecutionService"]
     Execution --> GoWorker["Go WorkerService / Claude Adapter"]
     Execution --> Task["TaskService / Deliverable / Audit"]
+    Task --> Observe
+    Review --> Observe
+    Revision --> Observe
     Task -. partial state .-> Recovery["Recovery inspect / approved apply"]
     Recovery --> Task
     Run --> Review["Go ReviewService / ReviewStore"]

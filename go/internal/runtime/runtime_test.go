@@ -16,6 +16,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/metrics"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/policy"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
@@ -122,6 +123,45 @@ func TestRuntimeRejectsMissingApprovalBeforeProviderOrTaskEffects(t *testing.T) 
 	}
 }
 
+func TestRuntimeObserverFailurePreservesCompletedTaskAndReturnsPartialFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("content-type", "application/json")
+		_, _ = response.Write([]byte(`{"model":"claude-sonnet-5","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+	store := seededTaskStore(t)
+	observerFailure := errors.New("notification commit failed")
+	metricSubscriber := metrics.NewSubscriber()
+	workspaceRuntime, err := New(Config{
+		ModelValue: "Claude Sonnet 5",
+		Claude:     claude.Config{APIKey: "fake-api-key", ProviderModel: "claude-sonnet-5", BaseURL: server.URL},
+	}, Dependencies{
+		HTTPClient: server.Client(), TaskStore: store, Deliverables: deliverablestore.NewInMemory(), AuditHandler: discardAudit,
+		Observers: []event.Observer{
+			{Types: []event.Type{event.TaskCompleted}, Handler: func(context.Context, event.Event) error { return observerFailure }},
+			{Types: []event.Type{event.TaskCompleted}, Handler: metricSubscriber.Handler()},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := workspaceRuntime.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer workspaceRuntime.Stop()
+	result, executeErr := workspaceRuntime.Execute(context.Background(), executionRequest(true))
+	if !errors.Is(executeErr, observerFailure) || result.Status != execution.StatusPartialFailure || result.FinalTaskStatus != task.StatusCompleted || result.Deliverable == nil {
+		t.Fatalf("Execute() = %#v, %v", result, executeErr)
+	}
+	stored, err := store.Get(context.Background(), "TASK-001")
+	if err != nil || stored.Status != task.StatusCompleted || stored.Version != 3 {
+		t.Fatalf("committed Task = %#v, %v", stored, err)
+	}
+	if snapshot := metricSubscriber.Snapshot(); snapshot.Total != 1 || snapshot.ByEventType[event.TaskCompleted] != 1 {
+		t.Fatalf("later observer was suppressed: %#v", snapshot)
+	}
+}
+
 func TestRuntimeRequiresExplicitConfigAndDependencies(t *testing.T) {
 	store := taskstore.NewInMemory()
 	client := http.DefaultClient
@@ -155,6 +195,11 @@ func TestRuntimeRequiresExplicitConfigAndDependencies(t *testing.T) {
 	missingHTTP.HTTPClient = nil
 	if _, err := New(valid, missingHTTP); !errors.Is(err, ErrInvalidConfig) || !errors.Is(err, claude.ErrInvalidConfig) {
 		t.Fatalf("missing HTTP client error = %v", err)
+	}
+	invalidObserver := validDependencies
+	invalidObserver.Observers = []event.Observer{{Types: []event.Type{event.TaskCompleted}}}
+	if _, err := New(valid, invalidObserver); !errors.Is(err, ErrInvalidDependencies) {
+		t.Fatalf("invalid observer error = %v", err)
 	}
 }
 

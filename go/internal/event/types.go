@@ -41,3 +41,7 @@ func (eventType Type) Valid() bool {
 	_, exists := supportedTypes[eventType]
 	return exists
 }
+
+// Supported lets Adapter contracts validate a stored Event type without
+// exposing or duplicating the closed-set registry.
+func Supported(eventType Type) bool { return eventType.Valid() }

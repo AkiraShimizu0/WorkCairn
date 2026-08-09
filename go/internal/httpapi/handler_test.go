@@ -16,6 +16,9 @@ import (
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/metrics"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/notification"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
@@ -206,6 +209,71 @@ func TestScheduledHTTPCommandDispatchesThroughExistingWriterOnce(t *testing.T) {
 	}
 }
 
+func TestProcessExecutorExposesRedactedNotificationsAndMetricsWithoutReplayDuplication(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "プロジェクト"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(executor, executor)
+	bootstrap := map[string]any{
+		"version": ContractVersion, "command_id": "CMD-OBS-PROJECT-001", "operation": "project.bootstrap", "approved": true,
+		"payload": map[string]any{"project_id": "PROJECT-001", "project_name": "観測案件", "current_time": "2026-08-09T12:00:00+09:00"},
+	}
+	if response := performSingleCommand(t, handler, bootstrap); response.Code != http.StatusOK {
+		t.Fatalf("bootstrap = %d %s", response.Code, response.Body.String())
+	}
+	create := map[string]any{
+		"version": ContractVersion, "command_id": "CMD-OBS-TASK-001", "operation": "task.create", "approved": true,
+		"payload": map[string]any{"project_name": "観測案件", "title": "secret task title", "assignee_id": nil, "current_time": "2026-08-09T12:01:00+09:00"},
+	}
+	first := performSingleCommand(t, handler, create)
+	if first.Code != http.StatusOK {
+		t.Fatalf("task create = %d %s", first.Code, first.Body.String())
+	}
+
+	metricsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(metricsResponse, httptest.NewRequest(http.MethodGet, "/v1/metrics", nil))
+	var snapshot metrics.Snapshot
+	if err := json.Unmarshal(metricsResponse.Body.Bytes(), &snapshot); err != nil || metricsResponse.Code != http.StatusOK || snapshot.Total != 1 || snapshot.ByEventType[event.TaskCreated] != 1 {
+		t.Fatalf("metrics = %d %#v, %v", metricsResponse.Code, snapshot, err)
+	}
+
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, httptest.NewRequest(http.MethodGet, "/v1/notifications", nil))
+	var envelope Response
+	if err := json.Unmarshal(listResponse.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var records []notification.Record
+	if err := json.Unmarshal(envelope.Result, &records); err != nil || listResponse.Code != http.StatusOK || len(records) != 1 || records[0].EventType != event.TaskCreated {
+		t.Fatalf("notifications = %d %#v, %v", listResponse.Code, records, err)
+	}
+	if bytes.Contains(listResponse.Body.Bytes(), []byte("secret task title")) {
+		t.Fatalf("Notification response leaked Event payload: %s", listResponse.Body.String())
+	}
+	detailResponse := httptest.NewRecorder()
+	handler.ServeHTTP(detailResponse, httptest.NewRequest(http.MethodGet, "/v1/notifications/"+records[0].EventID, nil))
+	if detailResponse.Code != http.StatusOK || !bytes.Contains(detailResponse.Body.Bytes(), []byte(records[0].EventID)) {
+		t.Fatalf("notification detail = %d %s", detailResponse.Code, detailResponse.Body.String())
+	}
+
+	replay := performSingleCommand(t, handler, create)
+	if replay.Code != http.StatusOK || replay.Body.String() != first.Body.String() {
+		t.Fatalf("replay = %d %s", replay.Code, replay.Body.String())
+	}
+	if got := executor.InspectMetrics(); got.Total != 1 {
+		t.Fatalf("replay metrics = %#v", got)
+	}
+	replayedRecords, err := executor.InspectNotifications(context.Background())
+	if err != nil || len(replayedRecords) != 1 {
+		t.Fatalf("replay notifications = %#v, %v", replayedRecords, err)
+	}
+}
+
 func TestServerGracefulShutdownWaitsForRunningCommand(t *testing.T) {
 	backend := &fakeCommandBackend{result: map[string]string{"status": "ok"}, started: make(chan struct{}), release: make(chan struct{})}
 	handler, _ := NewHandler(backend, backend)
@@ -252,6 +320,16 @@ func TestServerGracefulShutdownWaitsForRunningCommand(t *testing.T) {
 }
 
 func performCommand(t *testing.T, handler http.Handler, command map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	content, _ := json.Marshal(command)
+	request := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewReader(content))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func performSingleCommand(t *testing.T, handler http.Handler, command map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	content, _ := json.Marshal(command)
 	request := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewReader(content))

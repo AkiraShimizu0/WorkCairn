@@ -11,6 +11,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/policy"
 	workspaceruntime "github.com/AkiraShimizu0/workspace-os/go/internal/runtime"
@@ -56,6 +57,7 @@ type ExecuteTaskInput struct {
 	ApprovalReference string
 	ExecutionID       string
 	CommandID         string
+	EventObservers    []event.Observer
 }
 
 // ExecuteTask composes the concrete Vault Adapters and Go Runtime only after
@@ -262,7 +264,8 @@ func executeClaimedTask(
 		},
 	}, workspaceruntime.Dependencies{
 		HTTPClient: httpClient, TaskStore: taskStore,
-		Deliverables: deliverables, AuditHandler: audit.Handler(), Readiness: executionReadinessService(input.ExecutionPlanInput),
+		Deliverables: deliverables, AuditHandler: audit.Handler(), Observers: input.EventObservers,
+		Readiness: executionReadinessService(input.ExecutionPlanInput),
 	})
 	if err != nil {
 		return execution.Result{}, fmt.Errorf("execute Runtime composition: %w", err)

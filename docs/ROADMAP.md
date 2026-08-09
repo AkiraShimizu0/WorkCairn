@@ -155,20 +155,23 @@ ADR-0025に基づき、durable commandとworkflow runを変更せず時間駆動
 
 SchedulerはTask状態やProviderを直接操作せず、temporary Vault E2Eで既存writerへの一回配送とLedger terminal resultを検証します。cron／recurrence、並列配送、`dispatching`自動resume、target result adoptionは含めません。
 
-## Next 1 — Notification and Metrics
+## Completed — Notification and Metrics Foundation
 
-Event subscriberとして観測性を追加します。
+ADR-0026に基づき、既存Event／Audit ownershipを維持した観測subscriberを実装しました。
 
-候補：
+実装済み：
 
-- execution／review／revision／recoveryのMetrics subscriber
-- notification Adapterと配信失敗の分離
-- token、duration、failure stage、partial stateの集計
-- secret／Prompt本文／個人情報を漏らさないredaction policy
+- Task lifecycle、Review、Revision Runtimeへのordered observer injection
+- Event payload／metadataを保存しない`workspace-notification.v1` immutable local Inbox
+- atomic create、Event ID hash filename、破損／unexpected entry／不整合の安全な拒否
+- Event type別件数と最終観測時刻だけを持つbounded process-local Metrics
+- daemonのread-only Notification／Metrics HTTP inspection
+- Command replayでEvent／Notification／Metricsを重複させないE2E
+- subscriber失敗後もcanonical factをrollbackしないpartial publication test
 
-完了条件：通知やMetricsの失敗がbusiness factをrollbackせず、Event／Auditの責務を侵食しないこと。
+外部channel配送、未読／ack、永続Metrics、token／duration、Event replay、Outboxは含めません。
 
-## Next 2 — External Action Adapters
+## Next 1 — External Action Adapters
 
 WordPress等への公開は、Provider Runnerとは別の明示的Action Adapterとして追加します。
 

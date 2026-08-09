@@ -10,6 +10,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
@@ -54,11 +55,12 @@ func GenerateCEOPlan(ctx context.Context, input CEOPlanGenerationInput, provider
 }
 
 type CEOPlanApplyInput struct {
-	VaultRoot   string
-	ProjectID   string
-	Plan        ceoplan.Plan
-	CurrentTime time.Time
-	CommandID   string
+	VaultRoot      string
+	ProjectID      string
+	Plan           ceoplan.Plan
+	CurrentTime    time.Time
+	CommandID      string
+	EventObservers []event.Observer
 }
 
 type CEOPlanApplyPlan struct {
@@ -190,6 +192,7 @@ func executeClaimedCEOPlanApply(ctx context.Context, input CEOPlanApplyInput) (C
 		created, createErr := ExecuteTaskCreation(ctx, TaskCreationInput{
 			VaultRoot: input.VaultRoot, ProjectName: plan.Plan.ProjectName,
 			Title: proposed.Title, AssigneeID: proposed.AssigneeID, CurrentTime: input.CurrentTime,
+			EventObservers: input.EventObservers,
 		}, true)
 		if created.Task.ID != "" {
 			result.Tasks = append(result.Tasks, created)

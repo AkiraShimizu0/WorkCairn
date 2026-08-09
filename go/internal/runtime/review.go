@@ -25,6 +25,7 @@ type ReviewDependencies struct {
 	HTTPClient   claude.HTTPDoer
 	Store        review.Store
 	AuditHandler event.Handler
+	Observers    []event.Observer
 }
 
 func NewReviewRuntime(config Config, dependencies ReviewDependencies) (*ReviewRuntime, error) {
@@ -53,6 +54,9 @@ func NewReviewRuntime(config Config, dependencies ReviewDependencies) (*ReviewRu
 	eventService := service.NewEventService(nil)
 	if _, err := eventService.Subscribe(event.ReviewCompleted, dependencies.AuditHandler); err != nil {
 		return nil, fmt.Errorf("compose Review Runtime Audit: %w", err)
+	}
+	if err := subscribeObservers(eventService, dependencies.Observers); err != nil {
+		return nil, err
 	}
 	orchestration, err := service.NewReviewOrchestrationService(reviewService, dependencies.Store, eventService)
 	if err != nil {

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/metrics"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/notification"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
 )
@@ -18,15 +20,26 @@ import (
 const maxCommandRequestBytes = 2 << 20
 
 type Handler struct {
-	executor          Executor
-	inspector         Inspector
-	scheduleInspector ScheduleInspector
-	mux               *http.ServeMux
+	executor              Executor
+	inspector             Inspector
+	scheduleInspector     ScheduleInspector
+	metricsInspector      MetricsInspector
+	notificationInspector NotificationInspector
+	mux                   *http.ServeMux
 }
 
 type ScheduleInspector interface {
 	InspectSchedules(ctx context.Context) ([]scheduler.Record, error)
 	InspectSchedule(ctx context.Context, scheduleID string) (scheduler.Record, error)
+}
+
+type MetricsInspector interface {
+	InspectMetrics() metrics.Snapshot
+}
+
+type NotificationInspector interface {
+	InspectNotifications(ctx context.Context) ([]notification.Record, error)
+	InspectNotification(ctx context.Context, eventID string) (notification.Record, error)
 }
 
 func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
@@ -43,7 +56,54 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 		handler.mux.HandleFunc("GET /v1/schedules", handler.inspectSchedules)
 		handler.mux.HandleFunc("GET /v1/schedules/{schedule_id}", handler.inspectSchedule)
 	}
+	if metricsInspector, ok := executor.(MetricsInspector); ok {
+		handler.metricsInspector = metricsInspector
+		handler.mux.HandleFunc("GET /v1/metrics", handler.inspectMetrics)
+	}
+	if notificationInspector, ok := executor.(NotificationInspector); ok {
+		handler.notificationInspector = notificationInspector
+		handler.mux.HandleFunc("GET /v1/notifications", handler.inspectNotifications)
+		handler.mux.HandleFunc("GET /v1/notifications/{event_id}", handler.inspectNotification)
+	}
 	return handler, nil
+}
+
+func (handler *Handler) inspectMetrics(response http.ResponseWriter, _ *http.Request) {
+	writeJSON(response, http.StatusOK, handler.metricsInspector.InspectMetrics())
+}
+
+func (handler *Handler) inspectNotifications(response http.ResponseWriter, request *http.Request) {
+	records, err := handler.notificationInspector.InspectNotifications(request.Context())
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "NOTIFICATION_INSPECTION_FAILED", RecoveryRequired: true}})
+		return
+	}
+	encoded, err := json.Marshal(records)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, OK: true, Result: encoded})
+}
+
+func (handler *Handler) inspectNotification(response http.ResponseWriter, request *http.Request) {
+	record, err := handler.notificationInspector.InspectNotification(request.Context(), request.PathValue("event_id"))
+	if err != nil {
+		status, code := http.StatusInternalServerError, "NOTIFICATION_INSPECTION_FAILED"
+		if errors.Is(err, notification.ErrNotFound) {
+			status, code = http.StatusNotFound, "NOTIFICATION_NOT_FOUND"
+		} else if errors.Is(err, notification.ErrInvalidRecord) {
+			status, code = http.StatusBadRequest, "INVALID_EVENT_ID"
+		}
+		writeCommandResponse(response, status, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: code, RecoveryRequired: status == http.StatusInternalServerError}})
+		return
+	}
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, OK: true, Result: encoded})
 }
 
 func (handler *Handler) inspectSchedules(response http.ResponseWriter, request *http.Request) {

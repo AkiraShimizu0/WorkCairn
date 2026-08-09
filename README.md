@@ -67,6 +67,7 @@ flowchart TD
 - [ADR-0023: Multi-task Workflowは再planする順次Task commandとして構成する](docs/adr/ADR-0023-sequential-workflow-command-composition.md)
 - [ADR-0024: Reviewed Workflowは既存Task、Review、Revision commandを決定的に構成する](docs/adr/ADR-0024-reviewed-workflow-branch-composition.md)
 - [ADR-0025: Schedulerは承認済みone-shot CommandをLedger経路へ配送する](docs/adr/ADR-0025-one-shot-scheduler-command-dispatch.md)
+- [ADR-0026: NotificationとMetricsをredacted Event subscriberとして接続する](docs/adr/ADR-0026-redacted-notification-and-metrics-subscribers.md)
 
 新しいADRは[ADRテンプレート](docs/adr/ADR-template.md)から作成します。
 
@@ -340,7 +341,7 @@ Python Worker／PromptBuilder／ModelRouter／ClaudeRunnerは通常Task経路か
 
 ## Roadmap
 
-現在はGo Only Runtime、v1.0候補安定化、Durability／Recovery、主要commandへのLedger適用、loopback HTTP API／daemon、Reviewed Multi-task Workflow、one-shot Schedulerまで完了しています。次は通知／Metrics、外部Action Adapterへ進みます。順序と完了条件は[docs/ROADMAP.md](docs/ROADMAP.md)を参照してください。
+現在はGo Only Runtime、v1.0候補安定化、Durability／Recovery、主要commandへのLedger適用、loopback HTTP API／daemon、Reviewed Multi-task Workflow、one-shot Scheduler、redacted Notification／Metricsまで完了しています。次は外部Action Adapterへ進みます。順序と完了条件は[docs/ROADMAP.md](docs/ROADMAP.md)を参照してください。
 
 ## ライセンス
 

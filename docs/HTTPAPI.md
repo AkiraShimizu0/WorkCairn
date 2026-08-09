@@ -54,6 +54,8 @@ Payloadはunknown fieldを拒否します。CEO plan generation、read-only plan
 
 `GET /v1/schedules`と`GET /v1/schedules/{schedule_id}`はone-shot Scheduleのpending／dispatching／terminal stateをread-onlyで返します。daemonは`--scheduler-interval`ごとにdueまたはmissed pending Scheduleを確認し、保存済みの同一Command ID／payloadを既存Processへ配送します。`dispatching`は自動resumeしません。
 
+`GET /v1/notifications`と`GET /v1/notifications/{event_id}`は、Task／Review／Revision Eventから作成したimmutable local Inboxをread-onlyで返します。recordはEvent envelopeのidentityだけを持ち、payload、metadata、Prompt、Task title、Provider情報を含みません。`GET /v1/metrics`はdaemon process開始後のEvent type別件数を返し、再起動時にresetされます。
+
 ## Status and recovery
 
 ```text

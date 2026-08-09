@@ -40,6 +40,7 @@ type Dependencies struct {
 	TaskStore    task.Store
 	Deliverables deliverable.Store
 	AuditHandler event.Handler
+	Observers    []event.Observer
 	Readiness    service.ReadinessService
 }
 
@@ -110,6 +111,9 @@ func New(config Config, dependencies Dependencies) (*Runtime, error) {
 		if _, err := eventService.Subscribe(eventType, dependencies.AuditHandler); err != nil {
 			return nil, fmt.Errorf("compose Runtime Audit: %w", err)
 		}
+	}
+	if err := subscribeObservers(eventService, dependencies.Observers); err != nil {
+		return nil, err
 	}
 	return &Runtime{kernel: workspaceKernel}, nil
 }

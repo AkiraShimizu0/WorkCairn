@@ -9,6 +9,7 @@ import (
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/revision"
@@ -44,6 +45,7 @@ type ExecuteReviewedWorkflowInput struct {
 	ApprovalReference string
 	CommandID         string
 	MaxTasks          int
+	EventObservers    []event.Observer
 }
 
 func PlanReviewedWorkflow(ctx context.Context, input ReviewedWorkflowPlanInput) (ReviewedWorkflowPlan, error) {
@@ -127,7 +129,7 @@ func ExecuteReviewedWorkflow(
 				TaskID: taskID, CurrentTime: input.CurrentTime, ReadinessMode: mode,
 			},
 			Approved: true, ApprovalSource: "reviewed-workflow", ApprovalReference: strings.TrimSpace(input.ApprovalReference),
-			ExecutionID: childCommandID, CommandID: childCommandID,
+			ExecutionID: childCommandID, CommandID: childCommandID, EventObservers: input.EventObservers,
 		}, provider, httpClient)
 	})
 	reviewer := reviewedWorkflowReviewerFunc(func(runContext context.Context, taskID, childCommandID string) (review.OrchestrationResult, error) {
@@ -136,7 +138,7 @@ func ExecuteReviewedWorkflow(
 				VaultRoot: input.VaultRoot, ProjectID: input.ProjectID, ProjectName: input.ProjectName,
 				TaskID: taskID, ReviewerID: input.ReviewerID, CurrentTime: input.CurrentTime,
 			},
-			Approved: true, CommandID: childCommandID,
+			Approved: true, CommandID: childCommandID, EventObservers: input.EventObservers,
 		}, provider, httpClient)
 		return review.OrchestrationResult{
 			Status: executed.Status, Execution: executed.Execution, Artifact: executed.Artifact,
@@ -149,7 +151,7 @@ func ExecuteReviewedWorkflow(
 				VaultRoot: input.VaultRoot, ProjectID: input.ProjectID, ProjectName: input.ProjectName,
 				SourceTaskID: sourceTaskID, CurrentTime: input.CurrentTime,
 			},
-			Approved: true, CommandID: childCommandID,
+			Approved: true, CommandID: childCommandID, EventObservers: input.EventObservers,
 		})
 	})
 	runService, err := service.NewReviewedWorkflowRunService(planner, executor, reviewer, reviser)

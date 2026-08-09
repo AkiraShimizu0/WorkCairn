@@ -12,6 +12,8 @@ import (
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/metrics"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 )
 
@@ -46,8 +48,10 @@ func TestExecuteRevisionRequiresApprovalBeforeEffects(t *testing.T) {
 
 func TestExecuteRevisionCommitsIntentTaskEventsAndAudit(t *testing.T) {
 	root := revisionProcessVault(t, `{"verdict":"Request Changes","issues":[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}]}`)
+	metricSubscriber := metrics.NewSubscriber()
 	result, err := ExecuteRevision(context.Background(), ExecuteRevisionInput{
 		RevisionPlanInput: revisionPlanInput(root), Approved: true,
+		EventObservers: []event.Observer{{Types: []event.Type{event.TaskCreated, event.RevisionCreated}, Handler: metricSubscriber.Handler()}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +60,9 @@ func TestExecuteRevisionCommitsIntentTaskEventsAndAudit(t *testing.T) {
 		result.Task == nil || result.Task.ID != "TASK-002" || result.Task.Status != task.StatusUnstarted ||
 		!result.EventPublished || result.EventID == "" {
 		t.Fatalf("ExecuteRevision() = %#v", result)
+	}
+	if snapshot := metricSubscriber.Snapshot(); snapshot.Total != 2 || snapshot.ByEventType[event.TaskCreated] != 1 || snapshot.ByEventType[event.RevisionCreated] != 1 {
+		t.Fatalf("Revision metrics = %#v", snapshot)
 	}
 	project := filepath.Join(root, "プロジェクト", "ToDoアプリ")
 	intent, err := os.ReadFile(filepath.Join(project, "Revisions", "TASK-002.revision.md"))

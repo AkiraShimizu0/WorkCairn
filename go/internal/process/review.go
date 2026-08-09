@@ -13,6 +13,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
 	workspaceruntime "github.com/AkiraShimizu0/workspace-os/go/internal/runtime"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
@@ -60,8 +61,9 @@ func (*ReviewPreflightError) Is(target error) bool { return target == ErrReviewP
 
 type ExecuteReviewInput struct {
 	ReviewPlanInput
-	Approved  bool
-	CommandID string
+	Approved       bool
+	CommandID      string
+	EventObservers []event.Observer
 }
 
 type ReviewExecutionResult struct {
@@ -298,7 +300,7 @@ func executeClaimedReview(ctx context.Context, input ExecuteReviewInput, provide
 		ModelValue: promptInput.Reviewer.Model,
 		Claude:     claude.Config{APIKey: provider.APIKey, ProviderModel: provider.ProviderModel, BaseURL: provider.BaseURL, MaxTokens: provider.MaxTokens},
 	}, workspaceruntime.ReviewDependencies{
-		HTTPClient: httpClient, Store: reviewStore, AuditHandler: audit.Handler(),
+		HTTPClient: httpClient, Store: reviewStore, AuditHandler: audit.Handler(), Observers: input.EventObservers,
 	})
 	if err != nil {
 		return ReviewExecutionResult{}, fmt.Errorf("execute Review Runtime composition: %w", err)

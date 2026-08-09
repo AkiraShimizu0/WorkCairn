@@ -13,6 +13,9 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandcontract"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/metrics"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/notification"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/organization"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
@@ -28,9 +31,12 @@ type Inspector interface {
 }
 
 type ProcessExecutor struct {
-	vaultRoot  string
-	provider   workspaceprocess.ClaudeProcessConfig
-	httpClient claude.HTTPDoer
+	vaultRoot     string
+	provider      workspaceprocess.ClaudeProcessConfig
+	httpClient    claude.HTTPDoer
+	metrics       *metrics.Subscriber
+	notifications *vault.NotificationSubscriber
+	observers     []event.Observer
 }
 
 func NewProcessExecutor(vaultRoot string, provider workspaceprocess.ClaudeProcessConfig, httpClient claude.HTTPDoer) (*ProcessExecutor, error) {
@@ -42,7 +48,23 @@ func NewProcessExecutor(vaultRoot string, provider workspaceprocess.ClaudeProces
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("Vault root directory is required")
 	}
-	return &ProcessExecutor{vaultRoot: vaultRoot, provider: provider, httpClient: httpClient}, nil
+	notifications, err := vault.NewNotificationSubscriber(vaultRoot)
+	if err != nil {
+		return nil, err
+	}
+	metricSubscriber := metrics.NewSubscriber()
+	observedTypes := []event.Type{
+		event.TaskCreated, event.TaskStarted, event.TaskCompleted, event.TaskFailed, event.TaskHeld, event.TaskResumed,
+		event.ReviewCompleted, event.RevisionCreated,
+	}
+	return &ProcessExecutor{
+		vaultRoot: vaultRoot, provider: provider, httpClient: httpClient,
+		metrics: metricSubscriber, notifications: notifications,
+		observers: []event.Observer{
+			{Types: observedTypes, Handler: notifications.Handler()},
+			{Types: observedTypes, Handler: metricSubscriber.Handler()},
+		},
+	}, nil
 }
 
 type taskExecutePayload struct {
@@ -162,7 +184,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		return workspaceprocess.ExecuteTask(ctx, workspaceprocess.ExecuteTaskInput{
 			ExecutionPlanInput: workspaceprocess.ExecutionPlanInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, TaskID: payload.TaskID, CurrentTime: payload.CurrentTime},
 			Approved:           true, ApprovalSource: "http-api", ApprovalReference: payload.ApprovalReference,
-			ExecutionID: payload.ExecutionID, CommandID: command.CommandID,
+			ExecutionID: payload.ExecutionID, CommandID: command.CommandID, EventObservers: executor.observers,
 		}, executor.provider, executor.httpClient)
 	case "review.execute":
 		var payload reviewExecutePayload
@@ -171,7 +193,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		}
 		return workspaceprocess.ExecuteReview(ctx, workspaceprocess.ExecuteReviewInput{
 			ReviewPlanInput: workspaceprocess.ReviewPlanInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, TaskID: payload.TaskID, ReviewerID: payload.ReviewerID, ReviewVersion: payload.ReviewVersion, CurrentTime: payload.CurrentTime},
-			Approved:        true, CommandID: command.CommandID,
+			Approved:        true, CommandID: command.CommandID, EventObservers: executor.observers,
 		}, executor.provider, executor.httpClient)
 	case "revision.execute":
 		var payload revisionExecutePayload
@@ -180,7 +202,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		}
 		return workspaceprocess.ExecuteRevision(ctx, workspaceprocess.ExecuteRevisionInput{
 			RevisionPlanInput: workspaceprocess.RevisionPlanInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, SourceTaskID: payload.SourceTaskID, ReviewVersion: payload.ReviewVersion, CurrentTime: payload.CurrentTime},
-			Approved:          true, CommandID: command.CommandID,
+			Approved:          true, CommandID: command.CommandID, EventObservers: executor.observers,
 		})
 	case "workflow.execute":
 		var payload workflowExecutePayload
@@ -190,6 +212,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		return workspaceprocess.ExecuteWorkflow(ctx, workspaceprocess.ExecuteWorkflowInput{
 			WorkflowPlanInput: workspaceprocess.WorkflowPlanInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, CurrentTime: payload.CurrentTime},
 			Approved:          true, ApprovalReference: payload.ApprovalReference, CommandID: command.CommandID, MaxTasks: payload.MaxTasks,
+			EventObservers: executor.observers,
 		}, executor.provider, executor.httpClient)
 	case "workflow.reviewed.execute":
 		var payload reviewedWorkflowExecutePayload
@@ -204,13 +227,14 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 				ReviewerID: payload.ReviewerID,
 			},
 			Approved: true, ApprovalReference: payload.ApprovalReference, CommandID: command.CommandID, MaxTasks: payload.MaxTasks,
+			EventObservers: executor.observers,
 		}, executor.provider, executor.httpClient)
 	case "ceo_plan.apply":
 		var payload ceoApplyPayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
 			return nil, err
 		}
-		return workspaceprocess.ExecuteCEOPlanApply(ctx, workspaceprocess.CEOPlanApplyInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, Plan: payload.Plan, CurrentTime: payload.CurrentTime, CommandID: command.CommandID}, true)
+		return workspaceprocess.ExecuteCEOPlanApply(ctx, workspaceprocess.CEOPlanApplyInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, Plan: payload.Plan, CurrentTime: payload.CurrentTime, CommandID: command.CommandID, EventObservers: executor.observers}, true)
 	case "project.bootstrap":
 		var payload projectBootstrapPayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -222,7 +246,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		if err := decodePayload(command.Payload, &payload); err != nil {
 			return nil, err
 		}
-		return workspaceprocess.ExecuteTaskCreation(ctx, workspaceprocess.TaskCreationInput{VaultRoot: executor.vaultRoot, ProjectName: payload.ProjectName, Title: payload.Title, AssigneeID: payload.AssigneeID, CurrentTime: payload.CurrentTime, CommandID: command.CommandID}, true)
+		return workspaceprocess.ExecuteTaskCreation(ctx, workspaceprocess.TaskCreationInput{VaultRoot: executor.vaultRoot, ProjectName: payload.ProjectName, Title: payload.Title, AssigneeID: payload.AssigneeID, CurrentTime: payload.CurrentTime, CommandID: command.CommandID, EventObservers: executor.observers}, true)
 	case "project.dependencies.create":
 		var payload projectDependenciesPayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -298,6 +322,18 @@ func (executor *ProcessExecutor) InspectSchedule(ctx context.Context, scheduleID
 		return scheduler.Record{}, err
 	}
 	return store.Get(ctx, scheduleID)
+}
+
+func (executor *ProcessExecutor) InspectMetrics() metrics.Snapshot {
+	return executor.metrics.Snapshot()
+}
+
+func (executor *ProcessExecutor) InspectNotifications(ctx context.Context) ([]notification.Record, error) {
+	return executor.notifications.List(ctx)
+}
+
+func (executor *ProcessExecutor) InspectNotification(ctx context.Context, eventID string) (notification.Record, error) {
+	return executor.notifications.Get(ctx, eventID)
 }
 
 func (executor *ProcessExecutor) Inspect(ctx context.Context, scope, projectName, commandID string) (commandledger.Record, error) {

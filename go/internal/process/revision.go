@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/revision"
 	workspaceruntime "github.com/AkiraShimizu0/workspace-os/go/internal/runtime"
@@ -57,8 +58,9 @@ func (*RevisionPreflightError) Is(target error) bool { return target == ErrRevis
 
 type ExecuteRevisionInput struct {
 	RevisionPlanInput
-	Approved  bool
-	CommandID string
+	Approved       bool
+	CommandID      string
+	EventObservers []event.Observer
 }
 
 func PlanRevision(ctx context.Context, input RevisionPlanInput) (RevisionPlan, error) {
@@ -201,7 +203,7 @@ func executeClaimedRevision(ctx context.Context, input ExecuteRevisionInput) (re
 		return revision.Result{}, fmt.Errorf("execute Revision Audit: %w", err)
 	}
 	runtime, err := workspaceruntime.NewRevisionRuntime(workspaceruntime.RevisionDependencies{
-		TaskStore: taskStore, IntentStore: intentStore, AuditHandler: audit.Handler(),
+		TaskStore: taskStore, IntentStore: intentStore, AuditHandler: audit.Handler(), Observers: input.EventObservers,
 	})
 	if err != nil {
 		return revision.Result{}, fmt.Errorf("execute Revision Runtime composition: %w", err)

@@ -15,6 +15,7 @@ flowchart TD
     API["workspace-daemon / Command API v1"] --> Run
     API --> Scheduler["Kernel-managed one-shot Scheduler"]
     Scheduler --> Run
+    API -. inspect .-> Observe["Notification Inbox / Metrics"]
     Run --> WorkflowRun["Reviewed Workflow Run Service"]
     WorkflowRun --> Execution
     WorkflowRun --> Review
@@ -24,6 +25,9 @@ flowchart TD
     Kernel --> Execution["ExecutionService"]
     Execution --> GoWorker["Go WorkerService / Claude Adapter"]
     Execution --> Task["TaskService / Deliverable / Audit"]
+    Task --> Observe
+    Review --> Observe
+    Revision --> Observe
     Task -. partial state .-> Recovery["Recovery inspect / approved apply"]
     Recovery --> Task
     Run --> Review["Go ReviewService / ReviewStore"]
@@ -61,6 +65,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0023: Multi-task Workflowは再planする順次Task commandとして構成する](adr/ADR-0023-sequential-workflow-command-composition.md)
 - [ADR-0024: Reviewed Workflowは既存Task、Review、Revision commandを決定的に構成する](adr/ADR-0024-reviewed-workflow-branch-composition.md)
 - [ADR-0025: Schedulerは承認済みone-shot CommandをLedger経路へ配送する](adr/ADR-0025-one-shot-scheduler-command-dispatch.md)
+- [ADR-0026: NotificationとMetricsをredacted Event subscriberとして接続する](adr/ADR-0026-redacted-notification-and-metrics-subscribers.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -117,6 +122,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Workflow Run Service | dependency readinessを各Task後に再planし、決定的child Command IDで既存Task executionを順次調停する。Task状態やEventは変更しない |
 | Go Reviewed Workflow Run Service | 各Task後に既存Reviewを実行し、Request Changes時は既存Revisionで作成したTaskをtargeted readinessで実行・再Reviewしてから本流へ戻す |
 | Go Scheduler Service | 承認済みone-shot Commandをoffset付き時刻で選択し、Schedule CAS後に既存Process／Command Ledgerへ配送する。Task状態やProviderは直接扱わない |
+| Go Notification／Metrics Subscriber | Runtime edgeから既存Eventへ接続し、payload-free immutable Inboxとbounded process-local counterを提供する。Task状態、Event、Auditを変更しない |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
@@ -133,6 +139,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - `Reviews/`: 人間向けレビューと検証済みJSON
 - `Revisions/`: レビューから作られた修正タスクのメタデータ
 - `.workspace-os/schedules/`: one-shot Scheduleのdefinition、due time、Version／CAS、dispatch outcome
+- `.workspace-os/notifications/`: Event payloadを含まないimmutable Notification projection
 - `Progress.md`と`Audit Log.md`: 実行・レビュー履歴
 
 ### Python

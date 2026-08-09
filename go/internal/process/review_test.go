@@ -15,6 +15,8 @@ import (
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/metrics"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 )
@@ -68,12 +70,19 @@ func TestExecuteReviewUsesGoRuntimeAndCommitsPythonCompatibleArtifacts(t *testin
         }`))
 	}))
 	defer server.Close()
-	input := ExecuteReviewInput{ReviewPlanInput: reviewPlanInput(root), Approved: true, CommandID: "CMD-REVIEW-001"}
+	metricSubscriber := metrics.NewSubscriber()
+	input := ExecuteReviewInput{
+		ReviewPlanInput: reviewPlanInput(root), Approved: true, CommandID: "CMD-REVIEW-001",
+		EventObservers: []event.Observer{{Types: []event.Type{event.ReviewCompleted}, Handler: metricSubscriber.Handler()}},
+	}
 	result, err := ExecuteReview(context.Background(), input, ClaudeProcessConfig{
 		APIKey: "fake-review-key", ProviderModel: "claude-sonnet-5", BaseURL: server.URL,
 	}, server.Client())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if snapshot := metricSubscriber.Snapshot(); snapshot.Total != 1 || snapshot.ByEventType[event.ReviewCompleted] != 1 {
+		t.Fatalf("Review metrics = %#v", snapshot)
 	}
 	if result.Status != "reviewed" || result.Execution == nil || result.Artifact == nil ||
 		result.Execution.Decision.Verdict != review.VerdictRequestChanges ||
@@ -104,6 +113,9 @@ func TestExecuteReviewUsesGoRuntimeAndCommitsPythonCompatibleArtifacts(t *testin
 	}, server.Client())
 	if err != nil || !reflect.DeepEqual(replayed, result) || providerCalls.Load() != 1 {
 		t.Fatalf("Review command replay = %#v, %v calls=%d", replayed, err, providerCalls.Load())
+	}
+	if snapshot := metricSubscriber.Snapshot(); snapshot.Total != 1 {
+		t.Fatalf("Review replay emitted another Event: %#v", snapshot)
 	}
 	conflict := input
 	conflict.ReviewerID = "QA-002"

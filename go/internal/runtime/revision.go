@@ -23,6 +23,7 @@ type RevisionDependencies struct {
 	TaskStore    task.Store
 	IntentStore  revision.Store
 	AuditHandler event.Handler
+	Observers    []event.Observer
 }
 
 func NewRevisionRuntime(dependencies RevisionDependencies) (*RevisionRuntime, error) {
@@ -34,6 +35,9 @@ func NewRevisionRuntime(dependencies RevisionDependencies) (*RevisionRuntime, er
 		if _, err := events.Subscribe(eventType, dependencies.AuditHandler); err != nil {
 			return nil, fmt.Errorf("compose Revision Runtime Audit: %w", err)
 		}
+	}
+	if err := subscribeObservers(events, dependencies.Observers); err != nil {
+		return nil, err
 	}
 	tasks, err := service.NewTaskService(dependencies.TaskStore, events)
 	if err != nil {

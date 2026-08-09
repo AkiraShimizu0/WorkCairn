@@ -103,12 +103,13 @@ func executeClaimedProjectBootstrap(ctx context.Context, input ProjectBootstrapI
 }
 
 type TaskCreationInput struct {
-	VaultRoot   string
-	ProjectName string
-	Title       string
-	AssigneeID  *string
-	CurrentTime time.Time
-	CommandID   string
+	VaultRoot      string
+	ProjectName    string
+	Title          string
+	AssigneeID     *string
+	CurrentTime    time.Time
+	CommandID      string
+	EventObservers []event.Observer
 }
 
 type TaskCreationPlan struct {
@@ -215,6 +216,16 @@ func executeClaimedTaskCreation(ctx context.Context, input TaskCreationInput) (T
 	events := service.NewEventService(nil)
 	if _, err := events.Subscribe(event.TaskCreated, audit.Handler()); err != nil {
 		return TaskCreationResult{}, err
+	}
+	for observerIndex, observer := range input.EventObservers {
+		if observer.Handler == nil || len(observer.Types) == 0 {
+			return TaskCreationResult{}, fmt.Errorf("Task creation Event observer %d is invalid", observerIndex)
+		}
+		for _, eventType := range observer.Types {
+			if _, err := events.Subscribe(eventType, observer.Handler); err != nil {
+				return TaskCreationResult{}, err
+			}
+		}
 	}
 	tasks, err := service.NewTaskService(store, events)
 	if err != nil {
