@@ -23,6 +23,8 @@ Go Only Runtimeは自然言語CEO依頼からtyped plan、Project／Task、Revie
 
 Sessionは自然言語request、logical model、作成時刻、request digestをimmutable headerとして持ち、Provider plan、CEO回答、適用済みProjectをappend-only turnで保持します。turn削除、並替え、過去plan／回答の上書きを禁止し、Versionは1 turnにつき1増加します。
 
+`ready_to_execute`以後のReviewed Workflow結果、追加state、outer／child Command orderingは[ADR-0029](ADR-0029-interaction-reviewed-workflow-composition.md)で本ADRを拡張します。
+
 Vault AdapterはVault直下`.workspace-os/interactions/<Session ID SHA-256>.json`へstrict JSONを保存します。createはatomic create、turn追加はfile lock、expected Version、append-only prefix検証、atomic replacementを使います。Session IDをpathへ直接使いません。unknown field、未知schema、破損、history rewrite、stale Versionを拒否し、自動修復しません。
 
 SessionはTask、Project、Reviewの正本ではありません。request／clarification／approvalを既存commandへ接続するcoordination evidenceです。Task状態とTask lifecycle Eventは引き続きTaskServiceだけが変更・生成します。
@@ -64,5 +66,5 @@ CLIはstart plan／start／inspect／plan generate／answer／plan applyを提�
 
 - 自然言語依頼、質問、再plan、digest承認、Project／Task作成を1つのtyped継続状態で案内できます。
 - Provider、Vault、HTTP、credentialはDomain／Serviceへ入らず、既存CEO Plan／writerを再実装しません。
-- InteractionからReviewed Workflow／External Actionを開始してterminal状態まで記録するcompositionは後続です。
+- InteractionからReviewed Workflowを開始してterminal状態まで記録するcompositionはADR-0029で追加済みです。External Action handoffは後続です。
 - chat UI、free-form message history、automatic approval、automatic resume、parallel session、recurring Scheduler、Event replay、Session reconciliationは未実装です。

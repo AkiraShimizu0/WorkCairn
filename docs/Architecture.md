@@ -19,6 +19,7 @@ flowchart TD
     Scheduler --> Run
     API -. inspect .-> Observe["Notification Inbox / Metrics"]
     Run --> WorkflowRun["Reviewed Workflow Run Service"]
+    Interaction --> WorkflowRun
     WorkflowRun --> Execution
     WorkflowRun --> Review
     Review --> Revision
@@ -72,6 +73,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0026: NotificationとMetricsをredacted Event subscriberとして接続する](adr/ADR-0026-redacted-notification-and-metrics-subscribers.md)
 - [ADR-0027: External Actionはimmutable request evidenceを先行commitして公開する](adr/ADR-0027-external-action-evidence-and-publication.md)
 - [ADR-0028: Interaction Sessionは質問回答と承認対象digestをappend-only turnで保持する](adr/ADR-0028-interaction-session-clarification-and-approval.md)
+- [ADR-0029: Interactionは既存Reviewed Workflowを決定的child Commandとして実行する](adr/ADR-0029-interaction-reviewed-workflow-composition.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -130,7 +132,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Scheduler Service | 承認済みone-shot Commandをoffset付き時刻で選択し、Schedule CAS後に既存Process／Command Ledgerへ配送する。Task状態やProviderは直接扱わない |
 | Go Notification／Metrics Subscriber | Runtime edgeから既存Eventへ接続し、payload-free immutable Inboxとbounded process-local counterを提供する。Task状態、Event、Auditを変更しない |
 | Go External Action Service／WordPress Adapter | 既存Deliverableをtyped intentへ変換し、明示承認、immutable request／result evidence、外部公開、`action.completed`を調停する。credentialとHTTPはAdapter edgeだけに置く |
-| Go Interaction Domain／Service | 自然言語request、CEO質問回答、plan digest承認、適用済みProjectをappend-only turnとVersion/CASで調停する。Provider、Vault、Task状態を知らない |
+| Go Interaction Domain／Service | 自然言語request、CEO質問回答、plan digest承認、適用済みProject、Reviewed Workflowのtyped summary／Result digestをappend-only turnとVersion/CASで調停する。Provider、Vault、Task状態を知らない |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
@@ -184,13 +186,13 @@ Workspace OSの製品Runtime移行は完了しています。通常Task、Review
 - `go/internal/recovery`: Storage非依存のSnapshot／finding、version付きRecovery plan、typed result
 - `go/internal/commandledger`: Storage非依存のCommand identity、request digest、running／terminal outcome、Store port
 - `go/internal/commandcontract`: HTTP／Schedulerが共有する副作用commandのstrict typed payload契約
-- `go/internal/interaction`: request／clarification／plan approvalのclosed state、append-only turn、approval digest、CAS contract
+- `go/internal/interaction`: request／clarification／plan／Workflow approvalのclosed state、append-only turn、結果summary／digest、CAS contract
 - `go/internal/scheduler`: Storage／transport非依存のone-shot Schedule、state、Version／CAS、Dispatcher port
 - `go/internal/runner`: model値とRunner Adapterを解決するthread-safe Registry
 - `go/internal/adapter/claude`: Anthropic Messages APIを既存Runner契約へ変換するProvider Adapter
 - `go/internal/adapter/vault`: read-only Context／Organization Loader、Project／Task／Deliverable／Review／Revision intent／Schedule／Interaction Store、Audit Event subscriber
 - `go/internal/runtime`: Provider／Storage AdapterをServiceへ注入するprocess-neutral execution／Review／Revision composition
-- `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／reviewed Workflow／Schedule／Interaction／Recoveryのread-only planと明示承認付きexecute
+- `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／reviewed Workflow／Schedule／Interaction Workflow／Recoveryのread-only planと明示承認付きexecute
 - `go/internal/httpapi`: version付きCommand HTTP contract、必須Command ID、同期handler、Ledger inspection、graceful server lifecycle
 - `go/internal/policy`: 明示承認とWorker失敗後の回復判断を提供する決定的Policy Domain
 - `go/internal/execution`: 1タスク実行のRequest、Result、Stage、型付きpartial failure契約

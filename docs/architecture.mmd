@@ -10,6 +10,7 @@ flowchart TD
     Scheduler --> Run
     API -. inspect .-> Observe["Redacted Notification / Metrics"]
     Run --> WorkflowRun["Reviewed Workflow Run Service"]
+    Interaction --> WorkflowRun
     WorkflowRun --> Execution
     WorkflowRun --> Review
     Review --> Revision

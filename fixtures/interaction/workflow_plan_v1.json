@@ -1,0 +1,21 @@
+{
+  "plan": {
+    "session_id": "SESSION-WORKFLOW-001",
+    "session_version": 3,
+    "project_id": "PROJECT-001",
+    "project_name": "ToDoアプリ",
+    "reviewer_id": "QA-001",
+    "reviewer_name": "伊藤 健太",
+    "reviewer_model": "Claude Sonnet 5",
+    "max_tasks": 10,
+    "next": {
+      "task_id": "TASK-001",
+      "ready": true,
+      "completed": false,
+      "blocking_reasons": []
+    },
+    "executable": true,
+    "approval_required": true
+  },
+  "expected_workflow_plan_digest": "sha256:df9409a079a1add731d56a46d0faef3aa5206ecfa8151a002571d5ff1c8b504a"
+}

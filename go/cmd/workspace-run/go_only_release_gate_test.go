@@ -27,7 +27,7 @@ func TestGoOnlyReleaseGateCoversProductCapabilities(t *testing.T) {
 		"recovery":              {"recovery-inspect", "recovery-plan", "recovery-apply"},
 		"scheduler":             {"schedule-plan", "schedule-create", "schedule-list"},
 		"external_action":       {"action-wordpress-plan", "action-wordpress-publish"},
-		"interaction_session":   {"interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply"},
+		"interaction_session":   {"interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-workflow-plan", "interaction-workflow-execute"},
 	}
 	for capability, operations := range capabilities {
 		for _, operation := range operations {

@@ -114,6 +114,65 @@ func TestAnswersAreCanonicalizedAndPreserveUnicodeSpecialCharacters(t *testing.T
 	}
 }
 
+func TestWorkflowEvidenceCompletesOrKeepsExplicitContinuation(t *testing.T) {
+	at := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	ready := interactionReadyRecord(t, at)
+	blocked := interactionWorkflowEvidence(WorkflowStatusBlocked)
+	blocked.Next = &WorkflowNextEvidence{Action: "wait", TaskID: "TASK-002", BlockingReasons: []string{"dependency_incomplete"}}
+	continued, err := ready.RecordWorkflow(blocked, at.Add(3*time.Minute))
+	if err != nil || continued.State != StateReadyToExecute || continued.Version != ready.Version+1 {
+		t.Fatalf("blocked RecordWorkflow() = %#v, %v", continued, err)
+	}
+	completed := interactionWorkflowEvidence(WorkflowStatusCompleted)
+	finished, err := continued.RecordWorkflow(completed, at.Add(4*time.Minute))
+	if err != nil || finished.State != StateCompleted || finished.Validate() != nil {
+		t.Fatalf("completed RecordWorkflow() = %#v, %v", finished, err)
+	}
+	if _, err := finished.RecordWorkflow(completed, at.Add(5*time.Minute)); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("terminal workflow append error = %v", err)
+	}
+	rewritten := finished.Clone()
+	rewritten.Turns[len(rewritten.Turns)-2].Workflow.ResultDigest = "sha256:" + strings.Repeat("f", 64)
+	if err := ValidateTransition(continued, rewritten, continued.Version); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("workflow evidence rewrite error = %v", err)
+	}
+}
+
+func TestWorkflowFailureRequiresTypedEvidenceAndStopsSession(t *testing.T) {
+	at := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	ready := interactionReadyRecord(t, at)
+	failed := interactionWorkflowEvidence(WorkflowStatusPartialFailure)
+	failed.Failure = &WorkflowFailure{Code: "REVIEWED_WORKFLOW_FAILED", Stage: "review", Partial: true}
+	attention, err := ready.RecordWorkflow(failed, at.Add(3*time.Minute))
+	if err != nil || attention.State != StateWorkflowAttentionRequired {
+		t.Fatalf("partial RecordWorkflow() = %#v, %v", attention, err)
+	}
+	invalid := interactionWorkflowEvidence(WorkflowStatusFailed)
+	if _, err := ready.RecordWorkflow(invalid, at.Add(3*time.Minute)); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("missing failure evidence error = %v", err)
+	}
+}
+
+func interactionReadyRecord(t *testing.T, at time.Time) Record {
+	t.Helper()
+	record, _ := New("SESSION-WORKFLOW", "依頼", "Claude Sonnet 5", at)
+	withPlan, _ := record.RecordPlan(interactionTestPlan([]string{}), at.Add(time.Minute))
+	_, digest, _ := withPlan.CurrentPlan()
+	ready, err := withPlan.RecordApplied("PROJECT-001", "案件", digest, at.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ready
+}
+
+func interactionWorkflowEvidence(status WorkflowStatus) WorkflowEvidence {
+	return WorkflowEvidence{
+		SchemaVersion: 1, CommandID: "CMD-INTERACTION-WORKFLOW-001", WorkflowCommandID: "CMD-WORKFLOW-CHILD-001",
+		ProjectID: "PROJECT-001", ProjectName: "案件", ReviewerID: "QA-001", MaxTasks: 10,
+		Status: status, ResultDigest: "sha256:" + strings.Repeat("0", 64), Tasks: []WorkflowTaskEvidence{},
+	}
+}
+
 func interactionTestPlan(questions []string) ceoplan.Plan {
 	assignee := "PLAN-001"
 	return ceoplan.Plan{

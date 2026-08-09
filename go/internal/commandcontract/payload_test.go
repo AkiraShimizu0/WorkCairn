@@ -53,10 +53,11 @@ func TestInteractionPayloadsAreStrictAndNotSchedulable(t *testing.T) {
 	digest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	requestDigest := "sha256:3c8f6dc8dde25e7cad6814e9ee01b8efabe7451719fafa18c84792eb35aa8bbe"
 	cases := map[string]string{
-		"interaction.start":         `{"session_id":"SESSION-001","request":"Webアプリを作りたい","request_digest":"` + requestDigest + `","model":"Claude Sonnet 5","current_time":"2026-08-09T12:00:00Z"}`,
-		"interaction.plan.generate": `{"session_id":"SESSION-001","expected_version":1,"current_time":"2026-08-10T09:30:00+09:00"}`,
-		"interaction.answer":        `{"session_id":"SESSION-001","expected_version":2,"answers":[{"question":"Q","answer":"A"}],"current_time":"2026-08-10T09:30:00+09:00"}`,
-		"interaction.plan.apply":    `{"session_id":"SESSION-001","expected_version":3,"project_id":"PROJECT-001","plan_digest":"` + digest + `","current_time":"2026-08-10T09:30:00+09:00"}`,
+		"interaction.start":            `{"session_id":"SESSION-001","request":"Webアプリを作りたい","request_digest":"` + requestDigest + `","model":"Claude Sonnet 5","current_time":"2026-08-09T12:00:00Z"}`,
+		"interaction.plan.generate":    `{"session_id":"SESSION-001","expected_version":1,"current_time":"2026-08-10T09:30:00+09:00"}`,
+		"interaction.answer":           `{"session_id":"SESSION-001","expected_version":2,"answers":[{"question":"Q","answer":"A"}],"current_time":"2026-08-10T09:30:00+09:00"}`,
+		"interaction.plan.apply":       `{"session_id":"SESSION-001","expected_version":3,"project_id":"PROJECT-001","plan_digest":"` + digest + `","current_time":"2026-08-10T09:30:00+09:00"}`,
+		"interaction.workflow.execute": `{"session_id":"SESSION-001","expected_version":4,"reviewer_id":"QA-001","current_time":"2026-08-10T09:30:00+09:00","max_tasks":10,"workflow_plan_digest":"` + digest + `"}`,
 	}
 	for operation, payload := range cases {
 		if Schedulable(operation) || ValidatePayload(operation, json.RawMessage(payload)) != nil {

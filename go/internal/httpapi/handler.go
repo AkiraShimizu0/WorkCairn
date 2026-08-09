@@ -21,14 +21,15 @@ import (
 const maxCommandRequestBytes = 2 << 20
 
 type Handler struct {
-	executor              Executor
-	inspector             Inspector
-	scheduleInspector     ScheduleInspector
-	metricsInspector      MetricsInspector
-	notificationInspector NotificationInspector
-	interactionInspector  InteractionInspector
-	interactionPlanner    InteractionPlanner
-	mux                   *http.ServeMux
+	executor                   Executor
+	inspector                  Inspector
+	scheduleInspector          ScheduleInspector
+	metricsInspector           MetricsInspector
+	notificationInspector      NotificationInspector
+	interactionInspector       InteractionInspector
+	interactionPlanner         InteractionPlanner
+	interactionWorkflowPlanner InteractionWorkflowPlanner
+	mux                        *http.ServeMux
 }
 
 type ScheduleInspector interface {
@@ -52,6 +53,10 @@ type InteractionInspector interface {
 
 type InteractionPlanner interface {
 	PlanInteraction(ctx context.Context, request InteractionPlanRequest) (workspaceprocess.InteractionStartPlan, error)
+}
+
+type InteractionWorkflowPlanner interface {
+	PlanInteractionWorkflow(ctx context.Context, request InteractionWorkflowPlanRequest) (workspaceprocess.InteractionWorkflowPlan, error)
 }
 
 func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
@@ -86,7 +91,39 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 		handler.interactionPlanner = interactionPlanner
 		handler.mux.HandleFunc("POST /v1/interaction-plans", handler.planInteraction)
 	}
+	if workflowPlanner, ok := executor.(InteractionWorkflowPlanner); ok {
+		handler.interactionWorkflowPlanner = workflowPlanner
+		handler.mux.HandleFunc("POST /v1/interaction-workflow-plans", handler.planInteractionWorkflow)
+	}
 	return handler, nil
+}
+
+func (handler *Handler) planInteractionWorkflow(response http.ResponseWriter, request *http.Request) {
+	if !strings.HasPrefix(strings.ToLower(request.Header.Get("Content-Type")), "application/json") {
+		writeCommandResponse(response, http.StatusUnsupportedMediaType, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "UNSUPPORTED_MEDIA_TYPE"}})
+		return
+	}
+	content, err := io.ReadAll(http.MaxBytesReader(response, request.Body, maxCommandRequestBytes))
+	if err != nil {
+		writeCommandResponse(response, http.StatusRequestEntityTooLarge, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "INVALID_INTERACTION_WORKFLOW_PLAN"}})
+		return
+	}
+	var planRequest InteractionWorkflowPlanRequest
+	if err := decodePayload(content, &planRequest); err != nil || planRequest.Validate() != nil {
+		writeCommandResponse(response, http.StatusBadRequest, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "INVALID_INTERACTION_WORKFLOW_PLAN"}})
+		return
+	}
+	plan, err := handler.interactionWorkflowPlanner.PlanInteractionWorkflow(request.Context(), planRequest)
+	if err != nil {
+		writeCommandResponse(response, http.StatusUnprocessableEntity, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "INTERACTION_WORKFLOW_PLAN_FAILED"}})
+		return
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: InteractionContractVersion, OK: true, Result: encoded})
 }
 
 func (handler *Handler) planInteraction(response http.ResponseWriter, request *http.Request) {

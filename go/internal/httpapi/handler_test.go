@@ -37,6 +37,15 @@ type fakeCommandBackend struct {
 	release chan struct{}
 }
 
+type fakeInteractionWorkflowBackend struct {
+	fakeCommandBackend
+	plan workspaceprocess.InteractionWorkflowPlan
+}
+
+func (fake *fakeInteractionWorkflowBackend) PlanInteractionWorkflow(context.Context, InteractionWorkflowPlanRequest) (workspaceprocess.InteractionWorkflowPlan, error) {
+	return fake.plan, fake.err
+}
+
 func (fake *fakeCommandBackend) Execute(ctx context.Context, _ Command) (any, error) {
 	fake.calls++
 	if fake.started != nil {
@@ -142,6 +151,33 @@ func TestInteractionPlanStartReplayAndReadOnlyInspectionHTTP(t *testing.T) {
 		if inspection.Code != http.StatusOK || !strings.Contains(inspection.Body.String(), string(interaction.StatePlanGenerationApprovalRequired)) {
 			t.Fatalf("inspection %s = %d %s", path, inspection.Code, inspection.Body.String())
 		}
+	}
+}
+
+func TestInteractionWorkflowPlanHTTPUsesVersionedReadOnlyContract(t *testing.T) {
+	backend := &fakeInteractionWorkflowBackend{plan: workspaceprocess.InteractionWorkflowPlan{
+		SessionID: "SESSION-HTTP-001", SessionVersion: 3, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ",
+		ReviewerID: "QA-001", ReviewerName: "伊藤 健太", ReviewerModel: "Claude Sonnet 5", MaxTasks: 10,
+		WorkflowPlanDigest: "sha256:" + strings.Repeat("a", 64), Executable: true, ApprovalRequired: true,
+	}}
+	handler, err := NewHandler(backend, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version":"workspace-interaction.v1","session_id":"SESSION-HTTP-001","expected_version":3,"reviewer_id":"QA-001","current_time":"2026-08-09T12:00:00Z","max_tasks":10}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/interaction-workflow-plans", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), backend.plan.WorkflowPlanDigest) || backend.calls != 0 {
+		t.Fatalf("Interaction Workflow plan response = %d %s calls=%d", response.Code, response.Body.String(), backend.calls)
+	}
+	invalid := httptest.NewRequest(http.MethodPost, "/v1/interaction-workflow-plans", bytes.NewBufferString(strings.Replace(body, `"max_tasks":10`, `"max_tasks":101`, 1)))
+	invalid.Header.Set("Content-Type", "application/json")
+	invalidResponse := httptest.NewRecorder()
+	handler.ServeHTTP(invalidResponse, invalid)
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("invalid Interaction Workflow plan = %d %s", invalidResponse.Code, invalidResponse.Body.String())
 	}
 }
 

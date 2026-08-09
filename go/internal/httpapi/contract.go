@@ -63,10 +63,28 @@ type InteractionPlanRequest struct {
 	CurrentTime time.Time `json:"current_time"`
 }
 
+type InteractionWorkflowPlanRequest struct {
+	Version         string    `json:"version"`
+	SessionID       string    `json:"session_id"`
+	ExpectedVersion uint64    `json:"expected_version"`
+	ReviewerID      string    `json:"reviewer_id"`
+	CurrentTime     time.Time `json:"current_time"`
+	MaxTasks        int       `json:"max_tasks"`
+}
+
 func (request InteractionPlanRequest) Validate() error {
 	if request.Version != InteractionContractVersion || interaction.ValidateSessionID(request.SessionID) != nil ||
 		strings.TrimSpace(request.Request) == "" || len(request.Request) > 32<<10 ||
 		strings.TrimSpace(request.Model) == "" || strings.ContainsAny(request.Model, "\r\n") || request.CurrentTime.IsZero() {
+		return ErrInvalidCommand
+	}
+	return nil
+}
+
+func (request InteractionWorkflowPlanRequest) Validate() error {
+	if request.Version != InteractionContractVersion || interaction.ValidateSessionID(request.SessionID) != nil || request.ExpectedVersion == 0 ||
+		strings.TrimSpace(request.ReviewerID) == "" || request.ReviewerID != strings.TrimSpace(request.ReviewerID) ||
+		strings.ContainsAny(request.ReviewerID, "\r\n") || request.CurrentTime.IsZero() || request.MaxTasks <= 0 || request.MaxTasks > 100 {
 		return ErrInvalidCommand
 	}
 	return nil

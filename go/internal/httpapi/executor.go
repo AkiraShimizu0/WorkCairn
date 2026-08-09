@@ -212,6 +212,16 @@ type interactionPlanApplyPayload struct {
 	CurrentTime     time.Time `json:"current_time"`
 }
 
+type interactionWorkflowExecutePayload struct {
+	SessionID          string    `json:"session_id"`
+	ExpectedVersion    uint64    `json:"expected_version"`
+	ReviewerID         string    `json:"reviewer_id"`
+	CurrentTime        time.Time `json:"current_time"`
+	ApprovalReference  string    `json:"approval_reference,omitempty"`
+	MaxTasks           int       `json:"max_tasks"`
+	WorkflowPlanDigest string    `json:"workflow_plan_digest"`
+}
+
 func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (any, error) {
 	if err := command.Validate(); err != nil || !command.Approved {
 		return nil, ErrInvalidCommand
@@ -317,6 +327,19 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 			ProjectID: payload.ProjectID, PlanDigest: payload.PlanDigest, CurrentTime: payload.CurrentTime,
 			CommandID: command.CommandID, EventObservers: executor.observers,
 		}, true)
+	case "interaction.workflow.execute":
+		var payload interactionWorkflowExecutePayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteInteractionWorkflow(ctx, workspaceprocess.ExecuteInteractionWorkflowInput{
+			InteractionWorkflowPlanInput: workspaceprocess.InteractionWorkflowPlanInput{
+				VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
+				ReviewerID: payload.ReviewerID, CurrentTime: payload.CurrentTime, MaxTasks: payload.MaxTasks,
+			},
+			WorkflowPlanDigest: payload.WorkflowPlanDigest, ApprovalReference: payload.ApprovalReference,
+			CommandID: command.CommandID, EventObservers: executor.observers,
+		}, executor.provider, executor.httpClient, true)
 	case "project.bootstrap":
 		var payload projectBootstrapPayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -431,6 +454,13 @@ func (executor *ProcessExecutor) PlanInteraction(ctx context.Context, request In
 	return workspaceprocess.PlanInteractionStart(ctx, workspaceprocess.InteractionStartInput{
 		VaultRoot: executor.vaultRoot, SessionID: request.SessionID, Request: request.Request,
 		Model: request.Model, CurrentTime: request.CurrentTime,
+	})
+}
+
+func (executor *ProcessExecutor) PlanInteractionWorkflow(ctx context.Context, request InteractionWorkflowPlanRequest) (workspaceprocess.InteractionWorkflowPlan, error) {
+	return workspaceprocess.PlanInteractionWorkflow(ctx, workspaceprocess.InteractionWorkflowPlanInput{
+		VaultRoot: executor.vaultRoot, SessionID: request.SessionID, ExpectedVersion: request.ExpectedVersion,
+		ReviewerID: request.ReviewerID, CurrentTime: request.CurrentTime, MaxTasks: request.MaxTasks,
 	})
 }
 

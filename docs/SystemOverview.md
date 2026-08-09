@@ -139,6 +139,8 @@ ADR-0027のExternal Actionは既存Deliverableをread-onlyで読み、source dig
 
 ADR-0028のInteraction Sessionは、自然言語requestをimmutable digestへ固定し、CEO Planの質問をtyped回答としてappendしてから再planします。質問が残るplanは適用できず、質問ゼロの最新plan SHA-256とSession Versionへの別承認後だけ既存CEO applyへ渡します。Provider成功後やProject／Task commit後にSession CASが失敗しても成立済み効果をrollbackせず、Command Ledgerのpartial failureとして残します。
 
+ADR-0029では、適用済みSessionからreviewer、Task上限、次step、Session Versionに拘束したWorkflow plan digestを承認し、既存Reviewed Workflowを決定的child Commandとして実行します。Sessionは完全Result本文を複製せず、project Ledger上のResult SHA-256、Task／Review／Revision child Command ID、verdict、next action、failure stageをappendします。completedだけを終端とし、blocked／limitは新しい承認で継続、partial／failedは`workflow_attention_required`で停止します。
+
 ## Go Only RuntimeとPython compatibility
 
 製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／Metrics、External ActionにPython interpreterは不要です。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。Go sourceが外部interpreterを起動しないことをRelease Gateで検査します。
@@ -158,7 +160,7 @@ Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ�
 - Schedulerはone-shotだけで、cron／recurrence、並列配送、`dispatching` reconciliationは未実装
 - Notificationはlocal read-only Inboxだけで、外部channel配送、未読／ack、Event replayは未実装。Metricsはprocess再起動でresetされる
 - External ActionはWordPress post publishだけで、HTML変換、update／delete、media upload、remote reconciliation、自動retryは未実装
-- Interaction SessionはProject／Task作成までを扱い、Reviewed Workflow実行、Review／Revision分岐、External Action完了を同じSessionへ記録するcompositionは未実装
+- Interaction SessionはReviewed Workflowの完了までを扱う。External Actionのplan／完了を同じSessionへ記録するcompositionは未実装
 - Python compatibility APIは公開互換方針が終了するまでrepositoryに残る
 
 これらはGo Only Runtimeの不足ではなく、次期Roadmapで段階的に扱う耐久性・運用機能です。

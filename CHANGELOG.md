@@ -12,6 +12,7 @@
 - dependency順のReviewed Multi-task Workflowと、承認済みWordPress Action Adapterを追加。
 - Operator Guide、binary version metadata、Go Only release archive／checksumを追加。
 - 自然言語依頼、CEO質問回答、再plan、digest承認、Project／Task適用を継続するInteraction Sessionを追加。
+- Interaction Sessionから既存Reviewed Workflowを決定的child Commandとして実行し、Review／Revision結果をdigest付きtyped summaryで記録。
 
 ### Security
 

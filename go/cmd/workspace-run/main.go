@@ -57,6 +57,7 @@ type commandOptions struct {
 	actionTarget                              string
 	actionSourceSHA256                        string
 	sessionID, requestDigest, planDigest      string
+	workflowDigest                            string
 	candidateJSONs                            stringListFlag
 	answerJSONs                               stringListFlag
 	repairJSONs                               stringListFlag
@@ -360,6 +361,44 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			response.Error.ProjectCommitted = result.Apply.Project != nil && result.Apply.Project.Committed
 			response.Error.TaskCommitCount = len(result.Apply.Tasks)
 			response.Error.DependenciesCommit = result.Apply.Dependencies != nil && result.Apply.Dependencies.Committed
+			writeCommandResponse(output, response)
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
+		return 0
+	}
+	if operation == "interaction-workflow-plan" {
+		plan, err := workspaceprocess.PlanInteractionWorkflow(ctx, workspaceprocess.InteractionWorkflowPlanInput{
+			VaultRoot: options.vaultRoot, SessionID: options.sessionID, ExpectedVersion: options.expectedVersion,
+			ReviewerID: options.reviewerID, CurrentTime: currentTime, MaxTasks: options.maxTasks,
+		})
+		if err != nil {
+			writeCommandResponse(output, failureResponse("INTERACTION_WORKFLOW_PLAN_FAILED", "interaction_workflow_preflight"))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: plan})
+		return 0
+	}
+	if operation == "interaction-workflow-execute" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
+		providerModel, _ := dependencies.lookupEnv("WORKSPACE_CLAUDE_PROVIDER_MODEL")
+		baseURL, _ := dependencies.lookupEnv("WORKSPACE_CLAUDE_BASE_URL")
+		result, err := workspaceprocess.ExecuteInteractionWorkflow(ctx, workspaceprocess.ExecuteInteractionWorkflowInput{
+			InteractionWorkflowPlanInput: workspaceprocess.InteractionWorkflowPlanInput{
+				VaultRoot: options.vaultRoot, SessionID: options.sessionID, ExpectedVersion: options.expectedVersion,
+				ReviewerID: options.reviewerID, CurrentTime: currentTime, MaxTasks: options.maxTasks,
+			},
+			WorkflowPlanDigest: options.workflowDigest, ApprovalReference: options.approvalReference, CommandID: options.commandID,
+		}, workspaceprocess.ClaudeProcessConfig{
+			APIKey: apiKey, ProviderModel: providerModel, BaseURL: baseURL,
+		}, dependencies.newHTTPClient(options.timeout), true)
+		if err != nil {
+			response := durableCommandFailureResponse(err, "INTERACTION_WORKFLOW_FAILED", "interaction_workflow_execute")
+			response.Error.SessionCommitted = result.SessionCommitted
 			writeCommandResponse(output, response)
 			return 1
 		}
@@ -898,6 +937,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	set.StringVar(&options.sessionID, "session-id", "", "Interaction Session ID")
 	set.StringVar(&options.requestDigest, "request-sha256", "", "approved Interaction request digest")
 	set.StringVar(&options.planDigest, "plan-sha256", "", "approved Interaction plan digest")
+	set.StringVar(&options.workflowDigest, "workflow-sha256", "", "approved Interaction Workflow plan digest")
 	set.Var(&options.candidateJSONs, "candidate-json", "candidate JSON; repeat for batch validation")
 	set.Var(&options.answerJSONs, "answer-json", "Interaction clarification answer JSON; repeat for each answer")
 	set.Var(&options.repairJSONs, "repair-json", "expected Employee ID repair JSON; repeat for apply")
@@ -948,6 +988,15 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	}
 	if operation == "interaction-inspect" || operation == "interaction-plan-generate" || operation == "interaction-answer" || operation == "interaction-plan-apply" {
 		required = append(required, options.sessionID)
+	}
+	if operation == "interaction-workflow-plan" || operation == "interaction-workflow-execute" {
+		required = append(required, options.sessionID, options.reviewerID, options.at)
+		if options.expectedVersion == 0 || options.maxTasks <= 0 || options.maxTasks > service.MaxWorkflowTasks {
+			return commandOptions{}, errors.New("valid Interaction Workflow Version and Task limit are required")
+		}
+	}
+	if operation == "interaction-workflow-execute" {
+		required = append(required, options.commandID, options.workflowDigest)
 	}
 	if operation == "interaction-plan-generate" || operation == "interaction-answer" || operation == "interaction-plan-apply" {
 		if options.expectedVersion == 0 {
@@ -1016,7 +1065,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply":
+	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-workflow-plan", "interaction-workflow-execute":
 		return true
 	default:
 		return false

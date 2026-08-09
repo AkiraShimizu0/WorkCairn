@@ -163,6 +163,16 @@ func ValidatePayload(operation string, content json.RawMessage) error {
 			PlanDigest      string    `json:"plan_digest"`
 			CurrentTime     time.Time `json:"current_time"`
 		}{}
+	case "interaction.workflow.execute":
+		target = &struct {
+			SessionID          string    `json:"session_id"`
+			ExpectedVersion    uint64    `json:"expected_version"`
+			ReviewerID         string    `json:"reviewer_id"`
+			CurrentTime        time.Time `json:"current_time"`
+			ApprovalReference  string    `json:"approval_reference,omitempty"`
+			MaxTasks           int       `json:"max_tasks"`
+			WorkflowPlanDigest string    `json:"workflow_plan_digest"`
+		}{}
 	default:
 		return ErrInvalidPayload
 	}
@@ -201,6 +211,7 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 		"interaction.plan.generate":       {"session_id"},
 		"interaction.answer":              {"session_id"},
 		"interaction.plan.apply":          {"session_id", "project_id", "plan_digest"},
+		"interaction.workflow.execute":    {"session_id", "reviewer_id", "workflow_plan_digest"},
 	}
 	stringsRequired, supported := requiredStrings[operation]
 	if !supported {
@@ -261,7 +272,7 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 			return ErrInvalidPayload
 		}
 	}
-	if operation == "interaction.plan.generate" || operation == "interaction.answer" || operation == "interaction.plan.apply" {
+	if operation == "interaction.plan.generate" || operation == "interaction.answer" || operation == "interaction.plan.apply" || operation == "interaction.workflow.execute" {
 		var expected uint64
 		if raw, ok := fields["expected_version"]; !ok || json.Unmarshal(raw, &expected) != nil || expected == 0 {
 			return ErrInvalidPayload
@@ -276,6 +287,14 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 	if operation == "interaction.answer" {
 		var answers []interaction.Answer
 		if json.Unmarshal(fields["answers"], &answers) != nil || interaction.ValidateAnswerPayload(answers) != nil {
+			return ErrInvalidPayload
+		}
+	}
+	if operation == "interaction.workflow.execute" {
+		var digest string
+		var maxTasks int
+		if json.Unmarshal(fields["workflow_plan_digest"], &digest) != nil || interaction.ValidateDigest(digest) != nil ||
+			json.Unmarshal(fields["max_tasks"], &maxTasks) != nil || maxTasks <= 0 || maxTasks > 100 {
 			return ErrInvalidPayload
 		}
 	}

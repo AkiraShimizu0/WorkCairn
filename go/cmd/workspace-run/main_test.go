@@ -19,6 +19,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/recovery"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
@@ -154,6 +155,72 @@ func TestReviewedWorkflowPlanIsReadOnlyAndNeedsNoProviderConfig(t *testing.T) {
 		!reflect.DeepEqual(before, commandVaultSnapshot(t, root)) {
 		t.Fatalf("reviewed Workflow plan exit=%d response=%#v", exit, response)
 	}
+}
+
+func TestInteractionWorkflowPlanIsReadOnlyAndExecutionNeedsApprovalBeforeProviderConfig(t *testing.T) {
+	root := writeCommandVault(t)
+	writeCommandFile(t, filepath.Join(root, "社員", "伊藤 健太.md"), "---\nid: QA-001\ndepartment: 品質保証部\nrole: QA Engineer\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n")
+	at := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	ready := writeCommandReadyInteraction(t, root, at.Add(-time.Hour))
+	before := commandVaultSnapshot(t, root)
+	var output bytes.Buffer
+	base := []string{
+		"--vault", root, "--session-id", ready.SessionID, "--expected-version", "3",
+		"--reviewer", "QA-001", "--max-tasks", "10", "--at", at.Format(time.RFC3339),
+	}
+	dependencies := commandDependencies{
+		lookupEnv: func(string) (string, bool) {
+			t.Fatal("Interaction Workflow plan or rejection read Provider environment")
+			return "", false
+		},
+		newHTTPClient: func(time.Duration) claude.HTTPDoer {
+			t.Fatal("Interaction Workflow plan or rejection constructed HTTP client")
+			return nil
+		},
+	}
+	if code := run(context.Background(), append([]string{"interaction-workflow-plan"}, base...), &output, dependencies); code != 0 {
+		t.Fatalf("interaction-workflow-plan code=%d output=%s", code, output.String())
+	}
+	response := decodeCommandResponse(t, output.Bytes())
+	encoded, _ := json.Marshal(response.Result)
+	var plan workspaceprocess.InteractionWorkflowPlan
+	if err := json.Unmarshal(encoded, &plan); err != nil || plan.WorkflowPlanDigest == "" || !plan.ApprovalRequired ||
+		!reflect.DeepEqual(before, commandVaultSnapshot(t, root)) {
+		t.Fatalf("Interaction Workflow plan = %#v, %v", plan, err)
+	}
+	output.Reset()
+	executeArgs := append([]string{"interaction-workflow-execute"}, base...)
+	executeArgs = append(executeArgs, "--workflow-sha256", plan.WorkflowPlanDigest, "--command-id", "CMD-INTERACTION-WORKFLOW-CLI")
+	if code := run(context.Background(), executeArgs, &output, dependencies); code != 1 || !bytes.Contains(output.Bytes(), []byte(`"code":"APPROVAL_REQUIRED"`)) ||
+		!reflect.DeepEqual(before, commandVaultSnapshot(t, root)) {
+		t.Fatalf("unapproved interaction-workflow-execute code=%d output=%s", code, output.String())
+	}
+}
+
+func writeCommandReadyInteraction(t *testing.T, root string, at time.Time) interaction.Record {
+	t.Helper()
+	record, _ := interaction.New("SESSION-CLI-WORKFLOW", "ToDoアプリを完成させる", "Claude Sonnet 5", at)
+	assignee := "PLAN-001"
+	plan := ceoplan.Plan{
+		ProjectName: "ToDoアプリ", Objective: "完成", Summary: "概要", RequiredDepartments: []string{"企画部"},
+		RequiredRoles: []string{"Product Manager"}, AssignedExistingEmployees: []string{assignee}, MissingRoles: []string{},
+		ProposedTasks: []ceoplan.ProposedTask{{ProposalID: "PROPOSED-001", Title: "要件を整理する", AssigneeID: &assignee, DependencyIDs: []string{}, Rationale: "必要"}},
+		Risks:         []string{}, CEOQuestions: []string{}, PlanOnly: true,
+	}
+	withPlan, _ := record.RecordPlan(plan, at.Add(time.Minute))
+	_, digest, _ := withPlan.CurrentPlan()
+	ready, _ := withPlan.RecordApplied("PROJECT-001", "ToDoアプリ", digest, at.Add(2*time.Minute))
+	store, _ := vault.NewInteractionStore(root)
+	if err := store.Create(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(context.Background(), withPlan, record.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(context.Background(), ready, withPlan.Version); err != nil {
+		t.Fatal(err)
+	}
+	return ready
 }
 
 func TestSchedulePlanApprovalCreateAndListUseOnlyTemporaryVault(t *testing.T) {

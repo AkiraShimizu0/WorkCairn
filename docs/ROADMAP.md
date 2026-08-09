@@ -220,19 +220,32 @@ ADR-0028に基づく実装済みfoundation：
 
 自然言語requestはimmutable digest、Provider plan／質問回答／Project適用はappend-only turnとしてVersion/CAS保存します。未回答質問をblockし、回答後の再planで質問ゼロになった最新plan SHA-256だけを別承認で適用します。CLIとloopback APIは同じDomain／Service／Processを使い、全writerはworkspace Command Ledgerを通ります。
 
-## Next 1 — Interaction Workflow Execution Composition
+## Completed — Interaction Workflow Execution Composition
 
 `ready_to_execute` Sessionから既存Reviewed Workflowを開始し、Accept／Request Changes／Revision／再Reviewの結果をSessionへ記録します。
 
-候補：
+ADR-0029に基づく実装：
 
 - reviewer ID、最大Task数、approval referenceを含むread-only execution plan
 - approved Session VersionとProject identityに拘束したouter Interaction Command
-- 既存`ExecuteReviewedWorkflow`のResultをappend-only turnへ保存
+- 既存`ExecuteReviewedWorkflow`を決定的project child Commandとして実行し、完全Result digestとbounded typed summaryをappend-only turnへ保存
 - blocked／limit／partial resultをSessionから観測し、自動resumeしない
 - Workflow完了後だけExternal Action planへ進めるclosed next action
 
 Reviewed Workflow、TaskService、Review／Revision、child Command IDを再実装しません。External Actionの自動承認、remote reconciliation、parallel Sessionは含めません。
+
+`completed`だけをSession終端とし、blocked／limitは新しいplanと明示承認で継続できます。partial／failedは`workflow_attention_required`で停止し、Sessionから自動resumeしません。Workflow成功後のSession CAS失敗は成立済みTask／Review／Revision／Deliverableを保持したouter partial failureです。
+
+## Next 1 — Interaction Completion and External Action Handoff
+
+Workflow完了後、ユーザーへ「完了」または既存Deliverableに対するExternal Action候補をread-onlyで提示し、必要な場合だけ別のsource digest承認へ進めます。
+
+- External Actionを自然言語から推測して自動実行しない
+- 既存`action-wordpress-plan|publish`の承認、immutable evidence、partial publication semanticsを再利用する
+- Actionを要求しないSessionは`completed`のまま終える
+- Action intentをCEO planへ追加する場合も既存plan contractを破壊せずadditiveにする
+
+最初は明示targetとTask／Deliverable identityを受けるhandoffだけを候補とし、automatic approval、content変換、remote reconciliation、複数Action、汎用chat UIは含めません。
 
 ## Python Compatibility End of Life
 
