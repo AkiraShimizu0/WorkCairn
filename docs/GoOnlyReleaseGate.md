@@ -18,6 +18,7 @@
 | Revision | `revision-plan`、`revision-execute` | OK | immutable intent、TaskService.Create、Revision Event／Audit |
 | Multi-task Workflow | `workflow-plan`、`workflow-execute` | OK | readiness再plan、決定的child Command、順次Task E2E、replay／conflict |
 | Reviewed Multi-task Workflow | `workflow-reviewed-plan`、`workflow-reviewed-execute` | OK | Approve／Request Changes、Revision Task targeted readiness、再Review、replay／conflict |
+| Scheduler／Automation | `schedule-plan`、`schedule-create`、`schedule-list`、daemon poller | OK | typed one-shot、明示承認、Schedule CAS、target Ledger、missed／duplicate E2E |
 | Deliverable／Audit | Execution／Review／Revision composition | OK | immutable Store、Event subscriber、partial failure tests |
 | Recovery | `recovery-inspect`、`recovery-plan`、`recovery-apply` | OK | read-only inventory、evidence digest、Task CAS、temporary Vault E2E |
 

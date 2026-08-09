@@ -95,6 +95,42 @@ func TestReviewedWorkflowPlanIsReadOnlyAndNeedsNoProviderConfig(t *testing.T) {
 	}
 }
 
+func TestSchedulePlanApprovalCreateAndListUseOnlyTemporaryVault(t *testing.T) {
+	root := t.TempDir()
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "fixtures", "scheduler", "one_shot_v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := string(fixture)
+	dependencies := commandDependencies{
+		now:       func() time.Time { return commandTestTime() },
+		lookupEnv: func(string) (string, bool) { t.Fatal("Schedule read Provider configuration"); return "", false },
+	}
+	before := commandVaultSnapshot(t, root)
+	var planOutput bytes.Buffer
+	if code := run(context.Background(), []string{"schedule-plan", "--vault", root, "--schedule-json", definition}, &planOutput, dependencies); code != 0 || !bytes.Contains(planOutput.Bytes(), []byte(`"executable":true`)) {
+		t.Fatalf("schedule-plan code=%d output=%s", code, planOutput.String())
+	}
+	if !reflect.DeepEqual(before, commandVaultSnapshot(t, root)) {
+		t.Fatal("schedule-plan changed temporary Vault")
+	}
+	var rejected bytes.Buffer
+	if code := run(context.Background(), []string{"schedule-create", "--vault", root, "--schedule-json", definition, "--command-id", "CMD-CREATE-SCHEDULE-001"}, &rejected, dependencies); code != 1 || !bytes.Contains(rejected.Bytes(), []byte(`"code":"APPROVAL_REQUIRED"`)) {
+		t.Fatalf("unapproved schedule-create code=%d output=%s", code, rejected.String())
+	}
+	if !reflect.DeepEqual(before, commandVaultSnapshot(t, root)) {
+		t.Fatal("unapproved schedule-create changed temporary Vault")
+	}
+	var created bytes.Buffer
+	if code := run(context.Background(), []string{"schedule-create", "--vault", root, "--schedule-json", definition, "--command-id", "CMD-CREATE-SCHEDULE-001", "--approved"}, &created, dependencies); code != 0 || !bytes.Contains(created.Bytes(), []byte(`"state":"pending"`)) {
+		t.Fatalf("schedule-create code=%d output=%s", code, created.String())
+	}
+	var listed bytes.Buffer
+	if code := run(context.Background(), []string{"schedule-list", "--vault", root}, &listed, dependencies); code != 0 || !bytes.Contains(listed.Bytes(), []byte(`"schedule_id":"SCHEDULE-001"`)) {
+		t.Fatalf("schedule-list code=%d output=%s", code, listed.String())
+	}
+}
+
 func TestOrganizationCommandsNeedNoClockProviderOrEffects(t *testing.T) {
 	root := writeCommandVault(t)
 	before := commandVaultSnapshot(t, root)

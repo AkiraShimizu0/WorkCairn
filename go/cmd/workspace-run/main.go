@@ -23,6 +23,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/recovery"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/revision"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 )
@@ -49,7 +50,7 @@ type commandOptions struct {
 	employeeID, department, role, model       string
 	oldName, newName, reason                  string
 	recoveryAction, recoveryReason            string
-	ceoRequest, planJSON                      string
+	ceoRequest, planJSON, scheduleJSON        string
 	candidateJSONs                            stringListFlag
 	repairJSONs                               stringListFlag
 	renameJSONs                               stringListFlag
@@ -234,6 +235,50 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 	planInput := workspaceprocess.ExecutionPlanInput{
 		VaultRoot: options.vaultRoot, ProjectID: options.projectID,
 		ProjectName: options.projectName, TaskID: options.taskID, CurrentTime: currentTime,
+	}
+	if operation == "schedule-list" {
+		records, err := workspaceprocess.InspectSchedules(ctx, options.vaultRoot)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("SCHEDULE_INSPECTION_FAILED", ""))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: map[string]any{"schedules": records}})
+		return 0
+	}
+	if operation == "schedule-plan" || operation == "schedule-create" {
+		definition, err := decodeScheduleDefinition(options.scheduleJSON)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("INVALID_SCHEDULE", ""))
+			return 2
+		}
+		input := workspaceprocess.ScheduleCreationInput{
+			VaultRoot: options.vaultRoot, ScheduleID: definition.ScheduleID, DueAt: definition.DueAt,
+			CurrentTime: currentTime, ApprovalReference: definition.ApprovalReference, CommandID: options.commandID,
+			Target: scheduler.Command{
+				Version: definition.Target.Version, CommandID: definition.Target.CommandID,
+				Operation: definition.Target.Operation, Payload: definition.Target.Payload,
+			},
+		}
+		if operation == "schedule-plan" {
+			plan, err := workspaceprocess.PlanScheduleCreation(ctx, input)
+			if err != nil {
+				writeCommandResponse(output, failureResponse("SCHEDULE_PLAN_FAILED", ""))
+				return 1
+			}
+			writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: plan})
+			return 0
+		}
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		record, err := workspaceprocess.ExecuteScheduleCreation(ctx, input, true)
+		if err != nil {
+			writeCommandResponse(output, durableCommandFailureResponse(err, "SCHEDULE_CREATE_FAILED", "schedule_commit"))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		return 0
 	}
 	if operation == "ceo-plan-apply-plan" || operation == "ceo-plan-apply" {
 		plan, err := decodeCEOPlan(options.planJSON)
@@ -680,6 +725,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	set.StringVar(&options.recoveryReason, "recovery-reason", "", "explicit recovery failure reason")
 	set.StringVar(&options.ceoRequest, "request", "", "natural-language CEO request")
 	set.StringVar(&options.planJSON, "plan-json", "", "validated CEO plan JSON")
+	set.StringVar(&options.scheduleJSON, "schedule-json", "", "one-shot Schedule definition JSON")
 	set.Var(&options.candidateJSONs, "candidate-json", "candidate JSON; repeat for batch validation")
 	set.Var(&options.repairJSONs, "repair-json", "expected Employee ID repair JSON; repeat for apply")
 	set.Var(&options.renameJSONs, "rename-json", "Employee rename request JSON; repeat for batch plan")
@@ -690,7 +736,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 		return commandOptions{}, errors.New("invalid command arguments")
 	}
 	required := []string{options.vaultRoot}
-	if operation != "organization-inspect" && operation != "identity-validate" && operation != "employee-candidates-validate" && operation != "employee-hire-plan" && operation != "employee-hire-execute" && operation != "employee-rename-plan" && operation != "employee-rename-execute" && operation != "employee-rename-batch-plan" && operation != "employee-id-repair-plan" && operation != "employee-id-repair-execute" && operation != "organization-sync-plan" && operation != "organization-sync-execute" && operation != "ceo-plan-generate" && operation != "ceo-plan-apply-plan" && operation != "ceo-plan-apply" {
+	if operation != "organization-inspect" && operation != "identity-validate" && operation != "employee-candidates-validate" && operation != "employee-hire-plan" && operation != "employee-hire-execute" && operation != "employee-rename-plan" && operation != "employee-rename-execute" && operation != "employee-rename-batch-plan" && operation != "employee-id-repair-plan" && operation != "employee-id-repair-execute" && operation != "organization-sync-plan" && operation != "organization-sync-execute" && operation != "ceo-plan-generate" && operation != "ceo-plan-apply-plan" && operation != "ceo-plan-apply" && operation != "schedule-plan" && operation != "schedule-create" && operation != "schedule-list" {
 		required = append(required, options.projectName)
 	}
 	if operation == "plan" || operation == "execute" || operation == "review-plan" || operation == "review-execute" || operation == "revision-plan" || operation == "revision-execute" {
@@ -732,6 +778,12 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	if operation == "employee-rename-plan" || operation == "employee-rename-execute" {
 		required = append(required, options.employeeID, options.oldName, options.newName, options.reason)
 	}
+	if operation == "schedule-plan" || operation == "schedule-create" {
+		required = append(required, options.scheduleJSON)
+	}
+	if operation == "schedule-create" {
+		required = append(required, options.commandID)
+	}
 	if operation == "employee-candidates-validate" && len(options.candidateJSONs) == 0 {
 		return commandOptions{}, errors.New("candidate JSON is required")
 	}
@@ -760,7 +812,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply":
+	case "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list":
 		return true
 	default:
 		return false
@@ -891,6 +943,34 @@ func decodeCEOPlan(content string) (ceoplan.Plan, error) {
 		return ceoplan.Plan{}, errors.New("trailing CEO plan data")
 	}
 	return plan, nil
+}
+
+type scheduleDefinition struct {
+	ScheduleID        string    `json:"schedule_id"`
+	DueAt             time.Time `json:"due_at"`
+	ApprovalReference string    `json:"approval_reference,omitempty"`
+	Target            struct {
+		Version   string          `json:"version"`
+		CommandID string          `json:"command_id"`
+		Operation string          `json:"operation"`
+		Payload   json.RawMessage `json:"payload"`
+	} `json:"target"`
+}
+
+func decodeScheduleDefinition(content string) (scheduleDefinition, error) {
+	if len(content) > maxMigrationPlanBytes {
+		return scheduleDefinition{}, errors.New("Schedule definition is too large")
+	}
+	decoder := json.NewDecoder(strings.NewReader(content))
+	decoder.DisallowUnknownFields()
+	var definition scheduleDefinition
+	if err := decoder.Decode(&definition); err != nil {
+		return scheduleDefinition{}, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return scheduleDefinition{}, errors.New("trailing Schedule definition data")
+	}
+	return definition, nil
 }
 
 func migrationFailureResponse(err error) commandResponse {

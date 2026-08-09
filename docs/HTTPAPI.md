@@ -40,6 +40,7 @@ daemonは`.env` fileを読みません。Provider commandに必要な設定はRu
 | `revision.execute` | project | Project、source Task、Review version、時刻 |
 | `workflow.execute` | project | Project、時刻、approval reference、1〜100のTask上限 |
 | `workflow.reviewed.execute` | project | Project、Reviewer ID、時刻、approval reference、1〜100のTask上限 |
+| `schedule.create` | workspace | Schedule ID、due at、作成時刻、approval reference、typed target Command |
 | `ceo_plan.apply` | workspace | Project ID、validated CEO Plan、時刻 |
 | `project.bootstrap` | workspace | Project ID／name、description、時刻 |
 | `task.create` | project | Project name、title、assignee ID、時刻 |
@@ -50,6 +51,8 @@ daemonは`.env` fileを読みません。Provider commandに必要な設定はRu
 | `organization.sync` | workspace | 時刻 |
 
 Payloadはunknown fieldを拒否します。CEO plan generation、read-only plan／inspection、migration、Recovery applyはこのeffect Command endpointへ含めません。
+
+`GET /v1/schedules`と`GET /v1/schedules/{schedule_id}`はone-shot Scheduleのpending／dispatching／terminal stateをread-onlyで返します。daemonは`--scheduler-interval`ごとにdueまたはmissed pending Scheduleを確認し、保存済みの同一Command ID／payloadを既存Processへ配送します。`dispatching`は自動resumeしません。
 
 ## Status and recovery
 
@@ -64,6 +67,7 @@ statusはLedger recordをread-onlyで返します。`recovery_required: true`は
 
 - `GET /healthz`: process liveness
 - `GET /readyz`: handler readiness
+- `--scheduler-interval`: one-shot Scheduleのpoll間隔
 - SIGINT／SIGTERM: 新規受付を止め、`--shutdown-timeout`まで実行中commandを待つ
 - Provider command: `--provider-timeout`とrequest cancellationを適用
 

@@ -11,8 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/bootstrap"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/httpapi"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
 )
 
 func main() {
@@ -24,13 +28,14 @@ func main() {
 
 func run() error {
 	var vaultRoot, address string
-	var providerTimeout, shutdownTimeout time.Duration
+	var providerTimeout, shutdownTimeout, schedulerInterval time.Duration
 	flag.StringVar(&vaultRoot, "vault", "", "Vault root")
 	flag.StringVar(&address, "listen", "127.0.0.1:8787", "HTTP listen address")
 	flag.DurationVar(&providerTimeout, "provider-timeout", 60*time.Second, "Provider request timeout")
 	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "graceful shutdown timeout")
+	flag.DurationVar(&schedulerInterval, "scheduler-interval", time.Second, "one-shot Schedule polling interval")
 	flag.Parse()
-	if vaultRoot == "" || providerTimeout <= 0 || shutdownTimeout <= 0 {
+	if vaultRoot == "" || providerTimeout <= 0 || shutdownTimeout <= 0 || schedulerInterval <= 0 {
 		return errors.New("Vault root and positive timeouts are required")
 	}
 	executor, err := httpapi.NewProcessExecutor(vaultRoot, workspaceprocess.ClaudeProcessConfig{
@@ -40,6 +45,32 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	scheduleStore, err := vault.NewScheduleStore(vaultRoot)
+	if err != nil {
+		return err
+	}
+	schedulerService, err := service.NewSchedulerService(scheduleStore, executor, service.SchedulerConfig{
+		PollInterval: schedulerInterval, Now: time.Now,
+	})
+	if err != nil {
+		return err
+	}
+	schedulerKernel, err := kernel.New(bootstrap.DefaultKernelVersion)
+	if err != nil {
+		return err
+	}
+	if err := schedulerKernel.RegisterSchedulerService(schedulerService); err != nil {
+		return err
+	}
+	if err := schedulerKernel.Start(); err != nil {
+		return err
+	}
+	schedulerStarted := true
+	defer func() {
+		if schedulerStarted {
+			_ = schedulerKernel.Stop()
+		}
+	}()
 	handler, err := httpapi.NewHandler(executor, executor)
 	if err != nil {
 		return err
@@ -60,6 +91,10 @@ func run() error {
 		return err
 	case <-signalContext.Done():
 	}
+	if err := schedulerKernel.Stop(); err != nil {
+		return fmt.Errorf("stop scheduler: %w", err)
+	}
+	schedulerStarted = false
 	shutdownContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := server.Shutdown(shutdownContext); err != nil {

@@ -11,10 +11,12 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/commandcontract"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/organization"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
 )
 
 type Executor interface {
@@ -131,8 +133,24 @@ type organizationSyncPayload struct {
 	CurrentTime time.Time `json:"current_time"`
 }
 
+type scheduleCreatePayload struct {
+	ScheduleID        string    `json:"schedule_id"`
+	DueAt             time.Time `json:"due_at"`
+	CurrentTime       time.Time `json:"current_time"`
+	ApprovalReference string    `json:"approval_reference,omitempty"`
+	Target            struct {
+		Version   string          `json:"version"`
+		CommandID string          `json:"command_id"`
+		Operation string          `json:"operation"`
+		Payload   json.RawMessage `json:"payload"`
+	} `json:"target"`
+}
+
 func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (any, error) {
 	if err := command.Validate(); err != nil || !command.Approved {
+		return nil, ErrInvalidCommand
+	}
+	if commandcontract.Schedulable(command.Operation) && commandcontract.ValidatePayload(command.Operation, command.Payload) != nil {
 		return nil, ErrInvalidCommand
 	}
 	switch command.Operation {
@@ -235,9 +253,51 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 			return nil, err
 		}
 		return workspaceprocess.ExecuteOrganizationSync(ctx, workspaceprocess.OrganizationSyncInput{VaultRoot: executor.vaultRoot, CurrentTime: payload.CurrentTime, CommandID: command.CommandID}, true)
+	case "schedule.create":
+		var payload scheduleCreatePayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteScheduleCreation(ctx, workspaceprocess.ScheduleCreationInput{
+			VaultRoot: executor.vaultRoot, ScheduleID: payload.ScheduleID, DueAt: payload.DueAt,
+			CurrentTime: payload.CurrentTime, ApprovalReference: payload.ApprovalReference, CommandID: command.CommandID,
+			Target: scheduler.Command{
+				Version: payload.Target.Version, CommandID: payload.Target.CommandID, Operation: payload.Target.Operation,
+				Approved: true, Payload: append(json.RawMessage(nil), payload.Target.Payload...),
+			},
+		}, true)
 	default:
 		return nil, ErrUnsupportedCommand
 	}
+}
+
+func (executor *ProcessExecutor) Dispatch(ctx context.Context, command scheduler.Command) (scheduler.DispatchOutcome, error) {
+	result, err := executor.Execute(ctx, Command{
+		Version: command.Version, CommandID: command.CommandID, Operation: command.Operation,
+		Approved: command.Approved, Payload: append(json.RawMessage(nil), command.Payload...),
+	})
+	encoded, encodeErr := marshalResult(result)
+	if encodeErr != nil {
+		return scheduler.DispatchOutcome{}, encodeErr
+	}
+	outcome := scheduler.DispatchOutcome{Result: encoded}
+	if err != nil {
+		_, mapped := mapCommandError(err)
+		outcome.Failure = &scheduler.Failure{Code: mapped.Code, Stage: mapped.Stage, RecoveryRequired: mapped.RecoveryRequired}
+	}
+	return outcome, nil
+}
+
+func (executor *ProcessExecutor) InspectSchedules(ctx context.Context) ([]scheduler.Record, error) {
+	return workspaceprocess.InspectSchedules(ctx, executor.vaultRoot)
+}
+
+func (executor *ProcessExecutor) InspectSchedule(ctx context.Context, scheduleID string) (scheduler.Record, error) {
+	store, err := vault.NewScheduleStore(executor.vaultRoot)
+	if err != nil {
+		return scheduler.Record{}, err
+	}
+	return store.Get(ctx, scheduleID)
 }
 
 func (executor *ProcessExecutor) Inspect(ctx context.Context, scope, projectName, commandID string) (commandledger.Record, error) {
@@ -259,6 +319,7 @@ func (executor *ProcessExecutor) Inspect(ctx context.Context, scope, projectName
 
 var _ Executor = (*ProcessExecutor)(nil)
 var _ Inspector = (*ProcessExecutor)(nil)
+var _ scheduler.Dispatcher = (*ProcessExecutor)(nil)
 
 func marshalResult(result any) (json.RawMessage, error) {
 	if result == nil {

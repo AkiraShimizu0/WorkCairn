@@ -24,6 +24,7 @@ func TestGoOnlyReleaseGateCoversProductCapabilities(t *testing.T) {
 		"reviewed_workflow":     {"workflow-reviewed-plan", "workflow-reviewed-execute"},
 		"deliverable_audit":     {"plan", "execute"},
 		"recovery":              {"recovery-inspect", "recovery-plan", "recovery-apply"},
+		"scheduler":             {"schedule-plan", "schedule-create", "schedule-list"},
 	}
 	for capability, operations := range capabilities {
 		for _, operation := range operations {
@@ -76,9 +77,9 @@ func TestGoProductSourcesCannotLaunchPython(t *testing.T) {
 
 func TestV1ArchitectureLayerDependencies(t *testing.T) {
 	domainPackages := map[string]bool{
-		"ceoplan": true, "commandledger": true, "deliverable": true, "event": true, "execution": true,
+		"ceoplan": true, "commandcontract": true, "commandledger": true, "deliverable": true, "event": true, "execution": true,
 		"organization": true, "policy": true, "project": true, "prompt": true,
-		"recovery": true, "review": true, "revision": true, "runner": true, "task": true,
+		"recovery": true, "review": true, "revision": true, "runner": true, "scheduler": true, "task": true,
 		"worker": true, "workflow": true,
 	}
 	forEachProductionGoFile(t, func(path, packageName string, imports []string, _ *ast.File) {

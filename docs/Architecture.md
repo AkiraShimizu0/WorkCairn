@@ -2,7 +2,7 @@
 
 ## 概要
 
-Workspace OSは、Obsidian Vault上のMarkdownを人間とAIが共有できる永続データとして扱います。通常Task execution、Review、Revision、Organization／Identity、Project bootstrap、通常Task作成、CEO plan生成／適用はGoです。PythonはGo process gatewayと公開API referenceに限定していきます。
+Workspace OSは、Obsidian Vault上のMarkdownを人間とAIが共有できる永続データとして扱います。通常Task execution、Review、Revision、Organization／Identity、Project bootstrap、通常Task作成、CEO plan生成／適用、one-shot SchedulerはGoです。PythonはGo process gatewayと公開API referenceに限定していきます。
 
 現在のシステムを利用フローから一貫して読む場合は[System Overview](SystemOverview.md)を参照してください。この文書はpackage、port、compositionの詳細を補足します。
 
@@ -13,6 +13,8 @@ flowchart TD
     Apply --> Workflow["Go managed Project / Task"]
     Workflow --> Run["Go workspace-run"]
     API["workspace-daemon / Command API v1"] --> Run
+    API --> Scheduler["Kernel-managed one-shot Scheduler"]
+    Scheduler --> Run
     Run --> WorkflowRun["Reviewed Workflow Run Service"]
     WorkflowRun --> Execution
     WorkflowRun --> Review
@@ -58,6 +60,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0022: version付き同期Command APIをGo daemonの最初の外部入口とする](adr/ADR-0022-versioned-http-command-api-and-daemon.md)
 - [ADR-0023: Multi-task Workflowは再planする順次Task commandとして構成する](adr/ADR-0023-sequential-workflow-command-composition.md)
 - [ADR-0024: Reviewed Workflowは既存Task、Review、Revision commandを決定的に構成する](adr/ADR-0024-reviewed-workflow-branch-composition.md)
+- [ADR-0025: Schedulerは承認済みone-shot CommandをLedger経路へ配送する](adr/ADR-0025-one-shot-scheduler-command-dispatch.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -113,6 +116,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go HTTP API／workspace-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger inspection、graceful shutdownを提供し、workspace-runと同じprocess／Serviceを利用するloopback入口 |
 | Go Workflow Run Service | dependency readinessを各Task後に再planし、決定的child Command IDで既存Task executionを順次調停する。Task状態やEventは変更しない |
 | Go Reviewed Workflow Run Service | 各Task後に既存Reviewを実行し、Request Changes時は既存Revisionで作成したTaskをtargeted readinessで実行・再Reviewしてから本流へ戻す |
+| Go Scheduler Service | 承認済みone-shot Commandをoffset付き時刻で選択し、Schedule CAS後に既存Process／Command Ledgerへ配送する。Task状態やProviderは直接扱わない |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
@@ -128,6 +132,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - `Deliverables/`: AI社員が作成した成果物
 - `Reviews/`: 人間向けレビューと検証済みJSON
 - `Revisions/`: レビューから作られた修正タスクのメタデータ
+- `.workspace-os/schedules/`: one-shot Scheduleのdefinition、due time、Version／CAS、dispatch outcome
 - `Progress.md`と`Audit Log.md`: 実行・レビュー履歴
 
 ### Python
@@ -162,19 +167,21 @@ Workspace OSの製品Runtime移行は完了しています。通常Task、Review
 - `go/internal/revision`: Storage非依存のRevision intent、Store port、部分状態Result
 - `go/internal/recovery`: Storage非依存のSnapshot／finding、version付きRecovery plan、typed result
 - `go/internal/commandledger`: Storage非依存のCommand identity、request digest、running／terminal outcome、Store port
+- `go/internal/commandcontract`: HTTP／Schedulerが共有する副作用commandのstrict typed payload契約
+- `go/internal/scheduler`: Storage／transport非依存のone-shot Schedule、state、Version／CAS、Dispatcher port
 - `go/internal/runner`: model値とRunner Adapterを解決するthread-safe Registry
 - `go/internal/adapter/claude`: Anthropic Messages APIを既存Runner契約へ変換するProvider Adapter
-- `go/internal/adapter/vault`: read-only Context／Organization Loader、Project／Task／Deliverable／Review／Revision intent Store、Audit Event subscriber
+- `go/internal/adapter/vault`: read-only Context／Organization Loader、Project／Task／Deliverable／Review／Revision intent／Schedule Store、Audit Event subscriber
 - `go/internal/runtime`: Provider／Storage AdapterをServiceへ注入するprocess-neutral execution／Review／Revision composition
-- `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／reviewed Workflow／Recoveryのread-only planと明示承認付きexecute
+- `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／reviewed Workflow／Schedule／Recoveryのread-only planと明示承認付きexecute
 - `go/internal/httpapi`: version付きCommand HTTP contract、必須Command ID、同期handler、Ledger inspection、graceful server lifecycle
 - `go/internal/policy`: 明示承認とWorker失敗後の回復判断を提供する決定的Policy Domain
 - `go/internal/execution`: 1タスク実行のRequest、Result、Stage、型付きpartial failure契約
-- `go/internal/service`: Kernel向けProject/Workflow/Task/Event/Worker/Execution Facade
+- `go/internal/service`: Kernel向けProject/Workflow/Task/Event/Worker/Execution／Scheduler Facade
 - `go/internal/kernel`: サービス境界、ライフサイクル、Command調停
 - `go/internal/bootstrap`: 具体Serviceを登録するcomposition root
 - `go/cmd/workspace-core`: バージョン付きJSON契約を公開するCLI境界
-- `go/cmd/workspace-run`: Organization参照、Project／Task作成、migration、通常Task／Review／Revision／reviewed Workflow、Recoveryを公開するGo運用CLI
+- `go/cmd/workspace-run`: Organization参照、Project／Task作成、migration、通常Task／Review／Revision／reviewed Workflow、one-shot Schedule、Recoveryを公開するGo運用CLI
 - `go/cmd/workspace-daemon`: 同じprocess／Service compositionをloopback HTTPで公開するGo daemon
 
 PythonとGoは`fixtures/workflow`、`fixtures/project`、`fixtures/go_core`のJSONを共有する互換契約を維持します。次は公開Python callerがGo Core互換operationを使う場合のcompatibility境界であり、Go製品Runtimeの内部経路ではありません。
@@ -255,12 +262,11 @@ Workspace Kernel
             ↓
         Event Bus → Audit Handler
 
-将来追加
-    ├── Organization Service
-    ├── Scheduler
+追加可能
+    └── Organization Service
 ```
 
-`bootstrap.NewDefaultKernel`がProjectService、WorkflowService、TaskService、EventService、WorkerService、ExecutionServiceの具体実装を登録します。Kernel StartはEventService、TaskService、WorkerService、ExecutionServiceの順に有効化し、Kernel Stopは逆順に停止します。`kernel.status`には6 Serviceが表示されます。既存CLI Commandは従来どおり`CLI → Kernel → Service → Domain`を通り、JSON Contract v1のoperation、payload、result、error codeは変更していません。
+`bootstrap.NewDefaultKernel`がProjectService、WorkflowService、TaskService、EventService、WorkerService、ExecutionServiceの具体実装を登録します。Kernel StartはEventService、TaskService、WorkerService、ExecutionService、optional SchedulerServiceの順に有効化し、Kernel Stopは逆順に停止します。Default Kernelの`kernel.status`には従来どおり6 Serviceが表示され、daemonは別のKernel lifecycleへSchedulerを登録します。既存CLI Commandは従来どおり`CLI → Kernel → Service → Domain`を通り、JSON Contract v1のoperation、payload、result、error codeは変更していません。
 
 EventServiceはKernelのライフサイクルに従います。購読はKernel起動前に構成でき、PublishはStart後のみ受け付け、Stop後は拒否します。Kernelが保持するのはEventService interfaceだけであり、Event Bus内部実装、handler、永続化を知りません。
 
@@ -316,7 +322,7 @@ TaskService.Hold
 
 通常のcontextはPolicy、TaskService、WorkerService、Runnerまで伝播します。Worker実行中のtimeout/cancel後に失敗記録を可能にするため、Fail/Holdだけは元contextの値を維持した5秒上限のrecovery contextを使用します。同一Taskの並行実行はTaskServiceのVersion/CASが防止し、ExecutionServiceは独自lockを持ちません。
 
-Scheduler、Provider固有のLLM呼び出し、Obsidian I/OはKernelに含めません。Project/Workflow/Policy/Execution/Task/Event/Workerのビジネスルールと契約の正本は各Domainパッケージであり、Serviceは型付きFacade、Kernelはライフサイクル調停、CLIはJSON Adapterに限定します。
+Provider固有のLLM呼び出し、Schedule永続形式、Obsidian I/OはKernelに含めません。KernelはSchedulerを含むService lifecycleだけを所有します。Project/Workflow/Policy/Execution/Task/Event/Worker/Schedulerのビジネスルールと契約の正本は各Domainパッケージであり、Serviceは型付きFacade、Kernelはライフサイクル調停、CLIはJSON Adapterに限定します。
 
 ## 主要な設計原則
 

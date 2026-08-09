@@ -51,6 +51,7 @@ func (kernel *Kernel) Start() error {
 	taskService, hasTaskService := kernel.services[ServiceTask]
 	workerService, hasWorkerService := kernel.services[ServiceWorker]
 	executionService, hasExecutionService := kernel.services[ServiceExecution]
+	schedulerService, hasSchedulerService := kernel.services[ServiceScheduler]
 	kernel.mu.RUnlock()
 
 	if hasEventService {
@@ -91,6 +92,23 @@ func (kernel *Kernel) Start() error {
 			return fmt.Errorf("activate execution service: %w", err)
 		}
 	}
+	if hasSchedulerService {
+		if err := schedulerService.(SchedulerService).Start(); err != nil {
+			if hasExecutionService {
+				_ = executionService.(ExecutionService).Deactivate()
+			}
+			if hasWorkerService {
+				_ = workerService.(WorkerService).Deactivate()
+			}
+			if hasTaskService {
+				_ = taskService.(TaskService).Deactivate()
+			}
+			if hasEventService {
+				_ = eventService.(EventService).Stop()
+			}
+			return fmt.Errorf("start scheduler service: %w", err)
+		}
+	}
 
 	kernel.mu.Lock()
 	kernel.state = StateStarted
@@ -112,8 +130,14 @@ func (kernel *Kernel) Stop() error {
 	taskService, hasTaskService := kernel.services[ServiceTask]
 	workerService, hasWorkerService := kernel.services[ServiceWorker]
 	executionService, hasExecutionService := kernel.services[ServiceExecution]
+	schedulerService, hasSchedulerService := kernel.services[ServiceScheduler]
 	kernel.mu.RUnlock()
 
+	if hasSchedulerService {
+		if err := schedulerService.(SchedulerService).Stop(); err != nil {
+			return fmt.Errorf("stop scheduler service: %w", err)
+		}
+	}
 	if hasExecutionService {
 		if err := executionService.(ExecutionService).Deactivate(); err != nil {
 			return fmt.Errorf("deactivate execution service: %w", err)

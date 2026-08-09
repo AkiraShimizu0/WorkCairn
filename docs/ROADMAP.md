@@ -59,7 +59,7 @@ v1.0候補の完了条件：
 4. JSON Contract v1、既存Vault表示、公開Python v0.1 import surfaceを破壊しない。
 5. Python compatibility distributionが製品artifact／通常運用手順から分離され、物理削除条件が明文化されている。
 
-v1.0候補安定化の完了条件として先取りしなかったもの：永続Outbox、Command Ledger、Scheduler、distributed execution、汎用workflow engine、常駐daemon。その後の次期RoadmapでRecovery、Command Ledger、loopback daemon、bounded Multi-task Workflowを段階的に実装済みですが、これらはv1.0判定自体の前提へ遡及追加しません。永続Outbox、Scheduler、distributed execution、汎用workflow engineは引き続き未実装です。
+v1.0候補安定化の完了条件として先取りしなかったもの：永続Outbox、Command Ledger、Scheduler、distributed execution、汎用workflow engine、常駐daemon。その後の次期RoadmapでRecovery、Command Ledger、loopback daemon、bounded Multi-task Workflow、one-shot Schedulerを段階的に実装済みですが、これらはv1.0判定自体の前提へ遡及追加しません。永続Outbox、cron／recurring Scheduler、distributed execution、汎用workflow engineは引き続き未実装です。
 
 ## Completed — Durability and Recovery Foundation
 
@@ -140,19 +140,22 @@ ADR-0024に基づき実装済み：
 
 Review／Revision orchestration、Task lifecycle、artifact orderingを再実装せず、temporary VaultとMock Providerで`Task → Request Changes → Revision → Approve → 次Task`をEnd-to-End検証します。自動resume、並列実行、Schedulerは含めません。
 
-## Next 1 — Scheduler and Automation
+## Completed — Scheduler and Automation Foundation
 
-durable commandとworkflow runが成立してから時間駆動実行を追加します。
+ADR-0025に基づき、durable commandとworkflow runを変更せず時間駆動入口を追加しました。
 
-候補：
+実装済み：
 
-- Scheduler Domainとtrigger Store／Adapterの分離
-- scheduled commandも通常のplan、approval policy、Command Ledgerを通す
-- missed run、重複trigger、timezone、停止中復帰の規則
+- storage-neutral Scheduler Domain／ServiceとVault Schedule Store
+- exact typed `workspace-command.v1`を保存するread-only plan／明示承認create
+- pending → dispatching → terminalのVersion／CASとatomic replacement
+- missed one-shotの次tick配送、重複trigger拒否、offset付き絶対時刻
+- target Command Ledger、Kernel lifecycle、daemon graceful shutdownの再利用
+- `schedule-plan|create|list`、HTTP `schedule.create`／read-only inspection
 
-完了条件：SchedulerがTask状態やProviderを直接操作せず、再起動や重複triggerで二重実行しないこと。
+SchedulerはTask状態やProviderを直接操作せず、temporary Vault E2Eで既存writerへの一回配送とLedger terminal resultを検証します。cron／recurrence、並列配送、`dispatching`自動resume、target result adoptionは含めません。
 
-## Next 2 — Notification and Metrics
+## Next 1 — Notification and Metrics
 
 Event subscriberとして観測性を追加します。
 
@@ -165,7 +168,7 @@ Event subscriberとして観測性を追加します。
 
 完了条件：通知やMetricsの失敗がbusiness factをrollbackせず、Event／Auditの責務を侵食しないこと。
 
-## Next 3 — External Action Adapters
+## Next 2 — External Action Adapters
 
 WordPress等への公開は、Provider Runnerとは別の明示的Action Adapterとして追加します。
 

@@ -49,6 +49,11 @@ type fakeEventService struct {
 	stopCalls    int
 	publishCalls int
 }
+type fakeSchedulerService struct {
+	started    bool
+	startCalls int
+	stopCalls  int
+}
 
 var errFakeEventServiceStopped = errors.New("fake event service is stopped")
 var errFakeTaskServiceInactive = errors.New("fake task service is inactive")
@@ -71,6 +76,16 @@ func (service *fakeWorkflowService) Readiness(
 	map[string]bool,
 ) (workflow.ReadinessResult, error) {
 	return service.result, service.err
+}
+func (service *fakeSchedulerService) Start() error {
+	service.started = true
+	service.startCalls++
+	return nil
+}
+func (service *fakeSchedulerService) Stop() error {
+	service.started = false
+	service.stopCalls++
+	return nil
 }
 func (*fakeOrganizationService) IsOrganizationService() {}
 func (service *fakeTaskService) Activate() error {
@@ -225,6 +240,7 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 	task := &fakeTaskService{}
 	workerService := &fakeWorkerService{}
 	executionService := &fakeExecutionService{}
+	schedulerService := &fakeSchedulerService{}
 
 	registrations := []struct {
 		name string
@@ -237,6 +253,7 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 		{"task", kernel.RegisterTaskService(task)},
 		{"worker", kernel.RegisterWorkerService(workerService)},
 		{"execution", kernel.RegisterExecutionService(executionService)},
+		{"scheduler", kernel.RegisterSchedulerService(schedulerService)},
 	}
 	for _, registration := range registrations {
 		if registration.err != nil {
@@ -272,12 +289,17 @@ func TestServiceRegistrationAndLookup(t *testing.T) {
 	if err != nil || gotExecution != executionService {
 		t.Fatalf("ExecutionService() = %#v, %v", gotExecution, err)
 	}
+	gotScheduler, err := kernel.SchedulerService()
+	if err != nil || gotScheduler != schedulerService {
+		t.Fatalf("SchedulerService() = %#v, %v", gotScheduler, err)
+	}
 
 	wantServices := []ServiceKind{
 		ServiceEvent,
 		ServiceExecution,
 		ServiceOrganization,
 		ServiceProject,
+		ServiceScheduler,
 		ServiceTask,
 		ServiceWorker,
 		ServiceWorkflow,
@@ -314,6 +336,23 @@ func TestUnregisteredServiceIsRejected(t *testing.T) {
 	}
 	if _, err := kernel.ExecutionService(); !errors.Is(err, ErrServiceNotRegistered) {
 		t.Fatalf("ExecutionService() error = %v, want ErrServiceNotRegistered", err)
+	}
+	if _, err := kernel.SchedulerService(); !errors.Is(err, ErrServiceNotRegistered) {
+		t.Fatalf("SchedulerService() error = %v, want ErrServiceNotRegistered", err)
+	}
+}
+
+func TestKernelControlsSchedulerLifecycle(t *testing.T) {
+	workspaceKernel, _ := New("v0.3.0")
+	schedulerService := &fakeSchedulerService{}
+	if err := workspaceKernel.RegisterSchedulerService(schedulerService); err != nil {
+		t.Fatal(err)
+	}
+	if err := workspaceKernel.Start(); err != nil || !schedulerService.started {
+		t.Fatalf("Start() = %v scheduler=%#v", err, schedulerService)
+	}
+	if err := workspaceKernel.Stop(); err != nil || schedulerService.started || schedulerService.startCalls != 1 || schedulerService.stopCalls != 1 {
+		t.Fatalf("Stop() = %v scheduler=%#v", err, schedulerService)
 	}
 }
 

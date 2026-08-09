@@ -30,6 +30,10 @@ flowchart LR
     Execute -. partial failure .-> Recovery["Recovery inspect / plan"]
     Recovery --> RecoveryApproval{"Recoveryを承認"}
     RecoveryApproval --> Execute
+    SchedulePlan["one-shot Schedule plan"] --> ScheduleApproval{"将来実行を承認"}
+    ScheduleApproval --> Scheduler["Kernel-managed Scheduler"]
+    Scheduler --> ScheduledCommand["既存Command経路"]
+    ScheduledCommand --> Execute
 ```
 
 1. CEO依頼は、構造化Employee inventoryとProvider-neutralなPromptからtyped planへ変換します。
@@ -62,7 +66,7 @@ flowchart TB
 |---|---|---|
 | Kernel | Service登録、起動停止、Command調停 | Prompt本文、Markdown、Provider設定、Task規則 |
 | Domain | Task、Workflow、Policy、Organization、Review等の決定的な型とルール | Vault I/O、SDK、`.env`、ネットワーク |
-| Service | Domainとportの実行順、型付きResult／Error | Provider固有transport、Markdown形式 |
+| Service | Domainとportの実行順、Scheduler時刻調停、型付きResult／Error | Provider固有transport、Markdown形式 |
 | Adapter | Vault形式、atomic file operation、Anthropic HTTP変換 | Task状態変更、承認判断、Audit直書き |
 | Runtime／Process | 具体Adapterの注入、Event subscriber接続、CLI境界 | 新しいビジネスルール |
 
@@ -92,6 +96,7 @@ Vaultは現在の運用データの正ですが、Go Coreからはport越しに�
 - `Revisions/`: immutable intentをTask作成より先にcommitする
 - `Audit Log.md`: Event subscriberが既存互換の人間可読履歴を追記する
 - `社員/`、`会社/Workspace State.md`: Employee identityをcanonical、会社一覧をprojectionとして扱う
+- `.workspace-os/schedules/`: 承認済みone-shot Command、due time、Version／CAS、dispatch／terminal stateを持つmachine metadata
 
 単一ファイルは同一directoryのtemporary file、flush／sync、rename、directory syncで置換します。既存immutable artifactは上書きしません。Task表とmanaged metadataの欠落、破損、重複、不整合は推測せず拒否します。複数ファイル操作はtransactionではないため、各ADRのcommit orderingとpartial stateが回復判断の根拠です。
 
@@ -108,14 +113,17 @@ Vaultは現在の運用データの正ですが、Go Coreからはport越しに�
 | Revision | immutable intent → TaskService.Create → Revision Event | 成立済みintent／Taskを削除しない |
 | Organization writer | ADRで定めたcanonical commit → projection | commit済み段階をResultに保持 |
 | Recovery | read-only evidence → plan再検証 → TaskService | stale evidenceを拒否し、成立済みartifactを保持 |
+| Scheduler | pending Schedule → dispatching CAS → target Command Ledger → terminal Schedule | target factをrollbackせず、曖昧なdispatchingを自動resumeしない |
 
 retry時に既存artifactを推測してadoptせず、自動削除・上書きもしません。ADR-0020のRecovery foundationは、再起動後のTask／Deliverable／Review／Revision／Audit／temporary stateをread-onlyで診断します。確定証拠に拘束した`complete_task`と`fail_and_hold_task`だけを、plan再検証、明示承認、Task CASを経て実行します。Event replay、Review／Revision reconciliationは行いません。運用詳細は[Recovery.md](Recovery.md)を参照してください。
 
 ADR-0021のCommand Ledger foundationは、明示Command ID付き通常Task／Review／Revision、CEO apply、Project／Task writer、Organization writer、Sequential／Reviewed Workflow executionで、`running` claimを業務副作用より先にcommitします。同じID・digestのterminal outcomeは保存済みResultを返し、異なるdigestは拒否します。Project作成前とOrganization commandはworkspace scope、既存Project内commandはproject scopeへ記録します。`running` recordはcrashか実行中かを推測せず、Recoveryで診断して自動resumeしません。
 
+ADR-0025のSchedulerは、明示承認されたone-shot `workspace-command.v1`を`.workspace-os/schedules`へ保存します。dueまたはmissed tickではScheduleを`dispatching`へCAS commitしてから、同じtarget Command ID／payloadを既存Processへ渡します。targetのTask／Review／Revision／Audit規則を再実装せず、crash後の`dispatching`、failure、recovery requiredをread-only inspectionへ残します。
+
 ## Go Only RuntimeとPython compatibility
 
-製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、AuditにPython interpreterは不要です。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。Go sourceが外部interpreterを起動しないことをRelease Gateで検査します。
+製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot SchedulerにPython interpreterは不要です。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。Go sourceが外部interpreterを起動しないことをRelease Gateで検査します。
 
 Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ残します。既存import pathと`workspace-ai` entry pointを維持しますが、製品Runtimeではありません。Python gatewayはGo JSON v1 processへ明示的に接続し、失敗時にPython Worker、Provider、writerへfallbackしません。legacy moduleは新規機能追加禁止のreference実装です。
 
@@ -126,9 +134,10 @@ Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ�
 - Event配送は永続化されず、process crash後の自動再配送はない。欠落は原因不明として診断する
 - 既存artifactを使った自動retry／adoption／projection再構成はない。安全なTask partial stateだけ明示Recoveryできる
 - Durable Command判定は明示Command ID付き主要writerへ適用済み。ID未指定実行と専用migration／Recovery操作は再送保証を持たない
-- 複数Task orchestrationはboundedな同期runであり、durable queue、自動resume、Schedulerはない
+- 複数Task orchestrationはboundedな同期runであり、durable queueや自動resumeはない
 - HTTP daemonのremote公開、認証／TLS、非同期queueは未実装。現在はloopback同期Command APIだけ
-- Reviewed Multi-task WorkflowはTaskごとにReviewし、Request ChangesならRevision Taskを実行・再Reviewする。自動resume、並列実行、Schedulerは未実装
+- Reviewed Multi-task WorkflowはTaskごとにReviewし、Request ChangesならRevision Taskを実行・再Reviewする。自動resume、並列実行は未実装
+- Schedulerはone-shotだけで、cron／recurrence、並列配送、`dispatching` reconciliationは未実装
 - 外部Action Adapterはまだ製品入口ではない
 - Python compatibility APIは公開互換方針が終了するまでrepositoryに残る
 

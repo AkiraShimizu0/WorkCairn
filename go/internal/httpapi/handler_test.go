@@ -14,8 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 )
 
 type fakeCommandBackend struct {
@@ -140,6 +144,65 @@ func TestProcessExecutorRecognizesReviewedWorkflowV1Command(t *testing.T) {
 	record, inspectErr := executor.Inspect(context.Background(), "project", "P", "CMD-HTTP-REVIEWED-WORKFLOW-001")
 	if inspectErr != nil || record.Operation != "workflow.reviewed.execute" || record.State != commandledger.StateFailed {
 		t.Fatalf("reviewed Workflow command record = %#v, %v", record, inspectErr)
+	}
+}
+
+func TestScheduledHTTPCommandDispatchesThroughExistingWriterOnce(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "プロジェクト"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(executor, executor)
+	bootstrap := map[string]any{
+		"version": ContractVersion, "command_id": "CMD-SCHEDULE-PROJECT-001", "operation": "project.bootstrap", "approved": true,
+		"payload": map[string]any{"project_id": "PROJECT-001", "project_name": "自動化案件", "description": "schedule test", "current_time": "2026-08-09T12:00:00+09:00"},
+	}
+	if response := performCommand(t, handler, bootstrap); response.Code != http.StatusOK {
+		t.Fatalf("bootstrap = %d %s", response.Code, response.Body.String())
+	}
+	schedule := map[string]any{
+		"version": ContractVersion, "command_id": "CMD-CREATE-SCHEDULE-001", "operation": "schedule.create", "approved": true,
+		"payload": map[string]any{
+			"schedule_id": "SCHEDULE-001", "due_at": "2026-08-09T13:00:00+09:00", "current_time": "2026-08-09T12:30:00+09:00", "approval_reference": "approval-schedule-001",
+			"target": map[string]any{
+				"version": ContractVersion, "command_id": "CMD-SCHEDULED-TASK-CREATE-001", "operation": "task.create",
+				"payload": map[string]any{"project_name": "自動化案件", "title": "予定されたTask", "assignee_id": nil, "current_time": "2026-08-09T13:00:00+09:00"},
+			},
+		},
+	}
+	if response := performCommand(t, handler, schedule); response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"state":"pending"`)) {
+		t.Fatalf("schedule create = %d %s", response.Code, response.Body.String())
+	}
+	for _, path := range []string{"/v1/schedules", "/v1/schedules/SCHEDULE-001"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"schedule_id":"SCHEDULE-001"`)) {
+			t.Fatalf("schedule inspect %s = %d %s", path, response.Code, response.Body.String())
+		}
+	}
+	store, _ := vault.NewScheduleStore(root)
+	schedulerService, _ := service.NewSchedulerService(store, executor, service.SchedulerConfig{PollInterval: time.Hour, Now: time.Now})
+	due := time.Date(2026, time.August, 9, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	run, err := schedulerService.RunDue(context.Background(), due)
+	if err != nil || len(run.Records) != 1 || run.Records[0].State != scheduler.StateSucceeded {
+		t.Fatalf("RunDue() = %#v, %v", run, err)
+	}
+	if _, err := schedulerService.RunDue(context.Background(), due.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	taskStore, _ := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: root, ProjectName: "自動化案件"})
+	created, err := taskStore.Get(context.Background(), "TASK-001")
+	if err != nil || created.Title != "予定されたTask" || created.Status != task.StatusUnstarted {
+		t.Fatalf("scheduled Task = %#v, %v", created, err)
+	}
+	commandRecord, err := executor.Inspect(context.Background(), "project", "自動化案件", "CMD-SCHEDULED-TASK-CREATE-001")
+	if err != nil || commandRecord.State != commandledger.StateSucceeded {
+		t.Fatalf("scheduled Command record = %#v, %v", commandRecord, err)
 	}
 }
 

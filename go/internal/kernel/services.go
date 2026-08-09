@@ -26,6 +26,7 @@ const (
 	ServiceOrganization ServiceKind = "organization"
 	ServiceTask         ServiceKind = "task"
 	ServiceWorker       ServiceKind = "worker"
+	ServiceScheduler    ServiceKind = "scheduler"
 )
 
 var (
@@ -96,6 +97,13 @@ type ExecutionService interface {
 	Execute(ctx context.Context, request execution.Request) (execution.Result, error)
 }
 
+// SchedulerService is the Kernel-owned timing lifecycle. Command validation,
+// persistence, and dispatch remain behind the concrete Service ports.
+type SchedulerService interface {
+	Start() error
+	Stop() error
+}
+
 func (kernel *Kernel) RegisterProjectService(service ProjectService) error {
 	return kernel.registerService(ServiceProject, service)
 }
@@ -122,6 +130,10 @@ func (kernel *Kernel) RegisterWorkerService(service WorkerService) error {
 
 func (kernel *Kernel) RegisterExecutionService(service ExecutionService) error {
 	return kernel.registerService(ServiceExecution, service)
+}
+
+func (kernel *Kernel) RegisterSchedulerService(service SchedulerService) error {
+	return kernel.registerService(ServiceScheduler, service)
 }
 
 func (kernel *Kernel) ProjectService() (ProjectService, error) {
@@ -178,6 +190,14 @@ func (kernel *Kernel) ExecutionService() (ExecutionService, error) {
 		return nil, err
 	}
 	return service.(ExecutionService), nil
+}
+
+func (kernel *Kernel) SchedulerService() (SchedulerService, error) {
+	service, err := kernel.service(ServiceScheduler)
+	if err != nil {
+		return nil, err
+	}
+	return service.(SchedulerService), nil
 }
 
 func (kernel *Kernel) registerService(kind ServiceKind, service any) error {

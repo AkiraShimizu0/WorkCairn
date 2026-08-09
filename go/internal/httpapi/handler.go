@@ -12,14 +12,21 @@ import (
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
 )
 
 const maxCommandRequestBytes = 2 << 20
 
 type Handler struct {
-	executor  Executor
-	inspector Inspector
-	mux       *http.ServeMux
+	executor          Executor
+	inspector         Inspector
+	scheduleInspector ScheduleInspector
+	mux               *http.ServeMux
+}
+
+type ScheduleInspector interface {
+	InspectSchedules(ctx context.Context) ([]scheduler.Record, error)
+	InspectSchedule(ctx context.Context, scheduleID string) (scheduler.Record, error)
 }
 
 func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
@@ -31,7 +38,46 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 	handler.mux.HandleFunc("GET /readyz", handler.ready)
 	handler.mux.HandleFunc("POST /v1/commands", handler.execute)
 	handler.mux.HandleFunc("GET /v1/commands/{command_id}", handler.inspect)
+	if scheduleInspector, ok := executor.(ScheduleInspector); ok {
+		handler.scheduleInspector = scheduleInspector
+		handler.mux.HandleFunc("GET /v1/schedules", handler.inspectSchedules)
+		handler.mux.HandleFunc("GET /v1/schedules/{schedule_id}", handler.inspectSchedule)
+	}
 	return handler, nil
+}
+
+func (handler *Handler) inspectSchedules(response http.ResponseWriter, request *http.Request) {
+	records, err := handler.scheduleInspector.InspectSchedules(request.Context())
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "SCHEDULE_INSPECTION_FAILED", RecoveryRequired: true}})
+		return
+	}
+	encoded, err := json.Marshal(records)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, OK: true, Result: encoded})
+}
+
+func (handler *Handler) inspectSchedule(response http.ResponseWriter, request *http.Request) {
+	record, err := handler.scheduleInspector.InspectSchedule(request.Context(), request.PathValue("schedule_id"))
+	if err != nil {
+		status, code := http.StatusInternalServerError, "SCHEDULE_INSPECTION_FAILED"
+		if errors.Is(err, scheduler.ErrNotFound) {
+			status, code = http.StatusNotFound, "SCHEDULE_NOT_FOUND"
+		} else if errors.Is(err, scheduler.ErrInvalidSchedule) {
+			status, code = http.StatusBadRequest, "INVALID_SCHEDULE_ID"
+		}
+		writeCommandResponse(response, status, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: code, RecoveryRequired: status == http.StatusInternalServerError}})
+		return
+	}
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, OK: true, Result: encoded})
 }
 
 func (handler *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {

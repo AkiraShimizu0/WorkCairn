@@ -4,6 +4,8 @@ flowchart TD
     CEOApply --> Managed["Go managed Project / Task"]
     Managed --> Run["Go workspace-run"]
     API["workspace-daemon / Command API v1"] --> Run
+    API --> Scheduler["Kernel-managed one-shot Scheduler"]
+    Scheduler --> Run
     Run --> WorkflowRun["Reviewed Workflow Run Service"]
     WorkflowRun --> Execution
     WorkflowRun --> Review

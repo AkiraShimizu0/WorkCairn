@@ -1,0 +1,17 @@
+{
+  "schedule_id": "SCHEDULE-001",
+  "due_at": "2026-08-10T09:30:00+09:00",
+  "approval_reference": "approval-001",
+  "target": {
+    "version": "workspace-command.v1",
+    "command_id": "CMD-SCHEDULED-001",
+    "operation": "workflow.reviewed.execute",
+    "payload": {
+      "project_id": "PROJECT-001",
+      "project_name": "P",
+      "reviewer_id": "QA-001",
+      "current_time": "2026-08-10T09:30:00+09:00",
+      "max_tasks": 10
+    }
+  }
+}
