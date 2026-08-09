@@ -61,7 +61,7 @@ Interaction Sessionの開始前planはread-only `POST /v1/interaction-plans`、P
 
 Payloadはunknown fieldを拒否します。CEO plan generation、read-only plan／inspection、migration、Recovery applyはこのeffect Command endpointへ含めません。
 
-`GET /v1/interactions`と`GET /v1/interactions/{session_id}`はappend-only turn、state、Versionをread-onlyで返します。Workflow turnは完全Result digestとbounded summaryを返し、Deliverable本文は複製しません。Sessionには自然言語requestとplanが含まれるため、Notificationと異なりredacted endpointではありません。loopback外へ公開しないでください。Interaction commandは人間の質問回答・承認を必要とするためScheduler対象ではありません。
+`GET /v1/interactions`と`GET /v1/interactions/{session_id}`はappend-only turn、state、Versionをread-onlyで返します。`GET /v1/interactions/{session_id}/next`は次のoperation、必要field、質問、承認要否、attention時のLedger参照を決定的に返します。Workflow turnは完全Result digestとbounded summaryを返し、Deliverable本文は複製しません。Sessionには自然言語requestとplanが含まれるため、Notificationと異なりredacted endpointではありません。loopback外へ公開しないでください。Interaction commandは人間の質問回答・承認を必要とするためScheduler対象ではありません。
 
 `GET /v1/schedules`と`GET /v1/schedules/{schedule_id}`はone-shot Scheduleのpending／dispatching／terminal stateをread-onlyで返します。daemonは`--scheduler-interval`ごとにdueまたはmissed pending Scheduleを確認し、保存済みの同一Command ID／payloadを既存Processへ配送します。`dispatching`は自動resumeしません。
 

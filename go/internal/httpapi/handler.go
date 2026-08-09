@@ -50,6 +50,7 @@ type NotificationInspector interface {
 type InteractionInspector interface {
 	InspectInteractions(ctx context.Context) ([]interaction.Record, error)
 	InspectInteraction(ctx context.Context, sessionID string) (interaction.Record, error)
+	InspectInteractionNext(ctx context.Context, sessionID string) (interaction.NextAction, error)
 }
 
 type InteractionPlanner interface {
@@ -91,6 +92,7 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 		handler.interactionInspector = interactionInspector
 		handler.mux.HandleFunc("GET /v1/interactions", handler.inspectInteractions)
 		handler.mux.HandleFunc("GET /v1/interactions/{session_id}", handler.inspectInteraction)
+		handler.mux.HandleFunc("GET /v1/interactions/{session_id}/next", handler.inspectInteractionNext)
 	}
 	if interactionPlanner, ok := executor.(InteractionPlanner); ok {
 		handler.interactionPlanner = interactionPlanner
@@ -105,6 +107,26 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 		handler.mux.HandleFunc("POST /v1/interaction-action-plans", handler.planInteractionAction)
 	}
 	return handler, nil
+}
+
+func (handler *Handler) inspectInteractionNext(response http.ResponseWriter, request *http.Request) {
+	next, err := handler.interactionInspector.InspectInteractionNext(request.Context(), request.PathValue("session_id"))
+	if err != nil {
+		status, code := http.StatusInternalServerError, "INTERACTION_INSPECTION_FAILED"
+		if errors.Is(err, interaction.ErrNotFound) {
+			status, code = http.StatusNotFound, "INTERACTION_NOT_FOUND"
+		} else if errors.Is(err, interaction.ErrInvalidSession) {
+			status, code = http.StatusBadRequest, "INVALID_SESSION_ID"
+		}
+		writeCommandResponse(response, status, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: code, RecoveryRequired: status == http.StatusInternalServerError}})
+		return
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: InteractionContractVersion, OK: true, Result: encoded})
 }
 
 func (handler *Handler) planInteractionAction(response http.ResponseWriter, request *http.Request) {

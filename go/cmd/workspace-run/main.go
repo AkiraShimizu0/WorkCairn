@@ -231,6 +231,15 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
 		return 0
 	}
+	if operation == "interaction-next" {
+		next, err := workspaceprocess.InspectInteractionNext(ctx, options.vaultRoot, options.sessionID)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("INTERACTION_INSPECTION_FAILED", ""))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: next})
+		return 0
+	}
 	if operation == "recovery-plan" {
 		plan, err := workspaceprocess.PlanTaskRecovery(ctx, workspaceprocess.RecoveryInput{
 			VaultRoot: options.vaultRoot, ProjectName: options.projectName,
@@ -1023,7 +1032,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	if operation == "interaction-start" {
 		required = append(required, options.requestDigest, options.commandID)
 	}
-	if operation == "interaction-inspect" || operation == "interaction-plan-generate" || operation == "interaction-answer" || operation == "interaction-plan-apply" {
+	if operation == "interaction-inspect" || operation == "interaction-next" || operation == "interaction-plan-generate" || operation == "interaction-answer" || operation == "interaction-plan-apply" {
 		required = append(required, options.sessionID)
 	}
 	if operation == "interaction-workflow-plan" || operation == "interaction-workflow-execute" {
@@ -1111,7 +1120,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish":
+	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish":
 		return true
 	default:
 		return false

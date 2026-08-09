@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
 )
 
 func TestSessionRequiresClarificationBeforePlanApproval(t *testing.T) {
@@ -150,6 +151,42 @@ func TestWorkflowFailureRequiresTypedEvidenceAndStopsSession(t *testing.T) {
 	invalid := interactionWorkflowEvidence(WorkflowStatusFailed)
 	if _, err := ready.RecordWorkflow(invalid, at.Add(3*time.Minute)); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("missing failure evidence error = %v", err)
+	}
+}
+
+func TestNextActionProjectionGuidesApprovalCompletionAndRecovery(t *testing.T) {
+	at := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	ready := interactionReadyRecord(t, at)
+	next, err := ready.Next()
+	if err != nil || next.Kind != NextApproveWorkflow || next.Operation != "interaction.workflow.execute" || !next.ApprovalRequired ||
+		next.ExpectedVersion != ready.Version || next.ProjectID != "PROJECT-001" {
+		t.Fatalf("ready Next() = %#v, %v", next, err)
+	}
+	completedEvidence := interactionWorkflowEvidence(WorkflowStatusCompleted)
+	completedEvidence.Tasks = []WorkflowTaskEvidence{{
+		TaskID: "TASK-001", ExecutionCommandID: "CMD-TASK-001", ReviewCommandID: "CMD-REVIEW-001", Verdict: review.VerdictApprove,
+	}}
+	completed, err := ready.RecordWorkflow(completedEvidence, at.Add(3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err = completed.Next()
+	if err != nil || next.Kind != NextOptionalAction || len(next.EligibleTaskIDs) != 1 || next.EligibleTaskIDs[0] != "TASK-001" {
+		t.Fatalf("completed Next() = %#v, %v", next, err)
+	}
+	actionAttention, err := completed.RecordAction(ActionEvidence{
+		SchemaVersion: 1, CommandID: "CMD-INTERACTION-ACTION", ActionCommandID: "CMD-ACTION-CHILD",
+		ProjectID: "PROJECT-001", ProjectName: "案件", TaskID: "TASK-001", TargetID: "site-main",
+		SourceSHA256: strings.Repeat("0", 64), Status: ActionStatusFailed,
+		ResultDigest: "sha256:" + strings.Repeat("1", 64),
+		Failure:      &WorkflowFailure{Code: "ACTION_CONFIG_INVALID", Stage: "action_configuration", Partial: false},
+	}, at.Add(4*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err = actionAttention.Next()
+	if err != nil || next.Kind != NextInspectAction || len(next.Commands) != 2 || next.Commands[1].Scope != "project" {
+		t.Fatalf("Action attention Next() = %#v, %v", next, err)
 	}
 }
 

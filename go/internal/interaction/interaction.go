@@ -173,6 +173,40 @@ type Record struct {
 	Turns         []Turn    `json:"turns"`
 }
 
+type NextActionKind string
+
+const (
+	NextApprovePlanGeneration NextActionKind = "approve_plan_generation"
+	NextAnswerClarifications  NextActionKind = "answer_clarifications"
+	NextApprovePlanApply      NextActionKind = "approve_plan_apply"
+	NextApproveWorkflow       NextActionKind = "approve_workflow"
+	NextInspectWorkflow       NextActionKind = "inspect_workflow_recovery"
+	NextOptionalAction        NextActionKind = "optional_external_action_or_done"
+	NextInspectAction         NextActionKind = "inspect_action_recovery"
+	NextDone                  NextActionKind = "done"
+)
+
+type CommandReference struct {
+	Scope       string `json:"scope"`
+	ProjectName string `json:"project_name,omitempty"`
+	CommandID   string `json:"command_id"`
+}
+
+type NextAction struct {
+	Kind             NextActionKind     `json:"kind"`
+	Operation        string             `json:"operation,omitempty"`
+	SessionID        string             `json:"session_id"`
+	ExpectedVersion  uint64             `json:"expected_version"`
+	ApprovalRequired bool               `json:"approval_required"`
+	RequiredFields   []string           `json:"required_fields"`
+	Questions        []string           `json:"questions,omitempty"`
+	PlanDigest       string             `json:"plan_digest,omitempty"`
+	ProjectID        string             `json:"project_id,omitempty"`
+	ProjectName      string             `json:"project_name,omitempty"`
+	EligibleTaskIDs  []string           `json:"eligible_task_ids,omitempty"`
+	Commands         []CommandReference `json:"commands,omitempty"`
+}
+
 func New(sessionID, request, model string, createdAt time.Time) (Record, error) {
 	sessionID, request, model = strings.TrimSpace(sessionID), strings.TrimSpace(request), strings.TrimSpace(model)
 	if !sessionIDPattern.MatchString(sessionID) || request == "" || len(request) > 32<<10 || model == "" ||
@@ -420,6 +454,79 @@ func (record Record) LatestWorkflow() (WorkflowEvidence, bool) {
 		}
 	}
 	return WorkflowEvidence{}, false
+}
+
+func (record Record) Next() (NextAction, error) {
+	if record.Validate() != nil {
+		return NextAction{}, ErrInvalidSession
+	}
+	next := NextAction{
+		SessionID: record.SessionID, ExpectedVersion: record.Version,
+		RequiredFields: []string{}, Commands: []CommandReference{},
+	}
+	projectID, projectName, _ := record.AppliedProject()
+	next.ProjectID, next.ProjectName = projectID, projectName
+	switch record.State {
+	case StatePlanGenerationApprovalRequired:
+		next.Kind, next.Operation, next.ApprovalRequired = NextApprovePlanGeneration, "interaction.plan.generate", true
+		next.RequiredFields = []string{"command_id", "current_time"}
+	case StateClarificationRequired:
+		plan, _, ok := record.CurrentPlan()
+		if !ok {
+			return NextAction{}, ErrInvalidSession
+		}
+		next.Kind, next.Operation, next.ApprovalRequired = NextAnswerClarifications, "interaction.answer", true
+		next.RequiredFields = []string{"answers", "command_id", "current_time"}
+		next.Questions = cloneStrings(plan.CEOQuestions)
+	case StatePlanApprovalRequired:
+		plan, digest, ok := record.CurrentPlan()
+		if !ok {
+			return NextAction{}, ErrInvalidSession
+		}
+		next.Kind, next.Operation, next.ApprovalRequired = NextApprovePlanApply, "interaction.plan.apply", true
+		next.RequiredFields = []string{"project_id", "command_id", "current_time"}
+		next.PlanDigest = digest
+		next.ProjectName = plan.ProjectName
+	case StateReadyToExecute:
+		next.Kind, next.Operation, next.ApprovalRequired = NextApproveWorkflow, "interaction.workflow.execute", true
+		next.RequiredFields = []string{"reviewer_id", "max_tasks", "workflow_plan_digest", "command_id", "current_time"}
+	case StateWorkflowAttentionRequired:
+		next.Kind = NextInspectWorkflow
+		workflow, ok := record.LatestWorkflow()
+		if !ok {
+			return NextAction{}, ErrInvalidSession
+		}
+		next.Commands = []CommandReference{
+			{Scope: "workspace", CommandID: workflow.CommandID},
+			{Scope: "project", ProjectName: workflow.ProjectName, CommandID: workflow.WorkflowCommandID},
+		}
+	case StateCompleted:
+		next.Kind, next.Operation, next.ApprovalRequired = NextOptionalAction, "interaction.action.wordpress.publish", true
+		next.RequiredFields = []string{"task_id", "target_id", "action_plan_digest", "command_id", "current_time"}
+		workflow, ok := record.LatestWorkflow()
+		if !ok {
+			return NextAction{}, ErrInvalidSession
+		}
+		next.EligibleTaskIDs = make([]string, 0, len(workflow.Tasks))
+		for _, current := range workflow.Tasks {
+			next.EligibleTaskIDs = append(next.EligibleTaskIDs, current.TaskID)
+		}
+	case StateActionAttentionRequired:
+		next.Kind = NextInspectAction
+		for index := len(record.Turns) - 1; index >= 0; index-- {
+			if record.Turns[index].Action != nil {
+				actionEvidence := record.Turns[index].Action
+				next.Commands = []CommandReference{
+					{Scope: "workspace", CommandID: actionEvidence.CommandID},
+					{Scope: "project", ProjectName: actionEvidence.ProjectName, CommandID: actionEvidence.ActionCommandID},
+				}
+				break
+			}
+		}
+	case StateActionCompleted:
+		next.Kind = NextDone
+	}
+	return next, nil
 }
 
 func (record Record) PlanningRequest() (string, error) {

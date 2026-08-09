@@ -329,7 +329,7 @@ bin/workspace-run interaction-action-wordpress-publish --vault /path/to/vault \
   --command-id CMD-SESSION-ACTION-001 --approved
 ```
 
-各実行前に`interaction-inspect`でstateとVersionを確認します。Workflowは既存Reviewed Workflowを使い、Acceptなら次Task、Request ChangesならRevisionと再Reviewへ進みます。`blocked`／`limit_reached`は新しいplanと承認で継続でき、`workflow_attention_required`はLedger／Recovery確認までSessionから再実行しません。Workflow完了後のWordPress公開は任意で、明示Task／targetと別のsource digest承認を要求します。公開互換の直接`ceo-plan-*`は残りますが、Interaction経路は未回答質問をblockします。自動resumeや既存Project adoptionは行いません。
+各実行前に`interaction-next`で、次のoperation、expected Version、必要field、質問、承認要否、attention時のLedger参照を確認できます。Workflowは既存Reviewed Workflowを使い、Acceptなら次Task、Request ChangesならRevisionと再Reviewへ進みます。`blocked`／`limit_reached`は新しいplanと承認で継続でき、`workflow_attention_required`はLedger／Recovery確認までSessionから再実行しません。Workflow完了後のWordPress公開は任意で、明示Task／targetと別のsource digest承認を要求します。公開互換の直接`ceo-plan-*`は残りますが、Interaction経路は未回答質問をblockします。自動resumeや既存Project adoptionは行いません。
 
 ### Partial stateを診断・明示Recoveryする
 

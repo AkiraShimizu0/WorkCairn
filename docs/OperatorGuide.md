@@ -56,6 +56,8 @@ read-only plan
 
 自然言語依頼を継続して扱う場合はInteraction Sessionを使います。`interaction-start-plan`のrequest digestを確認してstartし、Provider呼出し前にSession Versionを承認します。`clarification_required`では表示された全質問へ`interaction-answer`で回答し、再度`interaction-plan-generate`します。`plan_approval_required`になった最新plan digestだけを`interaction-plan-apply`へ渡します。
 
+各段階では`interaction-next`をread-onlyで実行すると、次のoperation、expected Version、必要field、質問、承認要否が得られます。attention stateではouter／child Command参照を返しますが、Recoveryや再実行を自動開始しません。
+
 Sessionは回答と承認を調停するevidenceであり、Project／Taskの正本ではありません。Provider成功後またはProject／Task commit後にSession CASが失敗した場合、既存効果を削除せずworkspace Command Ledgerと`interaction-inspect`を確認します。同じCommand IDで推測再実行せず、自動adoptionもしません。
 
 Project適用後は`interaction-workflow-plan`でreviewer ID、Task上限、Session Version、次stepに拘束されたdigestを確認し、`interaction-workflow-execute`へ渡します。実行は既存Reviewed Workflowを再利用します。SessionのWorkflow turnは完全Resultのdigestとchild Command IDを保持するため、詳細はproject scopeのWorkflow Command Ledgerと各Deliverable／Review／Revision evidenceで確認します。`blocked`／`limit_reached`は最新Versionで再planし、`workflow_attention_required`は自動再開せずRecoveryを先に確認します。

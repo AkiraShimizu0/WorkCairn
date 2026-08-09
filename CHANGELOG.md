@@ -14,6 +14,7 @@
 - 自然言語依頼、CEO質問回答、再plan、digest承認、Project／Task適用を継続するInteraction Sessionを追加。
 - Interaction Sessionから既存Reviewed Workflowを決定的child Commandとして実行し、Review／Revision結果をdigest付きtyped summaryで記録。
 - completed Interaction Sessionから明示Deliverableを既存WordPress Actionへ別承認で引き渡す任意handoffを追加。
+- Interaction stateから次の質問、承認、operation、Recovery参照を導出するread-only next-action projectionを追加。
 
 ### Security
 

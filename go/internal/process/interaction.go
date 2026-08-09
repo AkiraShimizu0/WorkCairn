@@ -326,6 +326,14 @@ func InspectInteractions(ctx context.Context, vaultRoot string) ([]interaction.R
 	return interactionService.List(ctx)
 }
 
+func InspectInteractionNext(ctx context.Context, vaultRoot, sessionID string) (interaction.NextAction, error) {
+	record, err := InspectInteraction(ctx, vaultRoot, sessionID)
+	if err != nil {
+		return interaction.NextAction{}, err
+	}
+	return record.Next()
+}
+
 func newInteractionService(vaultRoot string) (*service.InteractionService, error) {
 	store, err := vault.NewInteractionStore(vaultRoot)
 	if err != nil {

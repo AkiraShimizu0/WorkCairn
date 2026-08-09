@@ -161,6 +161,12 @@ func TestInteractionPlanStartReplayAndReadOnlyInspectionHTTP(t *testing.T) {
 			t.Fatalf("inspection %s = %d %s", path, inspection.Code, inspection.Body.String())
 		}
 	}
+	nextResponse := httptest.NewRecorder()
+	handler.ServeHTTP(nextResponse, httptest.NewRequest(http.MethodGet, "/v1/interactions/SESSION-HTTP-001/next", nil))
+	if nextResponse.Code != http.StatusOK || !strings.Contains(nextResponse.Body.String(), string(interaction.NextApprovePlanGeneration)) ||
+		!strings.Contains(nextResponse.Body.String(), `"expected_version":1`) {
+		t.Fatalf("Interaction next = %d %s", nextResponse.Code, nextResponse.Body.String())
+	}
 }
 
 func TestInteractionWorkflowPlanHTTPUsesVersionedReadOnlyContract(t *testing.T) {

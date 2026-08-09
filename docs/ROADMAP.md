@@ -249,7 +249,7 @@ Workflow完了後、ユーザーへ「完了」または既存Deliverableに対�
 
 ADR-0030に基づき、completed Workflow evidence内の明示Taskだけを、prospective outer Command IDから導出した既存WordPress Action child Commandへ渡します。read-only planはsource／Action digestを固定し、成功は`action_completed`、失敗／partialは`action_attention_required`としてbounded evidenceをSessionへappendします。
 
-## Next 1 — Interaction Next-action Read Model
+## Completed — Interaction Next-action Read Model
 
 現在のSession stateを利用者が独自解釈せず、次に必要な質問、plan、承認、Recovery確認、完了を1つのread-only projectionとして取得できるようにします。
 
@@ -259,6 +259,19 @@ ADR-0030に基づき、completed Workflow evidence内の明示Taskだけを、pr
 - 自動承認、自動実行、自動Recoveryへ変換しない
 
 これはchat UIやagent loopではなく、CLI／loopback clientが「必要な質問・承認だけ」を表示するための薄いread modelです。
+
+`interaction-next`とHTTP next endpointは、closed Session stateと最新turnだけからoperation、expected Version、必要field、質問、承認要否、attention時のouter／child Ledger参照を返します。Provider、writer、Recoveryを呼ばず、credential、Prompt、Deliverable本文を含みません。
+
+## Next 1 — Guided Local Interaction Client
+
+既存Interaction plan／command／next endpointを使い、利用者が個別operation名を組み立てずに自然言語依頼、質問回答、digest確認、明示承認を順に進められるlocal clientを検討します。
+
+- Domain／Processを再実装せず、既存loopback APIのclientに限定する
+- approval promptで対象digest、Project、reviewer、Task上限、外部Actionを明示する
+- attention stateでは自動継続せずLedger／Recovery案内へ止める
+- credentialをclient historyやSessionへ保存しない
+
+interactive TUI、browser UI、remote authenticationのどれを最初の配布形にするかは、現在のlocal-only security boundaryとpublic release形態を合わせて決めます。Domain契約の追加は不要です。
 
 ## Python Compatibility End of Life
 

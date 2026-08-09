@@ -97,6 +97,11 @@ func TestInteractionStartPlanIsReadOnlyAndGenerationNeedsApprovalBeforeProviderC
 	if exit := run(context.Background(), startArgs, &output, commandDependencies{}); exit != 0 {
 		t.Fatalf("Interaction start exit=%d response=%s", exit, output.String())
 	}
+	output.Reset()
+	if exit := run(context.Background(), []string{"interaction-next", "--vault", root, "--session-id", "SESSION-CLI-001"}, &output, commandDependencies{}); exit != 0 ||
+		!bytes.Contains(output.Bytes(), []byte(`"kind":"approve_plan_generation"`)) || !bytes.Contains(output.Bytes(), []byte(`"expected_version":1`)) {
+		t.Fatalf("Interaction next exit=%d response=%s", exit, output.String())
+	}
 
 	environmentRead, httpConstructed := false, false
 	output.Reset()
