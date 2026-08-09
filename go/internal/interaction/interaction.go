@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
@@ -38,12 +39,15 @@ const (
 	StateReadyToExecute                 State = "ready_to_execute"
 	StateWorkflowAttentionRequired      State = "workflow_attention_required"
 	StateCompleted                      State = "completed"
+	StateActionCompleted                State = "action_completed"
+	StateActionAttentionRequired        State = "action_attention_required"
 )
 
 func (state State) Valid() bool {
 	return state == StatePlanGenerationApprovalRequired || state == StateClarificationRequired ||
 		state == StatePlanApprovalRequired || state == StateReadyToExecute ||
-		state == StateWorkflowAttentionRequired || state == StateCompleted
+		state == StateWorkflowAttentionRequired || state == StateCompleted ||
+		state == StateActionCompleted || state == StateActionAttentionRequired
 }
 
 type TurnKind string
@@ -53,7 +57,20 @@ const (
 	TurnClarificationAnswered TurnKind = "clarification_answered"
 	TurnPlanApplied           TurnKind = "plan_applied"
 	TurnWorkflowRecorded      TurnKind = "workflow_recorded"
+	TurnActionRecorded        TurnKind = "action_recorded"
 )
+
+type ActionStatus string
+
+const (
+	ActionStatusPublished      ActionStatus = "published"
+	ActionStatusFailed         ActionStatus = "failed"
+	ActionStatusPartialFailure ActionStatus = "partial_failure"
+)
+
+func (status ActionStatus) Valid() bool {
+	return status == ActionStatusPublished || status == ActionStatusFailed || status == ActionStatusPartialFailure
+}
 
 type WorkflowStatus string
 
@@ -108,6 +125,25 @@ type WorkflowEvidence struct {
 	Failure           *WorkflowFailure       `json:"failure,omitempty"`
 }
 
+type ActionEvidence struct {
+	SchemaVersion   int                 `json:"schema_version"`
+	CommandID       string              `json:"command_id"`
+	ActionCommandID string              `json:"action_command_id"`
+	ProjectID       string              `json:"project_id"`
+	ProjectName     string              `json:"project_name"`
+	TaskID          string              `json:"task_id"`
+	TargetID        string              `json:"target_id"`
+	SourceSHA256    string              `json:"source_sha256"`
+	Status          ActionStatus        `json:"status"`
+	ResultDigest    string              `json:"result_digest"`
+	Intent          *action.Evidence    `json:"intent,omitempty"`
+	Publication     *action.Publication `json:"publication,omitempty"`
+	Outcome         *action.Evidence    `json:"outcome,omitempty"`
+	EventID         string              `json:"event_id,omitempty"`
+	EventPublished  bool                `json:"event_published"`
+	Failure         *WorkflowFailure    `json:"failure,omitempty"`
+}
+
 type Answer struct {
 	Question string `json:"question"`
 	Answer   string `json:"answer"`
@@ -122,6 +158,7 @@ type Turn struct {
 	ProjectID   string            `json:"project_id,omitempty"`
 	ProjectName string            `json:"project_name,omitempty"`
 	Workflow    *WorkflowEvidence `json:"workflow,omitempty"`
+	Action      *ActionEvidence   `json:"action,omitempty"`
 }
 
 type Record struct {
@@ -196,6 +233,7 @@ func (record Record) Validate() error {
 	var activePlan *ceoplan.Plan
 	activeDigest := ""
 	activeProjectID, activeProjectName := "", ""
+	var latestWorkflow *WorkflowEvidence
 	for _, turn := range record.Turns {
 		if turn.At.IsZero() || turn.At.Before(lastAt) {
 			return ErrInvalidSession
@@ -204,7 +242,7 @@ func (record Record) Validate() error {
 		switch turn.Kind {
 		case TurnPlanGenerated:
 			if state != StatePlanGenerationApprovalRequired || turn.Plan == nil || len(turn.Answers) != 0 ||
-				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || validatePlanShape(*turn.Plan) != nil {
+				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || turn.Action != nil || validatePlanShape(*turn.Plan) != nil {
 				return ErrInvalidSession
 			}
 			digest, err := DigestPlan(*turn.Plan)
@@ -219,24 +257,26 @@ func (record Record) Validate() error {
 			}
 		case TurnClarificationAnswered:
 			if state != StateClarificationRequired || turn.Plan != nil || turn.PlanDigest != activeDigest ||
-				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || activePlan == nil || validateAnswers(activePlan.CEOQuestions, turn.Answers) != nil {
+				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || turn.Action != nil || activePlan == nil || validateAnswers(activePlan.CEOQuestions, turn.Answers) != nil {
 				return ErrInvalidSession
 			}
 			state = StatePlanGenerationApprovalRequired
 		case TurnPlanApplied:
 			if state != StatePlanApprovalRequired || turn.Plan != nil || len(turn.Answers) != 0 ||
 				turn.PlanDigest != activeDigest || strings.TrimSpace(turn.ProjectID) == "" || turn.ProjectID != strings.TrimSpace(turn.ProjectID) ||
-				strings.TrimSpace(turn.ProjectName) == "" || turn.ProjectName != strings.TrimSpace(turn.ProjectName) || turn.Workflow != nil {
+				strings.TrimSpace(turn.ProjectName) == "" || turn.ProjectName != strings.TrimSpace(turn.ProjectName) || turn.Workflow != nil || turn.Action != nil {
 				return ErrInvalidSession
 			}
 			activeProjectID, activeProjectName = turn.ProjectID, turn.ProjectName
 			state = StateReadyToExecute
 		case TurnWorkflowRecorded:
 			if state != StateReadyToExecute || turn.Plan != nil || turn.PlanDigest != "" || len(turn.Answers) != 0 ||
-				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow == nil ||
+				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow == nil || turn.Action != nil ||
 				validateWorkflowEvidence(*turn.Workflow, activeProjectID, activeProjectName) != nil {
 				return ErrInvalidSession
 			}
+			workflow := cloneWorkflowEvidence(*turn.Workflow)
+			latestWorkflow = &workflow
 			switch turn.Workflow.Status {
 			case WorkflowStatusCompleted:
 				state = StateCompleted
@@ -244,6 +284,17 @@ func (record Record) Validate() error {
 				state = StateReadyToExecute
 			case WorkflowStatusFailed, WorkflowStatusPartialFailure:
 				state = StateWorkflowAttentionRequired
+			}
+		case TurnActionRecorded:
+			if state != StateCompleted || turn.Plan != nil || turn.PlanDigest != "" || len(turn.Answers) != 0 ||
+				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || turn.Action == nil || latestWorkflow == nil ||
+				validateActionEvidence(*turn.Action, activeProjectID, activeProjectName, *latestWorkflow) != nil {
+				return ErrInvalidSession
+			}
+			if turn.Action.Status == ActionStatusPublished {
+				state = StateActionCompleted
+			} else {
+				state = StateActionAttentionRequired
 			}
 		default:
 			return ErrInvalidSession
@@ -325,6 +376,25 @@ func (record Record) RecordWorkflow(evidence WorkflowEvidence, at time.Time) (Re
 	return next, next.Validate()
 }
 
+func (record Record) RecordAction(evidence ActionEvidence, at time.Time) (Record, error) {
+	projectID, projectName, projectOK := record.AppliedProject()
+	workflow, workflowOK := record.LatestWorkflow()
+	if record.Validate() != nil || record.State != StateCompleted || !projectOK || !workflowOK || at.IsZero() ||
+		validateActionEvidence(evidence, projectID, projectName, workflow) != nil {
+		return Record{}, ErrInvalidState
+	}
+	next := record.Clone()
+	cloned := cloneActionEvidence(evidence)
+	next.Turns = append(next.Turns, Turn{Kind: TurnActionRecorded, At: at, Action: &cloned})
+	next.Version++
+	if evidence.Status == ActionStatusPublished {
+		next.State = StateActionCompleted
+	} else {
+		next.State = StateActionAttentionRequired
+	}
+	return next, next.Validate()
+}
+
 func (record Record) CurrentPlan() (ceoplan.Plan, string, bool) {
 	for index := len(record.Turns) - 1; index >= 0; index-- {
 		if record.Turns[index].Kind == TurnPlanGenerated && record.Turns[index].Plan != nil {
@@ -341,6 +411,15 @@ func (record Record) AppliedProject() (string, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+func (record Record) LatestWorkflow() (WorkflowEvidence, bool) {
+	for index := len(record.Turns) - 1; index >= 0; index-- {
+		if record.Turns[index].Kind == TurnWorkflowRecorded && record.Turns[index].Workflow != nil {
+			return cloneWorkflowEvidence(*record.Turns[index].Workflow), true
+		}
+	}
+	return WorkflowEvidence{}, false
 }
 
 func (record Record) PlanningRequest() (string, error) {
@@ -376,6 +455,10 @@ func (record Record) Clone() Record {
 		if turn.Workflow != nil {
 			workflow := cloneWorkflowEvidence(*turn.Workflow)
 			cloned.Turns[index].Workflow = &workflow
+		}
+		if turn.Action != nil {
+			actionEvidence := cloneActionEvidence(*turn.Action)
+			cloned.Turns[index].Action = &actionEvidence
 		}
 	}
 	return cloned
@@ -497,6 +580,46 @@ func validateWorkflowEvidence(evidence WorkflowEvidence, projectID, projectName 
 	return nil
 }
 
+func validateActionEvidence(evidence ActionEvidence, projectID, projectName string, workflow WorkflowEvidence) error {
+	if evidence.SchemaVersion != SchemaVersion || commandledger.ValidateCommandID(evidence.CommandID) != nil ||
+		commandledger.ValidateCommandID(evidence.ActionCommandID) != nil || evidence.ProjectID != projectID || evidence.ProjectName != projectName ||
+		strings.TrimSpace(evidence.TaskID) == "" || evidence.TaskID != strings.TrimSpace(evidence.TaskID) ||
+		strings.TrimSpace(evidence.TargetID) == "" || evidence.TargetID != strings.TrimSpace(evidence.TargetID) ||
+		action.ValidateSourceDigest(evidence.SourceSHA256) != nil || !evidence.Status.Valid() || !validDigest(evidence.ResultDigest) {
+		return ErrInvalidSession
+	}
+	taskFound := false
+	for _, current := range workflow.Tasks {
+		if current.TaskID == evidence.TaskID {
+			taskFound = true
+			break
+		}
+	}
+	if !taskFound {
+		return ErrInvalidSession
+	}
+	requiresFailure := evidence.Status == ActionStatusFailed || evidence.Status == ActionStatusPartialFailure
+	if requiresFailure != (evidence.Failure != nil) {
+		return ErrInvalidSession
+	}
+	if evidence.Status == ActionStatusPublished {
+		if evidence.Intent == nil || !evidence.Intent.Committed || evidence.Outcome == nil || !evidence.Outcome.Committed ||
+			evidence.Publication == nil || strings.TrimSpace(evidence.Publication.Provider) == "" ||
+			strings.TrimSpace(evidence.Publication.ExternalID) == "" || strings.TrimSpace(evidence.Publication.URL) == "" ||
+			evidence.Publication.Status != "published" || strings.TrimSpace(evidence.EventID) == "" || !evidence.EventPublished {
+			return ErrInvalidSession
+		}
+	}
+	if evidence.Failure != nil {
+		if strings.TrimSpace(evidence.Failure.Code) == "" || evidence.Failure.Code != strings.TrimSpace(evidence.Failure.Code) ||
+			strings.TrimSpace(evidence.Failure.Stage) == "" || evidence.Failure.Stage != strings.TrimSpace(evidence.Failure.Stage) ||
+			evidence.Failure.Partial != (evidence.Status == ActionStatusPartialFailure) {
+			return ErrInvalidSession
+		}
+	}
+	return nil
+}
+
 func orderAnswers(questions []string, answers []Answer) []Answer {
 	byQuestion := make(map[string]string, len(answers))
 	for _, answer := range answers {
@@ -523,6 +646,27 @@ func cloneWorkflowEvidence(evidence WorkflowEvidence) WorkflowEvidence {
 		next := *evidence.Next
 		next.BlockingReasons = cloneStrings(evidence.Next.BlockingReasons)
 		cloned.Next = &next
+	}
+	if evidence.Failure != nil {
+		failure := *evidence.Failure
+		cloned.Failure = &failure
+	}
+	return cloned
+}
+
+func cloneActionEvidence(evidence ActionEvidence) ActionEvidence {
+	cloned := evidence
+	if evidence.Intent != nil {
+		intent := *evidence.Intent
+		cloned.Intent = &intent
+	}
+	if evidence.Publication != nil {
+		publication := *evidence.Publication
+		cloned.Publication = &publication
+	}
+	if evidence.Outcome != nil {
+		outcome := *evidence.Outcome
+		cloned.Outcome = &outcome
 	}
 	if evidence.Failure != nil {
 		failure := *evidence.Failure

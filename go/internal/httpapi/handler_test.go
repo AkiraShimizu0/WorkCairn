@@ -42,6 +42,15 @@ type fakeInteractionWorkflowBackend struct {
 	plan workspaceprocess.InteractionWorkflowPlan
 }
 
+type fakeInteractionActionBackend struct {
+	fakeCommandBackend
+	plan workspaceprocess.InteractionActionPlan
+}
+
+func (fake *fakeInteractionActionBackend) PlanInteractionAction(context.Context, InteractionActionPlanRequest) (workspaceprocess.InteractionActionPlan, error) {
+	return fake.plan, fake.err
+}
+
 func (fake *fakeInteractionWorkflowBackend) PlanInteractionWorkflow(context.Context, InteractionWorkflowPlanRequest) (workspaceprocess.InteractionWorkflowPlan, error) {
 	return fake.plan, fake.err
 }
@@ -178,6 +187,34 @@ func TestInteractionWorkflowPlanHTTPUsesVersionedReadOnlyContract(t *testing.T) 
 	handler.ServeHTTP(invalidResponse, invalid)
 	if invalidResponse.Code != http.StatusBadRequest {
 		t.Fatalf("invalid Interaction Workflow plan = %d %s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+}
+
+func TestInteractionActionPlanHTTPRequiresProspectiveCommandIdentity(t *testing.T) {
+	backend := &fakeInteractionActionBackend{plan: workspaceprocess.InteractionActionPlan{
+		SessionID: "SESSION-HTTP-001", SessionVersion: 4, ProjectID: "PROJECT-001", ProjectName: "記事案件",
+		TaskID: "TASK-001", TargetID: "site-main", ActionCommandID: "CHILD-ACTION-001",
+		SourceSHA256: strings.Repeat("a", 64), ActionPlanDigest: "sha256:" + strings.Repeat("b", 64),
+		Executable: true, ApprovalRequired: true,
+	}}
+	handler, err := NewHandler(backend, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version":"workspace-interaction.v1","session_id":"SESSION-HTTP-001","expected_version":4,"task_id":"TASK-001","target_id":"site-main","current_time":"2026-08-09T12:00:00Z","command_id":"CMD-INTERACTION-ACTION-001"}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/interaction-action-plans", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), backend.plan.ActionPlanDigest) || backend.calls != 0 {
+		t.Fatalf("Interaction Action plan response = %d %s calls=%d", response.Code, response.Body.String(), backend.calls)
+	}
+	invalid := httptest.NewRequest(http.MethodPost, "/v1/interaction-action-plans", bytes.NewBufferString(strings.Replace(body, `"command_id":"CMD-INTERACTION-ACTION-001"`, `"command_id":""`, 1)))
+	invalid.Header.Set("Content-Type", "application/json")
+	invalidResponse := httptest.NewRecorder()
+	handler.ServeHTTP(invalidResponse, invalid)
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("invalid Interaction Action plan = %d %s", invalidResponse.Code, invalidResponse.Body.String())
 	}
 }
 

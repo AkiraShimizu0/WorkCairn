@@ -60,6 +60,8 @@ Sessionは回答と承認を調停するevidenceであり、Project／Taskの正
 
 Project適用後は`interaction-workflow-plan`でreviewer ID、Task上限、Session Version、次stepに拘束されたdigestを確認し、`interaction-workflow-execute`へ渡します。実行は既存Reviewed Workflowを再利用します。SessionのWorkflow turnは完全Resultのdigestとchild Command IDを保持するため、詳細はproject scopeのWorkflow Command Ledgerと各Deliverable／Review／Revision evidenceで確認します。`blocked`／`limit_reached`は最新Versionで再planし、`workflow_attention_required`は自動再開せずRecoveryを先に確認します。
 
+外部公開が必要な場合だけ、completed Sessionの`interaction-action-wordpress-plan`へWorkflow内のTask ID、logical target、prospective Command IDを渡します。表示されたsource digestとAction plan digestを別承認し、publishします。`action_attention_required`ではremote公開の有無を推測せず、outer／child LedgerとAction request／result evidenceを確認します。
+
 自然言語の依頼は`ceo-plan-generate`でtyped planへ変換します。生成は適用ではありません。未知社員、循環dependency、未知fieldをGo validationで拒否した後、別の`ceo-plan-apply-plan`と明示承認でProject／Task writerへ渡します。
 
 複数Taskでは`workflow-reviewed-plan`を先に実行します。実行経路はTask実行後にReviewし、Acceptなら次Taskへ、Request ChangesならRevision Taskを作成・実行して再Reviewします。上限、blocked、partial resultで停止した場合は自動resumeせず、outer／child Command Ledgerとcanonical evidenceを確認します。

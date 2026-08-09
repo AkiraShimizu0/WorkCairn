@@ -195,6 +195,16 @@ func TestInteractionWorkflowPlanIsReadOnlyAndExecutionNeedsApprovalBeforeProvide
 		!reflect.DeepEqual(before, commandVaultSnapshot(t, root)) {
 		t.Fatalf("unapproved interaction-workflow-execute code=%d output=%s", code, output.String())
 	}
+	output.Reset()
+	actionArgs := []string{
+		"interaction-action-wordpress-publish", "--vault", root, "--session-id", ready.SessionID, "--expected-version", "3",
+		"--task", "TASK-001", "--target", "site-main", "--command-id", "CMD-INTERACTION-ACTION-CLI",
+		"--action-plan-sha256", "sha256:" + strings.Repeat("a", 64), "--at", at.Format(time.RFC3339),
+	}
+	if code := run(context.Background(), actionArgs, &output, dependencies); code != 1 || !bytes.Contains(output.Bytes(), []byte(`"code":"APPROVAL_REQUIRED"`)) ||
+		!reflect.DeepEqual(before, commandVaultSnapshot(t, root)) {
+		t.Fatalf("unapproved interaction-action-wordpress-publish code=%d output=%s", code, output.String())
+	}
 }
 
 func writeCommandReadyInteraction(t *testing.T, root string, at time.Time) interaction.Record {

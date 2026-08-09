@@ -29,6 +29,7 @@ type Handler struct {
 	interactionInspector       InteractionInspector
 	interactionPlanner         InteractionPlanner
 	interactionWorkflowPlanner InteractionWorkflowPlanner
+	interactionActionPlanner   InteractionActionPlanner
 	mux                        *http.ServeMux
 }
 
@@ -57,6 +58,10 @@ type InteractionPlanner interface {
 
 type InteractionWorkflowPlanner interface {
 	PlanInteractionWorkflow(ctx context.Context, request InteractionWorkflowPlanRequest) (workspaceprocess.InteractionWorkflowPlan, error)
+}
+
+type InteractionActionPlanner interface {
+	PlanInteractionAction(ctx context.Context, request InteractionActionPlanRequest) (workspaceprocess.InteractionActionPlan, error)
 }
 
 func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
@@ -95,7 +100,39 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 		handler.interactionWorkflowPlanner = workflowPlanner
 		handler.mux.HandleFunc("POST /v1/interaction-workflow-plans", handler.planInteractionWorkflow)
 	}
+	if actionPlanner, ok := executor.(InteractionActionPlanner); ok {
+		handler.interactionActionPlanner = actionPlanner
+		handler.mux.HandleFunc("POST /v1/interaction-action-plans", handler.planInteractionAction)
+	}
 	return handler, nil
+}
+
+func (handler *Handler) planInteractionAction(response http.ResponseWriter, request *http.Request) {
+	if !strings.HasPrefix(strings.ToLower(request.Header.Get("Content-Type")), "application/json") {
+		writeCommandResponse(response, http.StatusUnsupportedMediaType, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "UNSUPPORTED_MEDIA_TYPE"}})
+		return
+	}
+	content, err := io.ReadAll(http.MaxBytesReader(response, request.Body, maxCommandRequestBytes))
+	if err != nil {
+		writeCommandResponse(response, http.StatusRequestEntityTooLarge, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "INVALID_INTERACTION_ACTION_PLAN"}})
+		return
+	}
+	var planRequest InteractionActionPlanRequest
+	if err := decodePayload(content, &planRequest); err != nil || planRequest.Validate() != nil {
+		writeCommandResponse(response, http.StatusBadRequest, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "INVALID_INTERACTION_ACTION_PLAN"}})
+		return
+	}
+	plan, err := handler.interactionActionPlanner.PlanInteractionAction(request.Context(), planRequest)
+	if err != nil {
+		writeCommandResponse(response, http.StatusUnprocessableEntity, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "INTERACTION_ACTION_PLAN_FAILED"}})
+		return
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: InteractionContractVersion, OK: true, Result: encoded})
 }
 
 func (handler *Handler) planInteractionWorkflow(response http.ResponseWriter, request *http.Request) {

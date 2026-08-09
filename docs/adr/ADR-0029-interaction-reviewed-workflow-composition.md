@@ -64,4 +64,4 @@ Sessionへfailure evidenceをcommitできた場合も、Workflow errorを成功�
 - 既存Reviewed Workflowと各canonical commit pointを再利用し、Task／Event ownershipを増やしません。
 - Sessionはboundedな監査可能summaryに留まり、大きなDeliverable本文や秘密情報を複製しません。
 - blocked／limitは明示的に継続できますが、partial／failed Sessionは人間のRecovery判断なしに再開しません。
-- External ActionをSessionから開始するcomposition、automatic approval、parallel Workflow、automatic resumeは後続です。
+- External ActionをSessionから開始するcompositionはADR-0030で追加済みです。automatic approval、parallel Workflow、automatic resumeは後続です。

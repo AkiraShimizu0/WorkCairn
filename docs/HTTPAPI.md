@@ -31,7 +31,7 @@ daemonは`.env` fileを読みません。Provider commandに必要な設定はRu
 
 `POST /v1/commands`は`application/json`だけを受け付けます。Command ID、version、operation、`approved: true`は必須です。同じscopeで同じCommand ID／requestを再送すると保存済みresultを返し、異なるrequestは`COMMAND_ID_CONFLICT`、未確定の`running`は`COMMAND_IN_PROGRESS`で拒否します。
 
-Interaction Sessionの開始前planはread-only `POST /v1/interaction-plans`を使います。Project適用後のReviewed Workflow planはread-only `POST /v1/interaction-workflow-plans`を使います。どちらも`workspace-interaction.v1`で承認対象digestを返し、Vault、Provider、credentialを変更・読込しません。その後の`interaction.*`は通常の承認済み`workspace-command.v1`です。
+Interaction Sessionの開始前planはread-only `POST /v1/interaction-plans`、Project適用後のReviewed Workflow planは`POST /v1/interaction-workflow-plans`、任意のExternal Action handoffは`POST /v1/interaction-action-plans`を使います。いずれも`workspace-interaction.v1`で承認対象digestを返し、Provider／Action credentialを読みません。その後の`interaction.*`は通常の承認済み`workspace-command.v1`です。
 
 対応operation：
 
@@ -57,6 +57,7 @@ Interaction Sessionの開始前planはread-only `POST /v1/interaction-plans`を�
 | `interaction.answer` | workspace | Session ID、expected Version、全質問へのtyped回答、時刻 |
 | `interaction.plan.apply` | workspace | Session ID、expected Version、Project ID、承認済みplan digest、時刻 |
 | `interaction.workflow.execute` | workspace outer＋project child | Session ID、expected Version、reviewer ID、Task上限、承認済みWorkflow plan digest、時刻。既存Reviewed Workflowを決定的child Commandで実行 |
+| `interaction.action.wordpress.publish` | workspace outer＋project child | completed Session、Workflow内Task ID、logical target、承認済みAction plan digest、時刻。credentialはpayload外 |
 
 Payloadはunknown fieldを拒否します。CEO plan generation、read-only plan／inspection、migration、Recovery applyはこのeffect Command endpointへ含めません。
 

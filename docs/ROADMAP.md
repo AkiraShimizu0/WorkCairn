@@ -236,7 +236,7 @@ Reviewed Workflow、TaskService、Review／Revision、child Command IDを再実�
 
 `completed`だけをSession終端とし、blocked／limitは新しいplanと明示承認で継続できます。partial／failedは`workflow_attention_required`で停止し、Sessionから自動resumeしません。Workflow成功後のSession CAS失敗は成立済みTask／Review／Revision／Deliverableを保持したouter partial failureです。
 
-## Next 1 — Interaction Completion and External Action Handoff
+## Completed — Interaction Completion and External Action Handoff
 
 Workflow完了後、ユーザーへ「完了」または既存Deliverableに対するExternal Action候補をread-onlyで提示し、必要な場合だけ別のsource digest承認へ進めます。
 
@@ -246,6 +246,19 @@ Workflow完了後、ユーザーへ「完了」または既存Deliverableに対�
 - Action intentをCEO planへ追加する場合も既存plan contractを破壊せずadditiveにする
 
 最初は明示targetとTask／Deliverable identityを受けるhandoffだけを候補とし、automatic approval、content変換、remote reconciliation、複数Action、汎用chat UIは含めません。
+
+ADR-0030に基づき、completed Workflow evidence内の明示Taskだけを、prospective outer Command IDから導出した既存WordPress Action child Commandへ渡します。read-only planはsource／Action digestを固定し、成功は`action_completed`、失敗／partialは`action_attention_required`としてbounded evidenceをSessionへappendします。
+
+## Next 1 — Interaction Next-action Read Model
+
+現在のSession stateを利用者が独自解釈せず、次に必要な質問、plan、承認、Recovery確認、完了を1つのread-only projectionとして取得できるようにします。
+
+- stateと最新turnだけから決定的に導出し、Provider／Vault writerを呼ばない
+- operation、expected Version、必要identity、承認要否、attention時のLedger参照をtypedに返す
+- credential、Prompt、Deliverable本文を含めない
+- 自動承認、自動実行、自動Recoveryへ変換しない
+
+これはchat UIやagent loopではなく、CLI／loopback clientが「必要な質問・承認だけ」を表示するための薄いread modelです。
 
 ## Python Compatibility End of Life
 

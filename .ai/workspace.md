@@ -18,6 +18,7 @@ Workspace OSは、会社のProject、Task、AI社員、Workflow、Eventを管理
 - ADR-0027のExternal Actionは既存Deliverable digestに拘束したrequest evidenceを先行commitし、WordPress公開、result evidence、`action.completed`の順で調停します。credentialはRuntime edgeだけにあり、公開後のpartial failureをrollbackしません。
 - Public Release Preparationとして、temporary VaultからのOperator Guide、linker注入するversion／commit metadata、Pythonを含まないGo Only archive／checksum、非loopback bind拒否、release checklistを追加しました。
 - ADR-0028/0029のInteraction Sessionは自然言語request、CEO質問回答、再plan、plan digest承認、既存Project／Task writer適用、Reviewed Workflow実行をappend-only turnとVersion/CASで調停します。未回答質問をblockし、Workflow完全Resultはproject Ledgerへ残してSessionにはdigestとbounded typed summaryだけを保存します。
+- ADR-0030の任意External Action handoffはcompleted Workflow内の明示Taskだけを既存WordPress Action child Commandへ渡し、source／plan digest承認後の結果summaryをSessionへ記録します。公開意図や対象を推測しません。
 - Workspace Kernel、Project／Workflow／Task／Event／Worker／Policy Domain、PromptBuilder、Claude Adapter、Vault Adapter、Runtime compositionはGoです。temporary VaultとMock ProviderでEnd-to-End検証します。
 - Python TaskExecutor／Worker／ModelRouter／ClaudeRunner／ReviewerWorker／RevisionTaskService／ProjectManager／Organization writerは全て通常製品経路から外れ、公開互換referenceだけに残ります。
 - WorkflowEngineのRevision呼出しは`WorkspaceRunRevisionGateway`からGo `workspace-run revision-*`へ切替済みです。ADR-0012のimmutable intent、TaskService.Create、`revision.created`、Auditをtemporary VaultでEnd-to-End検証済みです。Python RevisionTaskServiceは公開互換legacyだけに残ります。

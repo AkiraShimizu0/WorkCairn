@@ -34,6 +34,7 @@ flowchart TD
     Workflow --> Run["Go workspace-run"]
     Interaction --> ReviewedWorkflow["Reviewed Workflow"]
     ReviewedWorkflow --> Run
+    Interaction --> Action["Approved External Action"]
     Run --> Kernel["Workspace Kernel"]
     Kernel --> Execution["ExecutionService"]
     Execution --> Worker["Go WorkerService / Runner Adapter"]
@@ -76,6 +77,7 @@ flowchart TD
 - [ADR-0027: External Actionはimmutable request evidenceを先行commitして公開する](docs/adr/ADR-0027-external-action-evidence-and-publication.md)
 - [ADR-0028: Interaction Sessionは質問回答と承認対象digestをappend-only turnで保持する](docs/adr/ADR-0028-interaction-session-clarification-and-approval.md)
 - [ADR-0029: Interactionは既存Reviewed Workflowを決定的child Commandとして実行する](docs/adr/ADR-0029-interaction-reviewed-workflow-composition.md)
+- [ADR-0030: Interactionは明示Deliverableを既存External Actionへ引き渡す](docs/adr/ADR-0030-interaction-external-action-handoff.md)
 
 新しいADRは[ADRテンプレート](docs/adr/ADR-template.md)から作成します。
 
@@ -314,9 +316,20 @@ bin/workspace-run interaction-workflow-execute --vault /path/to/vault \
   --session-id SESSION-001 --expected-version 5 --reviewer QA-001 --max-tasks 10 \
   --workflow-sha256 '<planのworkflow_plan_digest>' --at 2026-08-09T12:05:00Z \
   --approval-ref approval-001 --command-id CMD-SESSION-WORKFLOW-001 --approved
+
+bin/workspace-run interaction-action-wordpress-plan --vault /path/to/vault \
+  --session-id SESSION-001 --expected-version 6 --task TASK-001 --target site-main \
+  --at 2026-08-09T12:30:00Z --command-id CMD-SESSION-ACTION-001
+
+WORKSPACE_WORDPRESS_BASE_URL=https://example.com \
+WORKSPACE_WORDPRESS_USERNAME=... WORKSPACE_WORDPRESS_APPLICATION_PASSWORD=... \
+bin/workspace-run interaction-action-wordpress-publish --vault /path/to/vault \
+  --session-id SESSION-001 --expected-version 6 --task TASK-001 --target site-main \
+  --action-plan-sha256 '<planのaction_plan_digest>' --at 2026-08-09T12:30:00Z \
+  --command-id CMD-SESSION-ACTION-001 --approved
 ```
 
-各実行前に`interaction-inspect`でstateとVersionを確認します。Workflowは既存Reviewed Workflowを使い、Acceptなら次Task、Request ChangesならRevisionと再Reviewへ進みます。`blocked`／`limit_reached`は新しいplanと承認で継続でき、`workflow_attention_required`はLedger／Recovery確認までSessionから再実行しません。公開互換の直接`ceo-plan-*`は残りますが、Interaction経路は未回答質問をblockします。自動resumeや既存Project adoptionは行いません。
+各実行前に`interaction-inspect`でstateとVersionを確認します。Workflowは既存Reviewed Workflowを使い、Acceptなら次Task、Request ChangesならRevisionと再Reviewへ進みます。`blocked`／`limit_reached`は新しいplanと承認で継続でき、`workflow_attention_required`はLedger／Recovery確認までSessionから再実行しません。Workflow完了後のWordPress公開は任意で、明示Task／targetと別のsource digest承認を要求します。公開互換の直接`ceo-plan-*`は残りますが、Interaction経路は未回答質問をblockします。自動resumeや既存Project adoptionは行いません。
 
 ### Partial stateを診断・明示Recoveryする
 

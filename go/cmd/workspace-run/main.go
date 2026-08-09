@@ -58,6 +58,7 @@ type commandOptions struct {
 	actionSourceSHA256                        string
 	sessionID, requestDigest, planDigest      string
 	workflowDigest                            string
+	actionPlanDigest                          string
 	candidateJSONs                            stringListFlag
 	answerJSONs                               stringListFlag
 	repairJSONs                               stringListFlag
@@ -398,6 +399,41 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		}, dependencies.newHTTPClient(options.timeout), true)
 		if err != nil {
 			response := durableCommandFailureResponse(err, "INTERACTION_WORKFLOW_FAILED", "interaction_workflow_execute")
+			response.Error.SessionCommitted = result.SessionCommitted
+			writeCommandResponse(output, response)
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
+		return 0
+	}
+	if operation == "interaction-action-wordpress-plan" || operation == "interaction-action-wordpress-publish" {
+		input := workspaceprocess.InteractionActionPlanInput{
+			VaultRoot: options.vaultRoot, SessionID: options.sessionID, ExpectedVersion: options.expectedVersion,
+			TaskID: options.taskID, TargetID: options.actionTarget, CurrentTime: currentTime, CommandID: options.commandID,
+		}
+		if operation == "interaction-action-wordpress-plan" {
+			plan, err := workspaceprocess.PlanInteractionAction(ctx, input)
+			if err != nil {
+				writeCommandResponse(output, failureResponse("INTERACTION_ACTION_PLAN_FAILED", "interaction_action_preflight"))
+				return 1
+			}
+			writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: plan})
+			return 0
+		}
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		baseURL, _ := dependencies.lookupEnv("WORKSPACE_WORDPRESS_BASE_URL")
+		username, _ := dependencies.lookupEnv("WORKSPACE_WORDPRESS_USERNAME")
+		password, _ := dependencies.lookupEnv("WORKSPACE_WORDPRESS_APPLICATION_PASSWORD")
+		result, err := workspaceprocess.ExecuteInteractionAction(ctx, workspaceprocess.ExecuteInteractionActionInput{
+			InteractionActionPlanInput: input, ActionPlanDigest: options.actionPlanDigest,
+		}, workspaceprocess.WordPressProcessConfig{
+			TargetID: options.actionTarget, BaseURL: baseURL, Username: username, ApplicationPassword: password,
+		}, dependencies.newHTTPClient(options.timeout), true)
+		if err != nil {
+			response := durableCommandFailureResponse(err, "INTERACTION_ACTION_FAILED", "interaction_action_execute")
 			response.Error.SessionCommitted = result.SessionCommitted
 			writeCommandResponse(output, response)
 			return 1
@@ -938,6 +974,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	set.StringVar(&options.requestDigest, "request-sha256", "", "approved Interaction request digest")
 	set.StringVar(&options.planDigest, "plan-sha256", "", "approved Interaction plan digest")
 	set.StringVar(&options.workflowDigest, "workflow-sha256", "", "approved Interaction Workflow plan digest")
+	set.StringVar(&options.actionPlanDigest, "action-plan-sha256", "", "approved Interaction external Action plan digest")
 	set.Var(&options.candidateJSONs, "candidate-json", "candidate JSON; repeat for batch validation")
 	set.Var(&options.answerJSONs, "answer-json", "Interaction clarification answer JSON; repeat for each answer")
 	set.Var(&options.repairJSONs, "repair-json", "expected Employee ID repair JSON; repeat for apply")
@@ -997,6 +1034,15 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	}
 	if operation == "interaction-workflow-execute" {
 		required = append(required, options.commandID, options.workflowDigest)
+	}
+	if operation == "interaction-action-wordpress-plan" || operation == "interaction-action-wordpress-publish" {
+		required = append(required, options.sessionID, options.taskID, options.actionTarget, options.commandID, options.at)
+		if options.expectedVersion == 0 {
+			return commandOptions{}, errors.New("expected Interaction Version is required")
+		}
+	}
+	if operation == "interaction-action-wordpress-publish" {
+		required = append(required, options.actionPlanDigest)
 	}
 	if operation == "interaction-plan-generate" || operation == "interaction-answer" || operation == "interaction-plan-apply" {
 		if options.expectedVersion == 0 {
@@ -1065,7 +1111,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-workflow-plan", "interaction-workflow-execute":
+	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish":
 		return true
 	default:
 		return false

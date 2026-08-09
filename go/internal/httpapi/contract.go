@@ -72,6 +72,16 @@ type InteractionWorkflowPlanRequest struct {
 	MaxTasks        int       `json:"max_tasks"`
 }
 
+type InteractionActionPlanRequest struct {
+	Version         string    `json:"version"`
+	SessionID       string    `json:"session_id"`
+	ExpectedVersion uint64    `json:"expected_version"`
+	TaskID          string    `json:"task_id"`
+	TargetID        string    `json:"target_id"`
+	CurrentTime     time.Time `json:"current_time"`
+	CommandID       string    `json:"command_id"`
+}
+
 func (request InteractionPlanRequest) Validate() error {
 	if request.Version != InteractionContractVersion || interaction.ValidateSessionID(request.SessionID) != nil ||
 		strings.TrimSpace(request.Request) == "" || len(request.Request) > 32<<10 ||
@@ -85,6 +95,16 @@ func (request InteractionWorkflowPlanRequest) Validate() error {
 	if request.Version != InteractionContractVersion || interaction.ValidateSessionID(request.SessionID) != nil || request.ExpectedVersion == 0 ||
 		strings.TrimSpace(request.ReviewerID) == "" || request.ReviewerID != strings.TrimSpace(request.ReviewerID) ||
 		strings.ContainsAny(request.ReviewerID, "\r\n") || request.CurrentTime.IsZero() || request.MaxTasks <= 0 || request.MaxTasks > 100 {
+		return ErrInvalidCommand
+	}
+	return nil
+}
+
+func (request InteractionActionPlanRequest) Validate() error {
+	if request.Version != InteractionContractVersion || interaction.ValidateSessionID(request.SessionID) != nil || request.ExpectedVersion == 0 ||
+		strings.TrimSpace(request.TaskID) == "" || request.TaskID != strings.TrimSpace(request.TaskID) ||
+		strings.TrimSpace(request.TargetID) == "" || request.TargetID != strings.TrimSpace(request.TargetID) ||
+		request.CurrentTime.IsZero() || commandledger.ValidateCommandID(request.CommandID) != nil {
 		return ErrInvalidCommand
 	}
 	return nil
