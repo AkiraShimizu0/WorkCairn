@@ -15,6 +15,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/buildinfo"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
@@ -114,6 +115,14 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		return 2
 	}
 	operation := args[0]
+	if operation == "version" {
+		if len(args) != 1 {
+			writeCommandResponse(output, failureResponse("INVALID_ARGUMENT", ""))
+			return 2
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: buildinfo.Current()})
+		return 0
+	}
 	options, err := parseOptions(operation, args[1:])
 	if err != nil {
 		writeCommandResponse(output, failureResponse("INVALID_ARGUMENT", ""))
@@ -863,7 +872,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish":
+	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish":
 		return true
 	default:
 		return false

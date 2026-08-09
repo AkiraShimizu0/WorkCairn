@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/bootstrap"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/buildinfo"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
 )
 
@@ -40,6 +41,12 @@ type commandExecutor interface {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		if err := json.NewEncoder(os.Stdout).Encode(buildinfo.Current()); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	os.Exit(run(os.Stdin, os.Stdout))
 }
 

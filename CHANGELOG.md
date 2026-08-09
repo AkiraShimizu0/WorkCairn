@@ -2,6 +2,21 @@
 
 このファイルはConventional Commitsの履歴から生成しています。変更内容は[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/)の形式を参考に分類しています。
 
+## [Unreleased]
+
+### Added
+
+- Go Only RuntimeへTask execution、Review、Revision、Project／Task、Organization／Identity、CEO planの通常製品経路を移行。
+- immutable Deliverable／Review／Revision evidence、Event／Audit、明示Recovery、Command Ledgerを追加。
+- version付きloopback HTTP daemon、one-shot Scheduler、redacted Notification／Metricsを追加。
+- dependency順のReviewed Multi-task Workflowと、承認済みWordPress Action Adapterを追加。
+- Operator Guide、binary version metadata、Go Only release archive／checksumを追加。
+
+### Security
+
+- daemonの非loopback bindを、認証・TLS・authorization導入まで拒否。
+- Provider／Action credentialをRuntime environmentへ限定し、Command／Schedule／evidenceから除外。
+
 ## [0.1.0] - 2026-08-07
 
 ### Added

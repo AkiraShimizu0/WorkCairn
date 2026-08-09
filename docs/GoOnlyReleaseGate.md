@@ -34,6 +34,8 @@ make go-only-release-gate
 
 `go_only_release_gate_test.go`は、上表の製品operationがGo CLIに存在することと、production／testを含む全Go sourceが`os/exec`または`os.StartProcess`を使ってPythonを含む外部interpreterを起動できないことを検査します。さらに、Domain／Service／Kernelからedge layerへの逆向き依存、Task lifecycle EventのTaskService外生成、全書込みcommandの承認前Vault／Provider I/Oを拒否します。Provider APIはGo Claude AdapterのMock HTTP testだけで検証し、実APIを呼びません。
 
+Public Release Preparationでは、daemonが非loopback addressを拒否するtest、linker注入するversion／commit metadata、Pythonを含まないGo Only archiveとSHA-256 checksumの作成手順も追加しています。配布手順は[OperatorGuide.md](OperatorGuide.md)と[PublicReleaseChecklist.md](PublicReleaseChecklist.md)を参照してください。
+
 明示`--command-id`付き通常Task／Review executionは、temporary Vault E2Eで同一requestの2回目がProviderを呼ばず保存済みresultを返すこと、異なるrequestでのID再利用を拒否することを検証します。これは現在まだ全mutating commandのidempotency保証ではありません。
 
 ## v1.0 Candidate Gate

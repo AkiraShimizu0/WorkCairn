@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/bootstrap"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/buildinfo"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/httpapi"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
@@ -20,6 +22,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		if err := json.NewEncoder(os.Stdout).Encode(buildinfo.Current()); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "workspace-daemon stopped:", err)
 		os.Exit(1)

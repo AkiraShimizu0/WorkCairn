@@ -42,7 +42,7 @@ daemonはSIGINT／SIGTERMで新規受付を停止し、設定済み猶予内で�
 
 ### Exposure boundary
 
-daemonの既定listen addressはloopbackです。認証、TLS termination、multi-tenant authorization、remote exposureは本foundationの範囲外であり、それらを決めるまでは外部networkへ公開しません。
+daemonの既定listen addressはloopbackです。認証、TLS termination、multi-tenant authorization、remote exposureは本foundationの範囲外であり、それらを決めるまでは外部networkへ公開しません。Public Release Preparationではこの境界を設定上の注意だけにせず、`127.0.0.1`、`::1`、`localhost`以外のlisten addressをserver constructorで拒否します。
 
 ## Consequences
 

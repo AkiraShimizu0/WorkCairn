@@ -121,7 +121,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Command Ledger Domain／Service | Command ID、request digest、running／terminal outcomeと一度だけのVersion遷移を管理する |
 | Go Vault Command Ledger Adapter | Project scopeまたはworkspace scopeのhidden machine metadataへclaimをatomic createし、terminal outcomeをCAS／atomic replacementで保存する |
 | Go Process／workspace-run | Vault AdapterとRuntimeをprocess edgeでcompositionし、Task metadata migration、read-only execution／recovery plan、明示承認付きexecute／recoveryを提供する |
-| Go HTTP API／workspace-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger inspection、graceful shutdownを提供し、workspace-runと同じprocess／Serviceを利用するloopback入口 |
+| Go HTTP API／workspace-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger inspection、graceful shutdownを提供し、workspace-runと同じprocess／Serviceを利用するloopback入口。認証／TLS導入前は非loopback bindを拒否する |
 | Go Workflow Run Service | dependency readinessを各Task後に再planし、決定的child Command IDで既存Task executionを順次調停する。Task状態やEventは変更しない |
 | Go Reviewed Workflow Run Service | 各Task後に既存Reviewを実行し、Request Changes時は既存Revisionで作成したTaskをtargeted readinessで実行・再Reviewしてから本流へ戻す |
 | Go Scheduler Service | 承認済みone-shot Commandをoffset付き時刻で選択し、Schedule CAS後に既存Process／Command Ledgerへ配送する。Task状態やProviderは直接扱わない |
@@ -195,6 +195,8 @@ Workspace OSの製品Runtime移行は完了しています。通常Task、Review
 - `go/cmd/workspace-core`: バージョン付きJSON契約を公開するCLI境界
 - `go/cmd/workspace-run`: Organization参照、Project／Task作成、migration、通常Task／Review／Revision／reviewed Workflow、one-shot Schedule、Recoveryを公開するGo運用CLI
 - `go/cmd/workspace-daemon`: 同じprocess／Service compositionをloopback HTTPで公開するGo daemon
+- `go/internal/buildinfo`: release時にlinkerから注入するversion／commit／build date。DomainやRuntime設定ではない
+- `scripts/package-release.sh`: Pythonを含まないGo binary、LICENSE、docsをversion付きarchiveとSHA-256 checksumへ構成するdistribution edge
 
 PythonとGoは`fixtures/workflow`、`fixtures/project`、`fixtures/go_core`のJSONを共有する互換契約を維持します。次は公開Python callerがGo Core互換operationを使う場合のcompatibility境界であり、Go製品Runtimeの内部経路ではありません。
 

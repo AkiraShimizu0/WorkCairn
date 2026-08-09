@@ -15,6 +15,7 @@ const internalModulePrefix = "github.com/AkiraShimizu0/workspace-os/go/internal/
 
 func TestGoOnlyReleaseGateCoversProductCapabilities(t *testing.T) {
 	capabilities := map[string][]string{
+		"release_metadata":      {"version"},
 		"normal_operation":      {"migrate-plan", "migrate-apply", "plan", "execute"},
 		"ceo_plan":              {"ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply"},
 		"project_task":          {"project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create"},

@@ -75,6 +75,24 @@ func TestHandlerRequiresVersionedApprovedCommandIDBeforeExecution(t *testing.T) 
 	}
 }
 
+func TestServerRejectsNonLoopbackExposure(t *testing.T) {
+	backend := &fakeCommandBackend{}
+	handler, err := NewHandler(backend, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range []string{"0.0.0.0:8787", ":8787", "192.0.2.1:8787"} {
+		if _, err := NewServer(address, handler); err == nil {
+			t.Fatalf("NewServer(%q) accepted a non-loopback address", address)
+		}
+	}
+	for _, address := range []string{"127.0.0.1:0", "localhost:8787", "[::1]:0"} {
+		if _, err := NewServer(address, handler); err != nil {
+			t.Fatalf("NewServer(%q): %v", address, err)
+		}
+	}
+}
+
 func TestHandlerMapsRunningCommandToRecoveryBoundary(t *testing.T) {
 	backend := &fakeCommandBackend{err: commandledger.ErrInProgress}
 	handler, _ := NewHandler(backend, backend)

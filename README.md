@@ -4,7 +4,7 @@
 
 Workspace OSは、Obsidian Vaultをデータストアとして、AI社員・プロジェクト・タスク実行・レビュー・修正フローを管理します。現在の通常Task実行入口はGo Workspace Kernel上の`workspace-run`です。
 
-v0.1.0 Python APIは公開互換専用のcompatibility surfaceとして残ります。既存importと`workspace-ai` entry pointは維持しますが、通常製品Runtimeではありません。正本のGo実行経路は実行前plan、明示的承認、Version/CAS、immutable Deliverable、Task lifecycle Event Auditを組み合わせ、人間が確認できるMarkdownを維持します。全体像は[System Overview](docs/SystemOverview.md)、HTTP入口は[HTTP Command API](docs/HTTPAPI.md)、判定根拠は[Go Only Release Gate](docs/GoOnlyReleaseGate.md)、残存Python callerと削除条件は[Python Runtime Inventory](docs/PythonRuntimeInventory.md)を参照してください。
+v0.1.0 Python APIは公開互換専用のcompatibility surfaceとして残ります。既存importと`workspace-ai` entry pointは維持しますが、通常製品Runtimeではありません。正本のGo実行経路は実行前plan、明示的承認、Version/CAS、immutable Deliverable、Task lifecycle Event Auditを組み合わせ、人間が確認できるMarkdownを維持します。全体像は[System Overview](docs/SystemOverview.md)、安全な導入と運用は[Operator Guide](docs/OperatorGuide.md)、HTTP入口は[HTTP Command API](docs/HTTPAPI.md)、判定根拠は[Go Only Release Gate](docs/GoOnlyReleaseGate.md)、残存Python callerと削除条件は[Python Runtime Inventory](docs/PythonRuntimeInventory.md)を参照してください。
 
 ## 特徴
 
@@ -80,6 +80,8 @@ workspace-os/
 │   ├── adr/
 │   ├── SystemOverview.md
 │   ├── Recovery.md
+│   ├── OperatorGuide.md
+│   ├── PublicReleaseChecklist.md
 │   ├── Architecture.md
 │   ├── CONSTITUTION.md
 │   ├── ROADMAP.md
@@ -133,7 +135,16 @@ Vault/
 git clone <repository-url> workspace-os
 cd workspace-os
 make go-build
+bin/workspace-run version
 ```
+
+version付きGo Only配布archiveとSHA-256 checksumは次で生成します。`RELEASE_VERSION`は英数字、dot、underscore、hyphenだけを受け付け、既存archiveを上書きしません。
+
+```bash
+make release-package RELEASE_VERSION=v1.0.0 BUILD_DATE=2026-08-09T12:00:00Z
+```
+
+公開前の全確認項目は[Public Release Checklist](docs/PublicReleaseChecklist.md)を参照してください。
 
 公開Python v0.1 compatibility APIを利用・検証する場合だけ、Python 3.9以上と[uv](https://docs.astral.sh/uv/)で`uv sync`を実行します。
 

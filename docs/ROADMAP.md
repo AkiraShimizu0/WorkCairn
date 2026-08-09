@@ -188,11 +188,11 @@ ADR-0027に基づき、WordPress公開をProvider Runnerとは別のAction Adapt
 
 HTML変換、update／delete、media upload、external reconciliation、自動retry、複数Action Providerは含めません。
 
-## Next 1 — Public Release Preparation
+## Completed — Public Release Preparation
 
 Go Onlyの閉ループが自然言語依頼から外部公開まで成立したため、新機能追加より配布・運用理解を優先します。
 
-候補：
+実装済み：
 
 - 初回setup、temporary／approved Vault、Provider／Action credential注入の安全な導線
 - loopback daemon、Scheduler、Notification、Recoveryを一貫して扱うoperator guide
@@ -200,7 +200,23 @@ Go Onlyの閉ループが自然言語依頼から外部公開まで成立した�
 - public exposure前のauthentication／TLS／authorization方針
 - 現在の機能を伝える製品名候補と既存Workspace OS名称との移行判断
 
-完了条件：新規利用者が実Vaultを誤変更せずplan／approval／execute／inspect／recoveryを再現でき、remote公開の未実装保証を誤解しないこと。
+`OperatorGuide.md`はtemporary Vaultからapproved Vaultへの導線、backup、plan／approval／execute、daemon、Scheduler、Notification、Recovery、WordPress partial failure、upgradeを一貫して説明します。release packageはversion／commit metadataを持つ3つのGo binary、必要docs、LICENSEだけをarchiveし、SHA-256 checksumを生成します。daemonはremote公開の注意書きだけでなく非loopback bindをcodeで拒否します。
+
+完了条件を満たしました。新規利用者は実Vaultを誤変更せずplan／approval／execute／inspect／recoveryを再現でき、remote公開、automatic retry、WordPress変換機能の未実装保証を確認できます。製品名は互換性を優先して当面`Workspace OS`を推奨し、名称変更そのものは商標・市場判断後の独立migrationとします。
+
+## Next 1 — Interaction and Approval Session Foundation
+
+現在のCLI／HTTPは自然言語依頼から実行までの閉ループを持ちますが、必要な質問、plan提示、承認待ち、partial failure後の次の安全な選択を1つの継続sessionとして表現していません。
+
+次の候補：
+
+- natural-language request、clarification required、plan ready、approval required、running、terminal／recovery requiredのclosed typed state
+- immutable requestと承認対象digestに拘束されたsession evidence
+- CEO plan、Reviewed Workflow、Actionを既存Commandへ変換する薄いorchestration
+- CLIとloopback APIが同じsession Serviceを利用するread／respond境界
+- credential、Vault root、Provider生responseをsession contractへ入れないredaction
+
+最初はsingle-user、single active step、手動応答だけを扱います。chat UI、remote exposure、parallel workflow、automatic approval、automatic resume、recurring Schedulerは先取りしません。
 
 ## Python Compatibility End of Life
 

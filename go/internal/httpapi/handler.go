@@ -259,6 +259,9 @@ func NewServer(address string, handler http.Handler) (*Server, error) {
 	if strings.TrimSpace(address) == "" || handler == nil {
 		return nil, errors.New("server address and handler are required")
 	}
+	if err := validateLoopbackAddress(address); err != nil {
+		return nil, err
+	}
 	return &Server{server: &http.Server{
 		Addr: address, Handler: handler,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -266,6 +269,21 @@ func NewServer(address string, handler http.Handler) (*Server, error) {
 		WriteTimeout:      0,
 		IdleTimeout:       60 * time.Second,
 	}}, nil
+}
+
+func validateLoopbackAddress(address string) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return errors.New("server address must be a loopback host and port")
+	}
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return errors.New("remote listen addresses require authentication, TLS, and authorization")
+	}
+	return nil
 }
 
 func (server *Server) ListenAndServe() error { return server.server.ListenAndServe() }

@@ -1,6 +1,6 @@
 # HTTP Command API
 
-`workspace-daemon`は、Go Only Runtimeをloopback HTTPから利用する同期Command入口です。現在はremote公開用ではありません。認証、TLS、authorizationを追加するまで、既定の`127.0.0.1:8787`から外へbindしないでください。
+`workspace-daemon`は、Go Only Runtimeをloopback HTTPから利用する同期Command入口です。現在はremote公開用ではありません。認証、TLS、authorizationが未実装のため、serverは`127.0.0.1`、`::1`、`localhost`以外へのbindを起動時に拒否します。
 
 ## 起動
 

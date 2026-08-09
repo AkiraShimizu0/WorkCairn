@@ -52,6 +52,19 @@ func TestPlanCommandIsReadOnlyAndNeedsNoProviderConfig(t *testing.T) {
 	}
 }
 
+func TestVersionDoesNotRequireVaultOrRuntimeDependencies(t *testing.T) {
+	environmentRead, httpConstructed := false, false
+	var output bytes.Buffer
+	exitCode := run(context.Background(), []string{"version"}, &output, commandDependencies{
+		lookupEnv:     func(string) (string, bool) { environmentRead = true; return "", false },
+		newHTTPClient: func(time.Duration) claude.HTTPDoer { httpConstructed = true; return http.DefaultClient },
+	})
+	response := decodeCommandResponse(t, output.Bytes())
+	if exitCode != 0 || !response.OK || environmentRead || httpConstructed {
+		t.Fatalf("version response = exit %d %#v env=%t http=%t", exitCode, response, environmentRead, httpConstructed)
+	}
+}
+
 func TestWorkflowPlanIsReadOnlyAndNeedsNoProviderConfig(t *testing.T) {
 	root := writeCommandVault(t)
 	before := commandVaultSnapshot(t, root)

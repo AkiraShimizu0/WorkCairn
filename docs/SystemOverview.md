@@ -4,7 +4,7 @@
 
 Workspace OSは、会社、AI社員、Project、Task、成果物、Review、Revision、監査証跡を、人間が読めるWorkspaceと型付きの実行系で一貫して扱うシステムです。現在の製品RuntimeはGo Onlyです。正本の運用入口は`workspace-run`、中核のビジネスルールはGo Domain／Service、運用データはVault Adapterが管理します。
 
-この文書は「現在どう動くか」を説明します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、個別判断の理由は[ADR](adr/)、詳細なpackage構造は[Architecture.md](Architecture.md)、HTTP運用は[HTTPAPI.md](HTTPAPI.md)、今後の順序は[ROADMAP.md](ROADMAP.md)を正とします。
+この文書は「現在どう動くか」を説明します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、個別判断の理由は[ADR](adr/)、詳細なpackage構造は[Architecture.md](Architecture.md)、安全な導入は[OperatorGuide.md](OperatorGuide.md)、HTTP運用は[HTTPAPI.md](HTTPAPI.md)、今後の順序は[ROADMAP.md](ROADMAP.md)を正とします。
 
 ## 外側から見た利用フロー
 
@@ -148,7 +148,7 @@ Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ�
 - 既存artifactを使った自動retry／adoption／projection再構成はない。安全なTask partial stateだけ明示Recoveryできる
 - Durable Command判定は明示Command ID付き主要writerへ適用済み。ID未指定実行と専用migration／Recovery操作は再送保証を持たない
 - 複数Task orchestrationはboundedな同期runであり、durable queueや自動resumeはない
-- HTTP daemonのremote公開、認証／TLS、非同期queueは未実装。現在はloopback同期Command APIだけ
+- HTTP daemonのremote公開、認証／TLS、非同期queueは未実装。現在はloopback同期Command APIだけで、非loopback bindをcodeで拒否する
 - Reviewed Multi-task WorkflowはTaskごとにReviewし、Request ChangesならRevision Taskを実行・再Reviewする。自動resume、並列実行は未実装
 - Schedulerはone-shotだけで、cron／recurrence、並列配送、`dispatching` reconciliationは未実装
 - Notificationはlocal read-only Inboxだけで、外部channel配送、未読／ack、Event replayは未実装。Metricsはprocess再起動でresetされる
