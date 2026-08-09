@@ -20,6 +20,7 @@
 | Reviewed Multi-task Workflow | `workflow-reviewed-plan`、`workflow-reviewed-execute` | OK | Approve／Request Changes、Revision Task targeted readiness、再Review、replay／conflict |
 | Scheduler／Automation | `schedule-plan`、`schedule-create`、`schedule-list`、daemon poller | OK | typed one-shot、明示承認、Schedule CAS、target Ledger、missed／duplicate E2E |
 | Notification／Metrics | daemon read-only Inbox／Metrics inspection | OK | Event subscriber、payload redaction、immutable atomic record、replay非重複、partial failure |
+| External Action | `action-wordpress-plan`、`action-wordpress-publish`、HTTP／Scheduler command | OK | 明示承認、Mock WordPress、request／result evidence、Ledger replay、Event／Audit／Notification |
 | Deliverable／Audit | Execution／Review／Revision composition | OK | immutable Store、Event subscriber、partial failure tests |
 | Recovery | `recovery-inspect`、`recovery-plan`、`recovery-apply` | OK | read-only inventory、evidence digest、Task CAS、temporary Vault E2E |
 

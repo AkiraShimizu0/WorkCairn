@@ -18,6 +18,7 @@ const (
 	EmployeeRenamed   Type = "employee.renamed"
 	WorkflowStarted   Type = "workflow.started"
 	WorkflowCompleted Type = "workflow.completed"
+	ActionCompleted   Type = "action.completed"
 )
 
 var supportedTypes = map[Type]struct{}{
@@ -35,6 +36,7 @@ var supportedTypes = map[Type]struct{}{
 	EmployeeRenamed:   {},
 	WorkflowStarted:   {},
 	WorkflowCompleted: {},
+	ActionCompleted:   {},
 }
 
 func (eventType Type) Valid() bool {

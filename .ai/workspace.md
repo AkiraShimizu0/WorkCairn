@@ -15,6 +15,7 @@ Workspace OSは、会社のProject、Task、AI社員、Workflow、Eventを管理
 - ADR-0023の順次Multi-task Workflowに加え、ADR-0024のReviewed Workflowは各Task後に既存Reviewを実行し、Request Changesなら既存Revisionで修正Taskを作成・実行・再Reviewしてから本流へ戻ります。役割付きchild Command ID、Revision Task限定targeted readiness、最大100 Taskを使い、自動resume／並列実行はしません。
 - ADR-0025のone-shot Schedulerは承認済み`workspace-command.v1`をoffset付き時刻以後に既存Processへ一度だけ配送します。Schedule CASとtarget Command Ledgerを再利用し、crash後の`dispatching`を自動resumeしません。
 - ADR-0026のNotification／MetricsはTask／Review／Revision EventへRuntime edgeから接続します。Notificationはpayload-free immutable local Inbox、Metricsはbounded process-local counterで、subscriber失敗はcanonical factをrollbackしません。
+- ADR-0027のExternal Actionは既存Deliverable digestに拘束したrequest evidenceを先行commitし、WordPress公開、result evidence、`action.completed`の順で調停します。credentialはRuntime edgeだけにあり、公開後のpartial failureをrollbackしません。
 - Workspace Kernel、Project／Workflow／Task／Event／Worker／Policy Domain、PromptBuilder、Claude Adapter、Vault Adapter、Runtime compositionはGoです。temporary VaultとMock ProviderでEnd-to-End検証します。
 - Python TaskExecutor／Worker／ModelRouter／ClaudeRunner／ReviewerWorker／RevisionTaskService／ProjectManager／Organization writerは全て通常製品経路から外れ、公開互換referenceだけに残ります。
 - WorkflowEngineのRevision呼出しは`WorkspaceRunRevisionGateway`からGo `workspace-run revision-*`へ切替済みです。ADR-0012のimmutable intent、TaskService.Create、`revision.created`、Auditをtemporary VaultでEnd-to-End検証済みです。Python RevisionTaskServiceは公開互換legacyだけに残ります。
@@ -51,7 +52,7 @@ Go CoreはObsidian、Python runtime、CrewAI、LLM SDK、`.env`、APIキーへ�
 
 ## Repository Map
 
-- `go/internal/*`: Go Domain、Service、Kernel、Adapter境界、Scheduler、Notification／Metrics、通常Task PromptBuilder、Claude Runner Adapter、Vault Context／TaskStore／Deliverable／Audit Adapter、Go Runtime composition。新しい中核ルールの実装先
+- `go/internal/*`: Go Domain、Service、Kernel、Adapter境界、Scheduler、Notification／Metrics、External Action、通常Task PromptBuilder、Claude Runner／WordPress Adapter、Vault Context／TaskStore／Deliverable／Audit Adapter、Go Runtime composition。新しい中核ルールの実装先
 - `go/cmd/workspace-core`: JSON Contract v1を公開するCLI
 - `go/cmd/workspace-run`: Organization参照、CEO plan生成／適用、Project／Task作成、Task metadata migration、通常Task／Review／Revision／Reviewed Workflow、明示Recoveryを提供するGo運用CLI
 - `go/cmd/workspace-daemon`: 必須Command IDの同期HTTP v1とgraceful shutdownを提供するloopback Go daemon

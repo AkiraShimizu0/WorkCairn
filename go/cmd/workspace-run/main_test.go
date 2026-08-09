@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
@@ -128,6 +129,59 @@ func TestSchedulePlanApprovalCreateAndListUseOnlyTemporaryVault(t *testing.T) {
 	var listed bytes.Buffer
 	if code := run(context.Background(), []string{"schedule-list", "--vault", root}, &listed, dependencies); code != 0 || !bytes.Contains(listed.Bytes(), []byte(`"schedule_id":"SCHEDULE-001"`)) {
 		t.Fatalf("schedule-list code=%d output=%s", code, listed.String())
+	}
+}
+
+func TestWordPressActionPlanApprovalPublishAndReplayUseMockProvider(t *testing.T) {
+	root := writeCommandVault(t)
+	deliverableDirectory := filepath.Join(root, "プロジェクト", "ToDoアプリ", "Deliverables")
+	if err := os.MkdirAll(deliverableDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	deliverableContent := "---\ntype: task-deliverable\nproject: ToDoアプリ\ntask_id: TASK-001\nassignee_id: PLAN-001\nrunner: fake\nexecuted_at: 2026-08-09 10:00:00\n---\n\n# 公開記事\n\n本文\n"
+	writeCommandFile(t, filepath.Join(deliverableDirectory, "TASK-001.md"), deliverableContent)
+	args := []string{"--vault", root, "--project-id", "PROJECT-001", "--project", "ToDoアプリ", "--task", "TASK-001", "--target", "site-main", "--command-id", "CMD-ACTION-CLI-001"}
+	before := commandVaultSnapshot(t, root)
+	noProvider := commandDependencies{
+		now:       commandTestTime,
+		lookupEnv: func(string) (string, bool) { t.Fatal("Action plan or rejection read credentials"); return "", false },
+		newHTTPClient: func(time.Duration) claude.HTTPDoer {
+			t.Fatal("Action plan or rejection created HTTP client")
+			return nil
+		},
+	}
+	var planOutput bytes.Buffer
+	if code := run(context.Background(), append([]string{"action-wordpress-plan"}, args...), &planOutput, noProvider); code != 0 || !bytes.Contains(planOutput.Bytes(), []byte(`"executable":true`)) || !reflect.DeepEqual(before, commandVaultSnapshot(t, root)) {
+		t.Fatalf("Action plan code=%d output=%s", code, planOutput.String())
+	}
+	publishBaseArgs := append(append([]string(nil), args...), "--source-sha256", action.SourceDigest([]byte(deliverableContent)))
+	var rejected bytes.Buffer
+	if code := run(context.Background(), append([]string{"action-wordpress-publish"}, publishBaseArgs...), &rejected, noProvider); code != 1 || !bytes.Contains(rejected.Bytes(), []byte(`"code":"APPROVAL_REQUIRED"`)) || !reflect.DeepEqual(before, commandVaultSnapshot(t, root)) {
+		t.Fatalf("Action rejection code=%d output=%s", code, rejected.String())
+	}
+
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		calls++
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"id":77,"link":"https://example.test/77","status":"publish"}`))
+	}))
+	defer server.Close()
+	environment := map[string]string{
+		"WORKSPACE_WORDPRESS_BASE_URL": server.URL, "WORKSPACE_WORDPRESS_USERNAME": "fake-user", "WORKSPACE_WORDPRESS_APPLICATION_PASSWORD": "fake-password",
+	}
+	dependencies := commandDependencies{
+		now: commandTestTime, lookupEnv: func(key string) (string, bool) { value, ok := environment[key]; return value, ok },
+		newHTTPClient: func(time.Duration) claude.HTTPDoer { return server.Client() },
+	}
+	publishArgs := append(append([]string{"action-wordpress-publish"}, publishBaseArgs...), "--approved")
+	var first bytes.Buffer
+	if code := run(context.Background(), publishArgs, &first, dependencies); code != 0 || !bytes.Contains(first.Bytes(), []byte(`"status":"published"`)) || calls != 1 {
+		t.Fatalf("Action publish code=%d output=%s calls=%d", code, first.String(), calls)
+	}
+	var replay bytes.Buffer
+	if code := run(context.Background(), publishArgs, &replay, dependencies); code != 0 || replay.String() != first.String() || calls != 1 {
+		t.Fatalf("Action replay code=%d output=%s calls=%d", code, replay.String(), calls)
 	}
 }
 

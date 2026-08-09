@@ -33,6 +33,7 @@ type Inspector interface {
 type ProcessExecutor struct {
 	vaultRoot     string
 	provider      workspaceprocess.ClaudeProcessConfig
+	actionConfig  workspaceprocess.WordPressProcessConfig
 	httpClient    claude.HTTPDoer
 	metrics       *metrics.Subscriber
 	notifications *vault.NotificationSubscriber
@@ -40,6 +41,10 @@ type ProcessExecutor struct {
 }
 
 func NewProcessExecutor(vaultRoot string, provider workspaceprocess.ClaudeProcessConfig, httpClient claude.HTTPDoer) (*ProcessExecutor, error) {
+	return NewProcessExecutorWithActionConfig(vaultRoot, provider, workspaceprocess.WordPressProcessConfig{}, httpClient)
+}
+
+func NewProcessExecutorWithActionConfig(vaultRoot string, provider workspaceprocess.ClaudeProcessConfig, actionConfig workspaceprocess.WordPressProcessConfig, httpClient claude.HTTPDoer) (*ProcessExecutor, error) {
 	if strings.TrimSpace(vaultRoot) == "" || httpClient == nil {
 		return nil, fmt.Errorf("Vault root and HTTP client are required")
 	}
@@ -55,10 +60,10 @@ func NewProcessExecutor(vaultRoot string, provider workspaceprocess.ClaudeProces
 	metricSubscriber := metrics.NewSubscriber()
 	observedTypes := []event.Type{
 		event.TaskCreated, event.TaskStarted, event.TaskCompleted, event.TaskFailed, event.TaskHeld, event.TaskResumed,
-		event.ReviewCompleted, event.RevisionCreated,
+		event.ReviewCompleted, event.RevisionCreated, event.ActionCompleted,
 	}
 	return &ProcessExecutor{
-		vaultRoot: vaultRoot, provider: provider, httpClient: httpClient,
+		vaultRoot: vaultRoot, provider: provider, actionConfig: actionConfig, httpClient: httpClient,
 		metrics: metricSubscriber, notifications: notifications,
 		observers: []event.Observer{
 			{Types: observedTypes, Handler: notifications.Handler()},
@@ -166,6 +171,15 @@ type scheduleCreatePayload struct {
 		Operation string          `json:"operation"`
 		Payload   json.RawMessage `json:"payload"`
 	} `json:"target"`
+}
+
+type actionPublishPayload struct {
+	ProjectID    string    `json:"project_id"`
+	ProjectName  string    `json:"project_name"`
+	TaskID       string    `json:"task_id"`
+	TargetID     string    `json:"target_id"`
+	CurrentTime  time.Time `json:"current_time"`
+	SourceSHA256 string    `json:"source_sha256"`
 }
 
 func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (any, error) {
@@ -290,6 +304,19 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 				Approved: true, Payload: append(json.RawMessage(nil), payload.Target.Payload...),
 			},
 		}, true)
+	case "action.wordpress.publish":
+		var payload actionPublishPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteExternalAction(ctx, workspaceprocess.ExecuteActionInput{
+			ActionPlanInput: workspaceprocess.ActionPlanInput{
+				VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName,
+				TaskID: payload.TaskID, TargetID: payload.TargetID, CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
+				ExpectedSourceSHA256: payload.SourceSHA256,
+			},
+			Approved: true, EventObservers: executor.observers,
+		}, executor.actionConfig, executor.httpClient)
 	default:
 		return nil, ErrUnsupportedCommand
 	}

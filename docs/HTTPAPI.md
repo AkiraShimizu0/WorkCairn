@@ -49,12 +49,15 @@ daemonは`.env` fileを読みません。Provider commandに必要な設定はRu
 | `organization.employee_rename` | workspace | typed Rename request、時刻 |
 | `organization.employee_id_repair` | workspace | approved ID repair list、時刻 |
 | `organization.sync` | workspace | 時刻 |
+| `action.wordpress.publish` | project | Project、Task、logical target ID、承認済みsource SHA-256、時刻。credentialはpayload外 |
 
 Payloadはunknown fieldを拒否します。CEO plan generation、read-only plan／inspection、migration、Recovery applyはこのeffect Command endpointへ含めません。
 
 `GET /v1/schedules`と`GET /v1/schedules/{schedule_id}`はone-shot Scheduleのpending／dispatching／terminal stateをread-onlyで返します。daemonは`--scheduler-interval`ごとにdueまたはmissed pending Scheduleを確認し、保存済みの同一Command ID／payloadを既存Processへ配送します。`dispatching`は自動resumeしません。
 
-`GET /v1/notifications`と`GET /v1/notifications/{event_id}`は、Task／Review／Revision Eventから作成したimmutable local Inboxをread-onlyで返します。recordはEvent envelopeのidentityだけを持ち、payload、metadata、Prompt、Task title、Provider情報を含みません。`GET /v1/metrics`はdaemon process開始後のEvent type別件数を返し、再起動時にresetされます。
+`GET /v1/notifications`と`GET /v1/notifications/{event_id}`は、Task／Review／Revision／Action Eventから作成したimmutable local Inboxをread-onlyで返します。recordはEvent envelopeのidentityだけを持ち、payload、metadata、Prompt、Task title、Provider情報を含みません。`GET /v1/metrics`はdaemon process開始後のEvent type別件数を返し、再起動時にresetされます。
+
+WordPress Actionは`WORKSPACE_WORDPRESS_TARGET_ID`、`WORKSPACE_WORDPRESS_BASE_URL`、`WORKSPACE_WORDPRESS_USERNAME`、`WORKSPACE_WORDPRESS_APPLICATION_PASSWORD`をdaemon process環境から受け取ります。HTTP commandやScheduleへcredential、Base URL、Vault rootを含めません。`action.completed`はimmutable result evidence commit後にAudit／Notificationへ流れます。
 
 ## Status and recovery
 

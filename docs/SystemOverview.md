@@ -19,6 +19,10 @@ flowchart LR
     Plan --> ApproveTask{"実行を承認"}
     ApproveTask --> Execute["Task execution"]
     Execute --> Deliverable["Deliverable"]
+    Deliverable --> ActionPlan["External Action plan"]
+    ActionPlan --> ActionApproval{"外部公開を承認"}
+    ActionApproval --> ExternalAction["WordPress Action"]
+    ExternalAction --> Observe
     Deliverable --> ReviewPlan["Review plan"]
     ReviewPlan --> ApproveReview{"Reviewを承認"}
     ApproveReview --> Review["Review"]
@@ -118,6 +122,7 @@ Vaultは現在の運用データの正ですが、Go Coreからはport越しに�
 | Recovery | read-only evidence → plan再検証 → TaskService | stale evidenceを拒否し、成立済みartifactを保持 |
 | Scheduler | pending Schedule → dispatching CAS → target Command Ledger → terminal Schedule | target factをrollbackせず、曖昧なdispatchingを自動resumeしない |
 | Notification | business Event → Audit → immutable redacted Inbox | payloadを保存せず、失敗時もcanonical factをrollbackしない |
+| External Action | request evidence → remote publish → result evidence → Action Event | remote効果をrollbackせず、欠落段階をpartial failureで返す |
 
 retry時に既存artifactを推測してadoptせず、自動削除・上書きもしません。ADR-0020のRecovery foundationは、再起動後のTask／Deliverable／Review／Revision／Audit／temporary stateをread-onlyで診断します。確定証拠に拘束した`complete_task`と`fail_and_hold_task`だけを、plan再検証、明示承認、Task CASを経て実行します。Event replay、Review／Revision reconciliationは行いません。運用詳細は[Recovery.md](Recovery.md)を参照してください。
 
@@ -127,9 +132,11 @@ ADR-0025のSchedulerは、明示承認されたone-shot `workspace-command.v1`�
 
 ADR-0026のNotification／Metricsは既存Task／Review／Revision EventへRuntime edgeから接続します。NotificationはEvent envelopeのidentityだけを`.workspace-os/notifications`へimmutable保存し、payload／metadata／Promptを複製しません。MetricsはEvent type別counterだけをprocess memoryへ保持します。subscriber失敗は成立済みfactを削除せず、既存partial publication errorとして返ります。
 
+ADR-0027のExternal Actionは既存Deliverableをread-onlyで読み、source digestに拘束したrequest evidenceを先に保存してからWordPress Adapterを呼びます。remote公開後はresult evidenceを保存し、その後だけ`action.completed`をAudit／Notificationへ流します。credentialはRuntime edgeだけにあり、Task状態やDeliverableを変更しません。
+
 ## Go Only RuntimeとPython compatibility
 
-製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／MetricsにPython interpreterは不要です。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。Go sourceが外部interpreterを起動しないことをRelease Gateで検査します。
+製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／Metrics、External ActionにPython interpreterは不要です。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。Go sourceが外部interpreterを起動しないことをRelease Gateで検査します。
 
 Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ残します。既存import pathと`workspace-ai` entry pointを維持しますが、製品Runtimeではありません。Python gatewayはGo JSON v1 processへ明示的に接続し、失敗時にPython Worker、Provider、writerへfallbackしません。legacy moduleは新規機能追加禁止のreference実装です。
 
@@ -145,7 +152,7 @@ Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ�
 - Reviewed Multi-task WorkflowはTaskごとにReviewし、Request ChangesならRevision Taskを実行・再Reviewする。自動resume、並列実行は未実装
 - Schedulerはone-shotだけで、cron／recurrence、並列配送、`dispatching` reconciliationは未実装
 - Notificationはlocal read-only Inboxだけで、外部channel配送、未読／ack、Event replayは未実装。Metricsはprocess再起動でresetされる
-- 外部Action Adapterはまだ製品入口ではない
+- External ActionはWordPress post publishだけで、HTML変換、update／delete、media upload、remote reconciliation、自動retryは未実装
 - Python compatibility APIは公開互換方針が終了するまでrepositoryに残る
 
 これらはGo Only Runtimeの不足ではなく、次期Roadmapで段階的に扱う耐久性・運用機能です。

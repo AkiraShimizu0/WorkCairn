@@ -68,6 +68,7 @@ flowchart TD
 - [ADR-0024: Reviewed Workflowは既存Task、Review、Revision commandを決定的に構成する](docs/adr/ADR-0024-reviewed-workflow-branch-composition.md)
 - [ADR-0025: Schedulerは承認済みone-shot CommandをLedger経路へ配送する](docs/adr/ADR-0025-one-shot-scheduler-command-dispatch.md)
 - [ADR-0026: NotificationとMetricsをredacted Event subscriberとして接続する](docs/adr/ADR-0026-redacted-notification-and-metrics-subscribers.md)
+- [ADR-0027: External Actionはimmutable request evidenceを先行commitして公開する](docs/adr/ADR-0027-external-action-evidence-and-publication.md)
 
 新しいADRは[ADRテンプレート](docs/adr/ADR-template.md)から作成します。
 
@@ -339,9 +340,20 @@ Python Worker／PromptBuilder／ModelRouter／ClaudeRunnerは通常Task経路か
 
 途中で失敗した場合は後続処理を停止し、各コンポーネントが確定した状態を保持してWorkspace Managerへ返します。詳細は[docs/Workflow.md](docs/Workflow.md)と[docs/ReviewFlow.md](docs/ReviewFlow.md)を参照してください。
 
+## External Action
+
+既存DeliverableのWordPress公開は、同じCommand ID／targetでplanしてから明示承認します。`.env`は自動読込せず、credentialはpublish process環境からだけ注入します。
+
+```bash
+bin/workspace-run action-wordpress-plan --vault /approved/vault --project-id PROJECT-001 --project "記事案件" --task TASK-001 --target site-main --command-id CMD-ACTION-001
+bin/workspace-run action-wordpress-publish --vault /approved/vault --project-id PROJECT-001 --project "記事案件" --task TASK-001 --target site-main --command-id CMD-ACTION-001 --source-sha256 SOURCE_SHA256_FROM_PLAN --approved
+```
+
+公開後のresult evidence保存やEvent配信が失敗してもremote postを自動削除・再送しません。Command Ledger、Action evidence、Audit／Notificationを確認して手動判断します。
+
 ## Roadmap
 
-現在はGo Only Runtime、v1.0候補安定化、Durability／Recovery、主要commandへのLedger適用、loopback HTTP API／daemon、Reviewed Multi-task Workflow、one-shot Scheduler、redacted Notification／Metricsまで完了しています。次は外部Action Adapterへ進みます。順序と完了条件は[docs/ROADMAP.md](docs/ROADMAP.md)を参照してください。
+現在はGo Only Runtime、v1.0候補安定化、Durability／Recovery、主要commandへのLedger適用、loopback HTTP API／daemon、Reviewed Multi-task Workflow、one-shot Scheduler、redacted Notification／Metrics、承認付きWordPress Actionまで完了しています。順序と完了条件は[docs/ROADMAP.md](docs/ROADMAP.md)を参照してください。
 
 ## ライセンス
 

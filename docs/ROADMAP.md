@@ -171,18 +171,36 @@ ADR-0026に基づき、既存Event／Audit ownershipを維持した観測subscri
 
 外部channel配送、未読／ack、永続Metrics、token／duration、Event replay、Outboxは含めません。
 
-## Next 1 — External Action Adapters
+## Completed — External Action Adapter Foundation
 
-WordPress等への公開は、Provider Runnerとは別の明示的Action Adapterとして追加します。
+ADR-0027に基づき、WordPress公開をProvider Runnerとは別のAction Adapterとして実装しました。
+
+実装済み：
+
+- 既存immutable Deliverableをsource reference／SHA-256へ拘束するread-only plan
+- 明示承認とproject-scoped Command Ledger claim
+- payload本文を複製しないimmutable request evidence
+- Runtime edgeからcredentialを注入するSDK-free WordPress REST Adapter
+- remote公開後のimmutable result evidenceと`action.completed` Event／Audit／Notification
+- Provider失敗、result保存失敗、Event失敗のtyped partial state
+- CLI、HTTP、one-shot Schedulerで共有する`action.wordpress.publish` contract
+- terminal replay非重複、異request conflict、承認前副作用ゼロのMock／temporary Vault E2E
+
+HTML変換、update／delete、media upload、external reconciliation、自動retry、複数Action Providerは含めません。
+
+## Next 1 — Public Release Preparation
+
+Go Onlyの閉ループが自然言語依頼から外部公開まで成立したため、新機能追加より配布・運用理解を優先します。
 
 候補：
 
-- typed Action request／result、dry-run、approval
-- credentialをRuntime edgeから注入
-- publish前後のimmutable evidenceとpartial failure
-- WordPressを最初の具体Adapter候補とする
+- 初回setup、temporary／approved Vault、Provider／Action credential注入の安全な導線
+- loopback daemon、Scheduler、Notification、Recoveryを一貫して扱うoperator guide
+- binary packaging、version metadata、upgrade／backup／compatibility checklist
+- public exposure前のauthentication／TLS／authorization方針
+- 現在の機能を伝える製品名候補と既存Workspace OS名称との移行判断
 
-完了条件：外部ActionがKernel／DomainへSDKや秘密情報を持ち込まず、Task状態、Deliverable、Auditを直接変更しないこと。
+完了条件：新規利用者が実Vaultを誤変更せずplan／approval／execute／inspect／recoveryを再現でき、remote公開の未実装保証を誤解しないこと。
 
 ## Python Compatibility End of Life
 

@@ -2,7 +2,7 @@
 
 ## 概要
 
-Workspace OSは、Obsidian Vault上のMarkdownを人間とAIが共有できる永続データとして扱います。通常Task execution、Review、Revision、Organization／Identity、Project bootstrap、通常Task作成、CEO plan生成／適用、one-shot SchedulerはGoです。PythonはGo process gatewayと公開API referenceに限定していきます。
+Workspace OSは、Obsidian Vault上のMarkdownを人間とAIが共有できる永続データとして扱います。通常Task execution、Review、Revision、Organization／Identity、Project bootstrap、通常Task作成、CEO plan生成／適用、one-shot Scheduler、Notification／Metrics、External ActionはGoです。PythonはGo process gatewayと公開API referenceに限定していきます。
 
 現在のシステムを利用フローから一貫して読む場合は[System Overview](SystemOverview.md)を参照してください。この文書はpackage、port、compositionの詳細を補足します。
 
@@ -25,6 +25,8 @@ flowchart TD
     Kernel --> Execution["ExecutionService"]
     Execution --> GoWorker["Go WorkerService / Claude Adapter"]
     Execution --> Task["TaskService / Deliverable / Audit"]
+    Task --> Action["Approved External Action"]
+    Action --> WordPress["WordPress Adapter"]
     Task --> Observe
     Review --> Observe
     Revision --> Observe
@@ -66,6 +68,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0024: Reviewed Workflowは既存Task、Review、Revision commandを決定的に構成する](adr/ADR-0024-reviewed-workflow-branch-composition.md)
 - [ADR-0025: Schedulerは承認済みone-shot CommandをLedger経路へ配送する](adr/ADR-0025-one-shot-scheduler-command-dispatch.md)
 - [ADR-0026: NotificationとMetricsをredacted Event subscriberとして接続する](adr/ADR-0026-redacted-notification-and-metrics-subscribers.md)
+- [ADR-0027: External Actionはimmutable request evidenceを先行commitして公開する](adr/ADR-0027-external-action-evidence-and-publication.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -123,6 +126,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Reviewed Workflow Run Service | 各Task後に既存Reviewを実行し、Request Changes時は既存Revisionで作成したTaskをtargeted readinessで実行・再Reviewしてから本流へ戻す |
 | Go Scheduler Service | 承認済みone-shot Commandをoffset付き時刻で選択し、Schedule CAS後に既存Process／Command Ledgerへ配送する。Task状態やProviderは直接扱わない |
 | Go Notification／Metrics Subscriber | Runtime edgeから既存Eventへ接続し、payload-free immutable Inboxとbounded process-local counterを提供する。Task状態、Event、Auditを変更しない |
+| Go External Action Service／WordPress Adapter | 既存Deliverableをtyped intentへ変換し、明示承認、immutable request／result evidence、外部公開、`action.completed`を調停する。credentialとHTTPはAdapter edgeだけに置く |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
@@ -140,6 +144,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - `Revisions/`: レビューから作られた修正タスクのメタデータ
 - `.workspace-os/schedules/`: one-shot Scheduleのdefinition、due time、Version／CAS、dispatch outcome
 - `.workspace-os/notifications/`: Event payloadを含まないimmutable Notification projection
+- `プロジェクト/<name>/.workspace-os/actions/`: source digestに拘束されたimmutable external Action request／result evidence
 - `Progress.md`と`Audit Log.md`: 実行・レビュー履歴
 
 ### Python

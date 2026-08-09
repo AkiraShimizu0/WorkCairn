@@ -16,6 +16,8 @@ flowchart TD
     Kernel --> Execution["ExecutionService"]
     Execution --> GoWorker["Go WorkerService / Claude Adapter"]
     Execution --> Task["TaskService / Deliverable / Audit"]
+    Task --> Action["Approved External Action"]
+    Action --> WordPress["WordPress Adapter"]
     Task --> Observe
     Review --> Observe
     Revision --> Observe

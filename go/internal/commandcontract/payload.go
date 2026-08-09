@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/organization"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
@@ -21,7 +22,8 @@ func Schedulable(operation string) bool {
 	switch operation {
 	case "task.execute", "review.execute", "revision.execute", "workflow.execute", "workflow.reviewed.execute",
 		"ceo_plan.apply", "project.bootstrap", "task.create", "project.dependencies.create",
-		"organization.employee_hire", "organization.employee_rename", "organization.employee_id_repair", "organization.sync":
+		"organization.employee_hire", "organization.employee_rename", "organization.employee_id_repair", "organization.sync",
+		"action.wordpress.publish":
 		return true
 	default:
 		return false
@@ -122,6 +124,15 @@ func ValidatePayload(operation string, content json.RawMessage) error {
 		target = &struct {
 			CurrentTime time.Time `json:"current_time"`
 		}{}
+	case "action.wordpress.publish":
+		target = &struct {
+			ProjectID    string    `json:"project_id"`
+			ProjectName  string    `json:"project_name"`
+			TaskID       string    `json:"task_id"`
+			TargetID     string    `json:"target_id"`
+			CurrentTime  time.Time `json:"current_time"`
+			SourceSHA256 string    `json:"source_sha256"`
+		}{}
 	default:
 		return ErrInvalidPayload
 	}
@@ -155,6 +166,7 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 		"organization.employee_rename":    {},
 		"organization.employee_id_repair": {},
 		"organization.sync":               {},
+		"action.wordpress.publish":        {"project_id", "project_name", "task_id", "target_id", "source_sha256"},
 	}
 	stringsRequired, supported := requiredStrings[operation]
 	if !supported {
@@ -186,6 +198,12 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 	if operation == "workflow.execute" || operation == "workflow.reviewed.execute" {
 		var maxTasks int
 		if raw, ok := fields["max_tasks"]; !ok || json.Unmarshal(raw, &maxTasks) != nil || maxTasks < 1 || maxTasks > 100 {
+			return ErrInvalidPayload
+		}
+	}
+	if operation == "action.wordpress.publish" {
+		var digest string
+		if json.Unmarshal(fields["source_sha256"], &digest) != nil || action.ValidateSourceDigest(digest) != nil {
 			return ErrInvalidPayload
 		}
 	}

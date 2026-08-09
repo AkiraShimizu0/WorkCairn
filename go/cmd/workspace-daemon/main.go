@@ -38,9 +38,12 @@ func run() error {
 	if vaultRoot == "" || providerTimeout <= 0 || shutdownTimeout <= 0 || schedulerInterval <= 0 {
 		return errors.New("Vault root and positive timeouts are required")
 	}
-	executor, err := httpapi.NewProcessExecutor(vaultRoot, workspaceprocess.ClaudeProcessConfig{
+	executor, err := httpapi.NewProcessExecutorWithActionConfig(vaultRoot, workspaceprocess.ClaudeProcessConfig{
 		APIKey: os.Getenv("ANTHROPIC_API_KEY"), ProviderModel: os.Getenv("WORKSPACE_CLAUDE_PROVIDER_MODEL"),
 		BaseURL: os.Getenv("WORKSPACE_CLAUDE_BASE_URL"),
+	}, workspaceprocess.WordPressProcessConfig{
+		TargetID: os.Getenv("WORKSPACE_WORDPRESS_TARGET_ID"), BaseURL: os.Getenv("WORKSPACE_WORDPRESS_BASE_URL"),
+		Username: os.Getenv("WORKSPACE_WORDPRESS_USERNAME"), ApplicationPassword: os.Getenv("WORKSPACE_WORDPRESS_APPLICATION_PASSWORD"),
 	}, &http.Client{Timeout: providerTimeout})
 	if err != nil {
 		return err

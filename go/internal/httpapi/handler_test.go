@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
@@ -271,6 +272,51 @@ func TestProcessExecutorExposesRedactedNotificationsAndMetricsWithoutReplayDupli
 	replayedRecords, err := executor.InspectNotifications(context.Background())
 	if err != nil || len(replayedRecords) != 1 {
 		t.Fatalf("replay notifications = %#v, %v", replayedRecords, err)
+	}
+}
+
+func TestHTTPWordPressActionUsesTypedCommandLedgerAndObserverPath(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "プロジェクト", "記事案件")
+	if err := os.MkdirAll(filepath.Join(project, "Deliverables"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	deliverableContent := "---\ntype: task-deliverable\nproject: 記事案件\ntask_id: TASK-001\nassignee_id: WRITER-001\nrunner: fake\nexecuted_at: 2026-08-09 10:00:00\n---\n\n# 公開記事\n\n本文\n"
+	if err := os.WriteFile(filepath.Join(project, "Deliverables", "TASK-001.md"), []byte(deliverableContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	providerCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		providerCalls++
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"id":88,"link":"https://example.test/88","status":"publish"}`))
+	}))
+	defer server.Close()
+	executor, err := NewProcessExecutorWithActionConfig(root, workspaceprocess.ClaudeProcessConfig{}, workspaceprocess.WordPressProcessConfig{
+		TargetID: "site-main", BaseURL: server.URL, Username: "fake-user", ApplicationPassword: "fake-password",
+	}, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(executor, executor)
+	command := map[string]any{
+		"version": ContractVersion, "command_id": "CMD-ACTION-HTTP-001", "operation": "action.wordpress.publish", "approved": true,
+		"payload": map[string]any{"project_id": "PROJECT-001", "project_name": "記事案件", "task_id": "TASK-001", "target_id": "site-main", "source_sha256": action.SourceDigest([]byte(deliverableContent)), "current_time": "2026-08-09T12:00:00Z"},
+	}
+	first := performSingleCommand(t, handler, command)
+	if first.Code != http.StatusOK || !bytes.Contains(first.Body.Bytes(), []byte(`"status":"published"`)) || providerCalls != 1 {
+		t.Fatalf("Action command = %d %s calls=%d", first.Code, first.Body.String(), providerCalls)
+	}
+	replay := performSingleCommand(t, handler, command)
+	if replay.Code != http.StatusOK || replay.Body.String() != first.Body.String() || providerCalls != 1 {
+		t.Fatalf("Action replay = %d %s calls=%d", replay.Code, replay.Body.String(), providerCalls)
+	}
+	if snapshot := executor.InspectMetrics(); snapshot.ByEventType[event.ActionCompleted] != 1 {
+		t.Fatalf("Action metrics = %#v", snapshot)
+	}
+	records, err := executor.InspectNotifications(context.Background())
+	if err != nil || len(records) != 1 || records[0].EventType != event.ActionCompleted {
+		t.Fatalf("Action notifications = %#v, %v", records, err)
 	}
 }
 

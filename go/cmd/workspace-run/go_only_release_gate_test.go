@@ -25,6 +25,7 @@ func TestGoOnlyReleaseGateCoversProductCapabilities(t *testing.T) {
 		"deliverable_audit":     {"plan", "execute"},
 		"recovery":              {"recovery-inspect", "recovery-plan", "recovery-apply"},
 		"scheduler":             {"schedule-plan", "schedule-create", "schedule-list"},
+		"external_action":       {"action-wordpress-plan", "action-wordpress-publish"},
 	}
 	for capability, operations := range capabilities {
 		for _, operation := range operations {

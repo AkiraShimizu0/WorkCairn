@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
@@ -51,6 +52,8 @@ type commandOptions struct {
 	oldName, newName, reason                  string
 	recoveryAction, recoveryReason            string
 	ceoRequest, planJSON, scheduleJSON        string
+	actionTarget                              string
+	actionSourceSHA256                        string
 	candidateJSONs                            stringListFlag
 	repairJSONs                               stringListFlag
 	renameJSONs                               stringListFlag
@@ -278,6 +281,43 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			return 1
 		}
 		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		return 0
+	}
+	if operation == "action-wordpress-plan" || operation == "action-wordpress-publish" {
+		input := workspaceprocess.ActionPlanInput{
+			VaultRoot: options.vaultRoot, ProjectID: options.projectID, ProjectName: options.projectName,
+			TaskID: options.taskID, TargetID: options.actionTarget, CurrentTime: currentTime, CommandID: options.commandID,
+			ExpectedSourceSHA256: options.actionSourceSHA256,
+		}
+		if operation == "action-wordpress-plan" {
+			plan, err := workspaceprocess.PlanExternalAction(ctx, input)
+			if err != nil {
+				writeCommandResponse(output, failureResponse("ACTION_PLAN_FAILED", "preflight"))
+				return 1
+			}
+			writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: plan})
+			return 0
+		}
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		baseURL, _ := dependencies.lookupEnv("WORKSPACE_WORDPRESS_BASE_URL")
+		username, _ := dependencies.lookupEnv("WORKSPACE_WORDPRESS_USERNAME")
+		password, _ := dependencies.lookupEnv("WORKSPACE_WORDPRESS_APPLICATION_PASSWORD")
+		result, err := workspaceprocess.ExecuteExternalAction(ctx, workspaceprocess.ExecuteActionInput{ActionPlanInput: input, Approved: true}, workspaceprocess.WordPressProcessConfig{
+			TargetID: options.actionTarget, BaseURL: baseURL, Username: username, ApplicationPassword: password,
+		}, dependencies.newHTTPClient(options.timeout))
+		if err != nil {
+			response := durableCommandFailureResponse(err, "ACTION_FAILED", "process")
+			if result.Intent != nil {
+				response.Error.IntentCommitted = result.Intent.Committed
+			}
+			response.Error.EventPublished = result.EventPublished
+			writeCommandResponse(output, response)
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
 		return 0
 	}
 	if operation == "ceo-plan-apply-plan" || operation == "ceo-plan-apply" {
@@ -726,6 +766,8 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	set.StringVar(&options.ceoRequest, "request", "", "natural-language CEO request")
 	set.StringVar(&options.planJSON, "plan-json", "", "validated CEO plan JSON")
 	set.StringVar(&options.scheduleJSON, "schedule-json", "", "one-shot Schedule definition JSON")
+	set.StringVar(&options.actionTarget, "target", "", "logical external Action target ID")
+	set.StringVar(&options.actionSourceSHA256, "source-sha256", "", "approved Deliverable SHA-256 for external Action")
 	set.Var(&options.candidateJSONs, "candidate-json", "candidate JSON; repeat for batch validation")
 	set.Var(&options.repairJSONs, "repair-json", "expected Employee ID repair JSON; repeat for apply")
 	set.Var(&options.renameJSONs, "rename-json", "Employee rename request JSON; repeat for batch plan")
@@ -784,6 +826,15 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	if operation == "schedule-create" {
 		required = append(required, options.commandID)
 	}
+	if operation == "action-wordpress-plan" || operation == "action-wordpress-publish" {
+		required = append(required, options.projectID, options.taskID, options.actionTarget, options.commandID)
+	}
+	if operation == "action-wordpress-publish" {
+		required = append(required, options.actionSourceSHA256)
+		if action.ValidateSourceDigest(options.actionSourceSHA256) != nil {
+			return commandOptions{}, errors.New("invalid Action source SHA-256")
+		}
+	}
 	if operation == "employee-candidates-validate" && len(options.candidateJSONs) == 0 {
 		return commandOptions{}, errors.New("candidate JSON is required")
 	}
@@ -812,7 +863,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list":
+	case "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish":
 		return true
 	default:
 		return false

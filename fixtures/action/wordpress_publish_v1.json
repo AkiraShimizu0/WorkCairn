@@ -1,0 +1,14 @@
+{
+  "version": "workspace-command.v1",
+  "command_id": "CMD-ACTION-001",
+  "operation": "action.wordpress.publish",
+  "approved": true,
+  "payload": {
+    "project_id": "PROJECT-001",
+    "project_name": "記事案件",
+    "task_id": "TASK-001",
+    "target_id": "site-main",
+    "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "current_time": "2026-08-09T12:00:00Z"
+  }
+}
