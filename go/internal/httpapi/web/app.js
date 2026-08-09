@@ -132,6 +132,7 @@ function showError(error, title = "処理を完了できませんでした") {
   const detail = error instanceof APIError ? error.detail : null;
   const code = detail?.code || error.message || "UNKNOWN_ERROR";
   const stage = detail?.stage;
+  const pending = sessionStorage.getItem(STORAGE_PENDING);
   ui.activeCard.className = "action-card attention";
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, "確認が必要です"),
@@ -142,7 +143,7 @@ function showError(error, title = "処理を完了できませんでした") {
       stage ? node("div", {}, `stage: ${stage}`) : null,
     ),
     node("div", { class: "button-row" },
-      button("状態を再確認", "primary", () => refreshCurrent()),
+      button(pending ? "Command状態を再確認" : "状態を再確認", "primary", () => pending ? resumePendingCommand(pending) : refreshCurrent()),
       button("依頼一覧へ", "quiet", () => selectSession(null)),
     ),
   );
@@ -601,14 +602,78 @@ async function executeNextCommand(next, payload, busyTitle, busyMessage, fixedCo
   };
   sessionStorage.setItem(STORAGE_PENDING, JSON.stringify(command));
   setBusy(true, busyTitle, busyMessage);
+  let accepted = false;
   try {
-    await requestJSON("/v1/commands", { method: "POST", body: JSON.stringify(command) });
-    sessionStorage.removeItem(STORAGE_PENDING);
+    await requestJSON("/v1/commands", {
+      method: "POST",
+      headers: { Prefer: "respond-async" },
+      body: JSON.stringify(command),
+    });
+    accepted = true;
+    await monitorAcceptedCommand(command);
     await refreshCurrent();
     setBusy(false);
   } catch (error) {
-    if (error.status !== 0) sessionStorage.removeItem(STORAGE_PENDING);
+    if (!accepted && error.status !== 0) sessionStorage.removeItem(STORAGE_PENDING);
     showError(error);
+  }
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function monitorAcceptedCommand(command) {
+  setBusy(true, "Macで実行しています", "承認は受理されました。この画面を閉じてもMac上の処理は続きます。");
+  let missing = 0;
+  while (true) {
+    let record;
+    try {
+      record = await requestJSON(`/v1/commands/${encodeURIComponent(command.command_id)}?scope=workspace`);
+      missing = 0;
+    } catch (error) {
+      if (error.status !== 404 || ++missing >= 10) throw error;
+      await wait(500);
+      continue;
+    }
+    if (record.state === "succeeded") {
+      sessionStorage.removeItem(STORAGE_PENDING);
+      return record;
+    }
+    if (record.state === "failed" || record.state === "partial_failure") {
+      sessionStorage.removeItem(STORAGE_PENDING);
+      throw new APIError(record.failure?.code || "COMMAND_FAILED", 422, {
+        code: record.failure?.code || "COMMAND_FAILED",
+        stage: record.failure?.stage,
+        recovery_required: record.state === "partial_failure",
+      });
+    }
+    if (record.state !== "running") {
+      throw new APIError("COMMAND_LEDGER_INVALID", 500, { code: "COMMAND_LEDGER_INVALID", recovery_required: true });
+    }
+    await wait(1000);
+  }
+}
+
+async function resumePendingCommand(serialized) {
+  let command;
+  try {
+    command = JSON.parse(serialized);
+  } catch {
+    sessionStorage.removeItem(STORAGE_PENDING);
+    return;
+  }
+  if (command?.version !== COMMAND_VERSION || typeof command.command_id !== "string" || !command.command_id) {
+    sessionStorage.removeItem(STORAGE_PENDING);
+    return;
+  }
+  try {
+    await monitorAcceptedCommand(command);
+    await refreshCurrent();
+    setBusy(false);
+    toast("Macで完了した処理を反映しました。");
+  } catch (error) {
+    showError(error, "前回のCommand状態を確認できませんでした");
   }
 }
 
@@ -764,7 +829,7 @@ async function initialize() {
     }
     await startWorkspace();
     const pending = sessionStorage.getItem(STORAGE_PENDING);
-    if (pending) toast("前回のCommand結果が未確認です。Session状態を確認してから必要なら同じCommand IDで明示再送してください。");
+    if (pending) await resumePendingCommand(pending);
   } catch (error) {
     setConnected(false);
     ui.pairingView.hidden = false;

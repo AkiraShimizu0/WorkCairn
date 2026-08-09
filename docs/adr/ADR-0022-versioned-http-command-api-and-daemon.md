@@ -34,6 +34,8 @@ daemonはVault rootとProvider設定をRuntime edgeで注入します。`.env` f
 
 v1は同期HTTP requestとしてcommand完了を待ちます。serverのWrite timeoutで長時間commandを途中終了させず、Provider timeoutとrequest context cancellationを既存processへ渡します。client切断後も、既にclaim済みcommandのterminal outcome保存は`context.WithoutCancel`に基づく既存Ledger境界で試行します。
 
+ADR-0032はこの同期defaultを維持したまま、Local Web UIの`interaction.*`だけにadditiveなbounded acceptanceを追加します。これはdurable queueやcrash後resumeではなく、CLIと他のHTTP commandの同期semanticsを変更しません。
+
 daemonはSIGINT／SIGTERMで新規受付を停止し、設定済み猶予内で実行中handlerを待つgraceful shutdownを行います。猶予超過、process crash、`running` recordを自動resumeしません。
 
 ### Inspection and recovery

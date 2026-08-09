@@ -273,15 +273,27 @@ ADR-0031に基づき、既存Interaction plan／command／next endpointを使い
 
 UIはGo binaryへembedし、iPhone 390×844相当で`依頼→質問→Plan承認→Workflow→完了→成果物／Review詳細`をtemporary VaultとMock Providerで確認済みです。既定loopbackは維持し、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可します。remote authentication、TLS、native app、Push通知は含めません。
 
-## Next 1 — Mobile Command Continuity
+## Completed — Mobile Command Continuity
 
-現在のeffect Commandは同期HTTP requestです。iPhoneがlock／backgroundへ移りconnectionが切れた場合、request context cancellationとCommand Ledgerの確定状態を確認する必要があります。次は、新しいbusiness ruleや自動resumeを追加せず「承認をdaemonが受理した後はclient接続と切り離して実行し、同じCommand IDをread-only statusで追跡する」最小境界を検討します。
+従来のeffect Commandは同期HTTP requestでした。iPhoneがlock／backgroundへ移りconnectionが切れた場合、request context cancellationとCommand Ledgerの確定状態を確認する必要がありました。新しいbusiness ruleや自動resumeを追加せず「承認をdaemonが受理した後はclient接続と切り離して実行し、同じCommand IDをread-only statusで追跡する」最小境界を採用します。
 
 - 受理前は既存と同じ明示承認、strict payload、Command IDを要求する
 - daemon process内のbounded executionだけを扱い、crash後の自動resumeはしない
 - terminal／partial／runningは既存Command LedgerとRecoveryを正とする
 - UIはpollingでstatusを表示するだけで、automatic retry／adoptionをしない
 - CLIと同期HTTP operationを破壊せずadditiveにする
+
+ADR-0032に基づき、`interaction.*`だけが`Prefer: respond-async`でboundedに受理され、既存workspace Command Ledgerをstatus URLとして返すようになりました。UIは同じCommand IDをread-only pollingし、reload後も再実行せずstatus確認だけを再開します。graceful shutdownは受理済みcommandを待ち、猶予切れではcancelしてRecoveryへ止めます。
+
+## Next 1 — Guided Recovery Inspection
+
+mobile attention表示は現在outer／child Command IDとLedger stateまでです。次は既存ADR-0020のRecovery snapshot／finding／planをread-only HTTP projectionとして公開し、iPhoneでも「何がcommit済みで、なぜ自動継続しないか」を理解できるようにします。
+
+- 最初は診断だけとし、自動repair／retry／artifact adoptionを追加しない
+- canonical evidence certaintyと既存Recovery error型をそのまま表示する
+- Recovery applyを追加する場合は別の明示digest／Version承認に分離する
+- Vault path、秘密情報、Prompt、Provider responseをclientへ出さない
+- normal Workflowのbusiness ruleやSession stateを変更しない
 
 ## Python Compatibility End of Life
 

@@ -232,11 +232,7 @@ type interactionActionExecutePayload struct {
 }
 
 func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (any, error) {
-	if err := command.Validate(); err != nil || !command.Approved {
-		return nil, ErrInvalidCommand
-	}
-	if (commandcontract.Schedulable(command.Operation) || strings.HasPrefix(command.Operation, "interaction.")) &&
-		commandcontract.ValidatePayload(command.Operation, command.Payload) != nil {
+	if err := executor.ValidateCommand(command); err != nil {
 		return nil, ErrInvalidCommand
 	}
 	switch command.Operation {
@@ -432,6 +428,17 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 	default:
 		return nil, ErrUnsupportedCommand
 	}
+}
+
+func (executor *ProcessExecutor) ValidateCommand(command Command) error {
+	if err := command.Validate(); err != nil || !command.Approved {
+		return ErrInvalidCommand
+	}
+	if (commandcontract.Schedulable(command.Operation) || strings.HasPrefix(command.Operation, "interaction.")) &&
+		commandcontract.ValidatePayload(command.Operation, command.Payload) != nil {
+		return ErrInvalidCommand
+	}
+	return nil
 }
 
 func (executor *ProcessExecutor) Dispatch(ctx context.Context, command scheduler.Command) (scheduler.DispatchOutcome, error) {

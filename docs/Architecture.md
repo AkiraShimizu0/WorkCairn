@@ -78,6 +78,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0029: Interactionは既存Reviewed Workflowを決定的child Commandとして実行する](adr/ADR-0029-interaction-reviewed-workflow-composition.md)
 - [ADR-0030: Interactionは明示Deliverableを既存External Actionへ引き渡す](adr/ADR-0030-interaction-external-action-handoff.md)
 - [ADR-0031: iPhone向けLocal Web UIはdaemon同一originと明示LAN pairingで提供する](adr/ADR-0031-mobile-local-web-interaction-client.md)
+- [ADR-0032: mobile Interaction Commandをclient接続から切り離して追跡する](adr/ADR-0032-mobile-command-continuity.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -130,7 +131,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Command Ledger Domain／Service | Command ID、request digest、running／terminal outcomeと一度だけのVersion遷移を管理する |
 | Go Vault Command Ledger Adapter | Project scopeまたはworkspace scopeのhidden machine metadataへclaimをatomic createし、terminal outcomeをCAS／atomic replacementで保存する |
 | Go Process／workspace-run | Vault AdapterとRuntimeをprocess edgeでcompositionし、Task metadata migration、read-only execution／recovery plan、明示承認付きexecute／recoveryを提供する |
-| Go HTTP API／workspace-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger／Organization／Task evidence inspection、graceful shutdownを提供し、workspace-runと同じprocess／Serviceを利用する。既定はloopback、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可する |
+| Go HTTP API／workspace-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger／Organization／Task evidence inspection、graceful shutdownを提供し、workspace-runと同じprocess／Serviceを利用する。既定はloopback、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可する。mobile Interaction commandだけadditiveなbounded acceptanceでclient接続から切り離せる |
 | Mobile-first Local Web UI | daemon同一originからembed配信し、Interaction Next Actionを「次にすること」へ投影する薄いclient。質問、digest、Reviewer、Task上限、External Actionを既存plan／Commandへ渡し、Task／Review／Revision規則を持たない |
 | Go Workflow Run Service | dependency readinessを各Task後に再planし、決定的child Command IDで既存Task executionを順次調停する。Task状態やEventは変更しない |
 | Go Reviewed Workflow Run Service | 各Task後に既存Reviewを実行し、Request Changes時は既存Revisionで作成したTaskをtargeted readinessで実行・再Reviewしてから本流へ戻す |
@@ -198,7 +199,7 @@ Workspace OSの製品Runtime移行は完了しています。通常Task、Review
 - `go/internal/adapter/vault`: read-only Context／Organization Loader、Project／Task／Deliverable／Review／Revision intent／Schedule／Interaction Store、Audit Event subscriber
 - `go/internal/runtime`: Provider／Storage AdapterをServiceへ注入するprocess-neutral execution／Review／Revision composition
 - `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／reviewed Workflow／Schedule／Interaction Workflow／Recoveryのread-only planと明示承認付きexecute
-- `go/internal/httpapi`: version付きCommand HTTP contract、必須Command ID、同期handler、Ledger／Task evidence inspection、embed mobile Web UI、trusted-LAN pairing、graceful server lifecycle
+- `go/internal/httpapi`: version付きCommand HTTP contract、必須Command ID、同期handler、mobile Interactionのbounded acceptance、Ledger／Task evidence inspection、embed mobile Web UI、trusted-LAN pairing、graceful server lifecycle
 - `go/internal/policy`: 明示承認とWorker失敗後の回復判断を提供する決定的Policy Domain
 - `go/internal/execution`: 1タスク実行のRequest、Result、Stage、型付きpartial failure契約
 - `go/internal/service`: Kernel向けProject/Workflow/Task/Event/Worker/Execution／Scheduler Facade

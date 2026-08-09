@@ -69,6 +69,10 @@ Interaction Sessionの開始前planはread-only `POST /v1/interaction-plans`、P
 
 Payloadはunknown fieldを拒否します。CEO plan generation、read-only plan／inspection、migration、Recovery applyはこのeffect Command endpointへ含めません。
 
+Local Web UIの`interaction.*` commandは、同じendpointへ`Prefer: respond-async`を付けられます。daemonはtyped payloadとapprovalを先に検証し、受理時に`202 Accepted`、`Preference-Applied: respond-async`、`Location: /v1/commands/{command_id}?scope=workspace`を返します。実行はrequest contextから切り離されますがdaemon process lifetimeには従い、UIは既存Ledgerをread-only pollingします。CLI、Project scope command、通常の同期HTTP responseは変更しません。
+
+これはdurable queueではありません。`202`後でもdurable claim前にprocessがcrashすればLedgerが存在しない可能性があります。`running`／partial／Ledger欠落を自動resume、retry、adoptせず、既存Recovery境界へ止めます。
+
 `GET /v1/interactions`と`GET /v1/interactions/{session_id}`はappend-only turn、state、Versionをread-onlyで返します。`GET /v1/interactions/{session_id}/next`は次のoperation、必要field、質問、承認要否、attention時のLedger参照を決定的に返します。Workflow turnは完全Result digestとbounded summaryを返し、Deliverable本文は複製しません。`GET /v1/organization`はReviewer選択用inventory、`GET /v1/projects/{project_name}/tasks/{task_id}/evidence`はcommit済みTask、Deliverable、canonical Reviewをread-onlyで返します。Session／成果物はredacted endpointではないため、loopbackまたはpairing済みtrusted LAN外へ公開しないでください。Interaction commandは人間の質問回答・承認を必要とするためScheduler対象ではありません。
 
 `GET /v1/schedules`と`GET /v1/schedules/{schedule_id}`はone-shot Scheduleのpending／dispatching／terminal stateをread-onlyで返します。daemonは`--scheduler-interval`ごとにdueまたはmissed pending Scheduleを確認し、保存済みの同一Command ID／payloadを既存Processへ配送します。`dispatching`は自動resumeしません。

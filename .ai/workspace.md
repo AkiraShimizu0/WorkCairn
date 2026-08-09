@@ -11,7 +11,7 @@ Workspace OSは、会社のProject、Task、AI社員、Workflow、Eventを管理
 - `workspace-run`は通常運用、CEO plan、Project／Task、Organization／Identity、Task execution、Review、Revision、Deliverable／AuditをPython interpreterなしで提供します。
 - ADR-0020に基づく`recovery-inspect|plan|apply`は、Task／artifact／Audit／temporary stateをread-only診断し、証拠SHA-256とTask Versionに拘束された2つの明示Task recoveryだけを提供します。Event replayやartifact adoptionはしません。
 - ADR-0021のCommand Ledger foundationは、明示Command ID付き通常Task／Review／Revision、CEO apply、Project／Task writer、Organization writer、Sequential／Reviewed Workflow executionで副作用前claim、request digest、terminal outcomeを永続化し、同一requestを副作用なしでreplayします。Project作成前／Organization commandはworkspace scope、既存Project内commandはproject scopeを使い、running recordはRecoveryで診断し自動resumeしません。
-- ADR-0022の`workspace-daemon`はloopback既定の`workspace-command.v1`を提供し、HTTPではCommand IDを必須化します。CLIと同じGo process／Serviceを直接利用し、graceful shutdownとread-only Ledger statusを持ちます。remote公開、認証／TLS、非同期queueは未実装です。
+- ADR-0022の`workspace-daemon`はloopback既定の`workspace-command.v1`を提供し、HTTPではCommand IDを必須化します。CLIと同じGo process／Serviceを直接利用し、graceful shutdownとread-only Ledger statusを持ちます。remote公開、認証／TLS、durable queueは未実装です。
 - ADR-0023の順次Multi-task Workflowに加え、ADR-0024のReviewed Workflowは各Task後に既存Reviewを実行し、Request Changesなら既存Revisionで修正Taskを作成・実行・再Reviewしてから本流へ戻ります。役割付きchild Command ID、Revision Task限定targeted readiness、最大100 Taskを使い、自動resume／並列実行はしません。
 - ADR-0025のone-shot Schedulerは承認済み`workspace-command.v1`をoffset付き時刻以後に既存Processへ一度だけ配送します。Schedule CASとtarget Command Ledgerを再利用し、crash後の`dispatching`を自動resumeしません。
 - ADR-0026のNotification／MetricsはTask／Review／Revision EventへRuntime edgeから接続します。Notificationはpayload-free immutable local Inbox、Metricsはbounded process-local counterで、subscriber失敗はcanonical factをrollbackしません。
@@ -21,6 +21,7 @@ Workspace OSは、会社のProject、Task、AI社員、Workflow、Eventを管理
 - ADR-0030の任意External Action handoffはcompleted Workflow内の明示Taskだけを既存WordPress Action child Commandへ渡し、source／plan digest承認後の結果summaryをSessionへ記録します。公開意図や対象を推測しません。
 - `interaction-next`はSession stateと最新turnから次のoperation、必要field、質問、承認要否、Recovery参照をread-onlyに導出します。自動承認・実行・Recoveryは行いません。
 - ADR-0031のmobile-first Local Web UIは`workspace-daemon`へembedされ、iPhoneからInteraction／Next Action／Command APIを利用します。既定loopbackを維持し、明示`--mobile`だけprivate／link-local addressとprocess-local pairingを許可します。UIはbusiness ruleを持たず、Task／Deliverable／canonical Review evidenceをread-onlyで後から表示します。
+- ADR-0032によりmobile Interaction commandはtyped validation後にbounded受理でき、client接続から切り離して既存workspace Ledgerを追跡します。同期API、CLI、commit pointは変更せず、daemon crash後の自動resumeは行いません。
 - Workspace Kernel、Project／Workflow／Task／Event／Worker／Policy Domain、PromptBuilder、Claude Adapter、Vault Adapter、Runtime compositionはGoです。temporary VaultとMock ProviderでEnd-to-End検証します。
 - Python TaskExecutor／Worker／ModelRouter／ClaudeRunner／ReviewerWorker／RevisionTaskService／ProjectManager／Organization writerは全て通常製品経路から外れ、公開互換referenceだけに残ります。
 - WorkflowEngineのRevision呼出しは`WorkspaceRunRevisionGateway`からGo `workspace-run revision-*`へ切替済みです。ADR-0012のimmutable intent、TaskService.Create、`revision.created`、Auditをtemporary VaultでEnd-to-End検証済みです。Python RevisionTaskServiceは公開互換legacyだけに残ります。
@@ -60,7 +61,7 @@ Go CoreはObsidian、Python runtime、CrewAI、LLM SDK、`.env`、APIキーへ�
 - `go/internal/*`: Go Domain、Service、Kernel、Adapter境界、Interaction、Scheduler、Notification／Metrics、External Action、通常Task PromptBuilder、Claude Runner／WordPress Adapter、Vault Context／TaskStore／Deliverable／Audit Adapter、Go Runtime composition。新しい中核ルールの実装先
 - `go/cmd/workspace-core`: JSON Contract v1を公開するCLI
 - `go/cmd/workspace-run`: Organization参照、CEO plan生成／適用、Project／Task作成、Task metadata migration、通常Task／Review／Revision／Reviewed Workflow、明示Recoveryを提供するGo運用CLI
-- `go/cmd/workspace-daemon`: 必須Command IDの同期HTTP v1、mobile-first Web UI、graceful shutdownを提供するloopback既定Go daemon
+- `go/cmd/workspace-daemon`: 必須Command IDの同期default HTTP v1、bounded mobile Interaction acceptance、mobile-first Web UI、graceful shutdownを提供するloopback既定Go daemon
 - `go/internal/httpapi`: HTTP contract／handler、embed Web UI、trusted-LAN pairingと、既存Go process compositionへのAdapter
 - `docs/Recovery.md`: partial state inventory、診断certainty、安全な明示Recovery操作
 - `src/workspace_ai/*`: 公開v0.1 compatibilityのGo process gateway、凍結Python legacy/reference

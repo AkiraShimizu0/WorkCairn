@@ -16,6 +16,7 @@
 - completed Interaction Sessionから明示Deliverableを既存WordPress Actionへ別承認で引き渡す任意handoffを追加。
 - Interaction stateから次の質問、承認、operation、Recovery参照を導出するread-only next-action projectionを追加。
 - `workspace-daemon`へiPhone基準のLocal Web UI、trusted-LAN pairing、Reviewer inventory、Task／Deliverable／Review evidence inspectionを追加。
+- mobile Interaction commandへbounded acceptanceとLedger pollingを追加し、受理後の実行をSafari接続から分離。
 
 ### Security
 

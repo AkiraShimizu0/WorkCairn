@@ -48,6 +48,37 @@ type fakeInteractionActionBackend struct {
 	plan workspaceprocess.InteractionActionPlan
 }
 
+type fakeAsyncBackend struct {
+	validateErr error
+	started     chan struct{}
+	release     chan struct{}
+	completed   chan error
+	record      commandledger.Record
+}
+
+func (fake *fakeAsyncBackend) ValidateCommand(command Command) error {
+	if fake.validateErr != nil {
+		return fake.validateErr
+	}
+	return command.Validate()
+}
+
+func (fake *fakeAsyncBackend) Execute(ctx context.Context, _ Command) (any, error) {
+	close(fake.started)
+	var err error
+	select {
+	case <-fake.release:
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
+	fake.completed <- err
+	return nil, err
+}
+
+func (fake *fakeAsyncBackend) Inspect(context.Context, string, string, string) (commandledger.Record, error) {
+	return fake.record, nil
+}
+
 func (fake *fakeInteractionActionBackend) PlanInteractionAction(context.Context, InteractionActionPlanRequest) (workspaceprocess.InteractionActionPlan, error) {
 	return fake.plan, fake.err
 }
@@ -154,6 +185,108 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		if strings.Contains(asset.Body.String(), forbidden) {
 			t.Fatalf("mobile UI contains forbidden rule or secret surface %q", forbidden)
 		}
+	}
+	for _, required := range []string{`Prefer: "respond-async"`, "monitorAcceptedCommand", "?scope=workspace"} {
+		if !strings.Contains(asset.Body.String(), required) {
+			t.Fatalf("mobile UI is missing command continuity boundary %q", required)
+		}
+	}
+}
+
+func TestAsyncInteractionCommandSurvivesRequestCancellationAndUsesLedgerLocation(t *testing.T) {
+	backend := &fakeAsyncBackend{started: make(chan struct{}), release: make(chan struct{}), completed: make(chan error, 1)}
+	handler, err := NewHandler(backend, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestContext, cancelRequest := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewBufferString(
+		`{"version":"workspace-command.v1","command_id":"CMD-ASYNC-001","operation":"interaction.answer","approved":true,"payload":{}}`,
+	)).WithContext(requestContext)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Prefer", "respond-async")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || response.Header().Get("Preference-Applied") != "respond-async" ||
+		response.Header().Get("Location") != "/v1/commands/CMD-ASYNC-001?scope=workspace" {
+		t.Fatalf("async response = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+	<-backend.started
+	cancelRequest()
+	select {
+	case err := <-backend.completed:
+		t.Fatalf("request cancellation reached accepted command: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(backend.release)
+	if err := <-backend.completed; err != nil {
+		t.Fatalf("accepted command = %v", err)
+	}
+	if err := handler.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAsyncInteractionCommandRejectsInvalidUnsupportedAndExcessWorkBeforeExecution(t *testing.T) {
+	invalid := &fakeAsyncBackend{validateErr: ErrInvalidCommand, started: make(chan struct{}), release: make(chan struct{}), completed: make(chan error, 1)}
+	handler, _ := NewHandler(invalid, invalid)
+	request := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewBufferString(
+		`{"version":"workspace-command.v1","command_id":"CMD-ASYNC-BAD","operation":"interaction.answer","approved":true,"payload":{}}`,
+	))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Prefer", "respond-async")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid async = %d %s", response.Code, response.Body.String())
+	}
+
+	unsupported := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewBufferString(
+		`{"version":"workspace-command.v1","command_id":"CMD-ASYNC-OTHER","operation":"task.execute","approved":true,"payload":{}}`,
+	))
+	unsupported.Header.Set("Content-Type", "application/json")
+	unsupported.Header.Set("Prefer", "respond-async")
+	unsupportedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unsupportedResponse, unsupported)
+	if unsupportedResponse.Code != http.StatusBadRequest || !strings.Contains(unsupportedResponse.Body.String(), "ASYNC_OPERATION_UNSUPPORTED") {
+		t.Fatalf("unsupported async = %d %s", unsupportedResponse.Code, unsupportedResponse.Body.String())
+	}
+
+	busy := &fakeAsyncBackend{started: make(chan struct{}), release: make(chan struct{}), completed: make(chan error, 1)}
+	runner := newAsyncCommandRunner(busy, 1)
+	command := Command{Version: ContractVersion, CommandID: "CMD-ASYNC-CAPACITY", Operation: "interaction.answer", Approved: true, Payload: json.RawMessage(`{}`)}
+	if err := runner.accept(command); err != nil {
+		t.Fatal(err)
+	}
+	<-busy.started
+	command.CommandID = "CMD-ASYNC-CAPACITY-2"
+	if err := runner.accept(command); !errors.Is(err, errAsyncCapacity) {
+		t.Fatalf("capacity error = %v", err)
+	}
+	close(busy.release)
+	if err := <-busy.completed; err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAsyncCommandShutdownCancelsAtDeadline(t *testing.T) {
+	backend := &fakeAsyncBackend{started: make(chan struct{}), release: make(chan struct{}), completed: make(chan error, 1)}
+	runner := newAsyncCommandRunner(backend, 1)
+	command := Command{Version: ContractVersion, CommandID: "CMD-ASYNC-SHUTDOWN", Operation: "interaction.answer", Approved: true, Payload: json.RawMessage(`{}`)}
+	if err := runner.accept(command); err != nil {
+		t.Fatal(err)
+	}
+	<-backend.started
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := runner.shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown error = %v", err)
+	}
+	if err := <-backend.completed; !errors.Is(err, context.Canceled) {
+		t.Fatalf("command cancellation = %v", err)
 	}
 }
 
@@ -402,13 +535,14 @@ func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(
 	})
 	var workflowPlan workspaceprocess.InteractionWorkflowPlan
 	decodeHTTPResult(t, workflowPlanResponse, &workflowPlan)
-	performSuccessfulCommand(t, handler, map[string]any{
+	performAcceptedCommand(t, handler, map[string]any{
 		"version": ContractVersion, "command_id": "CMD-MOBILE-WORKFLOW-001", "operation": "interaction.workflow.execute", "approved": true,
 		"payload": map[string]any{
 			"session_id": sessionID, "expected_version": next.ExpectedVersion, "reviewer_id": "QA-001", "current_time": workflowTime,
 			"max_tasks": 10, "workflow_plan_digest": workflowPlan.WorkflowPlanDigest, "approval_reference": "mobile-e2e-approval",
 		},
 	})
+	waitForCommandStateHTTP(t, handler, "CMD-MOBILE-WORKFLOW-001", commandledger.StateSucceeded)
 
 	next = inspectInteractionNextHTTP(t, handler, sessionID)
 	if next.Kind != interaction.NextOptionalAction || !reflect.DeepEqual(next.EligibleTaskIDs, []string{"TASK-001"}) || providerCalls != len(providerOutputs) {
@@ -782,6 +916,45 @@ func performSuccessfulCommand(t *testing.T, handler http.Handler, command map[st
 	if response.Code != http.StatusOK {
 		t.Fatalf("command %v = %d %s", command["operation"], response.Code, response.Body.String())
 	}
+}
+
+func performAcceptedCommand(t *testing.T, handler http.Handler, command map[string]any) {
+	t.Helper()
+	content, err := json.Marshal(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewReader(content))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Prefer", "respond-async")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || response.Header().Get("Location") == "" {
+		t.Fatalf("accepted command %v = %d %s", command["operation"], response.Code, response.Body.String())
+	}
+}
+
+func waitForCommandStateHTTP(t *testing.T, handler http.Handler, commandID string, expected commandledger.State) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/commands/"+commandID+"?scope=workspace", nil))
+		if response.Code == http.StatusOK {
+			var record commandledger.Record
+			decodeHTTPResult(t, response, &record)
+			if record.State == expected {
+				return
+			}
+			if record.State.Terminal() {
+				t.Fatalf("command %s terminal state = %s", commandID, record.State)
+			}
+		} else if response.Code != http.StatusNotFound {
+			t.Fatalf("command status = %d %s", response.Code, response.Body.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("command %s did not reach %s", commandID, expected)
 }
 
 func decodeHTTPResult(t *testing.T, response *httptest.ResponseRecorder, target any) {

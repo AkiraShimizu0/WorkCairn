@@ -19,6 +19,7 @@ v0.1.0 Python APIは公開互換専用のcompatibility surfaceとして残りま
 - Go process／Serviceによる実行・レビュー・修正フローの調整
 - 自然言語依頼、必要質問、再plan、digest承認をつなぐtyped Interaction Session
 - iPhoneから「次にすること」だけを操作できるmobile-first Local Web UIとtrusted-LAN pairing
+- iPhoneがbackgroundへ移っても既存Command Ledgerで追跡できるbounded Interaction実行
 - dry-run、明示的承認、二重実行防止、原子的更新、partial failureの明示
 - commit済み証拠とTask Versionに拘束されたread-only診断／明示Recovery
 - 社員IDを維持した安全な改名とIdentity履歴
@@ -80,6 +81,7 @@ flowchart TD
 - [ADR-0029: Interactionは既存Reviewed Workflowを決定的child Commandとして実行する](docs/adr/ADR-0029-interaction-reviewed-workflow-composition.md)
 - [ADR-0030: Interactionは明示Deliverableを既存External Actionへ引き渡す](docs/adr/ADR-0030-interaction-external-action-handoff.md)
 - [ADR-0031: iPhone向けLocal Web UIはdaemon同一originと明示LAN pairingで提供する](docs/adr/ADR-0031-mobile-local-web-interaction-client.md)
+- [ADR-0032: mobile Interaction Commandをclient接続から切り離して追跡する](docs/adr/ADR-0032-mobile-command-continuity.md)
 
 新しいADRは[ADRテンプレート](docs/adr/ADR-template.md)から作成します。
 

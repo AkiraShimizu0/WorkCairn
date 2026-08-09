@@ -42,6 +42,8 @@ mobile modeは起動ごとに暗号学的乱数のpairing codeを生成し、ope
 
 UIのeffect requestは既存の同期Command APIをそのまま利用します。画面は送信中を明示し、network切断時に自動retryせず、同じCommand ID／同じpayloadをsessionStorageに保持して利用者へstatus確認または明示再送を案内します。sessionStorageにはAPI key、pairing code、Deliverable本文を入れません。
 
+ADR-0032はこの契約をadditiveに拡張し、mobile Interaction commandだけを`Prefer: respond-async`でbounded受理してclient接続から切り離します。UIは自動再送せず、同じCommand IDのLedger statusだけを追跡します。
+
 SessionとNext Actionのread-only取得だけをbounded pollingできます。自動承認、自動resume、Scheduler変換、background queueは導入しません。daemon crash後の`running`やpartial failureは既存Command Ledger／Recovery境界へ残します。
 
 ## Consequences
@@ -50,4 +52,4 @@ SessionとNext Actionのread-only取得だけをbounded pollingできます。�
 - UIはGo Domain／Processのprojectionであり、新しいbusiness ruleの正本になりません。
 - 既定loopbackとJSON Contract v1を壊さず、明示mobile modeだけにLAN exposureを限定できます。
 - trusted LANの盗聴やactive attackerには耐えません。internet公開、remote authentication、TLS、native app、Push通知は未実装です。
-- 同期Command中にclientが切断された場合の自動継続は保証しません。確定済みLedger／canonical evidenceを確認し、推測で再実行しません。
+- ADR-0032の受理前またはdaemon停止／crash時の自動継続は保証しません。確定済みLedger／canonical evidenceを確認し、推測で再実行しません。

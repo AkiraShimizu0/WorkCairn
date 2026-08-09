@@ -34,6 +34,7 @@ type Handler struct {
 	organizationInspector      OrganizationInspector
 	taskEvidenceInspector      TaskEvidenceInspector
 	localAccess                *LocalAccess
+	asyncCommands              *asyncCommandRunner
 	mux                        *http.ServeMux
 }
 
@@ -81,7 +82,10 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 	if executor == nil || inspector == nil {
 		return nil, errors.New("Command executor and inspector are required")
 	}
-	handler := &Handler{executor: executor, inspector: inspector, mux: http.NewServeMux()}
+	handler := &Handler{
+		executor: executor, inspector: inspector, mux: http.NewServeMux(),
+		asyncCommands: newAsyncCommandRunner(executor, maxConcurrentAsyncCommands),
+	}
 	handler.mux.HandleFunc("GET /healthz", handler.health)
 	handler.mux.HandleFunc("GET /readyz", handler.ready)
 	handler.mux.HandleFunc("GET /{$}", handler.webIndex)
@@ -417,6 +421,29 @@ func (handler *Handler) execute(response http.ResponseWriter, request *http.Requ
 		writeCommandResponse(response, http.StatusForbidden, Response{Version: ContractVersion, CommandID: command.CommandID, OK: false, Error: &CommandError{Code: "APPROVAL_REQUIRED"}})
 		return
 	}
+	if prefersAsync(request.Header.Get("Prefer")) {
+		if !strings.HasPrefix(command.Operation, "interaction.") {
+			writeCommandResponse(response, http.StatusBadRequest, Response{Version: ContractVersion, CommandID: command.CommandID, OK: false, Error: &CommandError{Code: "ASYNC_OPERATION_UNSUPPORTED"}})
+			return
+		}
+		if err := handler.asyncCommands.accept(command); err != nil {
+			status, code := http.StatusBadRequest, "INVALID_COMMAND"
+			switch {
+			case errors.Is(err, errAsyncCapacity):
+				status, code = http.StatusTooManyRequests, "ASYNC_CAPACITY_EXHAUSTED"
+			case errors.Is(err, errAsyncStopping), errors.Is(err, errAsyncUnavailable):
+				status, code = http.StatusServiceUnavailable, "ASYNC_EXECUTION_UNAVAILABLE"
+			}
+			writeCommandResponse(response, status, Response{Version: ContractVersion, CommandID: command.CommandID, OK: false, Error: &CommandError{Code: code}})
+			return
+		}
+		statusURL := asyncStatusURL(command.CommandID)
+		encoded, _ := json.Marshal(acceptedCommand{CommandID: command.CommandID, StatusURL: statusURL})
+		response.Header().Set("Preference-Applied", "respond-async")
+		response.Header().Set("Location", statusURL)
+		writeCommandResponse(response, http.StatusAccepted, Response{Version: ContractVersion, CommandID: command.CommandID, OK: true, Result: encoded})
+		return
+	}
 	result, commandErr := handler.executor.Execute(request.Context(), command)
 	encoded, encodeErr := marshalResult(result)
 	if encodeErr != nil {
@@ -457,6 +484,10 @@ func (handler *Handler) inspect(response http.ResponseWriter, request *http.Requ
 	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, CommandID: commandID, OK: true, Result: encoded})
 }
 
+func (handler *Handler) Shutdown(ctx context.Context) error {
+	return handler.asyncCommands.shutdown(ctx)
+}
+
 func mapCommandError(err error) (int, *CommandError) {
 	var recorded *workspaceprocess.RecordedCommandError
 	switch {
@@ -485,6 +516,7 @@ func mapCommandError(err error) (int, *CommandError) {
 
 func writeCommandResponse(response http.ResponseWriter, status int, payload Response) {
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	response.Header().Set("Cache-Control", "no-store")
 	response.WriteHeader(status)
 	encoder := json.NewEncoder(response)
 	encoder.SetEscapeHTML(false)
@@ -493,11 +525,19 @@ func writeCommandResponse(response http.ResponseWriter, status int, payload Resp
 
 func writeJSON(response http.ResponseWriter, status int, payload any) {
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	response.Header().Set("Cache-Control", "no-store")
 	response.WriteHeader(status)
 	_ = json.NewEncoder(response).Encode(payload)
 }
 
-type Server struct{ server *http.Server }
+type Server struct {
+	server          *http.Server
+	handlerShutdown func(context.Context) error
+}
+
+type handlerShutdowner interface {
+	Shutdown(context.Context) error
+}
 
 func NewServer(address string, handler http.Handler) (*Server, error) {
 	if strings.TrimSpace(address) == "" || handler == nil {
@@ -506,13 +546,17 @@ func NewServer(address string, handler http.Handler) (*Server, error) {
 	if err := validateLoopbackAddress(address); err != nil {
 		return nil, err
 	}
-	return &Server{server: &http.Server{
+	server := &Server{server: &http.Server{
 		Addr: address, Handler: handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      0,
 		IdleTimeout:       60 * time.Second,
-	}}, nil
+	}}
+	if shutdowner, ok := handler.(handlerShutdowner); ok {
+		server.handlerShutdown = shutdowner.Shutdown
+	}
+	return server, nil
 }
 
 func NewLocalNetworkServer(address string, handler http.Handler) (*Server, error) {
@@ -522,13 +566,17 @@ func NewLocalNetworkServer(address string, handler http.Handler) (*Server, error
 	if err := validateLocalNetworkAddress(address); err != nil {
 		return nil, err
 	}
-	return &Server{server: &http.Server{
+	server := &Server{server: &http.Server{
 		Addr: address, Handler: handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      0,
 		IdleTimeout:       60 * time.Second,
-	}}, nil
+	}}
+	if shutdowner, ok := handler.(handlerShutdowner); ok {
+		server.handlerShutdown = shutdowner.Shutdown
+	}
+	return server, nil
 }
 
 func validateLoopbackAddress(address string) error {
@@ -563,5 +611,9 @@ func (server *Server) Serve(listener net.Listener) error {
 	return server.server.Serve(listener)
 }
 func (server *Server) Shutdown(ctx context.Context) error {
-	return server.server.Shutdown(ctx)
+	serverErr := server.server.Shutdown(ctx)
+	if server.handlerShutdown != nil {
+		return errors.Join(serverErr, server.handlerShutdown(ctx))
+	}
+	return serverErr
 }

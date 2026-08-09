@@ -9,7 +9,7 @@
 | Capability | Go製品入口／実装 | Python interpreterなし | 検証 |
 |---|---|---|---|
 | 通常運用 | `workspace-run` plan／execute／migration | OK | CLI、Runtime、temporary Vault E2E |
-| HTTP／daemon／Local Web UI | `workspace-command.v1`、必須Command ID、Ledger status、mobile Interaction client | OK | loopback既定、private IP pairing、same-origin effect、同一command replay、graceful shutdown、390×844 browser flow |
+| HTTP／daemon／Local Web UI | `workspace-command.v1`、必須Command ID、Ledger status、mobile Interaction client | OK | loopback既定、private IP pairing、same-origin effect、bounded async acceptance、request cancellation分離、graceful shutdown、390×844 browser flow |
 | CEO plan | `ceo-plan-generate`、`ceo-plan-apply-*` | OK | Mock Provider、typed plan、Go writer E2E |
 | Project／Task管理 | `project-bootstrap-*`、`task-create-*`、`project-dependencies-*` | OK | temporary Vault、TaskService Event／Audit |
 | Organization／Identity | `organization-inspect`、`identity-validate`、`employee-*`、`organization-sync-*` | OK | shared fixture、temporary Vault、partial failure tests |

@@ -73,6 +73,8 @@ iPhone browser
 
 画面は「次にすること」、質問、承認、完了、attention／Recovery案内だけを主要表示にします。Prompt、Provider生response、API key、Vault pathは表示しません。External ActionはWorkflow完了後に利用者が明示的に選んだ場合だけ、別のsource／Action digest承認へ進みます。
 
+承認済みInteraction commandはADR-0032のbounded acceptanceでbrowser接続から切り離され、iPhoneがlock／backgroundへ移ってもdaemon process内で継続します。画面は同じCommand IDのLedger statusだけをpollし、再読込後も再実行せずstatus確認を再開します。daemon crash後の自動resumeやLedger欠落の推測は行いません。
+
 既定daemonは引き続きloopback限定です。mobile modeもunspecified／public addressを拒否し、remote公開、敵対的LAN、port forwardingをsupportしません。HTTPを暗号化しないためtrusted LAN専用であり、internet公開には将来のTLS、durable identity、authorizationが必要です。
 
 各副作用commandは`--approved`がなければ、Vault I/O、Provider設定読取、HTTP client生成より前に拒否されます。plan／inspect／validateは副作用を持ちません。

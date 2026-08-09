@@ -93,6 +93,8 @@ bin/workspace-daemon --vault /absolute/path/to/temporary-or-approved-vault --mob
 5. 完了後は`Project・Task・Reviewの詳細`からTask、Deliverable本文、canonical Reviewをread-onlyで確認する。
 6. `確認が必要`では自動再送せず、表示されたouter／child Command IDを確認してRecovery手順へ進む。
 
+承認後にSafariをbackgroundへ移しても、`202 Accepted`済みのInteraction commandはMac上で継続します。画面へ戻ると同じCommand IDのLedger状態を再取得します。daemon自体を終了した場合やMacがsleep／crashした場合は自動resumeせず、`running`／partial stateをRecovery手順で確認してください。
+
 mobile modeは自動検出したprivate IPv4だけへbindします。複数network interfaceで違うaddressを選んだ場合は`--listen 192.168.x.x:8787`を明示してください。pairing code／cookieはprocess終了で無効になり、Vault、`.env`、Interaction Sessionには保存されません。
 
 HTTPは暗号化されないため、信頼できない共有Wi-Fi、port forwarding、internet公開では使用しないでください。remote authentication、TLS、durable account、Push通知は未実装です。
