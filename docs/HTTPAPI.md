@@ -1,12 +1,20 @@
 # HTTP Command API
 
-`workspace-daemon`は、Go Only Runtimeをloopback HTTPから利用する同期Command入口です。現在はremote公開用ではありません。認証、TLS、authorizationが未実装のため、serverは`127.0.0.1`、`::1`、`localhost`以外へのbindを起動時に拒否します。
+`workspace-daemon`は、Go Only Runtimeをloopback HTTPから利用する同期Command入口であり、同じGo binaryからmobile-first Local Web UIを配信します。現在はinternet／remote公開用ではありません。既定は`127.0.0.1`で、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可します。
 
 ## 起動
 
 ```bash
 bin/workspace-daemon --vault /path/to/temporary-or-approved-vault
 ```
+
+iPhoneとMacを同じtrusted local networkへ接続し、次でmobile modeを起動します。
+
+```bash
+bin/workspace-daemon --vault /path/to/temporary-or-approved-vault --mobile
+```
+
+private IPv4を自動選択し、iPhoneで開くURLとpairing codeをterminalへ表示します。必要なら`--listen 192.168.x.x:8787`のように明示できます。`0.0.0.0`、public IP、hostnameは拒否します。pairing codeは起動ごとに変わり、Vault／Session／browser storageへ保存しません。mobile modeのeffect POSTはpairing cookie、same-origin、`X-Workspace-Intent: mobile-ui.v1`を要求します。
 
 daemonは`.env` fileを読みません。Provider commandに必要な設定はRuntime environmentから注入され、HTTP payloadではAPI key、Base URL、Vault rootを受け取りません。
 
@@ -61,7 +69,7 @@ Interaction Sessionの開始前planはread-only `POST /v1/interaction-plans`、P
 
 Payloadはunknown fieldを拒否します。CEO plan generation、read-only plan／inspection、migration、Recovery applyはこのeffect Command endpointへ含めません。
 
-`GET /v1/interactions`と`GET /v1/interactions/{session_id}`はappend-only turn、state、Versionをread-onlyで返します。`GET /v1/interactions/{session_id}/next`は次のoperation、必要field、質問、承認要否、attention時のLedger参照を決定的に返します。Workflow turnは完全Result digestとbounded summaryを返し、Deliverable本文は複製しません。Sessionには自然言語requestとplanが含まれるため、Notificationと異なりredacted endpointではありません。loopback外へ公開しないでください。Interaction commandは人間の質問回答・承認を必要とするためScheduler対象ではありません。
+`GET /v1/interactions`と`GET /v1/interactions/{session_id}`はappend-only turn、state、Versionをread-onlyで返します。`GET /v1/interactions/{session_id}/next`は次のoperation、必要field、質問、承認要否、attention時のLedger参照を決定的に返します。Workflow turnは完全Result digestとbounded summaryを返し、Deliverable本文は複製しません。`GET /v1/organization`はReviewer選択用inventory、`GET /v1/projects/{project_name}/tasks/{task_id}/evidence`はcommit済みTask、Deliverable、canonical Reviewをread-onlyで返します。Session／成果物はredacted endpointではないため、loopbackまたはpairing済みtrusted LAN外へ公開しないでください。Interaction commandは人間の質問回答・承認を必要とするためScheduler対象ではありません。
 
 `GET /v1/schedules`と`GET /v1/schedules/{schedule_id}`はone-shot Scheduleのpending／dispatching／terminal stateをread-onlyで返します。daemonは`--scheduler-interval`ごとにdueまたはmissed pending Scheduleを確認し、保存済みの同一Command ID／payloadを既存Processへ配送します。`dispatching`は自動resumeしません。
 

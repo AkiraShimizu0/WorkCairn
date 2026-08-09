@@ -262,16 +262,26 @@ ADR-0030に基づき、completed Workflow evidence内の明示Taskだけを、pr
 
 `interaction-next`とHTTP next endpointは、closed Session stateと最新turnだけからoperation、expected Version、必要field、質問、承認要否、attention時のouter／child Ledger参照を返します。Provider、writer、Recoveryを呼ばず、credential、Prompt、Deliverable本文を含みません。
 
-## Next 1 — Guided Local Interaction Client
+## Completed — Guided Local Interaction Client
 
-既存Interaction plan／command／next endpointを使い、利用者が個別operation名を組み立てずに自然言語依頼、質問回答、digest確認、明示承認を順に進められるlocal clientを検討します。
+ADR-0031に基づき、既存Interaction plan／command／next endpointを使い、利用者が個別operation名を組み立てずに自然言語依頼、質問回答、digest確認、明示承認を順に進められるmobile-first Local Web UIを実装しました。
 
-- Domain／Processを再実装せず、既存loopback APIのclientに限定する
+- Domain／Processを再実装せず、既存HTTP APIの同一origin clientに限定する
 - approval promptで対象digest、Project、reviewer、Task上限、外部Actionを明示する
 - attention stateでは自動継続せずLedger／Recovery案内へ止める
 - credentialをclient historyやSessionへ保存しない
 
-interactive TUI、browser UI、remote authenticationのどれを最初の配布形にするかは、現在のlocal-only security boundaryとpublic release形態を合わせて決めます。Domain契約の追加は不要です。
+UIはGo binaryへembedし、iPhone 390×844相当で`依頼→質問→Plan承認→Workflow→完了→成果物／Review詳細`をtemporary VaultとMock Providerで確認済みです。既定loopbackは維持し、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可します。remote authentication、TLS、native app、Push通知は含めません。
+
+## Next 1 — Mobile Command Continuity
+
+現在のeffect Commandは同期HTTP requestです。iPhoneがlock／backgroundへ移りconnectionが切れた場合、request context cancellationとCommand Ledgerの確定状態を確認する必要があります。次は、新しいbusiness ruleや自動resumeを追加せず「承認をdaemonが受理した後はclient接続と切り離して実行し、同じCommand IDをread-only statusで追跡する」最小境界を検討します。
+
+- 受理前は既存と同じ明示承認、strict payload、Command IDを要求する
+- daemon process内のbounded executionだけを扱い、crash後の自動resumeはしない
+- terminal／partial／runningは既存Command LedgerとRecoveryを正とする
+- UIはpollingでstatusを表示するだけで、automatic retry／adoptionをしない
+- CLIと同期HTTP operationを破壊せずadditiveにする
 
 ## Python Compatibility End of Life
 

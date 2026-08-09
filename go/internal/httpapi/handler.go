@@ -16,6 +16,7 @@ import (
 	"github.com/AkiraShimizu0/workspace-os/go/internal/notification"
 	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
 	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
+	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
 )
 
 const maxCommandRequestBytes = 2 << 20
@@ -30,6 +31,9 @@ type Handler struct {
 	interactionPlanner         InteractionPlanner
 	interactionWorkflowPlanner InteractionWorkflowPlanner
 	interactionActionPlanner   InteractionActionPlanner
+	organizationInspector      OrganizationInspector
+	taskEvidenceInspector      TaskEvidenceInspector
+	localAccess                *LocalAccess
 	mux                        *http.ServeMux
 }
 
@@ -65,6 +69,14 @@ type InteractionActionPlanner interface {
 	PlanInteractionAction(ctx context.Context, request InteractionActionPlanRequest) (workspaceprocess.InteractionActionPlan, error)
 }
 
+type OrganizationInspector interface {
+	InspectOrganization(ctx context.Context) (workspaceprocess.OrganizationInspection, error)
+}
+
+type TaskEvidenceInspector interface {
+	InspectTaskEvidence(ctx context.Context, projectName, taskID string) (workspaceprocess.TaskEvidenceInspection, error)
+}
+
 func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 	if executor == nil || inspector == nil {
 		return nil, errors.New("Command executor and inspector are required")
@@ -72,6 +84,11 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 	handler := &Handler{executor: executor, inspector: inspector, mux: http.NewServeMux()}
 	handler.mux.HandleFunc("GET /healthz", handler.health)
 	handler.mux.HandleFunc("GET /readyz", handler.ready)
+	handler.mux.HandleFunc("GET /{$}", handler.webIndex)
+	handler.mux.HandleFunc("GET /assets/{name}", handler.webAsset)
+	handler.mux.HandleFunc("GET /manifest.webmanifest", handler.webManifest)
+	handler.mux.HandleFunc("GET /v1/local-access/status", handler.localAccessStatus)
+	handler.mux.HandleFunc("POST /v1/local-access/pair", handler.pairLocalAccess)
 	handler.mux.HandleFunc("POST /v1/commands", handler.execute)
 	handler.mux.HandleFunc("GET /v1/commands/{command_id}", handler.inspect)
 	if scheduleInspector, ok := executor.(ScheduleInspector); ok {
@@ -106,7 +123,47 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 		handler.interactionActionPlanner = actionPlanner
 		handler.mux.HandleFunc("POST /v1/interaction-action-plans", handler.planInteractionAction)
 	}
+	if organizationInspector, ok := executor.(OrganizationInspector); ok {
+		handler.organizationInspector = organizationInspector
+		handler.mux.HandleFunc("GET /v1/organization", handler.inspectOrganization)
+	}
+	if taskEvidenceInspector, ok := executor.(TaskEvidenceInspector); ok {
+		handler.taskEvidenceInspector = taskEvidenceInspector
+		handler.mux.HandleFunc("GET /v1/projects/{project_name}/tasks/{task_id}/evidence", handler.inspectTaskEvidence)
+	}
 	return handler, nil
+}
+
+func (handler *Handler) inspectTaskEvidence(response http.ResponseWriter, request *http.Request) {
+	inspection, err := handler.taskEvidenceInspector.InspectTaskEvidence(request.Context(), request.PathValue("project_name"), request.PathValue("task_id"))
+	if err != nil {
+		status, code := http.StatusUnprocessableEntity, "TASK_EVIDENCE_INSPECTION_FAILED"
+		if errors.Is(err, task.ErrTaskNotFound) {
+			status, code = http.StatusNotFound, "TASK_NOT_FOUND"
+		}
+		writeCommandResponse(response, status, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: code, RecoveryRequired: status != http.StatusNotFound}})
+		return
+	}
+	encoded, err := json.Marshal(inspection)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, OK: true, Result: encoded})
+}
+
+func (handler *Handler) inspectOrganization(response http.ResponseWriter, request *http.Request) {
+	inspection, err := handler.organizationInspector.InspectOrganization(request.Context())
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "ORGANIZATION_INSPECTION_FAILED", RecoveryRequired: true}})
+		return
+	}
+	encoded, err := json.Marshal(inspection)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, OK: true, Result: encoded})
 }
 
 func (handler *Handler) inspectInteractionNext(response http.ResponseWriter, request *http.Request) {
@@ -320,6 +377,14 @@ func (handler *Handler) inspectSchedule(response http.ResponseWriter, request *h
 }
 
 func (handler *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'")
+	response.Header().Set("Referrer-Policy", "no-referrer")
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	response.Header().Set("X-Frame-Options", "DENY")
+	response.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+	if !handler.authorizeLocalRequest(response, request) {
+		return
+	}
 	handler.mux.ServeHTTP(response, request)
 }
 
@@ -450,6 +515,22 @@ func NewServer(address string, handler http.Handler) (*Server, error) {
 	}}, nil
 }
 
+func NewLocalNetworkServer(address string, handler http.Handler) (*Server, error) {
+	if strings.TrimSpace(address) == "" || handler == nil {
+		return nil, errors.New("server address and handler are required")
+	}
+	if err := validateLocalNetworkAddress(address); err != nil {
+		return nil, err
+	}
+	return &Server{server: &http.Server{
+		Addr: address, Handler: handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      0,
+		IdleTimeout:       60 * time.Second,
+	}}, nil
+}
+
 func validateLoopbackAddress(address string) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
@@ -461,6 +542,18 @@ func validateLoopbackAddress(address string) error {
 	ip := net.ParseIP(host)
 	if ip == nil || !ip.IsLoopback() {
 		return errors.New("remote listen addresses require authentication, TLS, and authorization")
+	}
+	return nil
+}
+
+func validateLocalNetworkAddress(address string) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return errors.New("server address must be a local IP and port")
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || ip.IsUnspecified() || !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
+		return errors.New("mobile listen address must be loopback, private, or link-local")
 	}
 	return nil
 }

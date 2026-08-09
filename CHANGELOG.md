@@ -15,10 +15,11 @@
 - Interaction Sessionから既存Reviewed Workflowを決定的child Commandとして実行し、Review／Revision結果をdigest付きtyped summaryで記録。
 - completed Interaction Sessionから明示Deliverableを既存WordPress Actionへ別承認で引き渡す任意handoffを追加。
 - Interaction stateから次の質問、承認、operation、Recovery参照を導出するread-only next-action projectionを追加。
+- `workspace-daemon`へiPhone基準のLocal Web UI、trusted-LAN pairing、Reviewer inventory、Task／Deliverable／Review evidence inspectionを追加。
 
 ### Security
 
-- daemonの非loopback bindを、認証・TLS・authorization導入まで拒否。
+- daemonは既定で非loopback bindを拒否し、明示mobile modeだけprivate／link-local IP、process-local pairing、same-origin effect requestを許可。
 - Provider／Action credentialをRuntime environmentへ限定し、Command／Schedule／evidenceから除外。
 
 ## [0.1.0] - 2026-08-07

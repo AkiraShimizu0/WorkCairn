@@ -475,6 +475,14 @@ func (executor *ProcessExecutor) InspectInteractionNext(ctx context.Context, ses
 	return workspaceprocess.InspectInteractionNext(ctx, executor.vaultRoot, sessionID)
 }
 
+func (executor *ProcessExecutor) InspectOrganization(ctx context.Context) (workspaceprocess.OrganizationInspection, error) {
+	return workspaceprocess.InspectOrganization(ctx, executor.vaultRoot)
+}
+
+func (executor *ProcessExecutor) InspectTaskEvidence(ctx context.Context, projectName, taskID string) (workspaceprocess.TaskEvidenceInspection, error) {
+	return workspaceprocess.InspectTaskEvidence(ctx, executor.vaultRoot, projectName, taskID)
+}
+
 func (executor *ProcessExecutor) PlanInteraction(ctx context.Context, request InteractionPlanRequest) (workspaceprocess.InteractionStartPlan, error) {
 	return workspaceprocess.PlanInteractionStart(ctx, workspaceprocess.InteractionStartInput{
 		VaultRoot: executor.vaultRoot, SessionID: request.SessionID, Request: request.Request,

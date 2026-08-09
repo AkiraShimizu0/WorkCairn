@@ -6,9 +6,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -37,11 +40,13 @@ func main() {
 func run() error {
 	var vaultRoot, address string
 	var providerTimeout, shutdownTimeout, schedulerInterval time.Duration
+	var mobile bool
 	flag.StringVar(&vaultRoot, "vault", "", "Vault root")
 	flag.StringVar(&address, "listen", "127.0.0.1:8787", "HTTP listen address")
 	flag.DurationVar(&providerTimeout, "provider-timeout", 60*time.Second, "Provider request timeout")
 	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "graceful shutdown timeout")
 	flag.DurationVar(&schedulerInterval, "scheduler-interval", time.Second, "one-shot Schedule polling interval")
+	flag.BoolVar(&mobile, "mobile", false, "serve the paired Web UI on a trusted local network")
 	flag.Parse()
 	if vaultRoot == "" || providerTimeout <= 0 || shutdownTimeout <= 0 || schedulerInterval <= 0 {
 		return errors.New("Vault root and positive timeouts are required")
@@ -86,7 +91,34 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	server, err := httpapi.NewServer(address, handler)
+	var server *httpapi.Server
+	if mobile {
+		listenWasSet := false
+		flag.Visit(func(current *flag.Flag) {
+			if current.Name == "listen" {
+				listenWasSet = true
+			}
+		})
+		if !listenWasSet {
+			address, err = discoverMobileAddress("8787")
+			if err != nil {
+				return err
+			}
+		}
+		access, pairingCode, accessErr := httpapi.NewLocalAccess()
+		if accessErr != nil {
+			return accessErr
+		}
+		if err := handler.EnableLocalAccess(access); err != nil {
+			return err
+		}
+		server, err = httpapi.NewLocalNetworkServer(address, handler)
+		if err == nil {
+			fmt.Fprintf(os.Stdout, "Workspace OS mobile UI: %s\nPairing code: %s\nTrusted local network only; do not expose this address to the internet.\n", localURL(address), pairingCode)
+		}
+	} else {
+		server, err = httpapi.NewServer(address, handler)
+	}
 	if err != nil {
 		return err
 	}
@@ -116,4 +148,41 @@ func run() error {
 		return nil
 	}
 	return err
+}
+
+func discoverMobileAddress(port string) (string, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "", fmt.Errorf("discover local network: %w", err)
+	}
+	candidates := make([]string, 0)
+	for _, current := range interfaces {
+		if current.Flags&net.FlagUp == 0 || current.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, addressErr := current.Addrs()
+		if addressErr != nil {
+			continue
+		}
+		for _, address := range addresses {
+			ip, _, parseErr := net.ParseCIDR(address.String())
+			if parseErr != nil || ip.To4() == nil || !(ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
+				continue
+			}
+			candidates = append(candidates, ip.String())
+		}
+	}
+	if len(candidates) == 0 {
+		return "", errors.New("no private local network address found; connect the Mac and iPhone to the same network or pass --listen with a private IP")
+	}
+	sort.Strings(candidates)
+	return net.JoinHostPort(candidates[0], port), nil
+}
+
+func localURL(address string) string {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "http://" + strings.TrimSpace(address) + "/"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/"
 }

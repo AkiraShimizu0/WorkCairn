@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f1e8">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Workspace OS">
+  <title>Workspace OS</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Workspace OS ホーム">
+        <span class="brand-mark" aria-hidden="true">W</span>
+        <span><strong>Workspace OS</strong><small>Local workspace</small></span>
+      </a>
+      <span id="connection-status" class="status-dot">接続確認中</span>
+    </header>
+
+    <main>
+      <section id="pairing-view" class="center-card" hidden>
+        <p class="eyebrow">LOCAL PAIRING</p>
+        <h1>Macと接続</h1>
+        <p class="supporting">daemonを起動したMacに表示されたペアリングコードを入力してください。コードはこの端末に保存されません。</p>
+        <form id="pairing-form" class="stack-form">
+          <label for="pairing-code">ペアリングコード</label>
+          <input id="pairing-code" name="code" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+          <button class="button primary" type="submit">このMacと接続</button>
+        </form>
+      </section>
+
+      <section id="workspace-view" hidden>
+        <div class="intro-row">
+          <div>
+            <p class="eyebrow">YOUR NEXT MOVE</p>
+            <h1>次にすること</h1>
+          </div>
+          <button id="new-request-button" class="button compact" type="button">＋ 新しい依頼</button>
+        </div>
+
+        <section id="active-card" class="action-card" aria-live="polite"></section>
+
+        <details id="details-panel" class="detail-panel">
+          <summary>Project・Task・Reviewの詳細</summary>
+          <div id="details-content" class="detail-content"></div>
+        </details>
+
+        <section class="history-section">
+          <div class="section-heading">
+            <h2>最近の依頼</h2>
+            <button id="refresh-button" class="text-button" type="button">更新</button>
+          </div>
+          <div id="session-list" class="session-list"></div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="request-dialog" class="sheet-dialog">
+    <form id="request-form" method="dialog" class="sheet">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-heading">
+        <div>
+          <p class="eyebrow">NEW REQUEST</p>
+          <h2>どんな仕事を依頼しますか？</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button>
+      </div>
+      <label for="request-text">依頼内容</label>
+      <textarea id="request-text" name="request" rows="6" placeholder="例：新商品の紹介記事を企画して、レビューまで完了してください" required></textarea>
+      <details class="advanced-settings">
+        <summary>詳細設定</summary>
+        <label for="model-name">利用モデル</label>
+        <input id="model-name" name="model" value="Claude Sonnet 5" required>
+      </details>
+      <div class="sheet-actions">
+        <button class="button quiet" type="button" data-close-dialog>キャンセル</button>
+        <button class="button primary" type="submit">依頼内容を確認</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="action-dialog" class="sheet-dialog">
+    <form id="action-form" method="dialog" class="sheet"></form>
+  </dialog>
+
+  <div id="busy-overlay" class="busy-overlay" hidden>
+    <div class="busy-card" role="status">
+      <span class="spinner" aria-hidden="true"></span>
+      <strong id="busy-title">処理しています</strong>
+      <p id="busy-message">この画面を開いたままお待ちください。</p>
+    </div>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>

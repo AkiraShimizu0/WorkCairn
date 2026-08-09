@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -111,6 +112,105 @@ func TestServerRejectsNonLoopbackExposure(t *testing.T) {
 			t.Fatalf("NewServer(%q): %v", address, err)
 		}
 	}
+	for _, address := range []string{"0.0.0.0:8787", "203.0.113.1:8787", "workspace.local:8787"} {
+		if _, err := NewLocalNetworkServer(address, handler); err == nil {
+			t.Fatalf("NewLocalNetworkServer(%q) accepted an unsafe address", address)
+		}
+	}
+	for _, address := range []string{"127.0.0.1:0", "192.168.1.20:8787", "10.0.0.5:8787", "[fd00::1]:8787"} {
+		if _, err := NewLocalNetworkServer(address, handler); err != nil {
+			t.Fatalf("NewLocalNetworkServer(%q): %v", address, err)
+		}
+	}
+}
+
+func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules(t *testing.T) {
+	backend := &fakeCommandBackend{}
+	handler, err := NewHandler(backend, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		path        string
+		contentType string
+		contains    string
+	}{
+		{"/", "text/html", "次にすること"},
+		{"/assets/styles.css", "text/css", "safe-area-inset-bottom"},
+		{"/assets/app.js", "text/javascript", "/v1/interactions"},
+		{"/manifest.webmanifest", "application/manifest+json", "Workspace OS"},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if response.Code != http.StatusOK || !strings.HasPrefix(response.Header().Get("Content-Type"), test.contentType) ||
+			!strings.Contains(response.Body.String(), test.contains) || response.Header().Get("Content-Security-Policy") == "" ||
+			response.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("asset %s = %d %q headers=%v", test.path, response.Code, response.Body.String(), response.Header())
+		}
+	}
+	asset := httptest.NewRecorder()
+	handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	for _, forbidden := range []string{"TaskStarted", "TaskCompleted", "request_changes →", "ANTHROPIC_API_KEY", "innerHTML"} {
+		if strings.Contains(asset.Body.String(), forbidden) {
+			t.Fatalf("mobile UI contains forbidden rule or secret surface %q", forbidden)
+		}
+	}
+}
+
+func TestTrustedLANPairingProtectsAPIAndKeepsCodeOutOfResponses(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "社員"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "社員", "伊藤 健太.md"), []byte("---\nid: QA-001\ndepartment: 品質保証部\nrole: QA Engineer\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(executor, executor)
+	access, code, err := NewLocalAccess()
+	if err != nil || len(code) < 20 {
+		t.Fatalf("NewLocalAccess() code length=%d err=%v", len(code), err)
+	}
+	if err := handler.EnableLocalAccess(access); err != nil {
+		t.Fatal(err)
+	}
+
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/v1/organization", nil))
+	if unauthorized.Code != http.StatusUnauthorized || strings.Contains(unauthorized.Body.String(), code) {
+		t.Fatalf("unauthorized = %d %s", unauthorized.Code, unauthorized.Body.String())
+	}
+
+	pairRequest := httptest.NewRequest(http.MethodPost, "/v1/local-access/pair", bytes.NewBufferString(`{"code":"`+code+`"}`))
+	pairRequest.Header.Set("Content-Type", "application/json")
+	pairRequest.Header.Set(localIntentHeader, localIntentValue)
+	pairRequest.Header.Set("Origin", "http://example.com")
+	pairResponse := httptest.NewRecorder()
+	handler.ServeHTTP(pairResponse, pairRequest)
+	if pairResponse.Code != http.StatusOK || strings.Contains(pairResponse.Body.String(), code) || len(pairResponse.Result().Cookies()) != 1 || !pairResponse.Result().Cookies()[0].HttpOnly {
+		t.Fatalf("pair = %d %s cookies=%v", pairResponse.Code, pairResponse.Body.String(), pairResponse.Result().Cookies())
+	}
+	cookie := pairResponse.Result().Cookies()[0]
+
+	inspectionRequest := httptest.NewRequest(http.MethodGet, "/v1/organization", nil)
+	inspectionRequest.AddCookie(cookie)
+	inspectionResponse := httptest.NewRecorder()
+	handler.ServeHTTP(inspectionResponse, inspectionRequest)
+	if inspectionResponse.Code != http.StatusOK || !strings.Contains(inspectionResponse.Body.String(), "QA-001") || strings.Contains(inspectionResponse.Body.String(), code) {
+		t.Fatalf("authorized inspection = %d %s", inspectionResponse.Code, inspectionResponse.Body.String())
+	}
+
+	mutation := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewBufferString(`{}`))
+	mutation.AddCookie(cookie)
+	mutation.Header.Set("Content-Type", "application/json")
+	mutationResponse := httptest.NewRecorder()
+	handler.ServeHTTP(mutationResponse, mutation)
+	if mutationResponse.Code != http.StatusForbidden {
+		t.Fatalf("mutation without same-origin intent = %d %s", mutationResponse.Code, mutationResponse.Body.String())
+	}
 }
 
 func TestInteractionPlanStartReplayAndReadOnlyInspectionHTTP(t *testing.T) {
@@ -193,6 +293,142 @@ func TestInteractionWorkflowPlanHTTPUsesVersionedReadOnlyContract(t *testing.T) 
 	handler.ServeHTTP(invalidResponse, invalid)
 	if invalidResponse.Code != http.StatusBadRequest {
 		t.Fatalf("invalid Interaction Workflow plan = %d %s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+}
+
+func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(t *testing.T) {
+	root := t.TempDir()
+	for _, directory := range []string{"社員", "プロジェクト"} {
+		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, content := range map[string]string{
+		"山本 真帆.md": "---\nid: PLAN-001\ndepartment: 企画部\nrole: Product Manager\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n",
+		"伊藤 健太.md": "---\nid: QA-001\ndepartment: 品質保証部\nrole: QA Engineer\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, "社員", name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	planOutput := func(questions []string) string {
+		encoded, _ := json.Marshal(map[string]any{
+			"project_name": "iPhone依頼", "objective": "依頼から成果物を完成させる", "summary": "mobile E2E",
+			"required_departments": []string{"企画部"}, "required_roles": []string{"Product Manager"},
+			"assigned_existing_employees": []string{"PLAN-001"},
+			"proposed_tasks":              []map[string]any{{"title": "要件をまとめる", "assignee_id": "PLAN-001", "dependency_ids": []string{}, "rationale": "依頼を形にするため"}},
+			"risks":                       []string{}, "ceo_questions": questions,
+		})
+		return string(encoded)
+	}
+	providerOutputs := []string{
+		planOutput([]string{"対象はiPhoneを優先しますか？"}),
+		planOutput([]string{}),
+		"# 完成した成果物\n\niPhone向けの要件です。",
+		"# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Approve\",\"issues\":[]}\nREVIEW_RESULT_JSON_END",
+	}
+	providerCalls := 0
+	providerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/messages" || request.Header.Get("x-api-key") != "fake-mobile-key" || providerCalls >= len(providerOutputs) {
+			t.Fatalf("unexpected mock Provider request path=%s calls=%d", request.URL.Path, providerCalls)
+		}
+		output := providerOutputs[providerCalls]
+		providerCalls++
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"model": "claude-mobile-test", "content": []map[string]string{{"type": "text", "text": output}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer providerServer.Close()
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{
+		APIKey: "fake-mobile-key", ProviderModel: "claude-mobile-test", BaseURL: providerServer.URL,
+	}, providerServer.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(executor, executor)
+	base := time.Date(2026, time.August, 10, 9, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	sessionID := "SESSION-MOBILE-E2E-001"
+
+	planRequest := map[string]any{
+		"version": InteractionContractVersion, "session_id": sessionID, "request": "iPhone向けに仕事を完成させて",
+		"model": "Claude Sonnet 5", "current_time": base,
+	}
+	planResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-plans", planRequest)
+	var startPlan workspaceprocess.InteractionStartPlan
+	decodeHTTPResult(t, planResponse, &startPlan)
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-START-001", "operation": "interaction.start", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "request": planRequest["request"], "request_digest": startPlan.Session.RequestDigest, "model": planRequest["model"], "current_time": base},
+	})
+
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-PLAN-001", "operation": "interaction.plan.generate", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "expected_version": 1, "current_time": base.Add(time.Minute)},
+	})
+	next := inspectInteractionNextHTTP(t, handler, sessionID)
+	if next.Kind != interaction.NextAnswerClarifications || len(next.Questions) != 1 {
+		t.Fatalf("clarification next = %#v", next)
+	}
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-ANSWER-001", "operation": "interaction.answer", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "expected_version": next.ExpectedVersion, "answers": []map[string]string{{"question": next.Questions[0], "answer": "はい、iPhoneを優先します"}}, "current_time": base.Add(2 * time.Minute)},
+	})
+	next = inspectInteractionNextHTTP(t, handler, sessionID)
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-PLAN-002", "operation": "interaction.plan.generate", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "expected_version": next.ExpectedVersion, "current_time": base.Add(3 * time.Minute)},
+	})
+	next = inspectInteractionNextHTTP(t, handler, sessionID)
+	if next.Kind != interaction.NextApprovePlanApply || next.PlanDigest == "" {
+		t.Fatalf("plan apply next = %#v", next)
+	}
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-APPLY-001", "operation": "interaction.plan.apply", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "expected_version": next.ExpectedVersion, "project_id": "PROJECT-MOBILE-001", "plan_digest": next.PlanDigest, "current_time": base.Add(4 * time.Minute)},
+	})
+
+	organizationResponse := httptest.NewRecorder()
+	handler.ServeHTTP(organizationResponse, httptest.NewRequest(http.MethodGet, "/v1/organization", nil))
+	if organizationResponse.Code != http.StatusOK || !strings.Contains(organizationResponse.Body.String(), "QA-001") {
+		t.Fatalf("organization = %d %s", organizationResponse.Code, organizationResponse.Body.String())
+	}
+	next = inspectInteractionNextHTTP(t, handler, sessionID)
+	workflowTime := base.Add(5 * time.Minute)
+	workflowPlanResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-workflow-plans", map[string]any{
+		"version": InteractionContractVersion, "session_id": sessionID, "expected_version": next.ExpectedVersion,
+		"reviewer_id": "QA-001", "current_time": workflowTime, "max_tasks": 10,
+	})
+	var workflowPlan workspaceprocess.InteractionWorkflowPlan
+	decodeHTTPResult(t, workflowPlanResponse, &workflowPlan)
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-WORKFLOW-001", "operation": "interaction.workflow.execute", "approved": true,
+		"payload": map[string]any{
+			"session_id": sessionID, "expected_version": next.ExpectedVersion, "reviewer_id": "QA-001", "current_time": workflowTime,
+			"max_tasks": 10, "workflow_plan_digest": workflowPlan.WorkflowPlanDigest, "approval_reference": "mobile-e2e-approval",
+		},
+	})
+
+	next = inspectInteractionNextHTTP(t, handler, sessionID)
+	if next.Kind != interaction.NextOptionalAction || !reflect.DeepEqual(next.EligibleTaskIDs, []string{"TASK-001"}) || providerCalls != len(providerOutputs) {
+		t.Fatalf("completed next = %#v providerCalls=%d", next, providerCalls)
+	}
+	for _, relative := range []string{
+		"プロジェクト/iPhone依頼/Deliverables/TASK-001.md",
+		"プロジェクト/iPhone依頼/Reviews/TASK-001.review.json",
+		"プロジェクト/iPhone依頼/Audit Log.md",
+	} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(relative))); err != nil {
+			t.Fatalf("missing mobile E2E evidence %s: %v", relative, err)
+		}
+	}
+	evidenceResponse := httptest.NewRecorder()
+	handler.ServeHTTP(evidenceResponse, httptest.NewRequest(http.MethodGet, "/v1/projects/"+url.PathEscape("iPhone依頼")+"/tasks/TASK-001/evidence", nil))
+	var evidence workspaceprocess.TaskEvidenceInspection
+	decodeHTTPResult(t, evidenceResponse, &evidence)
+	if evidence.Deliverable == nil || evidence.Deliverable.Title != "要件をまとめる" || !strings.Contains(evidence.Deliverable.Content, "完成した成果物") || len(evidence.Reviews) != 1 || evidence.Reviews[0].Decision.Verdict != "Approve" {
+		t.Fatalf("Task evidence = %#v", evidence)
 	}
 }
 
@@ -522,6 +758,56 @@ func performCommand(t *testing.T, handler http.Handler, command map[string]any) 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func performJSONRequest(t *testing.T, handler http.Handler, method, path string, payload any) *httptest.ResponseRecorder {
+	t.Helper()
+	content, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(method, path, bytes.NewReader(content))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("%s %s = %d %s", method, path, response.Code, response.Body.String())
+	}
+	return response
+}
+
+func performSuccessfulCommand(t *testing.T, handler http.Handler, command map[string]any) {
+	t.Helper()
+	response := performCommand(t, handler, command)
+	if response.Code != http.StatusOK {
+		t.Fatalf("command %v = %d %s", command["operation"], response.Code, response.Body.String())
+	}
+}
+
+func decodeHTTPResult(t *testing.T, response *httptest.ResponseRecorder, target any) {
+	t.Helper()
+	var envelope Response
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if !envelope.OK {
+		t.Fatalf("HTTP result is not OK: %#v", envelope.Error)
+	}
+	if err := json.Unmarshal(envelope.Result, target); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func inspectInteractionNextHTTP(t *testing.T, handler http.Handler, sessionID string) interaction.NextAction {
+	t.Helper()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/interactions/"+sessionID+"/next", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("Interaction next = %d %s", response.Code, response.Body.String())
+	}
+	var next interaction.NextAction
+	decodeHTTPResult(t, response, &next)
+	return next
 }
 
 func performSingleCommand(t *testing.T, handler http.Handler, command map[string]any) *httptest.ResponseRecorder {

@@ -18,6 +18,7 @@ v0.1.0 Python APIは公開互換専用のcompatibility surfaceとして残りま
 - 別AI社員による構造化レビューと修正タスク生成
 - Go process／Serviceによる実行・レビュー・修正フローの調整
 - 自然言語依頼、必要質問、再plan、digest承認をつなぐtyped Interaction Session
+- iPhoneから「次にすること」だけを操作できるmobile-first Local Web UIとtrusted-LAN pairing
 - dry-run、明示的承認、二重実行防止、原子的更新、partial failureの明示
 - commit済み証拠とTask Versionに拘束されたread-only診断／明示Recovery
 - 社員IDを維持した安全な改名とIdentity履歴
@@ -78,6 +79,7 @@ flowchart TD
 - [ADR-0028: Interaction Sessionは質問回答と承認対象digestをappend-only turnで保持する](docs/adr/ADR-0028-interaction-session-clarification-and-approval.md)
 - [ADR-0029: Interactionは既存Reviewed Workflowを決定的child Commandとして実行する](docs/adr/ADR-0029-interaction-reviewed-workflow-composition.md)
 - [ADR-0030: Interactionは明示Deliverableを既存External Actionへ引き渡す](docs/adr/ADR-0030-interaction-external-action-handoff.md)
+- [ADR-0031: iPhone向けLocal Web UIはdaemon同一originと明示LAN pairingで提供する](docs/adr/ADR-0031-mobile-local-web-interaction-client.md)
 
 新しいADRは[ADRテンプレート](docs/adr/ADR-template.md)から作成します。
 
@@ -426,7 +428,7 @@ bin/workspace-run action-wordpress-publish --vault /approved/vault --project-id 
 
 ## Roadmap
 
-現在はGo Only Runtime、v1.0候補安定化、Durability／Recovery、主要commandへのLedger適用、loopback HTTP API／daemon、Reviewed Multi-task Workflow、one-shot Scheduler、redacted Notification／Metrics、承認付きWordPress Actionまで完了しています。順序と完了条件は[docs/ROADMAP.md](docs/ROADMAP.md)を参照してください。
+現在はGo Only Runtime、v1.0候補安定化、Durability／Recovery、主要commandへのLedger適用、HTTP API／daemon、Reviewed Multi-task Workflow、one-shot Scheduler、redacted Notification／Metrics、承認付きWordPress Action、iPhone向けLocal Web UIまで完了しています。順序と完了条件は[docs/ROADMAP.md](docs/ROADMAP.md)を参照してください。
 
 ## ライセンス
 

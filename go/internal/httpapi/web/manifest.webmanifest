@@ -1,0 +1,10 @@
+{
+  "name": "Workspace OS",
+  "short_name": "Workspace OS",
+  "description": "必要な質問と承認だけで仕事を進めるlocal workspace client",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f1e8",
+  "theme_color": "#f4f1e8",
+  "lang": "ja"
+}

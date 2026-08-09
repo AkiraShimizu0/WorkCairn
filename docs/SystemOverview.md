@@ -2,7 +2,7 @@
 
 ## Workspace OSとは
 
-Workspace OSは、会社、AI社員、Project、Task、成果物、Review、Revision、監査証跡を、人間が読めるWorkspaceと型付きの実行系で一貫して扱うシステムです。現在の製品RuntimeはGo Onlyです。正本の運用入口は`workspace-run`、中核のビジネスルールはGo Domain／Service、運用データはVault Adapterが管理します。
+Workspace OSは、会社、AI社員、Project、Task、成果物、Review、Revision、監査証跡を、人間が読めるWorkspaceと型付きの実行系で一貫して扱うシステムです。現在の製品RuntimeはGo Onlyです。正本の運用入口は`workspace-run`と`workspace-daemon`のLocal Web UI、中核のビジネスルールはGo Domain／Service、運用データはVault Adapterが管理します。
 
 この文書は「現在どう動くか」を説明します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、個別判断の理由は[ADR](adr/)、詳細なpackage構造は[Architecture.md](Architecture.md)、安全な導入は[OperatorGuide.md](OperatorGuide.md)、HTTP運用は[HTTPAPI.md](HTTPAPI.md)、今後の順序は[ROADMAP.md](ROADMAP.md)を正とします。
 
@@ -10,7 +10,8 @@ Workspace OSは、会社、AI社員、Project、Task、成果物、Review、Revi
 
 ```mermaid
 flowchart LR
-    Request["CEOの自然言語依頼"] --> Session["Interaction request digest"]
+    Phone["iPhone Local Web UI"] --> Request["CEOの自然言語依頼"]
+    Request --> Session["Interaction request digest"]
     Session --> ApproveGenerate{"Provider呼出しを承認"}
     ApproveGenerate --> Generate["Plan生成"]
     Generate -->|questions| Answer["全質問へtyped回答"]
@@ -53,6 +54,26 @@ flowchart LR
 5. Workerは構造化ContextからPromptを作り、Runner RegistryがProvider Adapterを選びます。RunnerはTask状態や保存形式を知りません。
 6. 成果物を保存してからTaskを完了します。Reviewはcanonical JSON、Markdown表示、Eventの順で成立させます。
 7. Reviewが修正を要求した場合は、immutable Revision intentを保存してからTaskServiceで修正Taskを作成します。
+
+Local Web UIはこの順序を再実装しません。`interaction-next`が返す1つの次操作をiPhoneの先頭へ表示し、質問回答とread-only plan、承認対象digestを既存HTTP APIへ渡します。完了後はProject、Task、Deliverable本文、canonical Reviewをread-only evidence endpointから後で展開できます。
+
+## iPhoneからのLocal Web UI
+
+`workspace-daemon --mobile`は、同じWi-Fi等のtrusted local network上のiPhoneへmobile-first Web UIを配信します。起動時にprivate IPv4を自動選択し、terminalへURLとprocess lifetimeだけ有効なpairing codeを表示します。codeはVault、`.env`、Interaction Session、browser storageへ保存されません。
+
+```text
+iPhone browser
+  → process-local pairing
+  → Interaction Session / Next Action
+  → read-only plan
+  → digestとVersionへの明示承認
+  → workspace-command.v1
+  → 既存Go Process / Service / Adapter
+```
+
+画面は「次にすること」、質問、承認、完了、attention／Recovery案内だけを主要表示にします。Prompt、Provider生response、API key、Vault pathは表示しません。External ActionはWorkflow完了後に利用者が明示的に選んだ場合だけ、別のsource／Action digest承認へ進みます。
+
+既定daemonは引き続きloopback限定です。mobile modeもunspecified／public addressを拒否し、remote公開、敵対的LAN、port forwardingをsupportしません。HTTPを暗号化しないためtrusted LAN専用であり、internet公開には将来のTLS、durable identity、authorizationが必要です。
 
 各副作用commandは`--approved`がなければ、Vault I/O、Provider設定読取、HTTP client生成より前に拒否されます。plan／inspect／validateは副作用を持ちません。
 
@@ -147,7 +168,7 @@ ADR-0030のExternal Action handoffは任意です。completed Workflowに含ま�
 
 ## Go Only RuntimeとPython compatibility
 
-製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／Metrics、External ActionにPython interpreterは不要です。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。Go sourceが外部interpreterを起動しないことをRelease Gateで検査します。
+製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／Metrics、External Action、Local Web UIにPython interpreterは不要です。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。Go sourceが外部interpreterを起動しないことをRelease Gateで検査します。
 
 Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ残します。既存import pathと`workspace-ai` entry pointを維持しますが、製品Runtimeではありません。Python gatewayはGo JSON v1 processへ明示的に接続し、失敗時にPython Worker、Provider、writerへfallbackしません。legacy moduleは新規機能追加禁止のreference実装です。
 
@@ -159,7 +180,7 @@ Python v0.1 packageは公開利用者向けcompatibility surfaceとしてだけ�
 - 既存artifactを使った自動retry／adoption／projection再構成はない。安全なTask partial stateだけ明示Recoveryできる
 - Durable Command判定は明示Command ID付き主要writerへ適用済み。ID未指定実行と専用migration／Recovery操作は再送保証を持たない
 - 複数Task orchestrationはboundedな同期runであり、durable queueや自動resumeはない
-- HTTP daemonのremote公開、認証／TLS、非同期queueは未実装。現在はloopback同期Command APIだけで、非loopback bindをcodeで拒否する
+- HTTP daemonのremote公開、TLS、durable user identity／authorization、非同期queueは未実装。既定はloopbackで、明示mobile modeもprocess-local pairing付きprivate／link-local addressだけを許可する
 - Reviewed Multi-task WorkflowはTaskごとにReviewし、Request ChangesならRevision Taskを実行・再Reviewする。自動resume、並列実行は未実装
 - Schedulerはone-shotだけで、cron／recurrence、並列配送、`dispatching` reconciliationは未実装
 - Notificationはlocal read-only Inboxだけで、外部channel配送、未読／ack、Event replayは未実装。Metricsはprocess再起動でresetされる

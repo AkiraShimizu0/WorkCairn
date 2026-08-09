@@ -20,6 +20,7 @@ Workspace OSは、会社のProject、Task、AI社員、Workflow、Eventを管理
 - ADR-0028/0029のInteraction Sessionは自然言語request、CEO質問回答、再plan、plan digest承認、既存Project／Task writer適用、Reviewed Workflow実行をappend-only turnとVersion/CASで調停します。未回答質問をblockし、Workflow完全Resultはproject Ledgerへ残してSessionにはdigestとbounded typed summaryだけを保存します。
 - ADR-0030の任意External Action handoffはcompleted Workflow内の明示Taskだけを既存WordPress Action child Commandへ渡し、source／plan digest承認後の結果summaryをSessionへ記録します。公開意図や対象を推測しません。
 - `interaction-next`はSession stateと最新turnから次のoperation、必要field、質問、承認要否、Recovery参照をread-onlyに導出します。自動承認・実行・Recoveryは行いません。
+- ADR-0031のmobile-first Local Web UIは`workspace-daemon`へembedされ、iPhoneからInteraction／Next Action／Command APIを利用します。既定loopbackを維持し、明示`--mobile`だけprivate／link-local addressとprocess-local pairingを許可します。UIはbusiness ruleを持たず、Task／Deliverable／canonical Review evidenceをread-onlyで後から表示します。
 - Workspace Kernel、Project／Workflow／Task／Event／Worker／Policy Domain、PromptBuilder、Claude Adapter、Vault Adapter、Runtime compositionはGoです。temporary VaultとMock ProviderでEnd-to-End検証します。
 - Python TaskExecutor／Worker／ModelRouter／ClaudeRunner／ReviewerWorker／RevisionTaskService／ProjectManager／Organization writerは全て通常製品経路から外れ、公開互換referenceだけに残ります。
 - WorkflowEngineのRevision呼出しは`WorkspaceRunRevisionGateway`からGo `workspace-run revision-*`へ切替済みです。ADR-0012のimmutable intent、TaskService.Create、`revision.created`、Auditをtemporary VaultでEnd-to-End検証済みです。Python RevisionTaskServiceは公開互換legacyだけに残ります。
@@ -59,8 +60,8 @@ Go CoreはObsidian、Python runtime、CrewAI、LLM SDK、`.env`、APIキーへ�
 - `go/internal/*`: Go Domain、Service、Kernel、Adapter境界、Interaction、Scheduler、Notification／Metrics、External Action、通常Task PromptBuilder、Claude Runner／WordPress Adapter、Vault Context／TaskStore／Deliverable／Audit Adapter、Go Runtime composition。新しい中核ルールの実装先
 - `go/cmd/workspace-core`: JSON Contract v1を公開するCLI
 - `go/cmd/workspace-run`: Organization参照、CEO plan生成／適用、Project／Task作成、Task metadata migration、通常Task／Review／Revision／Reviewed Workflow、明示Recoveryを提供するGo運用CLI
-- `go/cmd/workspace-daemon`: 必須Command IDの同期HTTP v1とgraceful shutdownを提供するloopback Go daemon
-- `go/internal/httpapi`: HTTP contract／handlerと、既存Go process compositionへのAdapter
+- `go/cmd/workspace-daemon`: 必須Command IDの同期HTTP v1、mobile-first Web UI、graceful shutdownを提供するloopback既定Go daemon
+- `go/internal/httpapi`: HTTP contract／handler、embed Web UI、trusted-LAN pairingと、既存Go process compositionへのAdapter
 - `docs/Recovery.md`: partial state inventory、診断certainty、安全な明示Recovery操作
 - `src/workspace_ai/*`: 公開v0.1 compatibilityのGo process gateway、凍結Python legacy/reference
 - `tests/`: Python互換性・Adapterテスト

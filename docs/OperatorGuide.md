@@ -76,7 +76,26 @@ bin/workspace-daemon \
   --listen 127.0.0.1:8787
 ```
 
-daemonはloopback addressだけを受け付けます。`0.0.0.0`、空host、非loopback IPは、認証・TLS・authorizationが未実装のため起動時に拒否します。reverse proxyを置いてremote公開する構成も現在のsupport対象ではありません。
+既定daemonはloopback addressだけを受け付けます。`0.0.0.0`、空host、非loopback IPは拒否します。reverse proxyを置いてremote公開する構成も現在のsupport対象ではありません。
+
+### iPhone Local Web UI
+
+iPhoneとMacを同じtrusted Wi-Fiへ接続し、temporary／approved Vaultを明示して起動します。
+
+```bash
+bin/workspace-daemon --vault /absolute/path/to/temporary-or-approved-vault --mobile
+```
+
+1. terminalに表示された`Workspace OS mobile UI`のURLをiPhone Safariで開く。
+2. 同じterminalのpairing codeを入力する。Universal Clipboardでcopyしてもよい。
+3. 自然言語の依頼を入力し、request digestを確認してSession開始を承認する。
+4. 表示された質問へ回答し、Provider Plan生成、Plan適用、Reviewed Workflowをそれぞれ明示承認する。
+5. 完了後は`Project・Task・Reviewの詳細`からTask、Deliverable本文、canonical Reviewをread-onlyで確認する。
+6. `確認が必要`では自動再送せず、表示されたouter／child Command IDを確認してRecovery手順へ進む。
+
+mobile modeは自動検出したprivate IPv4だけへbindします。複数network interfaceで違うaddressを選んだ場合は`--listen 192.168.x.x:8787`を明示してください。pairing code／cookieはprocess終了で無効になり、Vault、`.env`、Interaction Sessionには保存されません。
+
+HTTPは暗号化されないため、信頼できない共有Wi-Fi、port forwarding、internet公開では使用しないでください。remote authentication、TLS、durable account、Push通知は未実装です。
 
 - `/healthz`: processが応答できること
 - `/readyz`: command handlerが構成済みであること
