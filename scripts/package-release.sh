@@ -22,7 +22,7 @@ case "$dist_root" in
   *) dist_root="$repository_root/$dist_root" ;;
 esac
 
-archive_name="workspace-os_${RELEASE_VERSION}_${RELEASE_GOOS}_${RELEASE_GOARCH}"
+archive_name="workcairn_${RELEASE_VERSION}_${RELEASE_GOOS}_${RELEASE_GOARCH}"
 package_dir="$dist_root/$archive_name"
 archive_path="$dist_root/$archive_name.tar.gz"
 checksum_path="$archive_path.sha256"
@@ -34,12 +34,12 @@ fi
 
 mkdir -p "$package_dir/bin" "$package_dir/docs"
 
-module=github.com/AkiraShimizu0/workspace-os/go/internal/buildinfo
+module=github.com/AkiraShimizu0/workcairn/go/internal/buildinfo
 commit=${BUILD_COMMIT:-unknown}
 build_date=${BUILD_DATE:-unknown}
 ldflags="-s -w -X $module.Version=$RELEASE_VERSION -X $module.Commit=$commit -X $module.BuildDate=$build_date"
 
-for command in workspace-core workspace-run workspace-daemon; do
+for command in workcairn-core workcairn workcairn-daemon; do
   (
     cd "$repository_root/go"
     CGO_ENABLED=0 GOOS="$RELEASE_GOOS" GOARCH="$RELEASE_GOARCH" GOTELEMETRY=off \

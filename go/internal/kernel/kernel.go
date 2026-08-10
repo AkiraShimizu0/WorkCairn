@@ -1,4 +1,4 @@
-// Package kernel provides the Workspace OS process-level coordination boundary.
+// Package kernel provides the WorkCairn process-level coordination boundary.
 // It intentionally contains no project, workflow, storage, or AI business logic.
 package kernel
 

@@ -1,17 +1,17 @@
 # HTTP Command API
 
-`workspace-daemon`は、Go Only Runtimeをloopback HTTPから利用する同期Command入口であり、同じGo binaryからmobile-first Local Web UIを配信します。現在はinternet／remote公開用ではありません。既定は`127.0.0.1`で、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可します。
+`workcairn-daemon`は、Go Only Runtimeをloopback HTTPから利用する同期Command入口であり、同じGo binaryからmobile-first Local Web UIを配信します。現在はinternet／remote公開用ではありません。既定は`127.0.0.1`で、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可します。
 
 ## 起動
 
 ```bash
-bin/workspace-daemon --vault /path/to/temporary-or-approved-vault
+bin/workcairn-daemon --vault /path/to/temporary-or-approved-vault
 ```
 
 iPhoneとMacを同じtrusted local networkへ接続し、次でmobile modeを起動します。
 
 ```bash
-bin/workspace-daemon --vault /path/to/temporary-or-approved-vault --mobile
+bin/workcairn-daemon --vault /path/to/temporary-or-approved-vault --mobile
 ```
 
 private IPv4を自動選択し、iPhoneで開くURLとpairing codeをterminalへ表示します。必要なら`--listen 192.168.x.x:8787`のように明示できます。`0.0.0.0`、public IP、hostnameは拒否します。pairing codeは起動ごとに変わり、Vault／Session／browser storageへ保存しません。mobile modeのeffect POSTはpairing cookie、same-origin、`X-Workspace-Intent: mobile-ui.v1`を要求します。
@@ -79,7 +79,7 @@ Local Web UIの`interaction.*` commandは、同じendpointへ`Prefer: respond-as
 
 `GET /v1/notifications`と`GET /v1/notifications/{event_id}`は、Task／Review／Revision／Action Eventから作成したimmutable local Inboxをread-onlyで返します。recordはEvent envelopeのidentityだけを持ち、payload、metadata、Prompt、Task title、Provider情報を含みません。`GET /v1/metrics`はdaemon process開始後のEvent type別件数を返し、再起動時にresetされます。
 
-WordPress Actionは`WORKSPACE_WORDPRESS_TARGET_ID`、`WORKSPACE_WORDPRESS_BASE_URL`、`WORKSPACE_WORDPRESS_USERNAME`、`WORKSPACE_WORDPRESS_APPLICATION_PASSWORD`をdaemon process環境から受け取ります。HTTP commandやScheduleへcredential、Base URL、Vault rootを含めません。`action.completed`はimmutable result evidence commit後にAudit／Notificationへ流れます。
+WordPress Actionは`WORKCAIRN_WORDPRESS_TARGET_ID`、`WORKCAIRN_WORDPRESS_BASE_URL`、`WORKCAIRN_WORDPRESS_USERNAME`、`WORKCAIRN_WORDPRESS_APPLICATION_PASSWORD`をdaemon process環境から受け取ります。HTTP commandやScheduleへcredential、Base URL、Vault rootを含めません。`action.completed`はimmutable result evidence commit後にAudit／Notificationへ流れます。
 
 ## Status and recovery
 

@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/deliverablestore"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/runner"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/taskstore"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
+	"github.com/AkiraShimizu0/workcairn/go/internal/deliverablestore"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/workcairn/go/internal/kernel"
+	"github.com/AkiraShimizu0/workcairn/go/internal/runner"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/taskstore"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
 type bootstrapPromptBuilder struct{}

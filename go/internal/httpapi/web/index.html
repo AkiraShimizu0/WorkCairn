@@ -6,17 +6,17 @@
   <meta name="theme-color" content="#f4f1e8">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Workspace OS">
-  <title>Workspace OS</title>
+  <meta name="apple-mobile-web-app-title" content="WorkCairn">
+  <title>WorkCairn</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
   <div class="page-shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="Workspace OS ホーム">
-        <span class="brand-mark" aria-hidden="true">W</span>
-        <span><strong>Workspace OS</strong><small>Local workspace</small></span>
+      <a class="brand" href="/" aria-label="WorkCairn ホーム">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span><strong>WorkCairn</strong><small>Your AI company</small></span>
       </a>
       <span id="connection-status" class="status-dot">接続確認中</span>
     </header>
@@ -34,27 +34,59 @@
       </section>
 
       <section id="workspace-view" hidden>
-        <div class="intro-row">
-          <div>
-            <p class="eyebrow">YOUR NEXT MOVE</p>
-            <h1>次にすること</h1>
+        <nav class="view-switcher" aria-label="表示切替">
+          <button id="my-actions-tab" class="view-tab active" type="button" aria-selected="true">My Actions</button>
+          <button id="company-tab" class="view-tab" type="button" aria-selected="false">Company View</button>
+        </nav>
+
+        <section id="my-actions-view">
+          <div class="intro-row">
+            <div>
+              <p class="eyebrow">MY ACTIONS</p>
+              <h1>次の判断</h1>
+            </div>
+            <button id="new-request-button" class="button compact" type="button">＋ 依頼する</button>
           </div>
-          <button id="new-request-button" class="button compact" type="button">＋ 新しい依頼</button>
-        </div>
 
-        <section id="active-card" class="action-card" aria-live="polite"></section>
+          <section id="active-card" class="action-card" aria-live="polite"></section>
 
-        <details id="details-panel" class="detail-panel">
-          <summary>Project・Task・Reviewの詳細</summary>
-          <div id="details-content" class="detail-content"></div>
-        </details>
+          <details id="details-panel" class="detail-panel">
+            <summary>Project・Task・Reviewの詳細</summary>
+            <div id="details-content" class="detail-content"></div>
+          </details>
 
-        <section class="history-section">
-          <div class="section-heading">
-            <h2>最近の依頼</h2>
-            <button id="refresh-button" class="text-button" type="button">更新</button>
+          <section class="history-section">
+            <div class="section-heading">
+              <h2>最近の依頼</h2>
+              <button id="refresh-button" class="text-button" type="button">更新</button>
+            </div>
+            <div id="session-list" class="session-list"></div>
+          </section>
+        </section>
+
+        <section id="company-view" hidden>
+          <div class="company-hero">
+            <div>
+              <p class="eyebrow">LIVING COMPANY DASHBOARD</p>
+              <h1>あなたの会社</h1>
+              <p class="company-promise">会社は見える。仕事も見える。でも管理しなくていい。</p>
+            </div>
+            <button id="company-request-button" class="button compact" type="button">＋ 依頼する</button>
           </div>
-          <div id="session-list" class="session-list"></div>
+          <section id="company-status" class="company-status" aria-live="polite"></section>
+          <section class="company-section" aria-labelledby="team-heading">
+            <div class="section-heading">
+              <div><p class="eyebrow">YOUR TEAM</p><h2 id="team-heading">AI社員</h2></div>
+              <span id="team-count" class="count-chip"></span>
+            </div>
+            <div id="employee-grid" class="employee-grid"></div>
+          </section>
+          <section class="company-section" aria-labelledby="flow-heading">
+            <div class="section-heading">
+              <div><p class="eyebrow">RESPONSIBILITY FLOW</p><h2 id="flow-heading">仕事の流れ</h2></div>
+            </div>
+            <div id="company-flow" class="company-flow"></div>
+          </section>
         </section>
       </section>
     </main>
@@ -66,7 +98,7 @@
       <div class="sheet-heading">
         <div>
           <p class="eyebrow">NEW REQUEST</p>
-          <h2>どんな仕事を依頼しますか？</h2>
+          <h2>会社に何を任せますか？</h2>
         </div>
         <button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button>
       </div>

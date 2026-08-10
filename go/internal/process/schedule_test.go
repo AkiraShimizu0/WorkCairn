@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
+	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
 )
 
 func TestSchedulePlanIsReadOnlyAndExecuteIsDurable(t *testing.T) {

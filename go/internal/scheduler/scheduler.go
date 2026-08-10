@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/commandcontract"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/commandcontract"
+	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 )
 
 const (

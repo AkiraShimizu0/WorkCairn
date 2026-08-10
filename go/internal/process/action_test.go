@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/deliverable"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
+	"github.com/AkiraShimizu0/workcairn/go/internal/action"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/deliverable"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
 func TestExternalActionPlanApprovalPublishEvidenceEventAndReplay(t *testing.T) {

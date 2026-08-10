@@ -12,7 +12,7 @@ credential漏えい、承認回避、Vault root外への書込み、remote acces
 
 ## Current security boundary
 
-- `workspace-daemon`は既定loopbackです。`--mobile`は信頼できる同一LANとprocess-local pairing専用で、TLSやremote authenticationはありません。
+- `workcairn-daemon`は既定loopbackです。`--mobile`は信頼できる同一LANとprocess-local pairing専用で、TLSやremote authenticationはありません。
 - port forwarding、public IP、reverse proxy、internet公開はsupportしません。
 - `.env`は自動読込しません。Provider／External Action credentialは承認済みprocessの環境からだけ注入します。
 - 実Vaultでの初回試用は推奨しません。temporary Vaultで確認後、外部backupを用意してください。

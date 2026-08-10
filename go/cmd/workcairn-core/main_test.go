@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
+	"github.com/AkiraShimizu0/workcairn/go/internal/kernel"
 )
 
 type fakeCommandExecutor struct {

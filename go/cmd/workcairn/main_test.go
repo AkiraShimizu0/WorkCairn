@@ -15,16 +15,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
-	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/recovery"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/action"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
+	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
+	"github.com/AkiraShimizu0/workcairn/go/internal/recovery"
+	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 func TestPlanCommandIsReadOnlyAndNeedsNoProviderConfig(t *testing.T) {
@@ -310,7 +310,7 @@ func TestWordPressActionPlanApprovalPublishAndReplayUseMockProvider(t *testing.T
 	}))
 	defer server.Close()
 	environment := map[string]string{
-		"WORKSPACE_WORDPRESS_BASE_URL": server.URL, "WORKSPACE_WORDPRESS_USERNAME": "fake-user", "WORKSPACE_WORDPRESS_APPLICATION_PASSWORD": "fake-password",
+		"WORKCAIRN_WORDPRESS_BASE_URL": server.URL, "WORKCAIRN_WORDPRESS_USERNAME": "fake-user", "WORKCAIRN_WORDPRESS_APPLICATION_PASSWORD": "fake-password",
 	}
 	dependencies := commandDependencies{
 		now: commandTestTime, lookupEnv: func(key string) (string, bool) { value, ok := environment[key]; return value, ok },
@@ -626,7 +626,7 @@ func TestCEOPlanGenerateAndApplyUseGoOnlyProductPath(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	environment := map[string]string{"ANTHROPIC_API_KEY": "fake-key", "WORKSPACE_CLAUDE_PROVIDER_MODEL": "claude-test", "WORKSPACE_CLAUDE_BASE_URL": server.URL}
+	environment := map[string]string{"ANTHROPIC_API_KEY": "fake-key", "WORKCAIRN_CLAUDE_PROVIDER_MODEL": "claude-test", "WORKCAIRN_CLAUDE_BASE_URL": server.URL}
 	dependencies := commandDependencies{
 		lookupEnv: func(key string) (string, bool) { value, ok := environment[key]; return value, ok },
 		now:       commandTestTime, newHTTPClient: func(time.Duration) claude.HTTPDoer { return server.Client() },
@@ -747,8 +747,8 @@ func TestExecuteCommandUsesMockProviderAndTemporaryVault(t *testing.T) {
 	}))
 	defer server.Close()
 	environment := map[string]string{
-		"ANTHROPIC_API_KEY": "fake-api-key", "WORKSPACE_CLAUDE_PROVIDER_MODEL": "claude-sonnet-5",
-		"WORKSPACE_CLAUDE_BASE_URL": server.URL,
+		"ANTHROPIC_API_KEY": "fake-api-key", "WORKCAIRN_CLAUDE_PROVIDER_MODEL": "claude-sonnet-5",
+		"WORKCAIRN_CLAUDE_BASE_URL": server.URL,
 	}
 	args := append([]string{"execute"}, commandArgs(root)...)
 	args = append(args, "--approved", "--approval-reference", "human-approval-001", "--execution-id", "EXEC-001", "--command-id", "CMD-CLI-001")
@@ -826,7 +826,7 @@ func TestReviewCommandsPlanWithoutSecretsAndExecuteWithMockProvider(t *testing.T
 	}))
 	defer server.Close()
 	environment := map[string]string{
-		"ANTHROPIC_API_KEY": "fake-api-key", "WORKSPACE_CLAUDE_PROVIDER_MODEL": "claude-sonnet-5", "WORKSPACE_CLAUDE_BASE_URL": server.URL,
+		"ANTHROPIC_API_KEY": "fake-api-key", "WORKCAIRN_CLAUDE_PROVIDER_MODEL": "claude-sonnet-5", "WORKCAIRN_CLAUDE_BASE_URL": server.URL,
 	}
 	dependencies := commandDependencies{
 		lookupEnv:     func(key string) (string, bool) { value, found := environment[key]; return value, found },
@@ -894,7 +894,7 @@ func TestRevisionCommandsNeedNeitherProviderSecretsNorHTTP(t *testing.T) {
 	var executeOutput bytes.Buffer
 	if exit := run(context.Background(), append(append([]string{"execute"}, commandArgs(root)...), "--approved"), &executeOutput, commandDependencies{
 		lookupEnv: func(key string) (string, bool) {
-			values := map[string]string{"ANTHROPIC_API_KEY": "fake", "WORKSPACE_CLAUDE_PROVIDER_MODEL": "claude-sonnet-5", "WORKSPACE_CLAUDE_BASE_URL": server.URL}
+			values := map[string]string{"ANTHROPIC_API_KEY": "fake", "WORKCAIRN_CLAUDE_PROVIDER_MODEL": "claude-sonnet-5", "WORKCAIRN_CLAUDE_BASE_URL": server.URL}
 			value, found := values[key]
 			return value, found
 		},

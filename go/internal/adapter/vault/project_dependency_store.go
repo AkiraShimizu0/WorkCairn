@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
+	"github.com/AkiraShimizu0/workcairn/go/internal/project"
 )
 
 type ProjectDependencyRecord struct {

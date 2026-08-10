@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/organization"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
 )
 
 var ErrEmployeeHireApproval = errors.New("explicit Employee hire approval is required")

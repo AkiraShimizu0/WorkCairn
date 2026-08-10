@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 )
 
 func TestCommandLedgerStoreCreatesUpdatesAndReopensRecord(t *testing.T) {

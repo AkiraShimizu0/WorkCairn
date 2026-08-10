@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/project"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 var (

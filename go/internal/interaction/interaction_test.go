@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
+	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 )
 
 func TestSessionRequiresClarificationBeforePlanApproval(t *testing.T) {

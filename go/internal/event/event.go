@@ -1,4 +1,4 @@
-// Package event defines Workspace OS business facts independently of storage,
+// Package event defines WorkCairn business facts independently of storage,
 // transport, audit formats, Obsidian, and AI runtimes.
 package event
 

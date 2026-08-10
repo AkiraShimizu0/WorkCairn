@@ -4,8 +4,8 @@ flowchart TD
     CEOPlan -. questions / answers .-> Interaction
     CEOPlan --> CEOApply["Go CEO Plan Apply"]
     CEOApply --> Managed["Go managed Project / Task"]
-    Managed --> Run["Go workspace-run"]
-    API["workspace-daemon / Command API v1"] --> Run
+    Managed --> Run["Go workcairn"]
+    API["workcairn-daemon / Command API v1"] --> Run
     Mobile["iPhone / Local Web UI"] --> API
     API --> Scheduler["Kernel-managed one-shot Scheduler"]
     Scheduler --> Run

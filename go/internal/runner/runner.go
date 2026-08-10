@@ -5,7 +5,7 @@ package runner
 import (
 	"context"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
 // Runner is implemented by provider-specific Adapters. It has no knowledge of

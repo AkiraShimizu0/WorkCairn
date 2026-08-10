@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
+	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
 )
 
 type memoryScheduleStore struct {

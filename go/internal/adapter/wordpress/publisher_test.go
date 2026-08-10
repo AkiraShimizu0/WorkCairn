@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
+	"github.com/AkiraShimizu0/workcairn/go/internal/action"
 )
 
 func TestPublisherMapsTypedActionToWordPressWithoutLeakingCredentials(t *testing.T) {

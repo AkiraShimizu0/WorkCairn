@@ -1,15 +1,15 @@
-# Workspace OS Operator Guide
+# WorkCairn Operator Guide
 
 ## 目的と安全境界
 
 このGuideは、Go Only製品Runtimeを初めて動かすoperatorが、意図しないVault変更や外部公開を避けながらplan、approval、execute、inspect、recoveryを行うための手順です。
 
-Workspace OSのread-only操作とwriter操作は分離されています。`*-plan`、`*-inspect`、`identity-validate`は承認やProvider credentialを必要としません。`*-execute`、`*-create`、`*-apply`、`action-wordpress-publish`は対象とplanを人間が確認した後にだけ明示承認します。
+WorkCairnのread-only操作とwriter操作は分離されています。`*-plan`、`*-inspect`、`identity-validate`は承認やProvider credentialを必要としません。`*-execute`、`*-create`、`*-apply`、`action-wordpress-publish`は対象とplanを人間が確認した後にだけ明示承認します。
 
 次を運用上の不変条件とします。
 
 - 最初は実運用Vaultのcopyまたは新しいtemporary Vaultを使う。
-- writer実行前にVault全体をWorkspace OSとは別の方法でsnapshotする。
+- writer実行前にVault全体をWorkCairnとは別の方法でsnapshotする。
 - planでVault root、Project／Task／Employee ID、source digest、Command IDを確認する。
 - 同じ論理操作の再送には同じCommand IDと同じrequestを使う。内容が変わる場合は新しいCommand IDを使う。
 - `running`、partial failure、stale Versionを推測で再実行しない。
@@ -21,11 +21,11 @@ Workspace OSのread-only操作とwriter操作は分離されています。`*-pl
 配布archiveはallow-listされたGo Only artifactです。展開前に同梱checksumを検証し、実行binaryのversionを確認します。初回導入だけを短く確認する場合は[PublicBetaQuickstart.md](PublicBetaQuickstart.md)を先に参照してください。
 
 ```bash
-shasum -a 256 -c workspace-os_v1.0.0-beta.1_darwin_arm64.tar.gz.sha256
-tar -xzf workspace-os_v1.0.0-beta.1_darwin_arm64.tar.gz
-workspace-os_v1.0.0-beta.1_darwin_arm64/bin/workspace-run version
-workspace-os_v1.0.0-beta.1_darwin_arm64/bin/workspace-daemon --version
-workspace-os_v1.0.0-beta.1_darwin_arm64/bin/workspace-core --version
+shasum -a 256 -c workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz.sha256
+tar -xzf workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz
+workcairn_v1.0.0-beta.1_darwin_arm64/bin/workcairn version
+workcairn_v1.0.0-beta.1_darwin_arm64/bin/workcairn-daemon --version
+workcairn_v1.0.0-beta.1_darwin_arm64/bin/workcairn-core --version
 ```
 
 Linuxでは`sha256sum -c`を使用できます。`version`結果のrelease versionとcommitをRelease noteに記録します。sourceからbuildする場合はGo 1.23以上で`make go-build`を使用します。別言語runtimeやpackage managerは不要です。
@@ -39,7 +39,7 @@ Linuxでは`sha256sum -c`を使用できます。`version`結果のrelease versi
 5. temporary Vaultだけを対象に、同じ入力で`project-bootstrap-execute --approved --command-id ...`を実行する。
 6. `Tasks.md`の5列表、managed metadata、Audit Log、Command Ledgerを確認する。
 
-実運用Vaultをapproved Vaultへ昇格する条件は、identity validationが成功し、既存5列表を使うProjectではADR-0008 migrationが完了し、外部backupから復元できることをoperatorが確認した状態です。Workspace OS自身はVault backup製品ではありません。
+実運用Vaultをapproved Vaultへ昇格する条件は、identity validationが成功し、既存5列表を使うProjectではADR-0008 migrationが完了し、外部backupから復元できることをoperatorが確認した状態です。WorkCairn自身はVault backup製品ではありません。
 
 ## 通常運用
 
@@ -71,7 +71,7 @@ Project適用後は`interaction-workflow-plan`でreviewer ID、Task上限、Sess
 ## Loopback daemon
 
 ```bash
-bin/workspace-daemon \
+bin/workcairn-daemon \
   --vault /absolute/path/to/temporary-or-approved-vault \
   --listen 127.0.0.1:8787
 ```
@@ -83,15 +83,16 @@ bin/workspace-daemon \
 iPhoneとMacを同じtrusted Wi-Fiへ接続し、temporary／approved Vaultを明示して起動します。
 
 ```bash
-bin/workspace-daemon --vault /absolute/path/to/temporary-or-approved-vault --mobile
+bin/workcairn-daemon --vault /absolute/path/to/temporary-or-approved-vault --mobile
 ```
 
-1. terminalに表示された`Workspace OS mobile UI`のURLをiPhone Safariで開く。
+1. terminalに表示された`WorkCairn mobile UI`のURLをiPhone Safariで開く。
 2. 同じterminalのpairing codeを入力する。Universal Clipboardでcopyしてもよい。
 3. 自然言語の依頼を入力し、request digestを確認してSession開始を承認する。
 4. 表示された質問へ回答し、Provider Plan生成、Plan適用、Reviewed Workflowをそれぞれ明示承認する。
-5. 完了後は`Project・Task・Reviewの詳細`からTask、Deliverable本文、canonical Reviewをread-onlyで確認する。
-6. `確認が必要`では自動再送せず、表示されたouter／child Command IDを確認してRecovery手順へ進む。
+5. iPhoneの`My Actions`では必要な判断だけ、Mac／iPadの`Company View`ではAI社員、Maker、Reviewer、Revisionのhandoffを確認する。
+6. 完了後は`Project・Task・Reviewの詳細`からTask、Deliverable本文、canonical Reviewをread-onlyで確認する。
+7. `確認が必要`では自動再送せず、表示されたouter／child Command IDを確認してRecovery手順へ進む。
 
 承認後にSafariをbackgroundへ移しても、`202 Accepted`済みのInteraction commandはMac上で継続します。画面へ戻ると同じCommand IDのLedger状態を再取得します。daemon自体を終了した場合やMacがsleep／crashした場合は自動resumeせず、`running`／partial stateをRecovery手順で確認してください。
 
@@ -129,7 +130,7 @@ Metricsはdaemon process内のEvent件数だけです。永続監視、SLA、tok
 異常終了やpartial failureでは、まずread-only inventoryを取得します。
 
 ```bash
-bin/workspace-run recovery-inspect --vault /path/to/vault --project 'Project名'
+bin/workcairn recovery-inspect --vault /path/to/vault --project 'Project名'
 ```
 
 自動回復できるのは、確定DeliverableとTask Versionに拘束された`complete_task`、またはDeliverableなしの中断Taskを失敗・保留に確定する`fail_and_hold_task`だけです。`recovery-plan`を保存し、直前に証拠とTask Versionを再検証する`recovery-apply --approved`を使います。
@@ -146,7 +147,7 @@ WordPress Base URL、username、application passwordは承認済みpublish proce
 
 ## Upgrade／rollback checklist
 
-1. 現行binaryの`workspace-run version`と対象Vaultのbackup revisionを記録する。
+1. 現行binaryの`workcairn version`と対象Vaultのbackup revisionを記録する。
 2. Release checksum、CHANGELOG、JSON Contract／Vault schema互換性を確認する。
 3. temporary copyで`organization-inspect`、`identity-validate`、主要read-only plan、`recovery-inspect`を実行する。
 4. `make v1-release-gate`相当のRelease結果を確認する。

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
+	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 )
 
 type InteractionCommitResult struct {

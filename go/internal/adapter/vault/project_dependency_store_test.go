@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/project"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 func TestProjectDependencyStoreCreatesImmutableStableProjection(t *testing.T) {

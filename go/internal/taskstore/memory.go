@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 // InMemory is a race-safe optimistic-concurrency Task Store for Kernel runtime

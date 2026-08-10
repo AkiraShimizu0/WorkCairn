@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/revision"
-	workspaceruntime "github.com/AkiraShimizu0/workspace-os/go/internal/runtime"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
+	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 const maxCanonicalReviewBytes = 1 << 20

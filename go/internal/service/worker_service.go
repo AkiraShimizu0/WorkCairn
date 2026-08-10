@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/runner"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
+	"github.com/AkiraShimizu0/workcairn/go/internal/runner"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
 var (

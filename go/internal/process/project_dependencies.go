@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/project"
 )
 
 var ErrProjectDependenciesApproval = errors.New("explicit Project dependencies approval is required")

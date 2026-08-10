@@ -1,16 +1,16 @@
-# Workspace OS Constitution
+# WorkCairn Constitution
 
 ## Status
 
 - Version: 1.0
 - Effective: 2026-08-07
-- Scope: Workspace OSの設計、実装、テスト、運用データ変更
+- Scope: WorkCairnの設計、実装、テスト、運用データ変更
 
-この文書はWorkspace OS開発の不変条件を定めます。具体的な設計判断はADR、現在構造は`Architecture.md`、実施順序は`ROADMAP.md`で管理します。矛盾する場合は、明示的に改定されない限り、このConstitutionとAccepted ADRを優先します。
+この文書はWorkCairn開発の不変条件を定めます。具体的な設計判断はADR、現在構造は`Architecture.md`、実施順序は`ROADMAP.md`で管理します。矛盾する場合は、明示的に改定されない限り、このConstitutionとAccepted ADRを優先します。
 
 ## Article 1 — Go Core Is the Single Source of Business Rules
 
-Workspace OSの最終形はGo 100%、Python 0%です。Project、Workflow、Policy、Execution、Task、Event、Worker、Organization、Scheduler、Auditなどの新しい中核ビジネスルールはGoへ実装します。
+WorkCairnの最終形はGo 100%、Python 0%です。Project、Workflow、Policy、Execution、Task、Event、Worker、Organization、Scheduler、Auditなどの新しい中核ビジネスルールはGoへ実装します。
 
 Pythonは移行期間中のlegacy/reference、Adapter、Prompt、Provider Runner、LLM SDKとしてのみ維持します。暗黙fallbackやPythonとGoへの新規ルール二重実装は禁止します。
 

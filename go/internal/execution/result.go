@@ -3,11 +3,11 @@ package execution
 import (
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/deliverable"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/policy"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/workflow"
+	"github.com/AkiraShimizu0/workcairn/go/internal/deliverable"
+	"github.com/AkiraShimizu0/workcairn/go/internal/policy"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/workcairn/go/internal/workflow"
 )
 
 type Status string

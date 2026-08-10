@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 )
 
 const (

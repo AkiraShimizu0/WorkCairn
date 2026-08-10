@@ -6,7 +6,9 @@ Candidate: `v1.0.0-beta.1`
 
 ## 1. Human decisions — release前に必須
 
-- [ ] 公開製品名、GitHub repository名、module／binary名を維持するか決定した。
+- [x] 公開製品名を`WorkCairn`、binaryを`workcairn*`、Go moduleを`github.com/AkiraShimizu0/workcairn/go`と決定した。
+- [ ] GitHub repositoryを`workcairn`へ実renameし、clone URLとmodule pathの一致を確認した。
+- [ ] 配布予定地域で`WorkCairn`の正式な商標clearanceを完了した。
 - [ ] Private Vulnerability Reportingを有効化し、`SECURITY.md`の報告経路を実際に確認した。
 - [ ] Public Betaのsupport窓口とresponse expectationをRelease noteへ記載した。
 - [ ] 配布対象をTier 1だけにするか、native smoke済みcandidateを追加するか決定した。
@@ -68,6 +70,8 @@ targetごとにclean output directoryを使います。
 - [ ] Tier 1 MacとiPhoneを同じtrusted Wi-Fiへ接続した。
 - [ ] `--mobile`がprivate addressとpairing codeを表示した。
 - [ ] iPhone Safariでpairing、reload、background復帰、完了確認を実施した。
+- [ ] iPhoneでMy Actionsが既定となり、質問／承認以外では`No action needed`が明確に見える。
+- [ ] iPad／MacでCompany Viewが既定となり、Maker、Reviewer、Revision、担当、handoffを理解できる。
 - [ ] public／shared network、port forwarding、internet公開を使っていない。
 
 ### Provider
@@ -112,4 +116,4 @@ targetごとにclean output directoryを使います。
 
 ## Product name checkpoint
 
-`Workspace OS`は内容を広く表す一方、一般語の組合せで検索・識別性が弱く、近似する公開製品があります。Public Beta公開前に[ProductNaming.md](ProductNaming.md)をもとに名称、repository slug、商標、domain、app表示名を人間が決定します。このフェーズでは実renameを行いません。
+正式名称は`WorkCairn`です。Public surfaceのrename境界は[ProductNaming.md](ProductNaming.md)と[ADR-0034](adr/ADR-0034-workcairn-brand-and-living-company-dashboard.md)へ記録済みです。Public Beta前に実GitHub repository rename、商標／domain／handle確認、実機での初見UX確認を完了します。

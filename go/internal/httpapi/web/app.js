@@ -1,18 +1,27 @@
 const INTERACTION_VERSION = "workspace-interaction.v1";
 const COMMAND_VERSION = "workspace-command.v1";
-const STORAGE_SESSION = "workspace-os.active-session";
-const STORAGE_MODEL = "workspace-os.preferred-model";
-const STORAGE_PENDING = "workspace-os.pending-command";
+const STORAGE_SESSION = "workcairn.active-session";
+const STORAGE_MODEL = "workcairn.preferred-model";
+const STORAGE_PENDING = "workcairn.pending-command";
+const STORAGE_VIEW = "workcairn.active-view";
 
 const ui = {
   pairingView: document.querySelector("#pairing-view"),
   pairingForm: document.querySelector("#pairing-form"),
   workspaceView: document.querySelector("#workspace-view"),
+  myActionsView: document.querySelector("#my-actions-view"),
+  companyView: document.querySelector("#company-view"),
+  myActionsTab: document.querySelector("#my-actions-tab"),
+  companyTab: document.querySelector("#company-tab"),
   status: document.querySelector("#connection-status"),
   activeCard: document.querySelector("#active-card"),
   detailsPanel: document.querySelector("#details-panel"),
   details: document.querySelector("#details-content"),
   sessionList: document.querySelector("#session-list"),
+  companyStatus: document.querySelector("#company-status"),
+  employeeGrid: document.querySelector("#employee-grid"),
+  teamCount: document.querySelector("#team-count"),
+  companyFlow: document.querySelector("#company-flow"),
   requestDialog: document.querySelector("#request-dialog"),
   requestForm: document.querySelector("#request-form"),
   actionDialog: document.querySelector("#action-dialog"),
@@ -77,6 +86,9 @@ function stateLabel(value) {
     completed: "仕事完了",
     action_completed: "公開完了",
     action_attention_required: "公開確認が必要",
+    waiting: "待機中",
+    standby: "必要時に参加",
+    blocked: "確認が必要",
   };
   return labels[value] || value || "確認中";
 }
@@ -117,6 +129,18 @@ function setBusy(active, title = "処理しています", message = "この画�
   ui.busy.hidden = !active;
   ui.busyTitle.textContent = title;
   ui.busyMessage.textContent = message;
+}
+
+function setView(name, remember = true) {
+  const company = name === "company";
+  ui.myActionsView.hidden = company;
+  ui.companyView.hidden = !company;
+  ui.myActionsTab.classList.toggle("active", !company);
+  ui.companyTab.classList.toggle("active", company);
+  ui.myActionsTab.setAttribute("aria-selected", String(!company));
+  ui.companyTab.setAttribute("aria-selected", String(company));
+  if (remember) localStorage.setItem(STORAGE_VIEW, company ? "company" : "actions");
+  if (company) refreshCompanyView();
 }
 
 let toastTimer;
@@ -174,6 +198,8 @@ async function startWorkspace() {
   const candidate = state.sessions.find((record) => record.session_id === stored) ||
     state.sessions.find((record) => !["completed", "action_completed"].includes(record.state)) || state.sessions[0];
   await selectSession(candidate?.session_id || null);
+  const preferredView = localStorage.getItem(STORAGE_VIEW);
+  setView(preferredView || (window.matchMedia("(min-width: 900px)").matches ? "company" : "actions"), false);
 }
 
 async function loadSessions() {
@@ -189,6 +215,7 @@ async function selectSession(id) {
     localStorage.removeItem(STORAGE_SESSION);
     renderEmpty();
     renderDetails();
+    renderCompany();
     return;
   }
   localStorage.setItem(STORAGE_SESSION, id);
@@ -211,6 +238,7 @@ async function refreshCurrent(silent = false) {
     setConnected(true);
     renderNext();
     renderDetails();
+    renderCompany();
     await loadSessions();
   } catch (error) {
     setConnected(false);
@@ -222,8 +250,8 @@ function renderEmpty() {
   ui.activeCard.className = "action-card complete";
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, "準備できています"),
-    node("h2", {}, "新しい仕事を依頼してください"),
-    node("p", { class: "lead" }, "やりたいことを自然な言葉で入力すると、必要な質問と承認だけを順に表示します。"),
+    node("h2", {}, "会社に新しい仕事を依頼してください"),
+    node("p", { class: "lead" }, "依頼した後はAI社員が計画・実行・レビューを進め、必要な質問と承認だけをここに表示します。"),
     node("div", { class: "button-row" }, button("仕事を依頼する", "primary", openRequestDialog)),
   );
 }
@@ -321,8 +349,8 @@ function currentPlan() {
 function renderPlanApproval(next) {
   const current = currentPlan();
   if (!current) return showError(new Error("Plan evidence is missing"));
-  const identifier = localStorage.getItem(`workspace-os.project.${state.record.session_id}`) || projectID();
-  localStorage.setItem(`workspace-os.project.${state.record.session_id}`, identifier);
+  const identifier = localStorage.getItem(`workcairn.project.${state.record.session_id}`) || projectID();
+  localStorage.setItem(`workcairn.project.${state.record.session_id}`, identifier);
   const projectInput = node("input", { id: "project-id", value: identifier, required: true, autocomplete: "off", spellcheck: "false" });
   const tasks = node("ul", {}, ...current.plan.proposed_tasks.map((task) => node("li", {}, `${task.title}${task.assignee_id ? ` — ${task.assignee_id}` : ""}`)));
   ui.activeCard.replaceChildren(
@@ -340,7 +368,7 @@ function renderPlanApproval(next) {
       button("このPlanを承認して作成", "primary", () => {
         const value = projectInput.value.trim();
         if (!value) return toast("Project IDを入力してください。");
-        localStorage.setItem(`workspace-os.project.${state.record.session_id}`, value);
+        localStorage.setItem(`workcairn.project.${state.record.session_id}`, value);
         executeNextCommand(next, {
           session_id: next.session_id, expected_version: next.expected_version,
           project_id: value, plan_digest: current.digest, current_time: now(),
@@ -759,9 +787,150 @@ async function loadTaskEvidenceDetails() {
     const results = await Promise.all(missing.map((task) => requestJSON(`/v1/projects/${encodeURIComponent(workflow.project_name)}/tasks/${encodeURIComponent(task.task_id)}/evidence`)));
     results.forEach((evidence, index) => state.evidence.set(`${workflow.project_name}/${missing[index].task_id}`, evidence));
     renderDetails();
+    renderCompany();
   } catch (error) {
     toast(`成果物の詳細を取得できませんでした: ${error.message}`);
   }
+}
+
+async function refreshCompanyView() {
+  renderCompany();
+  try {
+    await loadOrganization();
+    await loadTaskEvidenceDetails();
+    renderCompany();
+  } catch (error) {
+    ui.employeeGrid.replaceChildren(node("p", { class: "warning" }, "社員情報を読み込めませんでした。仕事の状態は推測せず、Mac側のOrganizationを確認してください。"));
+  }
+}
+
+function renderCompany() {
+  if (!ui.companyStatus) return;
+  const next = state.next;
+  const pending = Boolean(sessionStorage.getItem(STORAGE_PENDING));
+  const requiresAction = next && !["optional_external_action_or_done", "done"].includes(next.kind);
+  let icon = "✓";
+  let title = "Your company is ready.";
+  let message = "仕事を依頼すると、担当AIとReviewerの流れがここに表示されます。";
+  if (pending) {
+    icon = "↻";
+    title = "Your company is working. No action needed.";
+    message = "承認済みの仕事をMac上で進めています。次に判断が必要になったらMy Actionsへ表示します。";
+  } else if (requiresAction) {
+    icon = "!";
+    title = "Your decision is needed.";
+    message = "会社は安全な境界で停止しています。My Actionsに必要な質問または承認があります。";
+  } else if (state.record) {
+    title = next?.kind === "done" ? "Work completed." : "Your company is working. No action needed.";
+    message = next?.kind === "done"
+      ? "依頼した仕事と外部Actionが完了しています。詳細は後から確認できます。"
+      : "現在あなたが対応することはありません。成果物は保存済みで、外部Actionは別承認です。";
+  }
+  ui.companyStatus.className = `company-status${requiresAction ? " needs-action" : ""}`;
+  ui.companyStatus.replaceChildren(
+    node("span", { class: "company-status-icon", "aria-hidden": "true" }, icon),
+    node("div", {}, node("strong", {}, title), node("p", {}, message)),
+  );
+  renderEmployees();
+  renderCompanyFlow();
+}
+
+function renderEmployees() {
+  const employees = state.organization?.inventory?.employees || [];
+  ui.teamCount.textContent = employees.length ? `${employees.length} people` : "";
+  if (!employees.length) {
+    ui.employeeGrid.replaceChildren(node("p", { class: "empty" }, "AI社員はまだ読み込まれていません。"));
+    return;
+  }
+  const plan = state.record ? currentPlan() : null;
+  const makerTasks = new Map();
+  for (const task of plan?.plan?.proposed_tasks || []) {
+    if (!task.assignee_id) continue;
+    const list = makerTasks.get(task.assignee_id) || [];
+    list.push(task.title);
+    makerTasks.set(task.assignee_id, list);
+  }
+  const workflow = latestWorkflow();
+  const reviewerID = workflow?.reviewer_id || "";
+  const revisionOwners = new Set();
+  for (const task of workflow?.tasks || []) {
+    if (!task.targeted_revision) continue;
+    const evidence = state.evidence.get(`${workflow.project_name}/${task.task_id}`);
+    if (evidence?.task?.assignee_id) revisionOwners.add(evidence.task.assignee_id);
+  }
+  ui.employeeGrid.replaceChildren(...employees.map((employee) => {
+    const tasks = makerTasks.get(employee.id) || [];
+    let responsibility = "Available";
+    let kind = "";
+    if (revisionOwners.has(employee.id)) {
+      responsibility = "Revision";
+      kind = "maker";
+    } else if (employee.id === reviewerID) {
+      responsibility = "Reviewer";
+      kind = "reviewer";
+    } else if (tasks.length) {
+      responsibility = "Maker";
+      kind = "maker";
+    }
+    const currentWork = employee.current_task || tasks[0] || (employee.id === reviewerID ? "成果物を独立レビュー" : "次の依頼を待機中");
+    return node("article", { class: `employee-card ${kind}`.trim() },
+      node("span", { class: "employee-avatar", "aria-hidden": "true" }),
+      node("div", { class: "employee-name" },
+        node("strong", {}, employee.name || employee.id),
+        node("small", {}, `${employee.role || "役割未設定"} · ${employee.department || "所属未設定"}`),
+        node("span", { class: "responsibility" }, responsibility),
+        node("p", { class: "employee-task" }, currentWork),
+      ),
+    );
+  }));
+}
+
+function latestWorkflow() {
+  return [...(state.record?.turns || [])].reverse().find((turn) => turn.workflow)?.workflow || null;
+}
+
+function employeeLabel(id) {
+  if (!id) return "未割当";
+  const employee = (state.organization?.inventory?.employees || []).find((candidate) => candidate.id === id);
+  return employee ? `${employee.name || employee.id} (${employee.id})` : id;
+}
+
+function renderCompanyFlow() {
+  const workflow = latestWorkflow();
+  const plan = state.record ? currentPlan() : null;
+  const firstTask = workflow?.tasks?.[0];
+  const plannedTask = plan?.plan?.proposed_tasks?.[0];
+  const firstEvidence = firstTask ? state.evidence.get(`${workflow.project_name}/${firstTask.task_id}`) : null;
+  const makerID = firstEvidence?.task?.assignee_id || plannedTask?.assignee_id || "";
+  const revisionTask = workflow?.tasks?.find((task) => task.targeted_revision);
+  const revisionEvidence = revisionTask ? state.evidence.get(`${workflow.project_name}/${revisionTask.task_id}`) : null;
+  const flow = [
+    {
+      kind: "worker", label: "Maker", owner: employeeLabel(makerID),
+      work: firstTask?.task_id || plannedTask?.title || "Taskを受け取り成果物を作る",
+      state: firstTask ? "completed" : state.record ? "waiting" : "standby",
+    },
+    {
+      kind: "reviewer", label: "Reviewer", owner: employeeLabel(workflow?.reviewer_id),
+      work: firstTask ? `Review ${firstTask.verdict || "進行待ち"}` : "Makerとは別の視点で確認する",
+      state: firstTask?.verdict ? "completed" : "waiting",
+    },
+    {
+      kind: "revision", label: "Revision", owner: employeeLabel(revisionEvidence?.task?.assignee_id),
+      work: revisionTask ? `${revisionTask.task_id}で指摘を反映` : "Request Changesのときだけ担当へ戻す",
+      state: revisionTask ? "completed" : "standby",
+    },
+  ];
+  if (workflow?.failure) {
+    flow.push({ kind: "revision", label: "Recovery", owner: "人間の確認待ち", work: `${workflow.failure.code} / ${workflow.failure.stage}`, state: "blocked" });
+  }
+  ui.companyFlow.replaceChildren(...flow.map((step, index) =>
+    node("article", { class: `flow-step ${step.kind}` },
+      node("span", { class: "flow-index" }, String(index + 1)),
+      node("div", { class: "flow-copy" }, node("strong", {}, `${step.label} · ${step.owner}`), node("small", {}, step.work)),
+      node("span", { class: `flow-state ${step.state}` }, stateLabel(step.state)),
+    ),
+  ));
 }
 
 function detailBlock(title, rows) {
@@ -814,7 +983,10 @@ function closeDialog(event) {
 ui.pairingForm.addEventListener("submit", pair);
 ui.requestForm.addEventListener("submit", prepareNewRequest);
 document.querySelector("#new-request-button").addEventListener("click", openRequestDialog);
+document.querySelector("#company-request-button").addEventListener("click", openRequestDialog);
 document.querySelector("#refresh-button").addEventListener("click", () => refreshCurrent());
+ui.myActionsTab.addEventListener("click", () => setView("actions"));
+ui.companyTab.addEventListener("click", () => setView("company"));
 ui.detailsPanel.addEventListener("toggle", () => { if (ui.detailsPanel.open) loadTaskEvidenceDetails(); });
 document.querySelectorAll("[data-close-dialog]").forEach((control) => control.addEventListener("click", closeDialog));
 

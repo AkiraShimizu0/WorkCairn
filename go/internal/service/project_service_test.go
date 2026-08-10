@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
+	"github.com/AkiraShimizu0/workcairn/go/internal/project"
 )
 
 func TestProjectServiceDelegatesToDomain(t *testing.T) {

@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/action"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 const maxActionSourceBytes = 16 << 20

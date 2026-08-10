@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 type DeliverableInspection struct {

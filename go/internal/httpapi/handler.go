@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/metrics"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/notification"
-	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/workcairn/go/internal/metrics"
+	"github.com/AkiraShimizu0/workcairn/go/internal/notification"
+	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
+	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 const maxCommandRequestBytes = 2 << 20

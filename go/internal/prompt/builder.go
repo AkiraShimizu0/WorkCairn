@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
 var jst = time.FixedZone("JST", 9*60*60)

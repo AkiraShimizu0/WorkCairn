@@ -1,17 +1,24 @@
-# Workspace OS
+# WorkCairn
 
-Workspace OSは、自然言語の依頼を検証可能なPlan、Project、Task、実行、Review、Revisionへ変換するlocal-firstなAI work orchestratorです。人間が必要な質問と承認だけに応答し、確定した成果物と監査証跡をローカルのMarkdown Vaultへ残します。
+**Your AI company that manages itself.**
+
+WorkCairnは、自分専用のAI会社へ自然言語で仕事を依頼するlocal-firstな製品です。AI社員が計画、実行、独立Review、必要なRevisionを進め、人間には本当に必要な質問と重要な承認だけを返します。
+
+**あなたのAI会社。必要な判断だけ、あなたがする。** 会社は見える。仕事も見える。でも管理しなくていい。
 
 現在の候補versionは`v1.0.0-beta.1`です。repository、build、test、release、distributionはGo Onlyです。
 
-## できること
+## 自分のAI会社を持つ
 
 - 自然言語依頼からtyped Planを生成し、質問回答後の明示承認でProject／Taskへ適用
 - Task実行、別AI社員によるReview、Request Changes時のRevisionと再Review
-- iPhone向けLocal Web UIで「次にすること」だけを案内
+- iPhoneの`My Actions`で、本当に必要な質問・承認・Recoveryだけを案内
+- PC／iPadの`Company View`で、AI社員、担当、Maker → Reviewer → Revisionの流れを確認
 - 承認前副作用ゼロ、Task Version/CAS、Command Ledger、partial failureの明示
 - Deliverable、canonical Review JSON、Revision intent、Event／Auditをローカル保存
 - read-only診断と、確定証拠に拘束された限定的な明示Recovery
+
+WorkCairnは会社simulationではありません。給与や機嫌を管理する代わりに、誰が作り、誰がReviewし、必要なら誰が直しているかを見せます。通常時は`Your company is working. No action needed.`と表示し、CEOである利用者へ細かな管理を要求しません。
 
 ## Public Betaの対応環境
 
@@ -32,10 +39,10 @@ Workspace OSは、自然言語の依頼を検証可能なPlan、Project、Task�
 ### Sourceからbuild
 
 ```bash
-git clone <repository-url> workspace-os
-cd workspace-os
+git clone <repository-url> workcairn
+cd workcairn
 make go-build
-bin/workspace-run version
+bin/workcairn version
 ```
 
 ### 配布archiveからinstall
@@ -43,17 +50,17 @@ bin/workspace-run version
 macOSでは`shasum`、Linuxでは`sha256sum`でchecksumを確認します。
 
 ```bash
-shasum -a 256 -c workspace-os_v1.0.0-beta.1_darwin_arm64.tar.gz.sha256
-tar -xzf workspace-os_v1.0.0-beta.1_darwin_arm64.tar.gz
-cd workspace-os_v1.0.0-beta.1_darwin_arm64
-bin/workspace-run version
+shasum -a 256 -c workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz.sha256
+tar -xzf workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz
+cd workcairn_v1.0.0-beta.1_darwin_arm64
+bin/workcairn version
 ```
 
 ### Loopback Web UIを開く
 
 ```bash
 beta_vault=$(mktemp -d)
-bin/workspace-daemon --vault "$beta_vault"
+bin/workcairn-daemon --vault "$beta_vault"
 ```
 
 Macのブラウザで`http://127.0.0.1:8787/`を開きます。この段階ではProvider credentialは不要で、実Vaultも変更しません。終了はterminalで`Ctrl-C`です。
@@ -65,10 +72,10 @@ Macのブラウザで`http://127.0.0.1:8787/`を開きます。この段階で�
 
 ```bash
 beta_vault=$(mktemp -d)
-bin/workspace-daemon --vault "$beta_vault" --mobile
+bin/workcairn-daemon --vault "$beta_vault" --mobile
 ```
 
-3. terminalに表示された`Workspace OS mobile UI`のURLをiPhone Safariで開く。
+3. terminalに表示された`WorkCairn mobile UI`のURLをiPhone Safariで開く。
 4. 同じterminalのpairing codeを入力する。
 
 mobile modeはprivate／link-local addressだけを許可します。TLS、remote authentication、internet公開には対応していません。共有Wi-Fi、port forwarding、reverse proxyでは使用しないでください。
@@ -79,11 +86,11 @@ UIへ到達するだけならcredentialは不要です。Plan生成やTask実行
 
 ```bash
 ANTHROPIC_API_KEY='<provider key>' \
-WORKSPACE_CLAUDE_PROVIDER_MODEL='<supported provider model id>' \
-bin/workspace-daemon --vault "$beta_vault" --mobile
+WORKCAIRN_CLAUDE_PROVIDER_MODEL='<supported provider model id>' \
+bin/workcairn-daemon --vault "$beta_vault" --mobile
 ```
 
-Workspace OSは`.env`を自動読込しません。API key、Provider response、pairing codeをVaultやCommandへ保存しません。External Action用WordPress設定は任意で、通常のTask／Reviewには不要です。
+WorkCairnは`.env`を自動読込しません。API key、Provider response、pairing codeをVaultやCommandへ保存しません。External Action用WordPress設定は任意で、通常のTask／Reviewには不要です。
 
 社員Markdownとtemporary Vaultの準備、初回Operator確認は[Public Beta Quickstart](docs/PublicBetaQuickstart.md)を参照してください。
 
@@ -103,13 +110,13 @@ Workspace OSは`.env`を自動読込しません。API key、Provider response�
 
 UIはこのフローを実装せず、Go Interaction Sessionの`Next Action`を表示する薄いclientです。Task状態とTask lifecycle EventはTaskServiceだけが変更します。
 
-## 安全モデル
+## 安全に任せられる理由
 
-- read-only plan／inspectとwriterを分離
-- Provider呼出しとVault変更前に明示承認
-- 同一Command ID／requestの安全なreplayと、異requestでのID再利用拒否
-- canonical evidence commit後の失敗をrollbackせずpartial failureとして返す
-- automatic retry、artifact adoption、Event replayを行わない
+- 変更前に内容を確認でき、重要な副作用は明示承認まで開始しない
+- 同じ依頼が届いても仕事を重複実行せず、異なる依頼の取り違えを拒否する
+- 「どこまで完了したか」「何が未確認か」を成立済み記録から説明する
+- 外部公開後や成果物保存後の失敗を隠さず、完了済み部分を勝手に削除しない
+- 状態が曖昧なときは勝手に再実行せず、人間へRecovery確認を返す
 - 実運用前にtemporary Vaultと外部backupを要求
 
 異常終了や`attention_required`では、推測で再実行せず[Recovery Guide](docs/Recovery.md)を参照してください。
@@ -132,15 +139,15 @@ make release-package RELEASE_GOOS=darwin RELEASE_GOARCH=arm64 \
 
 ## 正式な製品surface
 
-- `workspace-run`: plan、approval、execute、inspect、recoveryのCLI
-- `workspace-daemon`: HTTP Command APIとmobile-first Local Web UI
-- `workspace-core`: JSON Contract v1の外部process boundary
+- `workcairn`: plan、approval、execute、inspect、recoveryのCLI
+- `workcairn-daemon`: HTTP Command APIとmobile-first Local Web UI
+- `workcairn-core`: JSON Contract v1の外部process boundary
 
 ## Documentation
 
 - [Public Beta Quickstart](docs/PublicBetaQuickstart.md)
 - [Public Beta Release Checklist](docs/PublicReleaseChecklist.md)
-- [Product Naming Review](docs/ProductNaming.md)
+- [Product Naming](docs/ProductNaming.md)
 - [Operator Guide](docs/OperatorGuide.md)
 - [System Overview](docs/SystemOverview.md)
 - [Architecture](docs/Architecture.md)

@@ -1,41 +1,50 @@
-# Public Beta Product Naming Review
+# WorkCairn Product Naming
 
-Reviewed: 2026-08-10
+Decided: 2026-08-10
 
-この文書は名称変更の実施ではなく、Public Beta前の人間判断材料です。検索結果は商標clearance、法人名調査、domain取得可能性を保証しません。
+## Adopted name
 
-## Current name: Workspace OS
+Public Betaの第一正式名称は`WorkCairn`です。
 
-`Workspace OS`は内部Architectureを正確に表しますが、一般語の組合せで検索識別性が弱く、既に同名・近似名の異なる製品があります。
+- Product: **WorkCairn**
+- Concept: **Your AI company that manages itself.**
+- Primary copy: **Your AI company. You make the decisions that matter.**
+- 日本語: **あなたのAI会社。必要な判断だけ、あなたがする。**
+- Supporting copy: **頼んだら、あとは会社に任せる。**
+- Product principle: **会社は見える。仕事も見える。でも管理しなくていい。**
 
-- [OpenVerb Workspace OS](https://studio.openverb.org/)はAI支援付きcustom application platformとして`Workspace OS`を使用しています。
-- [AI Workspace OS](https://chromewebstore.google.com/detail/ai-workspace-os/nncnlkjobfplmemecopinmckgncmdjhe)はprompt管理Chrome extensionです。
-- [Links Workspace OS](https://linkspowered.com/en)はphysical workspace infrastructure platformです。
+WorkCairnはagentを細かく設定・監督するtoolではなく、自分専用のAI会社へ仕事を任せる体験を提供します。AI社員、担当、MakerとReviewer、Revision、仕事の状態は見えますが、給与、PIP、機嫌、昇進等のsimulationを主役にしません。
 
-このため、一般公開名としてそのまま採用することは推奨しません。Public Betaまで内部codename／repository名として維持し、公開前に人間が最終判断します。
+## Renamed Public Beta surface
 
-## Avoided candidates
+- app／docs／release表示: `WorkCairn`
+- primary CLI: `workcairn`
+- local daemon／Web UI: `workcairn-daemon`
+- JSON Contract executable: `workcairn-core`
+- release archive: `workcairn_<version>_<os>_<arch>`
+- intended repository slug: `workcairn`
+- Go module: `github.com/AkiraShimizu0/workcairn/go`
+- product-specific environment prefix: `WORKCAIRN_`
 
-- `Agent Workspace`: [agent-workspace.ai](https://agent-workspace.ai/)と[AgentWorkspace](https://agentworkspace.dev/)が既にlocal AI agent製品で使用し、NiCEやAWSも一般名称として使用しています。
-- `Workloom`: [AI Sales OS](https://useworkloom.com/)や複数のworkspace製品が存在します。
-- `Workstead`: [business automation service](https://workstead.app/)とHR／workspace関連製品が存在します。
-- `LedgerFlow`: 複数の会計／金融製品が使用しています。
-- `TaskWard`: local-first task CLIと同名domainが存在します。
+実GitHub repositoryのrename、redirect、Public化はこのrepository内の変更では実行しません。Public Beta公開前にrelease ownerが外部操作として行います。
 
-## Recommended candidates for human review
+## Intentionally unchanged identifiers
 
-| Candidate | Fit | Preliminary risk |
-|---|---|---|
-| Work Steward | 人間の依頼、承認、安全な実行、証拠保持という中心価値を最も表す | 一般的な役割語。exact trademark、repository、domain調査が必要 |
-| Plan Steward | Plan検証と承認境界を明確に伝える | 実行・Review・Recoveryまで扱う製品範囲を狭く見せる可能性 |
-| Task Harbor | local-first、安全停止、Recoveryの比喩が分かりやすい | `Harbor`を使うagentic frameworkや業務製品が多く、近似調査が必要 |
+次は製品名ではなく、既存の通信／永続化contractまたはArchitecture用語なので維持します。
 
-現時点の第一候補は`Work Steward`です。tag、binary、Go module、Vault metadata、HTTP contractを同時にrenameせず、公開表示名と技術識別子を分ける案も比較してください。
+- `Workspace`、`Workspace Kernel`、workspace root
+- `workspace-command.v1`、`workspace-interaction.v1`
+- JSON Contract v1のoperation／envelope
+- `.workspace-os` machine metadata directory
+- `workspace-os-task-metadata:v1`と既存lock／temporary filename
+- Accepted ADRとMigration History内の当時の名称
 
-## Required human checks
+詳細な境界は[ADR-0034](adr/ADR-0034-workcairn-brand-and-living-company-dashboard.md)を正とします。
 
-1. 日本、米国、EU等、配布予定地域の商標databaseを専門家または正式手順で検索する。
-2. GitHub organization／repository slug、主要domain、package registry、App Store／browser extensionの近似名を確認する。
-3. 日本語・英語で発音、綴り、検索性、製品説明との一致をuser interviewで確認する。
-4. 公開表示名だけを変更するか、repository、Go module、binary、Vault markerまで変更するかmigration scopeを決定する。
-5. renameする場合は独立ADR、contract影響、release migration、redirect方針を用意する。
+## Checks required before publication
+
+1. 配布予定地域で`WorkCairn`の商標・法人名・近似名を正式にclearanceする。
+2. GitHub repository slug、主要domain、package registry、SNS handleを確保または利用可否確認する。
+3. app表示名、repository、Go module、archive、Release noteが同じ表記であることを確認する。
+4. iPhone／iPad／Macで`WorkCairn`、`My Actions`、`Company View`の初見理解を実機確認する。
+5. rename前のbinaryやarchiveをPublic Beta配布物へ混在させない。

@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 )
 
 func TestInteractionClarificationPlanApprovalAndApplyE2E(t *testing.T) {

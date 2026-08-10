@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/revision"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 var ErrInvalidReviewedWorkflowResult = errors.New("invalid reviewed Workflow child result")

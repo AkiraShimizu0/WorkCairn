@@ -12,23 +12,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/buildinfo"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/ceoplan"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/organization"
-	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/recovery"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/revision"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/action"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/buildinfo"
+	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
+	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
+	"github.com/AkiraShimizu0/workcairn/go/internal/project"
+	"github.com/AkiraShimizu0/workcairn/go/internal/recovery"
+	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
+	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 const (
@@ -183,8 +183,8 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			return 1
 		}
 		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
-		providerModel, _ := dependencies.lookupEnv("WORKSPACE_CLAUDE_PROVIDER_MODEL")
-		baseURL, _ := dependencies.lookupEnv("WORKSPACE_CLAUDE_BASE_URL")
+		providerModel, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_PROVIDER_MODEL")
+		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
 		result, err := workspaceprocess.GenerateCEOPlan(ctx, workspaceprocess.CEOPlanGenerationInput{
 			VaultRoot: options.vaultRoot, Request: options.ceoRequest, Model: options.model, Approved: true,
 		}, workspaceprocess.ClaudeProcessConfig{
@@ -316,8 +316,8 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			return 1
 		}
 		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
-		providerModel, _ := dependencies.lookupEnv("WORKSPACE_CLAUDE_PROVIDER_MODEL")
-		baseURL, _ := dependencies.lookupEnv("WORKSPACE_CLAUDE_BASE_URL")
+		providerModel, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_PROVIDER_MODEL")
+		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
 		result, err := workspaceprocess.ExecuteInteractionPlanGeneration(ctx, workspaceprocess.InteractionPlanGenerationInput{
 			VaultRoot: options.vaultRoot, SessionID: options.sessionID, ExpectedVersion: options.expectedVersion,
 			CurrentTime: currentTime, CommandID: options.commandID,
@@ -395,8 +395,8 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			return 1
 		}
 		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
-		providerModel, _ := dependencies.lookupEnv("WORKSPACE_CLAUDE_PROVIDER_MODEL")
-		baseURL, _ := dependencies.lookupEnv("WORKSPACE_CLAUDE_BASE_URL")
+		providerModel, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_PROVIDER_MODEL")
+		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
 		result, err := workspaceprocess.ExecuteInteractionWorkflow(ctx, workspaceprocess.ExecuteInteractionWorkflowInput{
 			InteractionWorkflowPlanInput: workspaceprocess.InteractionWorkflowPlanInput{
 				VaultRoot: options.vaultRoot, SessionID: options.sessionID, ExpectedVersion: options.expectedVersion,
@@ -433,9 +433,9 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
 			return 1
 		}
-		baseURL, _ := dependencies.lookupEnv("WORKSPACE_WORDPRESS_BASE_URL")
-		username, _ := dependencies.lookupEnv("WORKSPACE_WORDPRESS_USERNAME")
-		password, _ := dependencies.lookupEnv("WORKSPACE_WORDPRESS_APPLICATION_PASSWORD")
+		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_WORDPRESS_BASE_URL")
+		username, _ := dependencies.lookupEnv("WORKCAIRN_WORDPRESS_USERNAME")
+		password, _ := dependencies.lookupEnv("WORKCAIRN_WORDPRESS_APPLICATION_PASSWORD")
 		result, err := workspaceprocess.ExecuteInteractionAction(ctx, workspaceprocess.ExecuteInteractionActionInput{
 			InteractionActionPlanInput: input, ActionPlanDigest: options.actionPlanDigest,
 		}, workspaceprocess.WordPressProcessConfig{
@@ -513,9 +513,9 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
 			return 1
 		}
-		baseURL, _ := dependencies.lookupEnv("WORKSPACE_WORDPRESS_BASE_URL")
-		username, _ := dependencies.lookupEnv("WORKSPACE_WORDPRESS_USERNAME")
-		password, _ := dependencies.lookupEnv("WORKSPACE_WORDPRESS_APPLICATION_PASSWORD")
+		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_WORDPRESS_BASE_URL")
+		username, _ := dependencies.lookupEnv("WORKCAIRN_WORDPRESS_USERNAME")
+		password, _ := dependencies.lookupEnv("WORKCAIRN_WORDPRESS_APPLICATION_PASSWORD")
 		result, err := workspaceprocess.ExecuteExternalAction(ctx, workspaceprocess.ExecuteActionInput{ActionPlanInput: input, Approved: true}, workspaceprocess.WordPressProcessConfig{
 			TargetID: options.actionTarget, BaseURL: baseURL, Username: username, ApplicationPassword: password,
 		}, dependencies.newHTTPClient(options.timeout))
@@ -876,8 +876,8 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		return 0
 	}
 	apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
-	providerModel, _ := dependencies.lookupEnv("WORKSPACE_CLAUDE_PROVIDER_MODEL")
-	baseURL, _ := dependencies.lookupEnv("WORKSPACE_CLAUDE_BASE_URL")
+	providerModel, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_PROVIDER_MODEL")
+	baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
 	if operation == "workflow-execute" {
 		result, err := workspaceprocess.ExecuteWorkflow(ctx, workspaceprocess.ExecuteWorkflowInput{
 			WorkflowPlanInput: workspaceprocess.WorkflowPlanInput{
@@ -931,7 +931,7 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		return 0
 	}
 	result, err := workspaceprocess.ExecuteTask(ctx, workspaceprocess.ExecuteTaskInput{
-		ExecutionPlanInput: planInput, Approved: true, ApprovalSource: "workspace-run",
+		ExecutionPlanInput: planInput, Approved: true, ApprovalSource: "workcairn",
 		ApprovalReference: options.approvalReference,
 		ExecutionID:       options.executionID, CommandID: options.commandID,
 	}, workspaceprocess.ClaudeProcessConfig{
@@ -947,7 +947,7 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 
 func parseOptions(operation string, args []string) (commandOptions, error) {
 	options := commandOptions{timeout: 60 * time.Second}
-	set := flag.NewFlagSet("workspace-run "+operation, flag.ContinueOnError)
+	set := flag.NewFlagSet("workcairn "+operation, flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	set.StringVar(&options.vaultRoot, "vault", "", "Vault root")
 	set.StringVar(&options.projectID, "project-id", "", "Project ID")

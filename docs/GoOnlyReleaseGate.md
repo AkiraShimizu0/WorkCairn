@@ -2,20 +2,20 @@
 
 ## 判定
 
-Workspace OSのrepository、build、test、release、distributionはGo Onlyです。正式な製品surfaceは`workspace-run`、`workspace-daemon`、JSON Contract v1の`workspace-core`であり、clone後の検証にGo toolchain以外の言語runtimeやpackage managerを必要としません。Public Beta候補versionは`VERSION`の`v1.0.0-beta.1`です。
+WorkCairnのrepository、build、test、release、distributionはGo Onlyです。正式な製品surfaceは`workcairn`、`workcairn-daemon`、JSON Contract v1の`workcairn-core`であり、clone後の検証にGo toolchain以外の言語runtimeやpackage managerを必要としません。Public Beta候補versionは`VERSION`の`v1.0.0-beta.1`です。
 
 ## Capability matrix
 
 | Capability | Go製品入口／実装 | 主な検証 |
 |---|---|---|
-| CEO依頼／Plan／Apply | `workspace-run ceo-plan-*`、Interaction Session | typed validation、approval、temporary Vault、Mock Provider |
+| CEO依頼／Plan／Apply | `workcairn ceo-plan-*`、Interaction Session | typed validation、approval、temporary Vault、Mock Provider |
 | Project／Task／Organization／Identity | Go process／Service／Vault Adapter | plan/execute分離、CAS、atomic write、partial failure |
 | Task execution／Deliverable／Audit | ExecutionService、WorkerService、TaskService | commit ordering、Event ownership、Fake Runner |
 | Review／Revision／Reviewed Workflow | Go Review／Revision／Workflow services | canonical evidence、child Command Ledger、branch E2E |
 | Recovery／Command Ledger | `recovery-*`、durable Ledger | evidence-bound recovery、replay、ID conflict rejection |
-| HTTP／Local Web UI | `workspace-daemon` | loopback default、pairing、graceful shutdown、mobile flow |
+| HTTP／Local Web UI | `workcairn-daemon` | loopback default、pairing、graceful shutdown、mobile flow |
 | Scheduler／Notification／Metrics／External Action | Go Kernel／Adapter | approved command dispatch、redaction、Mock transport |
-| JSON Contract v1 | `workspace-core` | golden fixtures、strict request／response envelope |
+| JSON Contract v1 | `workcairn-core` | golden fixtures、strict request／response envelope |
 
 ## Official gate
 
@@ -54,9 +54,9 @@ make release-package \
 
 packaging scriptはallow-listで次だけをarchiveへ含めます。
 
-- `workspace-run`
-- `workspace-daemon`
-- `workspace-core`
+- `workcairn`
+- `workcairn-daemon`
+- `workcairn-core`
 - `VERSION`、`LICENSE`、`README.md`、`CHANGELOG.md`、`SECURITY.md`、`CONTRIBUTING.md`
 - `docs/`
 
@@ -65,7 +65,7 @@ packaging scriptはallow-listで次だけをarchiveへ含めます。
 生成後は隣接checksum、必須asset、allow-list外file、archive名と`VERSION`の一致を検証します。
 
 ```bash
-make verify-release-package ARCHIVE=/absolute/path/to/workspace-os_v1.0.0-beta.1_darwin_arm64.tar.gz
+make verify-release-package ARCHIVE=/absolute/path/to/workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz
 ```
 
 ## Historical migration

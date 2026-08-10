@@ -2,7 +2,7 @@
 
 ## 概要
 
-通常製品Reviewは、`workspace-run review-*`からGo ReviewServiceを呼び、タスクの作成担当者とは別のAI社員Contextで成果物を確認します。Go PromptBuilder、Runner Registry、Runner Adapterを再利用し、検証可能な構造化JSONと人間向けMarkdownを生成します。
+通常製品Reviewは、`workcairn review-*`からGo ReviewServiceを呼び、タスクの作成担当者とは別のAI社員Contextで成果物を確認します。Go PromptBuilder、Runner Registry、Runner Adapterを再利用し、検証可能な構造化JSONと人間向けMarkdownを生成します。
 
 ## 事前検証
 
@@ -14,7 +14,7 @@
 - 同じ版のレビューMarkdownとJSONが未作成
 - 明示的承認がある
 
-`workspace-run review-plan`では、対象、担当者、モデル、保存予定path、blocking reasonを返し、RunnerやVaultを変更しません。
+`workcairn review-plan`では、対象、担当者、モデル、保存予定path、blocking reasonを返し、RunnerやVaultを変更しません。
 
 ## Reviewer Prompt
 

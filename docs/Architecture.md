@@ -2,7 +2,7 @@
 
 ## 概要
 
-Workspace OSは、Obsidian Vault上のMarkdownを人間とAIが共有できる永続データとして扱います。Interaction Session、通常Task execution、Review、Revision、Organization／Identity、Project bootstrap、通常Task作成、CEO plan生成／適用、one-shot Scheduler、Notification／Metrics、External ActionはGoです。repository、build、test、release、distributionもGo Onlyです。
+WorkCairnは、自分専用のAI会社へ仕事を任せ、必要な質問と重要な承認だけを人間へ返すlocal-first製品です。Obsidian Vault上のMarkdownを人間とAIが共有できる永続データとして扱います。Interaction Session、通常Task execution、Review、Revision、Organization／Identity、Project bootstrap、通常Task作成、CEO plan生成／適用、one-shot Scheduler、Notification／Metrics、External ActionはGoです。repository、build、test、release、distributionもGo Onlyです。
 
 現在のシステムを利用フローから一貫して読む場合は[System Overview](SystemOverview.md)を参照してください。この文書はpackage、port、compositionの詳細を補足します。
 
@@ -13,8 +13,8 @@ flowchart TD
     Plan -. questions / answers .-> Interaction
     Plan --> Apply["Go CEO Plan Apply"]
     Apply --> Workflow["Go managed Project / Task"]
-    Workflow --> Run["Go workspace-run"]
-    API["workspace-daemon / Command API v1"] --> Run
+    Workflow --> Run["Go workcairn"]
+    API["workcairn-daemon / Command API v1"] --> Run
     Mobile["iPhone / Local Web UI"] --> API
     API --> Scheduler["Kernel-managed one-shot Scheduler"]
     Scheduler --> Run
@@ -47,10 +47,10 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 
 重要な設計判断は[docs/adr](adr/)で管理します。
 
-- [ADR-0001: GoをWorkspace OSの中核実装とする](adr/ADR-0001-go-core.md)
+- [ADR-0001: GoをWorkspace OSの中核実装とする（当時の名称）](adr/ADR-0001-go-core.md)
 - [ADR-0002: PythonとGo CoreをJSON Contractで疎結合にする](adr/ADR-0002-json-contract.md)
 - [ADR-0003: Workspace Kernelを中心コンポーネントとする](adr/ADR-0003-workspace-kernel.md)
-- [ADR-0004: Event DrivenをWorkspace OSの基本設計とする](adr/ADR-0004-event-system.md)
+- [ADR-0004: Event DrivenをWorkspace OSの基本設計とする（当時の名称）](adr/ADR-0004-event-system.md)
 - [ADR-0005: Task lifecycleをGo TaskServiceの責務とする](adr/ADR-0005-task-lifecycle.md)
 - [ADR-0006: WorkerとRunnerをProvider非依存の境界で分離する](adr/ADR-0006-worker-runner-boundary.md)
 - [ADR-0007: Workflow executionとPolicyをTask lifecycleから分離する](adr/ADR-0007-workflow-execution-policy.md)
@@ -80,6 +80,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0031: iPhone向けLocal Web UIはdaemon同一originと明示LAN pairingで提供する](adr/ADR-0031-mobile-local-web-interaction-client.md)
 - [ADR-0032: mobile Interaction Commandをclient接続から切り離して追跡する](adr/ADR-0032-mobile-command-continuity.md)
 - [ADR-0033: Public Beta前にrepositoryとdistributionをGo Onlyへ確定する](adr/ADR-0033-public-beta-go-only-repository.md)
+- [ADR-0034: WorkCairnを製品名としLiving Company Dashboardをread-only projectionとして提供する](adr/ADR-0034-workcairn-brand-and-living-company-dashboard.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -114,9 +115,9 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Vault Recovery Snapshot Adapter | managed Task、artifact、Audit、既知temporary stateをread-only typed evidenceへ変換する |
 | Go Command Ledger Domain／Service | Command ID、request digest、running／terminal outcomeと一度だけのVersion遷移を管理する |
 | Go Vault Command Ledger Adapter | Project scopeまたはworkspace scopeのhidden machine metadataへclaimをatomic createし、terminal outcomeをCAS／atomic replacementで保存する |
-| Go Process／workspace-run | Vault AdapterとRuntimeをprocess edgeでcompositionし、Task metadata migration、read-only execution／recovery plan、明示承認付きexecute／recoveryを提供する |
-| Go HTTP API／workspace-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger／Organization／Task evidence inspection、graceful shutdownを提供し、workspace-runと同じprocess／Serviceを利用する。既定はloopback、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可する。mobile Interaction commandだけadditiveなbounded acceptanceでclient接続から切り離せる |
-| Mobile-first Local Web UI | daemon同一originからembed配信し、Interaction Next Actionを「次にすること」へ投影する薄いclient。質問、digest、Reviewer、Task上限、External Actionを既存plan／Commandへ渡し、Task／Review／Revision規則を持たない |
+| Go Process／workcairn | Vault AdapterとRuntimeをprocess edgeでcompositionし、Task metadata migration、read-only execution／recovery plan、明示承認付きexecute／recoveryを提供する |
+| Go HTTP API／workcairn-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger／Organization／Task evidence inspection、graceful shutdownを提供し、workcairnと同じprocess／Serviceを利用する。既定はloopback、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可する。mobile Interaction commandだけadditiveなbounded acceptanceでclient接続から切り離せる |
+| Living Company Dashboard | daemon同一originからembed配信する薄いclient。iPhone既定のMy ActionsはInteraction Next Actionを質問／承認／Recoveryへ投影し、PC／iPad既定のCompany ViewはOrganization／Workflow／Task evidenceから社員、Maker、Reviewer、Revision、handoffを表示する。Task／Review／Revision規則を持たない |
 | Go Workflow Run Service | dependency readinessを各Task後に再planし、決定的child Command IDで既存Task executionを順次調停する。Task状態やEventは変更しない |
 | Go Reviewed Workflow Run Service | 各Task後に既存Reviewを実行し、Request Changes時は既存Revisionで作成したTaskをtargeted readinessで実行・再Reviewしてから本流へ戻す |
 | Go Scheduler Service | 承認済みone-shot Commandをoffset付き時刻で選択し、Schedule CAS後に既存Process／Command Ledgerへ配送する。Task状態やProviderは直接扱わない |
@@ -145,15 +146,17 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 
 ### Go Only Repository and Runtime
 
-Workspace OSの移行は完了しています。`workspace-run`、`workspace-daemon`、`workspace-core`が正式surfaceであり、他言語のcompatibility package、fallback、SDK、build metadataはありません。経緯は[MigrationHistory.md](MigrationHistory.md)、自動判定は[GoOnlyReleaseGate.md](GoOnlyReleaseGate.md)を参照してください。
+WorkCairnの移行は完了しています。`workcairn`、`workcairn-daemon`、`workcairn-core`が正式surfaceであり、他言語のcompatibility package、fallback、SDK、build metadataはありません。経緯は[MigrationHistory.md](MigrationHistory.md)、自動判定は[GoOnlyReleaseGate.md](GoOnlyReleaseGate.md)を参照してください。
 
 Public BetaではmacOS／arm64をTier 1とし、macOS／amd64、Linux／amd64、Linux／arm64はcross-build後に各native smokeを要求します。WindowsはVault file lockが未対応のためsupportしません。このplatform境界はAdapterの制約であり、Domain／Service契約は変更しません。
+
+ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環境変数はWorkCairnへrenameしました。`Workspace`／`Workspace Kernel`は一般Architecture概念、`workspace-command.v1`、`workspace-interaction.v1`、`.workspace-os`、managed metadata markerは通信／永続化contractとして意図的に維持します。実GitHub repository slugの変更はPublic化前の外部release作業です。
 
 - 依存解析や実行可否判定などの副作用のないCoreを含め、中核ルールはGoを正本とします。
 - MarkdownやObsidianのファイルI/OはCoreの外側に置きます。
 - 通常Task、Review、Revisionのprocess入口はGoです。RevisionはADR-0012に従ってimmutable intentを先行commitし、TaskService.Create後に`revision.created`を発行します。AuditはEvent subscriberであり、partial failureを隠しません。Go Claude Adapterは`.env`を読まず、APIキー、Provider model、HTTP clientをRuntimeから受け取ります。
 - Go Coreは外部LLM SDK、別言語runtime、`.env`へ依存しません。
-- Rustへの主移行は行わず、GoをWorkspace OSの中核実装として育てます。
+- Rustへの主移行は行わず、GoをWorkCairnの中核実装として育てます。
 
 現在のGo Coreは次のパッケージで構成します。
 
@@ -185,9 +188,9 @@ Public BetaではmacOS／arm64をTier 1とし、macOS／amd64、Linux／amd64、
 - `go/internal/service`: Kernel向けProject/Workflow/Task/Event/Worker/Execution／Scheduler Facade
 - `go/internal/kernel`: サービス境界、ライフサイクル、Command調停
 - `go/internal/bootstrap`: 具体Serviceを登録するcomposition root
-- `go/cmd/workspace-core`: バージョン付きJSON契約を公開するCLI境界
-- `go/cmd/workspace-run`: Organization参照、Project／Task作成、migration、通常Task／Review／Revision／reviewed Workflow、one-shot Schedule、Interaction、Recoveryを公開するGo運用CLI
-- `go/cmd/workspace-daemon`: 同じprocess／Service compositionをloopback既定HTTPと、明示pairing済みtrusted-LAN mobile UIで公開するGo daemon
+- `go/cmd/workcairn-core`: バージョン付きJSON契約を公開するCLI境界
+- `go/cmd/workcairn`: Organization参照、Project／Task作成、migration、通常Task／Review／Revision／reviewed Workflow、one-shot Schedule、Interaction、Recoveryを公開するGo運用CLI
+- `go/cmd/workcairn-daemon`: 同じprocess／Service compositionをloopback既定HTTPと、明示pairing済みtrusted-LAN mobile UIで公開するGo daemon
 - `go/internal/buildinfo`: release時にlinkerから注入するversion／commit／build date。DomainやRuntime設定ではない
 - `scripts/package-release.sh`: allow-listされたGo binary、LICENSE、docsをversion付きarchiveとSHA-256 checksumへ構成するdistribution edge
 
@@ -196,7 +199,7 @@ Public BetaではmacOS／arm64をTier 1とし、macOS／amd64、Linux／amd64、
 ```text
 External process client
     ↓ JSON Contract v1 (stdin/stdout)
-workspace-core CLI
+workcairn-core CLI
     ↓
 Workspace Kernel
     ├── ProjectService
@@ -223,7 +226,7 @@ Workspace Kernel
         Event Bus
 ```
 
-Go CoreはProject/Workflow領域のビジネスルールの正本です。`workspace-core`はファイルシステムや`.env`を読み書きせず、標準出力にはJSONだけを返します。外部clientは同じ規則を再実装せず、このversioned contractを利用できます。
+Go CoreはProject/Workflow領域のビジネスルールの正本です。`workcairn-core`はファイルシステムや`.env`を読み書きせず、標準出力にはJSONだけを返します。外部clientは同じ規則を再実装せず、このversioned contractを利用できます。
 
 JSON契約v1は、`version`、`operation`、`payload`を標準入力で受け取り、`version`、`ok`、`result`、`error`を標準出力へ1件だけ返します。エラーは内部例外文を公開せず、次の機械判定可能なコードを使用します。
 
@@ -233,16 +236,16 @@ JSON契約v1は、`version`、`operation`、`payload`を標準入力で受け取
 | Project | `INVALID_TASK_ID`, `DUPLICATE_TASK_ID`, `INVALID_STATUS`, `INVALID_TRANSITION`, `INVALID_TASK_TITLE`, `INVALID_ASSIGNEE_ID` |
 | Workflow | `UNKNOWN_DEPENDENCY`, `CYCLIC_DEPENDENCY` |
 
-対応operationは`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`です。ローカルバイナリは`make go-build`で`bin/workspace-core`へ生成し、`bin/`はGit管理しません。
+対応operationは`project.next_task_id`、`project.validate_task`、`project.can_transition`、`workflow.readiness`です。ローカルバイナリは`make go-build`で`bin/workcairn-core`へ生成し、`bin/`はGit管理しません。
 
-通常Task、Review、Revision、Organization／Identity writer、Project／Task writer、CEO plan生成／適用のprocess入口はGoです。CEO planはADR-0019に従い、明示承認後に構造化Employee inventoryからProvider-neutral Serviceと既存Runnerを通ってtyped planとなり、別の明示承認付きapplyでADR-0018のwriterへ渡ります。LLM出力を直接Vaultへ書かず、Project IDと正式Task IDをProvider出力から分離します。Mock Providerとtemporary Vaultで生成からTask Dependency作成までEnd-to-End検証済みです。ADR-0021により、明示Command ID付き主要副作用command、ADR-0023のSequential Workflow、ADR-0024のReviewed Workflowは副作用前にdurable claimを保存し、同一requestのterminal resultを副作用なしでreplayします。`workspace-core` JSON Contract v1は変更していません。
+通常Task、Review、Revision、Organization／Identity writer、Project／Task writer、CEO plan生成／適用のprocess入口はGoです。CEO planはADR-0019に従い、明示承認後に構造化Employee inventoryからProvider-neutral Serviceと既存Runnerを通ってtyped planとなり、別の明示承認付きapplyでADR-0018のwriterへ渡ります。LLM出力を直接Vaultへ書かず、Project IDと正式Task IDをProvider出力から分離します。Mock Providerとtemporary Vaultで生成からTask Dependency作成までEnd-to-End検証済みです。ADR-0021により、明示Command ID付き主要副作用command、ADR-0023のSequential Workflow、ADR-0024のReviewed Workflowは副作用前にdurable claimを保存し、同一requestのterminal resultを副作用なしでreplayします。`workcairn-core` JSON Contract v1は変更していません。
 
 ### Workspace Kernel
 
-`go/internal/kernel`はWorkspace OSの中心となる最小Kernelです。サービスの登録・参照、`started`/`stopped`ライフサイクル、状態snapshot、構造化Commandの受付だけを担当します。Project、Workflow、Policy、Execution、Task、Organizationのビジネスルールは各Domain／Serviceへ委譲し、Kernel自身には持ち込みません。
+`go/internal/kernel`はWorkCairnの中心となる最小Kernelです。サービスの登録・参照、`started`/`stopped`ライフサイクル、状態snapshot、構造化Commandの受付だけを担当します。Project、Workflow、Policy、Execution、Task、Organizationのビジネスルールは各Domain／Serviceへ委譲し、Kernel自身には持ち込みません。
 
 ```text
-workspace-core CLI (JSON Contract v1)
+workcairn-core CLI (JSON Contract v1)
     ↓ Command
 Workspace Kernel
     ├── ProjectService

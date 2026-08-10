@@ -1,11 +1,11 @@
 GO_DIR := go
-GO_BINARY := bin/workspace-core
-GO_RUN_BINARY := bin/workspace-run
-GO_DAEMON_BINARY := bin/workspace-daemon
+GO_BINARY := bin/workcairn-core
+GO_RUN_BINARY := bin/workcairn
+GO_DAEMON_BINARY := bin/workcairn-daemon
 BUILD_VERSION ?= dev
 BUILD_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
 BUILD_DATE ?= unknown
-GO_LDFLAGS := -X github.com/AkiraShimizu0/workspace-os/go/internal/buildinfo.Version=$(BUILD_VERSION) -X github.com/AkiraShimizu0/workspace-os/go/internal/buildinfo.Commit=$(BUILD_COMMIT) -X github.com/AkiraShimizu0/workspace-os/go/internal/buildinfo.BuildDate=$(BUILD_DATE)
+GO_LDFLAGS := -X github.com/AkiraShimizu0/workcairn/go/internal/buildinfo.Version=$(BUILD_VERSION) -X github.com/AkiraShimizu0/workcairn/go/internal/buildinfo.Commit=$(BUILD_COMMIT) -X github.com/AkiraShimizu0/workcairn/go/internal/buildinfo.BuildDate=$(BUILD_DATE)
 GO_BUILD_FLAGS := -trimpath -buildvcs=false -ldflags "$(GO_LDFLAGS)"
 RELEASE_VERSION ?=
 RELEASE_GOOS ?= $(shell cd $(GO_DIR) && go env GOOS)
@@ -17,9 +17,9 @@ PUBLIC_BETA_VERSION := $(shell sed -n '1p' VERSION)
 
 go-build:
 	mkdir -p bin
-	cd $(GO_DIR) && GOTELEMETRY=off go build $(GO_BUILD_FLAGS) -o ../$(GO_BINARY) ./cmd/workspace-core
-	cd $(GO_DIR) && GOTELEMETRY=off go build $(GO_BUILD_FLAGS) -o ../$(GO_RUN_BINARY) ./cmd/workspace-run
-	cd $(GO_DIR) && GOTELEMETRY=off go build $(GO_BUILD_FLAGS) -o ../$(GO_DAEMON_BINARY) ./cmd/workspace-daemon
+	cd $(GO_DIR) && GOTELEMETRY=off go build $(GO_BUILD_FLAGS) -o ../$(GO_BINARY) ./cmd/workcairn-core
+	cd $(GO_DIR) && GOTELEMETRY=off go build $(GO_BUILD_FLAGS) -o ../$(GO_RUN_BINARY) ./cmd/workcairn
+	cd $(GO_DIR) && GOTELEMETRY=off go build $(GO_BUILD_FLAGS) -o ../$(GO_DAEMON_BINARY) ./cmd/workcairn-daemon
 
 go-test:
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./...

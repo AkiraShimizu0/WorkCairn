@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/taskstore"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/taskstore"
 )
 
 type recordingEventPublisher struct {

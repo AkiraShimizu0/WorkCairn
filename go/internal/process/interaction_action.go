@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/wordpress"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
+	"github.com/AkiraShimizu0/workcairn/go/internal/action"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/wordpress"
+	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 )
 
 var ErrInteractionActionPrecondition = errors.New("interaction external Action precondition failed")

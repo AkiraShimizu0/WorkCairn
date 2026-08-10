@@ -31,7 +31,7 @@ type CommandResult struct {
 }
 
 // HandleCommand dispatches a structured command without binding the Kernel to
-// the workspace-core CLI transport.
+// the workcairn-core CLI transport.
 func (kernel *Kernel) HandleCommand(command Command) (CommandResult, error) {
 	switch command.Type {
 	case CommandKernelStatus:

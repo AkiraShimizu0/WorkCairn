@@ -1,7 +1,7 @@
 // Package service adapts Go Domain packages to Workspace Kernel interfaces.
 package service
 
-import "github.com/AkiraShimizu0/workspace-os/go/internal/project"
+import "github.com/AkiraShimizu0/workcairn/go/internal/project"
 
 // ProjectService is a stateless facade over the Project Domain.
 type ProjectService struct{}

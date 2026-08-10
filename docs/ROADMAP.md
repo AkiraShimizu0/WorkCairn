@@ -1,8 +1,8 @@
-# Workspace OS Roadmap
+# WorkCairn Roadmap
 
 ## North Star
 
-Workspace OSは、Workspace Kernelを中心とするGo Only製品Runtimeです。Project、Organization、Workflow、Task、Event、Worker、Policy、Review、Revision、Deliverable、Auditの中核ルールと通常運用はGoを正本とします。
+WorkCairnは、Workspace Kernelを中心とするGo Only製品Runtimeです。Project、Organization、Workflow、Task、Event、Worker、Policy、Review、Revision、Deliverable、Auditの中核ルールと通常運用はGoを正本とします。
 
 ロードマップは現在地、次の順序、完了条件を示します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、現在構造は[SystemOverview.md](SystemOverview.md)と[Architecture.md](Architecture.md)、確定した設計判断は[ADR](adr/)を参照してください。
 
@@ -29,7 +29,7 @@ Obsidian Vaultを利用した社員、組織、Project、Task、Deliverable、Re
 - Project bootstrap、Task creation、Task Dependencies
 - Organization inventory、Identity validation、採用、改名、ID repair、同期
 - CEO自然言語依頼からtyped plan生成、検証、承認、Go writer適用
-- `workspace-run`への通常製品cutoverとlegacy fallback除去
+- `workcairn`への通常製品cutoverとlegacy fallback除去
 - Provider依存をRuntime／Adapterへ隔離
 - Go toolchainだけで成立する`v1-release-gate`
 
@@ -198,11 +198,11 @@ Go Onlyの閉ループが自然言語依頼から外部公開まで成立した�
 - loopback daemon、Scheduler、Notification、Recoveryを一貫して扱うoperator guide
 - binary packaging、version metadata、upgrade／backup／compatibility checklist
 - public exposure前のauthentication／TLS／authorization方針
-- 現在の機能を伝える製品名候補と既存Workspace OS名称との移行判断
+- 現在の機能を伝える名称候補と旧製品名からの移行判断
 
 `OperatorGuide.md`はtemporary Vaultからapproved Vaultへの導線、backup、plan／approval／execute、daemon、Scheduler、Notification、Recovery、WordPress partial failure、upgradeを一貫して説明します。release packageはversion／commit metadataを持つ3つのGo binary、必要docs、LICENSEだけをarchiveし、SHA-256 checksumを生成します。daemonはremote公開の注意書きだけでなく非loopback bindをcodeで拒否します。
 
-基礎条件を満たしました。新規利用者は実Vaultを誤変更せずplan／approval／execute／inspect／recoveryを再現でき、remote公開、automatic retry、WordPress変換機能の未実装保証を確認できます。公開名称の最終判断とnative platform smokeはPublic Beta Preparationで扱います。
+基礎条件を満たしました。新規利用者は実Vaultを誤変更せずplan／approval／execute／inspect／recoveryを再現でき、remote公開、automatic retry、WordPress変換機能の未実装保証を確認できます。名称の採用とnative platform smokeはPublic Beta Preparationで扱います。
 
 ## Completed — Interaction and Approval Session Foundation
 
@@ -310,10 +310,12 @@ ADR-0033に基づき、外部公開前に移行用compatibility distribution、t
 - clean install、temporary Vault、iPhone到達手順
 - `VERSION`、SECURITY、CONTRIBUTING、Public Beta Release Checklist
 - archive allow-listとmacOS／Linux checksum生成
+- ADR-0034に基づくWorkCairn product／binary／module／archive rename
+- iPhone既定のMy Actionsと、PC／iPad既定のCompany View foundation
 
 Public Beta公開前に残る人間／実環境確認：
 
-- 公開名称、repository slug、security reporting、support窓口
+- WorkCairnの正式商標clearance、実GitHub repository slug変更、security reporting、support窓口
 - macOS／arm64のnative CLI／daemon／iPhone実機smoke
 - 配布する追加targetごとのnative filesystem／daemon smoke
 - temporary Vaultとtest credentialによる最小Provider smoke

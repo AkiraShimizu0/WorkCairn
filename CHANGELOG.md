@@ -15,10 +15,16 @@
 - Interaction Sessionから既存Reviewed Workflowを決定的child Commandとして実行し、Review／Revision結果をdigest付きtyped summaryで記録。
 - completed Interaction Sessionから明示Deliverableを既存WordPress Actionへ別承認で引き渡す任意handoffを追加。
 - Interaction stateから次の質問、承認、operation、Recovery参照を導出するread-only next-action projectionを追加。
-- `workspace-daemon`へiPhone基準のLocal Web UI、trusted-LAN pairing、Reviewer inventory、Task／Deliverable／Review evidence inspectionを追加。
+- `workcairn-daemon`へiPhone基準のLocal Web UI、trusted-LAN pairing、Reviewer inventory、Task／Deliverable／Review evidence inspectionを追加。
 - mobile Interaction commandへbounded acceptanceとLedger pollingを追加し、受理後の実行をSafari接続から分離。
 - `v1.0.0-beta.1`のversion source、macOS／Linux build matrix、temporary Vault + Mock Provider smokeを追加。
 - Public Beta Quickstart、Security Policy、Contributing guide、native実機項目を分離したRelease Checklistを追加。
+- WorkCairnのLiving Company Dashboardとして、iPhone既定のMy ActionsとPC／iPad既定のCompany Viewを追加。
+
+### Changed
+
+- Public Beta前の正式製品名をWorkCairnとし、binary、Go module、archive、固有環境変数、現行docs／UIをrename。
+- Public positioningを「自分専用のAI会社へ仕事を任せ、必要な判断だけ行う」体験へ統一。
 
 ### Removed
 

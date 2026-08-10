@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-const internalModulePrefix = "github.com/AkiraShimizu0/workspace-os/go/internal/"
+const internalModulePrefix = "github.com/AkiraShimizu0/workcairn/go/internal/"
 
 func TestGoOnlyReleaseGateCoversProductCapabilities(t *testing.T) {
 	capabilities := map[string][]string{
@@ -131,6 +131,41 @@ func TestPublicBetaRepositoryMetadata(t *testing.T) {
 	version := strings.TrimSpace(string(content))
 	if !regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$`).MatchString(version) {
 		t.Fatalf("Public Beta VERSION is not a SemVer prerelease: %q", version)
+	}
+}
+
+func TestWorkCairnPublicSurfaceIsConsistent(t *testing.T) {
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"go/cmd/workcairn", "go/cmd/workcairn-daemon", "go/cmd/workcairn-core"} {
+		info, statErr := os.Stat(filepath.Join(repositoryRoot, filepath.FromSlash(path)))
+		if statErr != nil || !info.IsDir() {
+			t.Errorf("WorkCairn command source is missing: %s", path)
+		}
+	}
+	for _, path := range []string{"go/cmd/workspace-run", "go/cmd/workspace-daemon", "go/cmd/workspace-core"} {
+		if _, statErr := os.Stat(filepath.Join(repositoryRoot, filepath.FromSlash(path))); !os.IsNotExist(statErr) {
+			t.Errorf("retired pre-beta command source remains: %s", path)
+		}
+	}
+	checks := map[string][]string{
+		"go/go.mod":                  {"module github.com/AkiraShimizu0/workcairn/go"},
+		"Makefile":                   {"bin/workcairn", "bin/workcairn-daemon", "bin/workcairn-core"},
+		"scripts/package-release.sh": {`archive_name="workcairn_`, "for command in workcairn-core workcairn workcairn-daemon"},
+		"README.md":                  {"# WorkCairn", "Your AI company that manages itself.", "Company View", "My Actions"},
+	}
+	for path, required := range checks {
+		content, readErr := os.ReadFile(filepath.Join(repositoryRoot, filepath.FromSlash(path)))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		for _, value := range required {
+			if !strings.Contains(string(content), value) {
+				t.Errorf("%s is missing WorkCairn surface %q", path, value)
+			}
+		}
 	}
 }
 

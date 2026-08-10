@@ -44,7 +44,7 @@ Employee採用processは書き込み前にIdentityPolicyを実行します。完
 
 ## 既存組織の診断
 
-`workspace-run identity-validate --vault /path/to/vault`でread-only診断を実行します。
+`workcairn identity-validate --vault /path/to/vault`でread-only診断を実行します。
 
 診断結果にはID重複、完全一致、正規化一致、同じ名、同じ姓、高類似、不正名、改名候補が含まれます。診断だけではVaultを変更しません。
 

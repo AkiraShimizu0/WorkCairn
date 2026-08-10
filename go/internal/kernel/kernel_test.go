@@ -7,12 +7,12 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/project"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/workflow"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/workcairn/go/internal/project"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/workcairn/go/internal/workflow"
 )
 
 type fakeProjectService struct {

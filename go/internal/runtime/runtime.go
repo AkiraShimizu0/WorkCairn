@@ -9,16 +9,16 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/claude"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/bootstrap"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/deliverable"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/execution"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
-	promptbuilder "github.com/AkiraShimizu0/workspace-os/go/internal/prompt"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/runner"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/workcairn/go/internal/bootstrap"
+	"github.com/AkiraShimizu0/workcairn/go/internal/deliverable"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/workcairn/go/internal/kernel"
+	promptbuilder "github.com/AkiraShimizu0/workcairn/go/internal/prompt"
+	"github.com/AkiraShimizu0/workcairn/go/internal/runner"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 var (

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/notification"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/notification"
 )
 
 func TestNotificationSubscriberCommitsRedactedImmutableRecord(t *testing.T) {

@@ -1,8 +1,10 @@
-# Workspace OS System Overview
+# WorkCairn System Overview
 
-## Workspace OSとは
+## WorkCairnとは
 
-Workspace OSは、会社、AI社員、Project、Task、成果物、Review、Revision、監査証跡を、人間が読めるWorkspaceと型付きの実行系で一貫して扱うシステムです。現在の製品RuntimeはGo Only、Public Beta候補は`v1.0.0-beta.1`です。正本の運用入口は`workspace-run`と`workspace-daemon`のLocal Web UI、中核のビジネスルールはGo Domain／Service、運用データはVault Adapterが管理します。
+WorkCairnは「自分専用のAI会社を持つ」local-first製品です。自然言語で仕事を依頼すると、AI社員が計画、実行、独立Review、必要なRevisionを進め、人間にはclarification、approval、Recoveryなど必要な判断だけを返します。会社と仕事の責任は見えますが、細かな管理は要求しません。
+
+Conceptは`Your AI company that manages itself.`、中心思想は「会社は見える。仕事も見える。でも管理しなくていい。」です。現在の製品RuntimeはGo Only、Public Beta候補は`v1.0.0-beta.1`です。正本の運用入口は`workcairn`と`workcairn-daemon`のLocal Web UI、中核のビジネスルールはGo Domain／Service、運用データはVault Adapterが管理します。
 
 この文書は「現在どう動くか」を説明します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、個別判断の理由は[ADR](adr/)、詳細なpackage構造は[Architecture.md](Architecture.md)、安全な導入は[PublicBetaQuickstart.md](PublicBetaQuickstart.md)と[OperatorGuide.md](OperatorGuide.md)、HTTP運用は[HTTPAPI.md](HTTPAPI.md)、今後の順序は[ROADMAP.md](ROADMAP.md)を正とします。
 
@@ -59,7 +61,7 @@ Local Web UIはこの順序を再実装しません。`interaction-next`が返�
 
 ## iPhoneからのLocal Web UI
 
-`workspace-daemon --mobile`は、同じWi-Fi等のtrusted local network上のiPhoneへmobile-first Web UIを配信します。起動時にprivate IPv4を自動選択し、terminalへURLとprocess lifetimeだけ有効なpairing codeを表示します。codeはVault、`.env`、Interaction Session、browser storageへ保存されません。
+`workcairn-daemon --mobile`は、同じWi-Fi等のtrusted local network上のiPhoneへmobile-first Web UIを配信します。起動時にprivate IPv4を自動選択し、terminalへURLとprocess lifetimeだけ有効なpairing codeを表示します。codeはVault、`.env`、Interaction Session、browser storageへ保存されません。
 
 ```text
 iPhone browser
@@ -71,7 +73,12 @@ iPhone browser
   → 既存Go Process / Service / Adapter
 ```
 
-画面は「次にすること」、質問、承認、完了、attention／Recovery案内だけを主要表示にします。Prompt、Provider生response、API key、Vault pathは表示しません。External ActionはWorkflow完了後に利用者が明示的に選んだ場合だけ、別のsource／Action digest承認へ進みます。
+画面には2つのread-only projectionがあります。
+
+- `My Actions`: iPhone既定。次の質問、承認、Recoveryだけを最優先表示する
+- `Company View`: PC／iPad既定。AI社員を人型で示し、担当、Maker、Reviewer、Revision、blocked／completedとhandoffを表示する
+
+いずれもInteraction Next Action、Organization inventory、Workflow／Task evidenceを表示するだけで、Task遷移やReview判断をJavaScriptへ複製しません。対応不要なら`Your company is working. No action needed.`を明示します。Prompt、Provider生response、API key、Vault pathは表示しません。External ActionはWorkflow完了後に利用者が明示的に選んだ場合だけ、別のsource／Action digest承認へ進みます。
 
 承認済みInteraction commandはADR-0032のbounded acceptanceでbrowser接続から切り離され、iPhoneがlock／backgroundへ移ってもdaemon process内で継続します。画面は同じCommand IDのLedger statusだけをpollし、再読込後も再実行せずstatus確認を再開します。daemon crash後の自動resumeやLedger欠落の推測は行いません。
 
@@ -83,7 +90,7 @@ iPhone browser
 
 ```mermaid
 flowchart TB
-    CLI["workspace-run / workspace-core"] --> Process["Process composition"]
+    CLI["workcairn / workcairn-core"] --> Process["Process composition"]
     Process --> Runtime["Runtime / Bootstrap"]
     Runtime --> Kernel["Workspace Kernel"]
     Runtime --> Services["Application Services"]
@@ -170,7 +177,7 @@ ADR-0030のExternal Action handoffは任意です。completed Workflowに含ま�
 
 ## Go Only Repository and Runtime
 
-製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／Metrics、External Action、Local Web UIはGoだけで構成されます。CLIに加え、loopback既定の`workspace-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。
+製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／Metrics、External Action、Local Web UIはGoだけで構成されます。CLIに加え、loopback既定の`workcairn-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。
 
 Public Beta前に移行用compatibility distributionを撤去しました。repository、test、release、distributionにも別言語runtimeやSDKはありません。JSON Contract v1とgolden／migration fixtureはGoが直接検証するlanguage-neutralな契約資産です。
 

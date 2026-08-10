@@ -1,6 +1,6 @@
 package event
 
-// Type is a closed set of Workspace OS business event types.
+// Type is a closed set of WorkCairn business event types.
 type Type string
 
 const (

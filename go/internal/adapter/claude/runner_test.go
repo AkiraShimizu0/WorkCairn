@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
 type doerFunc func(*http.Request) (*http.Response, error)

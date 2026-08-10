@@ -1,6 +1,6 @@
 package project
 
-import "github.com/AkiraShimizu0/workspace-os/go/internal/task"
+import "github.com/AkiraShimizu0/workcairn/go/internal/task"
 
 var ErrInvalidTransition = task.ErrInvalidTransition
 

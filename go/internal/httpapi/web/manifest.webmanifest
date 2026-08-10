@@ -1,7 +1,7 @@
 {
-  "name": "Workspace OS",
-  "short_name": "Workspace OS",
-  "description": "必要な質問と承認だけで仕事を進めるlocal workspace client",
+  "name": "WorkCairn",
+  "short_name": "WorkCairn",
+  "description": "あなたのAI会社。必要な判断だけ、あなたがする。",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f4f1e8",

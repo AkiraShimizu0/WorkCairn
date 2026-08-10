@@ -2,7 +2,7 @@
 set -eu
 
 if [ "$#" -ne 1 ]; then
-  echo "usage: $0 <workspace-os archive.tar.gz>" >&2
+  echo "usage: $0 <workcairn archive.tar.gz>" >&2
   exit 2
 fi
 
@@ -33,16 +33,16 @@ fi
 )
 
 root=${archive_filename%.tar.gz}
-temporary_list=$(mktemp "${TMPDIR:-/tmp}/workspace-os-archive-list.XXXXXX")
+temporary_list=$(mktemp "${TMPDIR:-/tmp}/workcairn-archive-list.XXXXXX")
 trap 'rm -f "$temporary_list"' EXIT HUP INT TERM
 tar -tzf "$archive" > "$temporary_list"
 
 for required in \
   "$root/" \
   "$root/bin/" \
-  "$root/bin/workspace-core" \
-  "$root/bin/workspace-run" \
-  "$root/bin/workspace-daemon" \
+  "$root/bin/workcairn-core" \
+  "$root/bin/workcairn" \
+  "$root/bin/workcairn-daemon" \
   "$root/VERSION" \
   "$root/LICENSE" \
   "$root/README.md" \
@@ -60,7 +60,7 @@ done
 
 while IFS= read -r path; do
   case "$path" in
-    "$root/"|"$root/bin/"|"$root/bin/workspace-core"|"$root/bin/workspace-run"|"$root/bin/workspace-daemon"|\
+    "$root/"|"$root/bin/"|"$root/bin/workcairn-core"|"$root/bin/workcairn"|"$root/bin/workcairn-daemon"|\
     "$root/VERSION"|"$root/LICENSE"|"$root/README.md"|"$root/CHANGELOG.md"|"$root/SECURITY.md"|"$root/CONTRIBUTING.md"|\
     "$root/docs/"|"$root/docs/"*.md|"$root/docs/"*.mmd|"$root/docs/adr/"|"$root/docs/adr/"*.md)
       ;;
@@ -73,7 +73,7 @@ done < "$temporary_list"
 
 version=$(tar -xOzf "$archive" "$root/VERSION" | tr -d '\r\n')
 case "$root" in
-  workspace-os_"$version"_*) ;;
+  workcairn_"$version"_*) ;;
   *)
     echo "archive root and VERSION disagree: $root / $version" >&2
     exit 1

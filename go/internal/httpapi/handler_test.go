@@ -16,17 +16,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/action"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/metrics"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/notification"
-	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/action"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/workcairn/go/internal/metrics"
+	"github.com/AkiraShimizu0/workcairn/go/internal/notification"
+	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
+	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 type fakeCommandBackend struct {
@@ -166,10 +166,10 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		contentType string
 		contains    string
 	}{
-		{"/", "text/html", "次にすること"},
+		{"/", "text/html", "WorkCairn"},
 		{"/assets/styles.css", "text/css", "safe-area-inset-bottom"},
 		{"/assets/app.js", "text/javascript", "/v1/interactions"},
-		{"/manifest.webmanifest", "application/manifest+json", "Workspace OS"},
+		{"/manifest.webmanifest", "application/manifest+json", "WorkCairn"},
 	} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
@@ -186,9 +186,19 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 			t.Fatalf("mobile UI contains forbidden rule or secret surface %q", forbidden)
 		}
 	}
-	for _, required := range []string{`Prefer: "respond-async"`, "monitorAcceptedCommand", "?scope=workspace"} {
+	for _, required := range []string{
+		`Prefer: "respond-async"`, "monitorAcceptedCommand", "?scope=workspace",
+		"Your company is working. No action needed.", "renderCompanyFlow", "const next = state.next",
+	} {
 		if !strings.Contains(asset.Body.String(), required) {
 			t.Fatalf("mobile UI is missing command continuity boundary %q", required)
+		}
+	}
+	index := httptest.NewRecorder()
+	handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/", nil))
+	for _, required := range []string{"My Actions", "Company View", "AI社員", "RESPONSIBILITY FLOW"} {
+		if !strings.Contains(index.Body.String(), required) {
+			t.Fatalf("mobile UI is missing Living Company Dashboard surface %q", required)
 		}
 	}
 }

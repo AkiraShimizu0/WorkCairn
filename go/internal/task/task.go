@@ -1,4 +1,4 @@
-// Package task owns the deterministic Workspace OS Task lifecycle.
+// Package task owns the deterministic WorkCairn Task lifecycle.
 package task
 
 import (

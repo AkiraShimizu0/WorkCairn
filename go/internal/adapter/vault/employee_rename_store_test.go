@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/organization"
+	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
 )
 
 func TestEmployeeRenameStoreMatchesStructuredReferencePolicy(t *testing.T) {

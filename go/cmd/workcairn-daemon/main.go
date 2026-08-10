@@ -15,13 +15,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/bootstrap"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/buildinfo"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/httpapi"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/kernel"
-	workspaceprocess "github.com/AkiraShimizu0/workspace-os/go/internal/process"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/bootstrap"
+	"github.com/AkiraShimizu0/workcairn/go/internal/buildinfo"
+	"github.com/AkiraShimizu0/workcairn/go/internal/httpapi"
+	"github.com/AkiraShimizu0/workcairn/go/internal/kernel"
+	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 )
 
 func main() {
@@ -32,7 +32,7 @@ func main() {
 		return
 	}
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "workspace-daemon stopped:", err)
+		fmt.Fprintln(os.Stderr, "workcairn-daemon stopped:", err)
 		os.Exit(1)
 	}
 }
@@ -52,11 +52,11 @@ func run() error {
 		return errors.New("Vault root and positive timeouts are required")
 	}
 	executor, err := httpapi.NewProcessExecutorWithActionConfig(vaultRoot, workspaceprocess.ClaudeProcessConfig{
-		APIKey: os.Getenv("ANTHROPIC_API_KEY"), ProviderModel: os.Getenv("WORKSPACE_CLAUDE_PROVIDER_MODEL"),
-		BaseURL: os.Getenv("WORKSPACE_CLAUDE_BASE_URL"),
+		APIKey: os.Getenv("ANTHROPIC_API_KEY"), ProviderModel: os.Getenv("WORKCAIRN_CLAUDE_PROVIDER_MODEL"),
+		BaseURL: os.Getenv("WORKCAIRN_CLAUDE_BASE_URL"),
 	}, workspaceprocess.WordPressProcessConfig{
-		TargetID: os.Getenv("WORKSPACE_WORDPRESS_TARGET_ID"), BaseURL: os.Getenv("WORKSPACE_WORDPRESS_BASE_URL"),
-		Username: os.Getenv("WORKSPACE_WORDPRESS_USERNAME"), ApplicationPassword: os.Getenv("WORKSPACE_WORDPRESS_APPLICATION_PASSWORD"),
+		TargetID: os.Getenv("WORKCAIRN_WORDPRESS_TARGET_ID"), BaseURL: os.Getenv("WORKCAIRN_WORDPRESS_BASE_URL"),
+		Username: os.Getenv("WORKCAIRN_WORDPRESS_USERNAME"), ApplicationPassword: os.Getenv("WORKCAIRN_WORDPRESS_APPLICATION_PASSWORD"),
 	}, &http.Client{Timeout: providerTimeout})
 	if err != nil {
 		return err
@@ -114,7 +114,7 @@ func run() error {
 		}
 		server, err = httpapi.NewLocalNetworkServer(address, handler)
 		if err == nil {
-			fmt.Fprintf(os.Stdout, "Workspace OS mobile UI: %s\nPairing code: %s\nTrusted local network only; do not expose this address to the internet.\n", localURL(address), pairingCode)
+			fmt.Fprintf(os.Stdout, "WorkCairn mobile UI: %s\nPairing code: %s\nTrusted local network only; do not expose this address to the internet.\n", localURL(address), pairingCode)
 		}
 	} else {
 		server, err = httpapi.NewServer(address, handler)

@@ -6,9 +6,9 @@ PythonからGoへの移行はPublic Beta前に完了しました。ADR-0033に�
 
 現在の正式な製品surfaceは次の3つです。
 
-- `workspace-run`: local CLIと全process composition
-- `workspace-daemon`: HTTP Command APIとmobile-first Local Web UI
-- `workspace-core`: JSON Contract v1の外部process boundary
+- `workcairn`: local CLIと全process composition
+- `workcairn-daemon`: HTTP Command APIとmobile-first Local Web UI
+- `workcairn-core`: JSON Contract v1の外部process boundary
 
 repositoryのbuild、test、release、distributionにはGo toolchain以外の言語runtimeを必要としません。
 

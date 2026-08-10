@@ -1,14 +1,18 @@
 :root {
   color-scheme: light;
-  --paper: #f4f1e8;
-  --surface: #fffdf8;
+  --paper: #f2efe8;
+  --surface: #fffdf9;
   --surface-strong: #ffffff;
   --ink: #19231f;
   --muted: #65716b;
   --line: #d9ded8;
-  --green: #176b50;
-  --green-dark: #0e4c38;
-  --green-soft: #dceee5;
+  --green: #246557;
+  --green-dark: #17483e;
+  --green-soft: #dcebe6;
+  --blue: #355f85;
+  --blue-soft: #e3edf5;
+  --stone: #786f61;
+  --stone-soft: #ebe6dc;
   --amber: #a55a14;
   --amber-soft: #fff0d9;
   --red: #a83434;
@@ -37,7 +41,7 @@ button, input, textarea, select { font: inherit; }
 button { touch-action: manipulation; }
 
 .page-shell {
-  width: min(100%, 860px);
+  width: min(100%, 1160px);
   min-height: 100dvh;
   margin: 0 auto;
   padding: env(safe-area-inset-top) max(18px, env(safe-area-inset-right)) calc(36px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
@@ -65,11 +69,15 @@ button { touch-action: manipulation; }
   display: grid;
   place-items: center;
   border-radius: 12px;
-  color: #fff;
+  position: relative;
+  overflow: hidden;
   background: var(--ink);
-  font-family: Georgia, serif;
-  font-size: 21px;
 }
+
+.brand-mark i { position: absolute; left: 50%; display: block; height: 5px; border-radius: 999px; background: #f7f2e8; transform: translateX(-50%); }
+.brand-mark i:nth-child(1) { bottom: 8px; width: 23px; }
+.brand-mark i:nth-child(2) { bottom: 16px; width: 17px; }
+.brand-mark i:nth-child(3) { bottom: 24px; width: 10px; }
 
 .brand strong, .brand small { display: block; }
 .brand strong { font-size: 15px; letter-spacing: -.01em; }
@@ -128,6 +136,30 @@ h3 { margin-bottom: 7px; font-size: 18px; }
 }
 
 .intro-row { margin-bottom: 20px; }
+
+.view-switcher {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 0 0 26px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: rgba(255,255,255,.5);
+}
+
+.view-tab {
+  min-height: 44px;
+  border: 0;
+  border-radius: 11px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.view-tab.active { color: var(--ink); background: #fff; box-shadow: 0 4px 14px rgba(40,50,43,.08); }
 
 .action-card {
   position: relative;
@@ -192,7 +224,7 @@ h3 { margin-bottom: 7px; font-size: 18px; }
 .button.primary:hover { background: var(--green-dark); }
 .button.danger { border-color: var(--red); color: #fff; background: var(--red); }
 .button.quiet { color: var(--muted); background: transparent; }
-.button.compact { min-height: 44px; padding: 9px 13px; font-size: 13px; }
+.button.compact { min-height: 44px; padding: 9px 13px; font-size: 13px; white-space: nowrap; }
 .button:disabled { cursor: not-allowed; opacity: .52; }
 
 .text-button, .icon-button {
@@ -284,6 +316,78 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 .session-item small { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .state-chip { padding: 4px 8px; border-radius: 999px; color: var(--green-dark); background: var(--green-soft); font-size: 10px; font-weight: 750; }
 
+.company-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.company-promise { max-width: 540px; margin-bottom: 0; color: var(--muted); font-size: 14px; }
+
+.company-status {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 15px;
+  align-items: center;
+  min-height: 112px;
+  padding: 20px;
+  border: 1px solid rgba(255,255,255,.9);
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.company-status.needs-action { border-color: #edc9c5; background: #fffaf9; }
+.company-status-icon { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 18px; color: var(--green-dark); background: var(--green-soft); font-size: 23px; }
+.company-status.needs-action .company-status-icon { color: var(--red); background: var(--red-soft); }
+.company-status strong { display: block; margin-bottom: 3px; font-family: Georgia, "Yu Mincho", serif; font-size: 20px; }
+.company-status p { margin: 0; color: var(--muted); font-size: 13px; }
+
+.company-section { margin-top: 30px; }
+.count-chip { padding: 5px 10px; border-radius: 999px; color: var(--stone); background: var(--stone-soft); font-size: 11px; font-weight: 760; }
+.employee-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 14px; }
+.employee-card {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 13px;
+  align-items: center;
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 19px;
+  background: rgba(255,255,255,.65);
+}
+.employee-avatar { position: relative; width: 52px; height: 52px; border-radius: 18px; background: var(--stone-soft); }
+.employee-avatar::before { position: absolute; top: 8px; left: 18px; width: 16px; height: 16px; border-radius: 50%; background: var(--stone); content: ""; }
+.employee-avatar::after { position: absolute; right: 10px; bottom: 7px; left: 10px; height: 21px; border-radius: 13px 13px 7px 7px; background: var(--stone); content: ""; }
+.employee-card.maker .employee-avatar { background: var(--blue-soft); }
+.employee-card.maker .employee-avatar::before, .employee-card.maker .employee-avatar::after { background: var(--blue); }
+.employee-card.reviewer .employee-avatar { background: var(--green-soft); }
+.employee-card.reviewer .employee-avatar::before, .employee-card.reviewer .employee-avatar::after { background: var(--green); }
+.employee-name { min-width: 0; }
+.employee-name strong, .employee-name small { display: block; }
+.employee-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.employee-name small { margin-top: 2px; color: var(--muted); font-size: 11px; }
+.responsibility { display: inline-flex; margin-top: 8px; padding: 3px 7px; border-radius: 999px; color: var(--stone); background: var(--stone-soft); font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.maker .responsibility { color: var(--blue); background: var(--blue-soft); }
+.reviewer .responsibility { color: var(--green-dark); background: var(--green-soft); }
+.employee-task { margin: 7px 0 0; color: #34413b; font-size: 12px; }
+
+.company-flow { display: grid; gap: 10px; margin-top: 14px; }
+.flow-step { position: relative; display: grid; grid-template-columns: 34px 1fr auto; gap: 11px; align-items: center; min-height: 66px; padding: 12px 13px; border: 1px solid var(--line); border-radius: 17px; background: rgba(255,255,255,.65); }
+.flow-index { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 11px; color: var(--stone); background: var(--stone-soft); font-size: 12px; font-weight: 800; }
+.flow-step.worker .flow-index { color: var(--blue); background: var(--blue-soft); }
+.flow-step.reviewer .flow-index { color: var(--green-dark); background: var(--green-soft); }
+.flow-step.revision .flow-index { color: var(--amber); background: var(--amber-soft); }
+.flow-copy strong, .flow-copy small { display: block; }
+.flow-copy strong { font-size: 13px; }
+.flow-copy small { margin-top: 2px; color: var(--muted); font-size: 11px; }
+.flow-state { padding: 4px 7px; border-radius: 999px; color: var(--muted); background: #eef0ed; font-size: 9px; font-weight: 760; }
+.flow-state.completed { color: var(--green-dark); background: var(--green-soft); }
+.flow-state.blocked { color: var(--red); background: var(--red-soft); }
+
 .sheet-dialog {
   width: 100%;
   max-width: none;
@@ -322,6 +426,15 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   .action-card { padding: 30px; }
   .sheet-dialog { width: min(680px, calc(100% - 36px)); margin: auto; border-radius: 28px; }
   .sheet { padding: 14px 28px 28px; }
+  .employee-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 900px) {
+  .page-shell { padding-right: 42px; padding-left: 42px; }
+  .employee-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .company-flow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .flow-step { grid-template-columns: 34px 1fr; }
+  .flow-state { grid-column: 2; width: fit-content; }
 }
 
 @media (prefers-reduced-motion: reduce) {

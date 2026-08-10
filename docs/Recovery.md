@@ -27,23 +27,23 @@ Recovery foundationは、process停止やpartial failure後のVaultを読み取�
 ## 運用フロー
 
 ```text
-workspace-run recovery-inspect
+workcairn recovery-inspect
     ↓ read-only report
-workspace-run recovery-plan --task ... --action ...
+workcairn recovery-plan --task ... --action ...
     ↓ versioned plan + evidence SHA-256 + expected Task Version
 人間が証拠とactionを確認
     ↓
-workspace-run recovery-apply --plan-file ... --approved
+workcairn recovery-apply --plan-file ... --approved
     ↓ plan再生成・完全一致検査 → TaskService → EventService → Audit subscriber
 ```
 
 例：
 
 ```bash
-workspace-run recovery-inspect --vault /path/to/vault --project 'Project名'
-workspace-run recovery-plan --vault /path/to/vault --project 'Project名' \
+workcairn recovery-inspect --vault /path/to/vault --project 'Project名'
+workcairn recovery-plan --vault /path/to/vault --project 'Project名' \
   --task TASK-001 --action complete_task > recovery-plan.json
-workspace-run recovery-apply --vault /path/to/vault --project 'Project名' \
+workcairn recovery-apply --vault /path/to/vault --project 'Project名' \
   --plan-file recovery-plan.json --approved
 ```
 

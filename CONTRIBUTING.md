@@ -1,6 +1,6 @@
-# Contributing to Workspace OS
+# Contributing to WorkCairn
 
-Workspace OSはPublic Beta前のGo Only projectです。変更前に`AGENTS.md`、`docs/CONSTITUTION.md`、`docs/Architecture.md`、関連ADRを読んでください。
+WorkCairnはPublic Beta前のGo Only projectです。変更前に`AGENTS.md`、`docs/CONSTITUTION.md`、`docs/Architecture.md`、関連ADRを読んでください。
 
 ## Development environment
 

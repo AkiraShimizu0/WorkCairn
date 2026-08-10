@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/scheduler"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/service"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 )
 
 var ErrScheduleApprovalRequired = errors.New("explicit Schedule approval is required")

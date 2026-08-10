@@ -1,5 +1,5 @@
 // Package metrics provides a bounded, payload-free Event subscriber for local
-// Workspace OS runtime observation.
+// WorkCairn runtime observation.
 package metrics
 
 import (
@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 )
 
 const SnapshotVersion = "workspace-metrics.v1"

@@ -1,5 +1,5 @@
 // Package notification defines the redacted immutable projection created from
-// committed Workspace OS business Events.
+// committed WorkCairn business Events.
 package notification
 
 import (
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 )
 
 const RecordVersion = "workspace-notification.v1"

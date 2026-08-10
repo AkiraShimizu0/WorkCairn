@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 // EmployeeContext contains only the employee identity needed for one

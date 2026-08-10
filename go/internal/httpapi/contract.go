@@ -1,4 +1,4 @@
-// Package httpapi defines the versioned HTTP edge for Workspace OS commands.
+// Package httpapi defines the versioned HTTP edge for WorkCairn commands.
 // It depends on application process composition, never the other way around.
 package httpapi
 
@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/interaction"
+	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 )
 
 const (

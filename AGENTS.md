@@ -63,7 +63,7 @@ make v1-release-gate
 make public-beta-smoke
 ```
 
-Go生成物`bin/workspace-core`、`bin/workspace-run`、`bin/workspace-daemon`はGit管理しません。テストは実Vaultや実APIへ接続しない構成にしてください。
+Go生成物`bin/workcairn-core`、`bin/workcairn`、`bin/workcairn-daemon`はGit管理しません。テストは実Vaultや実APIへ接続しない構成にしてください。
 
 ## Documentation
 

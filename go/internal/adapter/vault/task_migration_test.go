@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 func TestTaskMetadataMigrationPlanIsReadOnlyAndApplyRequiresApproval(t *testing.T) {

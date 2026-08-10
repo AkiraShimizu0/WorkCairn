@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/workflow"
+	"github.com/AkiraShimizu0/workcairn/go/internal/workflow"
 )
 
 func TestWorkflowServiceReadinessStates(t *testing.T) {

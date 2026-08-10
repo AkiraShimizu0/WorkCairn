@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
 // DeliverableFrontmatter is the structured subset displayed to the reviewer.

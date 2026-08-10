@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/recovery"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/recovery"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 func TestTaskRecoveryCompletesCommittedDeliverableThroughTaskService(t *testing.T) {

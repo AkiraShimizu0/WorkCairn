@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 // TaskMetadataMigrationPlan is a read-only description of converting a

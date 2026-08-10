@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/review"
-	"github.com/AkiraShimizu0/workspace-os/go/internal/worker"
+	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
 func TestReviewStoreMatchesGoldenArtifactsAndNeverOverwrites(t *testing.T) {

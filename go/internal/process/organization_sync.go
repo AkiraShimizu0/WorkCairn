@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/AkiraShimizu0/workspace-os/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 )
 
 var ErrOrganizationSyncApproval = errors.New("explicit Organization sync approval is required")
