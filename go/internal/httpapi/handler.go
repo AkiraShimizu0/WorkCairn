@@ -33,6 +33,7 @@ type Handler struct {
 	interactionActionPlanner   InteractionActionPlanner
 	organizationInspector      OrganizationInspector
 	taskEvidenceInspector      TaskEvidenceInspector
+	workReportInspector        WorkReportInspector
 	localAccess                *LocalAccess
 	asyncCommands              *asyncCommandRunner
 	mux                        *http.ServeMux
@@ -76,6 +77,10 @@ type OrganizationInspector interface {
 
 type TaskEvidenceInspector interface {
 	InspectTaskEvidence(ctx context.Context, projectName, taskID string) (workspaceprocess.TaskEvidenceInspection, error)
+}
+
+type WorkReportInspector interface {
+	InspectWorkReport(ctx context.Context, sessionID string) (workspaceprocess.WorkReport, error)
 }
 
 func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
@@ -135,7 +140,31 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 		handler.taskEvidenceInspector = taskEvidenceInspector
 		handler.mux.HandleFunc("GET /v1/projects/{project_name}/tasks/{task_id}/evidence", handler.inspectTaskEvidence)
 	}
+	if workReportInspector, ok := executor.(WorkReportInspector); ok {
+		handler.workReportInspector = workReportInspector
+		handler.mux.HandleFunc("GET /v1/interactions/{session_id}/work-report", handler.inspectWorkReport)
+	}
 	return handler, nil
+}
+
+func (handler *Handler) inspectWorkReport(response http.ResponseWriter, request *http.Request) {
+	report, err := handler.workReportInspector.InspectWorkReport(request.Context(), request.PathValue("session_id"))
+	if err != nil {
+		status, code := http.StatusInternalServerError, "WORK_REPORT_INSPECTION_FAILED"
+		if errors.Is(err, interaction.ErrNotFound) {
+			status, code = http.StatusNotFound, "INTERACTION_NOT_FOUND"
+		} else if errors.Is(err, interaction.ErrInvalidSession) {
+			status, code = http.StatusBadRequest, "INVALID_SESSION_ID"
+		}
+		writeCommandResponse(response, status, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: code, RecoveryRequired: status == http.StatusInternalServerError}})
+		return
+	}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: InteractionContractVersion, OK: true, Result: encoded})
 }
 
 func (handler *Handler) inspectTaskEvidence(response http.ResponseWriter, request *http.Request) {

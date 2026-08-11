@@ -22,6 +22,9 @@ const ui = {
   employeeGrid: document.querySelector("#employee-grid"),
   teamCount: document.querySelector("#team-count"),
   companyFlow: document.querySelector("#company-flow"),
+  attentionGrid: document.querySelector("#attention-grid"),
+  autonomySummary: document.querySelector("#autonomy-summary"),
+  proofOfWork: document.querySelector("#proof-of-work"),
   requestDialog: document.querySelector("#request-dialog"),
   requestForm: document.querySelector("#request-form"),
   actionDialog: document.querySelector("#action-dialog"),
@@ -38,6 +41,8 @@ const state = {
   next: null,
   organization: null,
   evidence: new Map(),
+  workReport: null,
+  workReportError: null,
   busy: false,
 };
 
@@ -212,6 +217,8 @@ async function selectSession(id) {
   if (!id) {
     state.record = null;
     state.next = null;
+    state.workReport = null;
+    state.workReportError = null;
     localStorage.removeItem(STORAGE_SESSION);
     renderEmpty();
     renderDetails();
@@ -229,12 +236,17 @@ async function refreshCurrent(silent = false) {
     return;
   }
   try {
-    const [record, next] = await Promise.all([
+    const [record, next, reportResult] = await Promise.all([
       requestJSON(`/v1/interactions/${encodeURIComponent(id)}`),
       requestJSON(`/v1/interactions/${encodeURIComponent(id)}/next`),
+      requestJSON(`/v1/interactions/${encodeURIComponent(id)}/work-report`)
+        .then((report) => ({ report }))
+        .catch((error) => ({ error })),
     ]);
     state.record = record;
     state.next = next;
+    state.workReport = reportResult.report || null;
+    state.workReportError = reportResult.error || null;
     setConnected(true);
     renderNext();
     renderDetails();
@@ -448,13 +460,16 @@ async function prepareWorkflowApproval(next, reviewerID, maxTasks) {
         ["Project", `${plan.project_name} (${plan.project_id})`],
         ["Reviewer", `${plan.reviewer_name} (${plan.reviewer_id})`],
         ["次のTask", plan.next?.task_id || "readinessに従う"],
-        ["Task上限", String(plan.max_tasks)],
+        ["任せる上限", `${plan.autonomy_contract.execution_limit}件の仕事ステップ`],
+        ["任せるAI社員", plan.autonomy_contract.allowed_employee_ids.map(employeeLabel).join(" / ")],
+        ["安全条件", "全成果物をReview・Revisionは委任・外部公開は別承認・支出は禁止"],
         ["Plan digest", plan.workflow_plan_digest],
       ],
       approveLabel: "承認して実行",
       onApprove: () => executeNextCommand(next, {
         session_id: next.session_id, expected_version: next.expected_version,
         reviewer_id: reviewerID, current_time: currentTime, max_tasks: maxTasks,
+        autonomy_contract: plan.autonomy_contract,
         workflow_plan_digest: plan.workflow_plan_digest,
         approval_reference: `mobile-ui:${next.session_id}:v${next.expected_version}`,
       }, "Workflowを実行しています", "Task、Review、必要なRevisionを順番に進めています。"),
@@ -809,6 +824,8 @@ function renderCompany() {
   const next = state.next;
   const pending = Boolean(sessionStorage.getItem(STORAGE_PENDING));
   const requiresAction = next && !["optional_external_action_or_done", "done"].includes(next.kind);
+  const proofNeedsAttention = Boolean(state.workReportError) || Boolean(state.workReport &&
+    ["completed", "action_completed"].includes(state.record?.state) && !state.workReport.proof_of_work?.fully_verified);
   let icon = "✓";
   let title = "Your company is ready.";
   let message = "仕事を依頼すると、担当AIとReviewerの流れがここに表示されます。";
@@ -820,19 +837,99 @@ function renderCompany() {
     icon = "!";
     title = "Your decision is needed.";
     message = "会社は安全な境界で停止しています。My Actionsに必要な質問または承認があります。";
+  } else if (proofNeedsAttention) {
+    icon = "!";
+    title = "Some work records need confirmation.";
+    message = "成立済み部分は保持しています。Proof of Workで未確認の記録を確認してください。";
   } else if (state.record) {
     title = next?.kind === "done" ? "Work completed." : "Your company is working. No action needed.";
     message = next?.kind === "done"
       ? "依頼した仕事と外部Actionが完了しています。詳細は後から確認できます。"
       : "現在あなたが対応することはありません。成果物は保存済みで、外部Actionは別承認です。";
   }
-  ui.companyStatus.className = `company-status${requiresAction ? " needs-action" : ""}`;
+  ui.companyStatus.className = `company-status${requiresAction || proofNeedsAttention ? " needs-action" : ""}`;
   ui.companyStatus.replaceChildren(
     node("span", { class: "company-status-icon", "aria-hidden": "true" }, icon),
     node("div", {}, node("strong", {}, title), node("p", {}, message)),
   );
   renderEmployees();
   renderCompanyFlow();
+  renderCEOAttention();
+  renderAutonomy();
+  renderProofOfWork();
+}
+
+function renderCEOAttention() {
+  const attention = state.workReport?.ceo_attention;
+  if (!attention) {
+    ui.attentionGrid.replaceChildren(node("p", { class: "empty" }, state.record ? "仕事が進むと、任せられたstepをここに表示します。" : "依頼後に表示されます。"));
+    return;
+  }
+  const metrics = [
+    [attention.company_steps, "会社が進めたstep"],
+    [attention.delegated_steps, "呼ばずに進めたstep"],
+    [attention.clarification_questions, "必要だった質問"],
+    [attention.approval_moments, "重要な承認"],
+  ];
+  if (attention.recovery_attention_required) metrics.push([attention.recovery_attention_required, "復旧の確認"]);
+  ui.attentionGrid.replaceChildren(...metrics.map(([value, label]) =>
+    node("div", { class: "attention-stat" }, node("strong", {}, String(value)), node("span", {}, label)),
+  ));
+}
+
+function renderAutonomy() {
+  const contract = state.workReport?.autonomy_contract;
+  if (!contract) {
+    ui.autonomySummary.replaceChildren(node("p", { class: "empty" }, "実行承認時に、今回任せる範囲を固定します。"));
+    return;
+  }
+  ui.autonomySummary.replaceChildren(
+    node("p", { class: "insight-lead" }, `最大${contract.execution_limit}件の仕事ステップを、${contract.allowed_employee_ids.length}人のAI社員に任せています。`),
+    node("ul", { class: "trust-list" },
+      node("li", {}, "成果物は必ず別のReviewerが確認"),
+      node("li", {}, "修正は同じ範囲で自動継続"),
+      node("li", {}, "外部公開は毎回あなたの承認が必要"),
+      node("li", {}, "支出は許可していません"),
+    ),
+  );
+}
+
+function renderProofOfWork() {
+  const report = state.workReport;
+  if (state.workReportError) {
+    ui.proofOfWork.replaceChildren(node("p", { class: "warning" }, "仕事の記録を確認できません。完了を推測せず、Mac側の状態を確認してください。"));
+    return;
+  }
+  const proof = report?.proof_of_work;
+  if (!proof?.tasks?.length) {
+    ui.proofOfWork.replaceChildren(node("p", { class: "empty" }, "成果物とReviewが成立すると、ここから辿れます。"));
+    return;
+  }
+  const tasks = proof.tasks.map((task) => node("article", { class: `proof-card${task.verified ? " verified" : " attention"}` },
+    node("div", { class: "proof-heading" },
+      node("strong", {}, task.title || task.task_id),
+      node("span", { class: "proof-state" }, task.verified ? "確認済み" : "確認が必要"),
+    ),
+    node("p", {}, `${employeeLabel(task.maker_id)} が作成 · ${employeeLabel(task.review.reviewer_id)} がReview`),
+    node("ul", { class: "proof-facts" },
+      node("li", {}, task.deliverable.committed ? "成果物を保存済み" : "成果物の保存を未確認"),
+      node("li", {}, task.review.canonical_committed ? `Review: ${task.review.verdict}` : "Review記録を未確認"),
+      task.revision.occurred ? node("li", {}, task.revision.intent_committed ? "Request Changesを受け、修正を記録済み" : "修正の記録を要確認") : null,
+    ),
+  ));
+  if (proof.external_action.requested) {
+    tasks.push(node("article", { class: `proof-card${proof.external_action.verified ? " verified" : " attention"}` },
+      node("div", { class: "proof-heading" }, node("strong", {}, "外部Action"), node("span", { class: "proof-state" }, proof.external_action.verified ? "成立済み" : "確認が必要")),
+      node("p", {}, proof.external_action.verified ? `公開先 ${proof.external_action.target_id} への反映を確認しました。` : "成立済み記録を保持したまま、自動継続を停止しています。"),
+    ));
+  }
+  ui.proofOfWork.replaceChildren(
+    node("p", { class: "insight-lead" }, proof.fully_verified ? `${proof.verified_tasks}件の仕事を保存済みの確定記録で確認しました。` : "完了を推測せず、成立済みの記録だけを表示しています。"),
+    proof.audit?.readable && proof.audit.recorded_events > 0
+      ? node("p", { class: "audit-note" }, `監査記録 ${proof.audit.recorded_events}件を確認`)
+      : node("p", { class: "warning" }, "監査記録を確認できないため、完了として断定しません。"),
+    ...tasks,
+  );
 }
 
 function renderEmployees() {

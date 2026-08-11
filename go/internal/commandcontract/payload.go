@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/action"
+	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
@@ -165,13 +166,14 @@ func ValidatePayload(operation string, content json.RawMessage) error {
 		}{}
 	case "interaction.workflow.execute":
 		target = &struct {
-			SessionID          string    `json:"session_id"`
-			ExpectedVersion    uint64    `json:"expected_version"`
-			ReviewerID         string    `json:"reviewer_id"`
-			CurrentTime        time.Time `json:"current_time"`
-			ApprovalReference  string    `json:"approval_reference,omitempty"`
-			MaxTasks           int       `json:"max_tasks"`
-			WorkflowPlanDigest string    `json:"workflow_plan_digest"`
+			SessionID          string             `json:"session_id"`
+			ExpectedVersion    uint64             `json:"expected_version"`
+			ReviewerID         string             `json:"reviewer_id"`
+			CurrentTime        time.Time          `json:"current_time"`
+			ApprovalReference  string             `json:"approval_reference,omitempty"`
+			MaxTasks           int                `json:"max_tasks"`
+			WorkflowPlanDigest string             `json:"workflow_plan_digest"`
+			Autonomy           *autonomy.Contract `json:"autonomy_contract,omitempty"`
 		}{}
 	case "interaction.action.wordpress.publish":
 		target = &struct {
@@ -306,6 +308,12 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 		if json.Unmarshal(fields["workflow_plan_digest"], &digest) != nil || interaction.ValidateDigest(digest) != nil ||
 			json.Unmarshal(fields["max_tasks"], &maxTasks) != nil || maxTasks <= 0 || maxTasks > 100 {
 			return ErrInvalidPayload
+		}
+		if raw, ok := fields["autonomy_contract"]; ok {
+			var contract autonomy.Contract
+			if json.Unmarshal(raw, &contract) != nil || contract.Validate() != nil || contract.ExecutionLimit != maxTasks {
+				return ErrInvalidPayload
+			}
 		}
 	}
 	if operation == "interaction.action.wordpress.publish" {

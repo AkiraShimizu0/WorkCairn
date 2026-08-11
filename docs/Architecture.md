@@ -81,6 +81,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0032: mobile Interaction Commandをclient接続から切り離して追跡する](adr/ADR-0032-mobile-command-continuity.md)
 - [ADR-0033: Public Beta前にrepositoryとdistributionをGo Onlyへ確定する](adr/ADR-0033-public-beta-go-only-repository.md)
 - [ADR-0034: WorkCairnを製品名としLiving Company Dashboardをread-only projectionとして提供する](adr/ADR-0034-workcairn-brand-and-living-company-dashboard.md)
+- [ADR-0035: Autonomy Contractを承認範囲に固定しProof of Workをcanonical evidenceから投影する](adr/ADR-0035-autonomy-contract-and-proof-of-work.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -124,6 +125,8 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Notification／Metrics Subscriber | Runtime edgeから既存Eventへ接続し、payload-free immutable Inboxとbounded process-local counterを提供する。Task状態、Event、Auditを変更しない |
 | Go External Action Service／WordPress Adapter | 既存Deliverableをtyped intentへ変換し、明示承認、immutable request／result evidence、外部公開、`action.completed`を調停する。credentialとHTTPはAdapter edgeだけに置く |
 | Go Interaction Domain／Service | 自然言語request、CEO質問回答、plan digest承認、適用済みProject、Reviewed Workflow／External Actionのtyped summaryとResult digestをappend-only turn／Version/CASで調停する。Provider、Vault、Task状態を知らない |
+| Go Autonomy Contract | Workflow承認で委任するTask実行、必須Review、Revision、別承認のExternal Action、禁止された支出、Employee／model allow-list、実行上限をProvider／Vault非依存のtyped valueへ固定する。Execution PolicyやApprovalを置き換えない |
+| Go Work Report | Interaction、Task、Deliverable、canonical Review、Revision intent、Command Ledger、AuditからProof of WorkとCEO Attentionを再構成するread-only projection。新しいStore、状態修復、自動retryを持たない |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
@@ -175,14 +178,15 @@ ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環�
 - `go/internal/recovery`: Storage非依存のSnapshot／finding、version付きRecovery plan、typed result
 - `go/internal/commandledger`: Storage非依存のCommand identity、request digest、running／terminal outcome、Store port
 - `go/internal/commandcontract`: HTTP／Schedulerが共有する副作用commandのstrict typed payload契約
+- `go/internal/autonomy`: 承認するWorkflowの自律範囲をcanonicalize／検証するProvider／Storage非依存のtyped contract
 - `go/internal/interaction`: request／clarification／plan／Workflow approvalのclosed state、append-only turn、結果summary／digest、CAS contract
 - `go/internal/scheduler`: Storage／transport非依存のone-shot Schedule、state、Version／CAS、Dispatcher port
 - `go/internal/runner`: model値とRunner Adapterを解決するthread-safe Registry
 - `go/internal/adapter/claude`: Anthropic Messages APIを既存Runner契約へ変換するProvider Adapter
 - `go/internal/adapter/vault`: read-only Context／Organization Loader、Project／Task／Deliverable／Review／Revision intent／Schedule／Interaction Store、Audit Event subscriber
 - `go/internal/runtime`: Provider／Storage AdapterをServiceへ注入するprocess-neutral execution／Review／Revision composition
-- `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／reviewed Workflow／Schedule／Interaction Workflow／Recoveryのread-only planと明示承認付きexecute
-- `go/internal/httpapi`: version付きCommand HTTP contract、必須Command ID、同期handler、mobile Interactionのbounded acceptance、Ledger／Task evidence inspection、embed mobile Web UI、trusted-LAN pairing、graceful server lifecycle
+- `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／reviewed Workflow／Schedule／Interaction Workflow／Recoveryのread-only planと明示承認付きexecute、canonical evidenceからのWork Report projection
+- `go/internal/httpapi`: version付きCommand HTTP contract、必須Command ID、同期handler、mobile Interactionのbounded acceptance、Ledger／Task evidence／Work Report inspection、embed mobile Web UI、trusted-LAN pairing、graceful server lifecycle
 - `go/internal/policy`: 明示承認とWorker失敗後の回復判断を提供する決定的Policy Domain
 - `go/internal/execution`: 1タスク実行のRequest、Result、Stage、型付きpartial failure契約
 - `go/internal/service`: Kernel向けProject/Workflow/Task/Event/Worker/Execution／Scheduler Facade

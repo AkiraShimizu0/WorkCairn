@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 )
@@ -64,12 +65,13 @@ type InteractionPlanRequest struct {
 }
 
 type InteractionWorkflowPlanRequest struct {
-	Version         string    `json:"version"`
-	SessionID       string    `json:"session_id"`
-	ExpectedVersion uint64    `json:"expected_version"`
-	ReviewerID      string    `json:"reviewer_id"`
-	CurrentTime     time.Time `json:"current_time"`
-	MaxTasks        int       `json:"max_tasks"`
+	Version         string             `json:"version"`
+	SessionID       string             `json:"session_id"`
+	ExpectedVersion uint64             `json:"expected_version"`
+	ReviewerID      string             `json:"reviewer_id"`
+	CurrentTime     time.Time          `json:"current_time"`
+	MaxTasks        int                `json:"max_tasks"`
+	Autonomy        *autonomy.Contract `json:"autonomy_contract,omitempty"`
 }
 
 type InteractionActionPlanRequest struct {
@@ -95,6 +97,9 @@ func (request InteractionWorkflowPlanRequest) Validate() error {
 	if request.Version != InteractionContractVersion || interaction.ValidateSessionID(request.SessionID) != nil || request.ExpectedVersion == 0 ||
 		strings.TrimSpace(request.ReviewerID) == "" || request.ReviewerID != strings.TrimSpace(request.ReviewerID) ||
 		strings.ContainsAny(request.ReviewerID, "\r\n") || request.CurrentTime.IsZero() || request.MaxTasks <= 0 || request.MaxTasks > 100 {
+		return ErrInvalidCommand
+	}
+	if request.Autonomy != nil && (request.Autonomy.Validate() != nil || request.Autonomy.ExecutionLimit != request.MaxTasks) {
 		return ErrInvalidCommand
 	}
 	return nil

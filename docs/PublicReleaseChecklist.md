@@ -34,6 +34,7 @@ cross-build成功だけでnative supportを宣言しません。
 - [ ] macOS／Linuxの4 target、3 binaryがCGOなしでcross-buildできる。
 - [ ] temporary Vault + Mock ProviderでTask execution、Deliverable、Auditが完了する。
 - [ ] mobile Interactionで依頼、clarification、Plan承認、Reviewed Workflow完了まで成功する。
+- [ ] Workflow承認対象へAutonomy Contractが固定され、Proof of Work／CEO Attentionがcanonical evidenceから再構成される。
 - [ ] Request Changes、Revision、再Review、Command replayが成功する。
 - [ ] 承認なしのProvider／Vault effectが拒否される。
 - [ ] JSON Contract v1、Prompt／Markdown／migration fixtureが成功する。
@@ -72,6 +73,7 @@ targetごとにclean output directoryを使います。
 - [ ] iPhone Safariでpairing、reload、background復帰、完了確認を実施した。
 - [ ] iPhoneでMy Actionsが既定となり、質問／承認以外では`No action needed`が明確に見える。
 - [ ] iPad／MacでCompany Viewが既定となり、Maker、Reviewer、Revision、担当、handoffを理解できる。
+- [ ] iPhoneのWorkflow承認で任せる範囲が短く理解でき、Company ViewのProof of Workが「何が実際に完了したか」を技術語なしで説明する。
 - [ ] public／shared network、port forwarding、internet公開を使っていない。
 
 ### Provider

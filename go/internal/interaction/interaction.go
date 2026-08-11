@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/action"
+	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
@@ -118,6 +119,7 @@ type WorkflowEvidence struct {
 	ProjectName       string                 `json:"project_name"`
 	ReviewerID        string                 `json:"reviewer_id"`
 	MaxTasks          int                    `json:"max_tasks"`
+	Autonomy          *autonomy.Contract     `json:"autonomy_contract,omitempty"`
 	Status            WorkflowStatus         `json:"status"`
 	ResultDigest      string                 `json:"result_digest"`
 	Tasks             []WorkflowTaskEvidence `json:"tasks"`
@@ -650,6 +652,10 @@ func validateWorkflowEvidence(evidence WorkflowEvidence, projectID, projectName 
 		!evidence.Status.Valid() || !validDigest(evidence.ResultDigest) || evidence.Tasks == nil || len(evidence.Tasks) > evidence.MaxTasks {
 		return ErrInvalidSession
 	}
+	if evidence.Autonomy != nil && (evidence.Autonomy.Validate() != nil || evidence.Autonomy.ExecutionLimit != evidence.MaxTasks ||
+		!evidence.Autonomy.AllowsEmployee(evidence.ReviewerID)) {
+		return ErrInvalidSession
+	}
 	for _, taskEvidence := range evidence.Tasks {
 		if strings.TrimSpace(taskEvidence.TaskID) == "" || taskEvidence.TaskID != strings.TrimSpace(taskEvidence.TaskID) ||
 			commandledger.ValidateCommandID(taskEvidence.ExecutionCommandID) != nil ||
@@ -748,6 +754,10 @@ func cloneAnswers(answers []Answer) []Answer {
 
 func cloneWorkflowEvidence(evidence WorkflowEvidence) WorkflowEvidence {
 	cloned := evidence
+	if evidence.Autonomy != nil {
+		contract := evidence.Autonomy.Clone()
+		cloned.Autonomy = &contract
+	}
 	cloned.Tasks = append(make([]WorkflowTaskEvidence, 0, len(evidence.Tasks)), evidence.Tasks...)
 	if evidence.Next != nil {
 		next := *evidence.Next

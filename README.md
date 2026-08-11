@@ -14,6 +14,9 @@ WorkCairnは、自分専用のAI会社へ自然言語で仕事を依頼するloc
 - Task実行、別AI社員によるReview、Request Changes時のRevisionと再Review
 - iPhoneの`My Actions`で、本当に必要な質問・承認・Recoveryだけを案内
 - PC／iPadの`Company View`で、AI社員、担当、Maker → Reviewer → Revisionの流れを確認
+- Workflow承認時に、今回AI会社へ任せる範囲をAutonomy Contractとして確認
+- 成果物、独立Review、Revision、承認、外部Actionを保存済みの確定記録から確認
+- 会社が進めたstepと、人間を呼ばずに進めたstepをCEO Attentionとして確認
 - 承認前副作用ゼロ、Task Version/CAS、Command Ledger、partial failureの明示
 - Deliverable、canonical Review JSON、Revision intent、Event／Auditをローカル保存
 - read-only診断と、確定証拠に拘束された限定的な明示Recovery
@@ -115,6 +118,7 @@ UIはこのフローを実装せず、Go Interaction Sessionの`Next Action`を�
 - 変更前に内容を確認でき、重要な副作用は明示承認まで開始しない
 - 同じ依頼が届いても仕事を重複実行せず、異なる依頼の取り違えを拒否する
 - 「どこまで完了したか」「何が未確認か」を成立済み記録から説明する
+- 任せたEmployee、Review必須、Revision、実行上限を承認対象digestへ固定する
 - 外部公開後や成果物保存後の失敗を隠さず、完了済み部分を勝手に削除しない
 - 状態が曖昧なときは勝手に再実行せず、人間へRecovery確認を返す
 - 実運用前にtemporary Vaultと外部backupを要求

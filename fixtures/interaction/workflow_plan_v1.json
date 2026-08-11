@@ -8,6 +8,17 @@
     "reviewer_name": "伊藤 健太",
     "reviewer_model": "Claude Sonnet 5",
     "max_tasks": 10,
+    "autonomy_contract": {
+      "schema_version": "workcairn-autonomy.v1",
+      "task_execution": "delegated",
+      "review": "required",
+      "revision": "delegated",
+      "external_publish": "separate_approval",
+      "spending": "forbidden",
+      "allowed_employee_ids": ["PLAN-001", "QA-001"],
+      "allowed_models": ["Claude Sonnet 5"],
+      "execution_limit": 10
+    },
     "next": {
       "task_id": "TASK-001",
       "ready": true,
@@ -17,5 +28,5 @@
     "executable": true,
     "approval_required": true
   },
-  "expected_workflow_plan_digest": "sha256:df9409a079a1add731d56a46d0faef3aa5206ecfa8151a002571d5ff1c8b504a"
+  "expected_workflow_plan_digest": "sha256:146e6854175f98c91ead02a722273e1d017bb3106d8329afa31cfa5036dfbd23"
 }

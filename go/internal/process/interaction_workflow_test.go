@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
@@ -79,6 +80,14 @@ func TestInteractionWorkflowTemporaryVaultReviewRevisionAndReplay(t *testing.T) 
 	if turn.Workflow.ResultDigest != digest {
 		t.Fatalf("result digest = %s, want %s", turn.Workflow.ResultDigest, digest)
 	}
+	report, reportErr := InspectWorkReport(context.Background(), root, ready.SessionID)
+	if reportErr != nil || report.Autonomy == nil || !report.Proof.FullyVerified || report.Proof.VerifiedTasks != 3 ||
+		len(report.Proof.Tasks) != 3 || !report.Proof.Tasks[0].Review.RequestChanges ||
+		!report.Proof.Tasks[0].Revision.IntentCommitted || report.Proof.Tasks[0].Revision.RevisionTaskID != "TASK-003" ||
+		!report.Proof.Audit.Readable || report.Proof.Audit.RecordedEvents == 0 ||
+		report.Attention.DelegatedSteps != 7 || report.Attention.RecoveryAttentionRequired != 0 || !report.Attention.NoActionNeeded {
+		t.Fatalf("Work Report = %#v, %v", report, reportErr)
+	}
 	projectLedger, _ := vault.NewCommandLedgerStore(root, "ToDoアプリ")
 	if stored, getErr := projectLedger.Get(context.Background(), result.WorkflowCommandID); getErr != nil || stored.State != commandledger.StateSucceeded {
 		t.Fatalf("child Workflow Ledger = %#v, %v", stored, getErr)
@@ -112,6 +121,23 @@ func TestInteractionWorkflowPlanFixturePinsApprovalDigest(t *testing.T) {
 	digest, err := interactionWorkflowPlanDigest(fixture.Plan)
 	if err != nil || digest != fixture.ExpectedDigest {
 		t.Fatalf("Workflow plan digest = %s, want %s, err=%v", digest, fixture.ExpectedDigest, err)
+	}
+}
+
+func TestInteractionWorkflowPlanRejectsAutonomyOutsideActualTeam(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	ready := writeReadyInteractionSession(t, root, "SESSION-WORKFLOW-AUTONOMY", at.Add(-time.Hour))
+	contract, contractErr := autonomy.NewStandard([]string{"PLAN-001"}, []string{"Claude Sonnet 5"}, 10)
+	if contractErr != nil {
+		t.Fatal(contractErr)
+	}
+	_, err := PlanInteractionWorkflow(context.Background(), InteractionWorkflowPlanInput{
+		VaultRoot: root, SessionID: ready.SessionID, ExpectedVersion: ready.Version,
+		ReviewerID: "QA-001", CurrentTime: at, MaxTasks: 10, Autonomy: &contract,
+	})
+	if err == nil {
+		t.Fatal("PlanInteractionWorkflow accepted a contract that excludes the reviewer")
 	}
 }
 
@@ -177,6 +203,10 @@ func TestInteractionWorkflowFailureRecordsAttentionWithoutRollback(t *testing.T)
 	evidence := result.Session.Turns[len(result.Session.Turns)-1].Workflow
 	if evidence == nil || evidence.Failure == nil || evidence.Status != interaction.WorkflowStatusPartialFailure {
 		t.Fatalf("failure evidence = %#v", evidence)
+	}
+	report, reportErr := InspectWorkReport(context.Background(), root, ready.SessionID)
+	if reportErr != nil || report.Proof.FullyVerified || report.Attention.RecoveryAttentionRequired != 1 || report.Attention.NoActionNeeded {
+		t.Fatalf("partial Work Report = %#v, %v", report, reportErr)
 	}
 	if _, planErr := PlanInteractionWorkflow(context.Background(), InteractionWorkflowPlanInput{
 		VaultRoot: root, SessionID: ready.SessionID, ExpectedVersion: result.Session.Version,

@@ -312,6 +312,9 @@ ADR-0033に基づき、外部公開前に移行用compatibility distribution、t
 - archive allow-listとmacOS／Linux checksum生成
 - ADR-0034に基づくWorkCairn product／binary／module／archive rename
 - iPhone既定のMy Actionsと、PC／iPad既定のCompany View foundation
+- ADR-0035に基づくWorkflow単位のAutonomy Contract、canonical evidence由来のProof of Work／CEO Attention
+
+Public Beta向け差別化foundationでは、安全側の固定contractだけを提供します。Shadow Mode、Employee Authority、支出上限、長期KPI Storeは既存Approval／Ledger／Adapter境界へ自然に追加できる設計だけを記録し、先取り実装しません。
 
 Public Beta公開前に残る人間／実環境確認：
 

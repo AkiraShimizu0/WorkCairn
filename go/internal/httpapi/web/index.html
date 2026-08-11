@@ -74,6 +74,12 @@
             <button id="company-request-button" class="button compact" type="button">＋ 依頼する</button>
           </div>
           <section id="company-status" class="company-status" aria-live="polite"></section>
+          <section class="company-section attention-section" aria-labelledby="attention-heading">
+            <div class="section-heading">
+              <div><p class="eyebrow">CEO ATTENTION</p><h2 id="attention-heading">任せて進んだ仕事</h2></div>
+            </div>
+            <div id="attention-grid" class="attention-grid"></div>
+          </section>
           <section class="company-section" aria-labelledby="team-heading">
             <div class="section-heading">
               <div><p class="eyebrow">YOUR TEAM</p><h2 id="team-heading">AI社員</h2></div>
@@ -86,6 +92,16 @@
               <div><p class="eyebrow">RESPONSIBILITY FLOW</p><h2 id="flow-heading">仕事の流れ</h2></div>
             </div>
             <div id="company-flow" class="company-flow"></div>
+          </section>
+          <section class="company-section company-insight-grid" aria-label="自律範囲と仕事の証明">
+            <article class="company-insight" aria-labelledby="autonomy-heading">
+              <div><p class="eyebrow">AUTONOMY CONTRACT</p><h2 id="autonomy-heading">任せている範囲</h2></div>
+              <div id="autonomy-summary"></div>
+            </article>
+            <article class="company-insight" aria-labelledby="proof-heading">
+              <div><p class="eyebrow">PROOF OF WORK</p><h2 id="proof-heading">実際に完了したこと</h2></div>
+              <div id="proof-of-work"></div>
+            </article>
           </section>
         </section>
       </section>

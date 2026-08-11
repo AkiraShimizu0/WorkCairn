@@ -189,6 +189,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 	for _, required := range []string{
 		`Prefer: "respond-async"`, "monitorAcceptedCommand", "?scope=workspace",
 		"Your company is working. No action needed.", "renderCompanyFlow", "const next = state.next",
+		"/work-report", "autonomy_contract", "renderProofOfWork", "renderCEOAttention",
 	} {
 		if !strings.Contains(asset.Body.String(), required) {
 			t.Fatalf("mobile UI is missing command continuity boundary %q", required)
@@ -196,7 +197,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 	}
 	index := httptest.NewRecorder()
 	handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/", nil))
-	for _, required := range []string{"My Actions", "Company View", "AI社員", "RESPONSIBILITY FLOW"} {
+	for _, required := range []string{"My Actions", "Company View", "AI社員", "RESPONSIBILITY FLOW", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION"} {
 		if !strings.Contains(index.Body.String(), required) {
 			t.Fatalf("mobile UI is missing Living Company Dashboard surface %q", required)
 		}
@@ -549,7 +550,7 @@ func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(
 		"version": ContractVersion, "command_id": "CMD-MOBILE-WORKFLOW-001", "operation": "interaction.workflow.execute", "approved": true,
 		"payload": map[string]any{
 			"session_id": sessionID, "expected_version": next.ExpectedVersion, "reviewer_id": "QA-001", "current_time": workflowTime,
-			"max_tasks": 10, "workflow_plan_digest": workflowPlan.WorkflowPlanDigest, "approval_reference": "mobile-e2e-approval",
+			"max_tasks": 10, "autonomy_contract": workflowPlan.Autonomy, "workflow_plan_digest": workflowPlan.WorkflowPlanDigest, "approval_reference": "mobile-e2e-approval",
 		},
 	})
 	waitForCommandStateHTTP(t, handler, "CMD-MOBILE-WORKFLOW-001", commandledger.StateSucceeded)
@@ -573,6 +574,19 @@ func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(
 	decodeHTTPResult(t, evidenceResponse, &evidence)
 	if evidence.Deliverable == nil || evidence.Deliverable.Title != "要件をまとめる" || !strings.Contains(evidence.Deliverable.Content, "完成した成果物") || len(evidence.Reviews) != 1 || evidence.Reviews[0].Decision.Verdict != "Approve" {
 		t.Fatalf("Task evidence = %#v", evidence)
+	}
+	reportResponse := httptest.NewRecorder()
+	handler.ServeHTTP(reportResponse, httptest.NewRequest(http.MethodGet, "/v1/interactions/"+sessionID+"/work-report", nil))
+	var report workspaceprocess.WorkReport
+	decodeHTTPResult(t, reportResponse, &report)
+	if report.Autonomy == nil || report.Autonomy.ExecutionLimit != 10 ||
+		!reflect.DeepEqual(report.Autonomy.AllowedEmployeeIDs, []string{"PLAN-001", "QA-001"}) ||
+		!report.Proof.FullyVerified || report.Proof.VerifiedTasks != 1 || len(report.Proof.Tasks) != 1 ||
+		report.Proof.Tasks[0].MakerID != "PLAN-001" || report.Proof.Tasks[0].Review.ReviewerID != "QA-001" ||
+		!report.Proof.Audit.Readable || report.Proof.Audit.RecordedEvents == 0 ||
+		report.Attention.CompanySteps != 4 || report.Attention.DelegatedSteps != 2 ||
+		report.Attention.ClarificationQuestions != 1 || report.Attention.ApprovalMoments != 5 || !report.Attention.NoActionNeeded {
+		t.Fatalf("Work Report = %#v", report)
 	}
 }
 

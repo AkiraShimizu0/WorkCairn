@@ -20,6 +20,7 @@
 - `v1.0.0-beta.1`のversion source、macOS／Linux build matrix、temporary Vault + Mock Provider smokeを追加。
 - Public Beta Quickstart、Security Policy、Contributing guide、native実機項目を分離したRelease Checklistを追加。
 - WorkCairnのLiving Company Dashboardとして、iPhone既定のMy ActionsとPC／iPad既定のCompany Viewを追加。
+- Workflow承認範囲を固定するAutonomy Contractと、確定記録から再構成するProof of Work／CEO Attentionを追加。
 
 ### Changed
 

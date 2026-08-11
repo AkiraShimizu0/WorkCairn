@@ -80,6 +80,10 @@ iPhone browser
 
 いずれもInteraction Next Action、Organization inventory、Workflow／Task evidenceを表示するだけで、Task遷移やReview判断をJavaScriptへ複製しません。対応不要なら`Your company is working. No action needed.`を明示します。Prompt、Provider生response、API key、Vault pathは表示しません。External ActionはWorkflow完了後に利用者が明示的に選んだ場合だけ、別のsource／Action digest承認へ進みます。
 
+Workflowを承認する前に、ADR-0035の`workcairn-autonomy.v1`で今回任せる範囲を確認します。Public BetaではTask実行とRevisionを委任し、各成果物のReviewを必須、External publishを別承認、支出を禁止する安全側の標準契約です。参加Employee ID、Employee inventory由来の論理model、Task上限をWorkflow plan digestへ含めるため、承認後に範囲だけを差し替えられません。これは既存Approval、Execution Policy、Command Ledgerを置き換える機構ではありません。
+
+Company ViewのProof of Workは、Interaction evidenceからTask、Deliverable、canonical Review JSON、Revision intent、Command Ledger、Auditを再読込するread-only Work Reportです。誰が作り、誰がReviewし、Request ChangesとRevisionがあったか、外部Actionが成立したかを表示します。欠落やpartial stateは完了と推測せず`確認が必要`とします。同じReportから、会社が処理したstep、委任範囲で進んだstep、質問、承認、Recovery attentionをCEO Attentionとして算出します。新しい実績Storeやprocess-local counterを正本にしません。
+
 承認済みInteraction commandはADR-0032のbounded acceptanceでbrowser接続から切り離され、iPhoneがlock／backgroundへ移ってもdaemon process内で継続します。画面は同じCommand IDのLedger statusだけをpollし、再読込後も再実行せずstatus確認を再開します。daemon crash後の自動resumeやLedger欠落の推測は行いません。
 
 既定daemonは引き続きloopback限定です。mobile modeもunspecified／public addressを拒否し、remote公開、敵対的LAN、port forwardingをsupportしません。HTTPを暗号化しないためtrusted LAN専用であり、internet公開には将来のTLS、durable identity、authorizationが必要です。
@@ -195,6 +199,7 @@ Public Beta前に移行用compatibility distributionを撤去しました。repo
 - Notificationはlocal read-only Inboxだけで、外部channel配送、未読／ack、Event replayは未実装。Metricsはprocess再起動でresetされる
 - External ActionはWordPress post publishだけで、HTML変換、update／delete、media upload、remote reconciliation、自動retryは未実装
 - Interaction SessionはReviewed Workflow完了と任意の単一WordPress Action handoffまでを扱う。複数Action、公開意図の推測、automatic approvalは未実装
+- Autonomy Contractは安全側の標準profileだけで、任意のReview省略、支出上限、永続Employee Authorityは未実装。Shadow ModeはExternal Action intent／Ledgerへ将来追加可能だが未実装
 - remote authentication／TLS／internet公開とPush通知は未実装
 
 これらはGo Only Runtimeの不足ではなく、次期Roadmapで段階的に扱う耐久性・運用機能です。

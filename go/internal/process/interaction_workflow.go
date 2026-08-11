@@ -4,14 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 var ErrInteractionWorkflowPrecondition = errors.New("interaction Workflow precondition failed")
@@ -23,6 +27,7 @@ type InteractionWorkflowPlanInput struct {
 	ReviewerID      string
 	CurrentTime     time.Time
 	MaxTasks        int
+	Autonomy        *autonomy.Contract
 }
 
 type InteractionWorkflowPlan struct {
@@ -34,6 +39,7 @@ type InteractionWorkflowPlan struct {
 	ReviewerName       string                   `json:"reviewer_name"`
 	ReviewerModel      string                   `json:"reviewer_model"`
 	MaxTasks           int                      `json:"max_tasks"`
+	Autonomy           autonomy.Contract        `json:"autonomy_contract"`
 	Next               service.WorkflowStepPlan `json:"next"`
 	WorkflowPlanDigest string                   `json:"workflow_plan_digest"`
 	Executable         bool                     `json:"executable"`
@@ -84,10 +90,14 @@ func PlanInteractionWorkflow(ctx context.Context, input InteractionWorkflowPlanI
 	if err != nil {
 		return InteractionWorkflowPlan{}, err
 	}
+	contract, err := resolveAutonomyContract(ctx, input, reviewed)
+	if err != nil {
+		return InteractionWorkflowPlan{}, err
+	}
 	plan := InteractionWorkflowPlan{
 		SessionID: record.SessionID, SessionVersion: record.Version, ProjectID: projectID, ProjectName: projectName,
 		ReviewerID: reviewed.ReviewerID, ReviewerName: reviewed.ReviewerName, ReviewerModel: reviewed.ReviewerModel,
-		MaxTasks: input.MaxTasks, Next: reviewed.Next, Executable: true, ApprovalRequired: true,
+		MaxTasks: input.MaxTasks, Autonomy: contract, Next: reviewed.Next, Executable: true, ApprovalRequired: true,
 	}
 	plan.WorkflowPlanDigest, err = interactionWorkflowPlanDigest(plan)
 	if err != nil {
@@ -202,10 +212,11 @@ func interactionWorkflowPlanDigest(plan InteractionWorkflowPlan) (string, error)
 		ReviewerName   string                   `json:"reviewer_name"`
 		ReviewerModel  string                   `json:"reviewer_model"`
 		MaxTasks       int                      `json:"max_tasks"`
+		Autonomy       autonomy.Contract        `json:"autonomy_contract"`
 		Next           service.WorkflowStepPlan `json:"next"`
 	}{
 		plan.SessionID, plan.SessionVersion, plan.ProjectID, plan.ProjectName, plan.ReviewerID,
-		plan.ReviewerName, plan.ReviewerModel, plan.MaxTasks, plan.Next,
+		plan.ReviewerName, plan.ReviewerModel, plan.MaxTasks, plan.Autonomy, plan.Next,
 	})
 }
 
@@ -233,7 +244,7 @@ func interactionWorkflowEvidence(
 	evidence := interaction.WorkflowEvidence{
 		SchemaVersion: 1, CommandID: input.CommandID, WorkflowCommandID: workflowCommandID,
 		ProjectID: plan.ProjectID, ProjectName: plan.ProjectName, ReviewerID: input.ReviewerID,
-		MaxTasks: input.MaxTasks, Status: status, ResultDigest: digest,
+		MaxTasks: input.MaxTasks, Autonomy: pointerToAutonomy(plan.Autonomy), Status: status, ResultDigest: digest,
 		Tasks: make([]interaction.WorkflowTaskEvidence, 0, len(result.Tasks)),
 	}
 	for _, current := range result.Tasks {
@@ -257,6 +268,60 @@ func interactionWorkflowEvidence(
 		evidence.Failure = &interaction.WorkflowFailure{Code: code, Stage: stage, Partial: partial}
 	}
 	return evidence, nil
+}
+
+func resolveAutonomyContract(ctx context.Context, input InteractionWorkflowPlanInput, reviewed ReviewedWorkflowPlan) (autonomy.Contract, error) {
+	store, err := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: input.VaultRoot, ProjectName: reviewed.ProjectName})
+	if err != nil {
+		return autonomy.Contract{}, err
+	}
+	tasks, err := store.InspectAll(ctx)
+	if err != nil {
+		return autonomy.Contract{}, err
+	}
+	employeeIDs := []string{reviewed.ReviewerID}
+	for _, current := range tasks {
+		if current.Status == task.StatusCompleted {
+			continue
+		}
+		if current.AssigneeID == nil || strings.TrimSpace(*current.AssigneeID) == "" {
+			return autonomy.Contract{}, ErrInteractionWorkflowPrecondition
+		}
+		employeeIDs = append(employeeIDs, strings.TrimSpace(*current.AssigneeID))
+	}
+	loader, err := vault.NewLoader(input.VaultRoot)
+	if err != nil {
+		return autonomy.Contract{}, err
+	}
+	models := make([]string, 0, len(employeeIDs))
+	for _, employeeID := range employeeIDs {
+		employee, loadErr := loader.LoadEmployeeContext(ctx, employeeID)
+		if loadErr != nil {
+			return autonomy.Contract{}, loadErr
+		}
+		models = append(models, employee.Model)
+	}
+	standard, err := autonomy.NewStandard(employeeIDs, models, input.MaxTasks)
+	if err != nil {
+		return autonomy.Contract{}, err
+	}
+	if input.Autonomy == nil {
+		return standard, nil
+	}
+	requested := input.Autonomy.Clone()
+	if requested.Validate() != nil || requested.ExecutionLimit != input.MaxTasks {
+		return autonomy.Contract{}, ErrInteractionWorkflowPrecondition
+	}
+	if !slices.Equal(requested.AllowedEmployeeIDs, standard.AllowedEmployeeIDs) ||
+		!slices.Equal(requested.AllowedModels, standard.AllowedModels) {
+		return autonomy.Contract{}, ErrInteractionWorkflowPrecondition
+	}
+	return requested, nil
+}
+
+func pointerToAutonomy(contract autonomy.Contract) *autonomy.Contract {
+	cloned := contract.Clone()
+	return &cloned
 }
 
 func workflowFailure(result service.ReviewedWorkflowRunResult, err error) (string, string, bool) {

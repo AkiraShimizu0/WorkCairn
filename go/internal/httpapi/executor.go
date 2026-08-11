@@ -10,6 +10,7 @@ import (
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandcontract"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
@@ -213,13 +214,14 @@ type interactionPlanApplyPayload struct {
 }
 
 type interactionWorkflowExecutePayload struct {
-	SessionID          string    `json:"session_id"`
-	ExpectedVersion    uint64    `json:"expected_version"`
-	ReviewerID         string    `json:"reviewer_id"`
-	CurrentTime        time.Time `json:"current_time"`
-	ApprovalReference  string    `json:"approval_reference,omitempty"`
-	MaxTasks           int       `json:"max_tasks"`
-	WorkflowPlanDigest string    `json:"workflow_plan_digest"`
+	SessionID          string             `json:"session_id"`
+	ExpectedVersion    uint64             `json:"expected_version"`
+	ReviewerID         string             `json:"reviewer_id"`
+	CurrentTime        time.Time          `json:"current_time"`
+	ApprovalReference  string             `json:"approval_reference,omitempty"`
+	MaxTasks           int                `json:"max_tasks"`
+	WorkflowPlanDigest string             `json:"workflow_plan_digest"`
+	Autonomy           *autonomy.Contract `json:"autonomy_contract,omitempty"`
 }
 
 type interactionActionExecutePayload struct {
@@ -340,7 +342,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		return workspaceprocess.ExecuteInteractionWorkflow(ctx, workspaceprocess.ExecuteInteractionWorkflowInput{
 			InteractionWorkflowPlanInput: workspaceprocess.InteractionWorkflowPlanInput{
 				VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
-				ReviewerID: payload.ReviewerID, CurrentTime: payload.CurrentTime, MaxTasks: payload.MaxTasks,
+				ReviewerID: payload.ReviewerID, CurrentTime: payload.CurrentTime, MaxTasks: payload.MaxTasks, Autonomy: payload.Autonomy,
 			},
 			WorkflowPlanDigest: payload.WorkflowPlanDigest, ApprovalReference: payload.ApprovalReference,
 			CommandID: command.CommandID, EventObservers: executor.observers,
@@ -490,6 +492,10 @@ func (executor *ProcessExecutor) InspectTaskEvidence(ctx context.Context, projec
 	return workspaceprocess.InspectTaskEvidence(ctx, executor.vaultRoot, projectName, taskID)
 }
 
+func (executor *ProcessExecutor) InspectWorkReport(ctx context.Context, sessionID string) (workspaceprocess.WorkReport, error) {
+	return workspaceprocess.InspectWorkReport(ctx, executor.vaultRoot, sessionID)
+}
+
 func (executor *ProcessExecutor) PlanInteraction(ctx context.Context, request InteractionPlanRequest) (workspaceprocess.InteractionStartPlan, error) {
 	return workspaceprocess.PlanInteractionStart(ctx, workspaceprocess.InteractionStartInput{
 		VaultRoot: executor.vaultRoot, SessionID: request.SessionID, Request: request.Request,
@@ -500,7 +506,7 @@ func (executor *ProcessExecutor) PlanInteraction(ctx context.Context, request In
 func (executor *ProcessExecutor) PlanInteractionWorkflow(ctx context.Context, request InteractionWorkflowPlanRequest) (workspaceprocess.InteractionWorkflowPlan, error) {
 	return workspaceprocess.PlanInteractionWorkflow(ctx, workspaceprocess.InteractionWorkflowPlanInput{
 		VaultRoot: executor.vaultRoot, SessionID: request.SessionID, ExpectedVersion: request.ExpectedVersion,
-		ReviewerID: request.ReviewerID, CurrentTime: request.CurrentTime, MaxTasks: request.MaxTasks,
+		ReviewerID: request.ReviewerID, CurrentTime: request.CurrentTime, MaxTasks: request.MaxTasks, Autonomy: request.Autonomy,
 	})
 }
 
