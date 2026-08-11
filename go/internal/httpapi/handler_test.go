@@ -181,7 +181,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 	}
 	asset := httptest.NewRecorder()
 	handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
-	for _, forbidden := range []string{"TaskStarted", "TaskCompleted", "request_changes →", "ANTHROPIC_API_KEY", "innerHTML"} {
+	for _, forbidden := range []string{"TaskStarted", "TaskCompleted", "request_changes →", "ANTHROPIC_API_KEY", "innerHTML", "crypto.randomUUID", "Math.random"} {
 		if strings.Contains(asset.Body.String(), forbidden) {
 			t.Fatalf("mobile UI contains forbidden rule or secret surface %q", forbidden)
 		}
@@ -190,6 +190,9 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		`Prefer: "respond-async"`, "monitorAcceptedCommand", "?scope=workspace",
 		"Your company is working. No action needed.", "renderCompanyFlow", "const next = state.next",
 		"/work-report", "autonomy_contract", "renderProofOfWork", "renderCEOAttention",
+		"cryptoAPI.getRandomValues", "BROWSER_SECURE_RANDOM_UNAVAILABLE",
+		`ui.requestForm.addEventListener("submit", prepareNewRequest)`, `requestJSON("/v1/interaction-plans"`,
+		`showError(error, "依頼内容を確認できませんでした")`,
 	} {
 		if !strings.Contains(asset.Body.String(), required) {
 			t.Fatalf("mobile UI is missing command continuity boundary %q", required)
@@ -345,6 +348,22 @@ func TestTrustedLANPairingProtectsAPIAndKeepsCodeOutOfResponses(t *testing.T) {
 	handler.ServeHTTP(inspectionResponse, inspectionRequest)
 	if inspectionResponse.Code != http.StatusOK || !strings.Contains(inspectionResponse.Body.String(), "QA-001") || strings.Contains(inspectionResponse.Body.String(), code) {
 		t.Fatalf("authorized inspection = %d %s", inspectionResponse.Code, inspectionResponse.Body.String())
+	}
+
+	planRequest := httptest.NewRequest(http.MethodPost, "/v1/interaction-plans", bytes.NewBufferString(
+		`{"version":"workspace-interaction.v1","session_id":"SESSION-TRUSTED-LAN-001","request":"iPhoneから仕事を依頼する","model":"Claude Sonnet 5","current_time":"2026-08-12T12:00:00+09:00"}`,
+	))
+	planRequest.AddCookie(cookie)
+	planRequest.Header.Set("Content-Type", "application/json")
+	planRequest.Header.Set(localIntentHeader, localIntentValue)
+	planRequest.Header.Set("Origin", "http://example.com")
+	planResponse := httptest.NewRecorder()
+	handler.ServeHTTP(planResponse, planRequest)
+	if planResponse.Code != http.StatusOK || !strings.Contains(planResponse.Body.String(), "request_digest") {
+		t.Fatalf("authorized Interaction preview = %d %s", planResponse.Code, planResponse.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, ".workspace-os")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read-only Interaction preview changed Vault: %v", err)
 	}
 
 	mutation := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewBufferString(`{}`))

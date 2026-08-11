@@ -77,9 +77,24 @@ function button(label, kind, handler, type = "button") {
 }
 
 function now() { return new Date().toISOString(); }
-function commandID() { return `CMD-${crypto.randomUUID().toUpperCase()}`; }
-function sessionID() { return `SESSION-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`; }
-function projectID() { return `PROJECT-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`; }
+function secureRandomUUID() {
+  const cryptoAPI = window.crypto;
+  if (!cryptoAPI || typeof cryptoAPI.getRandomValues !== "function") {
+    throw new APIError("このブラウザでは安全な依頼IDを作成できません。ブラウザを更新して再度お試しください。", 0, {
+      code: "BROWSER_SECURE_RANDOM_UNAVAILABLE",
+    });
+  }
+  const bytes = new Uint8Array(16);
+  cryptoAPI.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+}
+
+function commandID() { return `CMD-${secureRandomUUID().toUpperCase()}`; }
+function sessionID() { return `SESSION-${Date.now()}-${secureRandomUUID().slice(0, 8).toUpperCase()}`; }
+function projectID() { return `PROJECT-${Date.now()}-${secureRandomUUID().slice(0, 6).toUpperCase()}`; }
 
 function stateLabel(value) {
   const labels = {
@@ -574,10 +589,10 @@ function openActionSheet(next) {
 }
 
 async function prepareActionApproval(next, taskID, targetID) {
-  const outerCommandID = commandID();
   const currentTime = now();
-  setBusy(true, "公開内容を確認しています", "成果物digestと公開対象をread-onlyで検証しています。");
   try {
+    const outerCommandID = commandID();
+    setBusy(true, "公開内容を確認しています", "成果物digestと公開対象をread-onlyで検証しています。");
     const plan = await requestJSON("/v1/interaction-action-plans", {
       method: "POST",
       body: JSON.stringify({ version: INTERACTION_VERSION, session_id: next.session_id, expected_version: next.expected_version, task_id: taskID, target_id: targetID, current_time: currentTime, command_id: outerCommandID }),
@@ -621,10 +636,14 @@ function showApprovalSheet({ title, description, facts, approveLabel, onApprove,
       button(approveLabel, approveKind, null, "submit"),
     ),
   );
-  form.onsubmit = (event) => {
+  form.onsubmit = async (event) => {
     event.preventDefault();
     closeActionDialog();
-    onApprove();
+    try {
+      await onApprove();
+    } catch (error) {
+      showError(error);
+    }
   };
   ui.actionDialog.showModal();
 }
@@ -636,17 +655,17 @@ function approvalFacts(facts) {
 }
 
 async function executeNextCommand(next, payload, busyTitle, busyMessage, fixedCommandID = null) {
-  const command = {
-    version: COMMAND_VERSION,
-    command_id: fixedCommandID || commandID(),
-    operation: next.operation,
-    approved: true,
-    payload,
-  };
-  sessionStorage.setItem(STORAGE_PENDING, JSON.stringify(command));
-  setBusy(true, busyTitle, busyMessage);
   let accepted = false;
   try {
+    const command = {
+      version: COMMAND_VERSION,
+      command_id: fixedCommandID || commandID(),
+      operation: next.operation,
+      approved: true,
+      payload,
+    };
+    sessionStorage.setItem(STORAGE_PENDING, JSON.stringify(command));
+    setBusy(true, busyTitle, busyMessage);
     await requestJSON("/v1/commands", {
       method: "POST",
       headers: { Prefer: "respond-async" },
@@ -1043,15 +1062,15 @@ function openRequestDialog() {
 
 async function prepareNewRequest(event) {
   event.preventDefault();
-  const data = new FormData(ui.requestForm);
-  const request = data.get("request")?.toString().trim();
-  const model = data.get("model")?.toString().trim();
-  if (!request || !model) return;
-  localStorage.setItem(STORAGE_MODEL, model);
-  const input = { version: INTERACTION_VERSION, session_id: sessionID(), request, model, current_time: now() };
-  ui.requestDialog.close();
-  setBusy(true, "依頼内容を確認しています", "まだWorkspaceやProviderは変更しません。");
   try {
+    const data = new FormData(ui.requestForm);
+    const request = data.get("request")?.toString().trim();
+    const model = data.get("model")?.toString().trim();
+    if (!request || !model) return toast("依頼内容とモデルを入力してください。");
+    localStorage.setItem(STORAGE_MODEL, model);
+    const input = { version: INTERACTION_VERSION, session_id: sessionID(), request, model, current_time: now() };
+    ui.requestDialog.close();
+    setBusy(true, "依頼内容を確認しています", "まだWorkspaceやProviderは変更しません。");
     const plan = await requestJSON("/v1/interaction-plans", { method: "POST", body: JSON.stringify(input) });
     setBusy(false);
     showApprovalSheet({
@@ -1068,6 +1087,7 @@ async function prepareNewRequest(event) {
       },
     });
   } catch (error) {
+    if (ui.requestDialog.open) ui.requestDialog.close();
     showError(error, "依頼内容を確認できませんでした");
   }
 }
