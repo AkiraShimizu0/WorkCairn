@@ -13,6 +13,7 @@ const ui = {
   myActionsTab: document.querySelector("#my-actions-tab"),
   companyTab: document.querySelector("#company-tab"),
   status: document.querySelector("#connection-status"),
+  settingsButton: document.querySelector("#settings-button"),
   activeCard: document.querySelector("#active-card"),
   detailsPanel: document.querySelector("#details-panel"),
   details: document.querySelector("#details-content"),
@@ -28,6 +29,8 @@ const ui = {
   requestForm: document.querySelector("#request-form"),
   actionDialog: document.querySelector("#action-dialog"),
   actionForm: document.querySelector("#action-form"),
+  settingsDialog: document.querySelector("#settings-dialog"),
+  providerSettings: document.querySelector("#provider-settings"),
   busy: document.querySelector("#busy-overlay"),
   busyTitle: document.querySelector("#busy-title"),
   busyMessage: document.querySelector("#busy-message"),
@@ -194,7 +197,7 @@ function showError(error, title = "処理を完了できませんでした") {
       stage ? node("div", {}, `stage: ${stage}`) : null,
     ),
     node("div", { class: "button-row" },
-      button(providerIssue ? "AIサービス状態を確認" : (pending ? "Command状態を再確認" : "状態を再確認"), "primary", () => providerIssue ? refreshProviderStatus() : (pending ? resumePendingCommand(pending) : refreshCurrent())),
+      button(providerIssue ? "AI Connectionsを開く" : (pending ? "Command状態を再確認" : "状態を再確認"), "primary", () => providerIssue ? openSettingsDialog() : (pending ? resumePendingCommand(pending) : refreshCurrent())),
       button("依頼一覧へ", "quiet", () => selectSession(null)),
     ),
   );
@@ -219,6 +222,7 @@ async function startWorkspace() {
   setBusy(false);
   ui.pairingView.hidden = true;
   ui.workspaceView.hidden = false;
+  ui.settingsButton.hidden = false;
   setConnected(true);
   await Promise.all([loadSessions(), loadProviderStatus()]);
   const stored = localStorage.getItem(STORAGE_SESSION);
@@ -242,7 +246,45 @@ async function refreshProviderStatus() {
   await loadProviderStatus();
   setBusy(false);
   if (state.record) renderNext();
+  renderProviderSettings();
   toast(state.providerStatus?.configured ? "AIサービスを利用できます。" : "Mac側のAIサービス設定を確認し、daemonを再起動してください。");
+}
+
+function providerStatusCopy() {
+  if (state.providerStatus?.configured) return {
+    state: "Connected",
+    className: "connected",
+    description: "Claudeを利用できます。credentialやModel IDの値は画面へ表示しません。",
+  };
+  if (state.providerStatus?.invalid?.includes("status_unavailable")) return {
+    state: "確認できません",
+    className: "attention",
+    description: "daemonとの接続を確認してから、状態を再確認してください。",
+  };
+  return {
+    state: "Setup required",
+    className: "attention",
+    description: "AIサービスの接続が必要です。現在のPublic BetaではMacの起動設定を確認してください。",
+  };
+}
+
+function renderProviderSettings() {
+  const copy = providerStatusCopy();
+  ui.providerSettings.replaceChildren(
+    node("section", { class: `connection-card ${copy.className}` },
+      node("div", { class: "connection-heading" },
+        node("div", {}, node("strong", {}, "Claude"), node("small", {}, "AI service")),
+        node("span", { class: `connection-state ${copy.className}` }, copy.state),
+      ),
+      node("p", {}, copy.description),
+      !state.providerStatus?.configured ? node("p", { class: "connection-safety" }, "秘密情報はiPhoneやbrowser storageへ保存しません。接続設定はMac側で行います。") : null,
+    ),
+  );
+}
+
+function openSettingsDialog() {
+  renderProviderSettings();
+  ui.settingsDialog.showModal();
 }
 
 async function loadSessions() {
@@ -378,7 +420,7 @@ function renderProviderSetup() {
     node("ul", { class: "trust-list" }, ...reasons.map((reason) => node("li", {}, reason))),
     node("p", { class: "supporting" }, "MacでWorkCairn daemonを停止し、AIサービス設定を起動processへ渡して再起動してください。別Providerへの自動fallbackは行いません。"),
     node("div", { class: "button-row" },
-      button("接続状態を再確認", "primary", refreshProviderStatus),
+      button("AI Connectionsを開く", "primary", openSettingsDialog),
       button("今は設定しない", "quiet", () => toast("依頼はPlan作成待ちのまま保存されています。")),
     ),
   );
@@ -1145,6 +1187,8 @@ ui.requestForm.addEventListener("submit", prepareNewRequest);
 document.querySelector("#new-request-button").addEventListener("click", openRequestDialog);
 document.querySelector("#company-request-button").addEventListener("click", openRequestDialog);
 document.querySelector("#refresh-button").addEventListener("click", () => refreshCurrent());
+ui.settingsButton.addEventListener("click", openSettingsDialog);
+document.querySelector("#provider-status-refresh").addEventListener("click", refreshProviderStatus);
 ui.myActionsTab.addEventListener("click", () => setView("actions"));
 ui.companyTab.addEventListener("click", () => setView("company"));
 ui.detailsPanel.addEventListener("toggle", () => { if (ui.detailsPanel.open) loadTaskEvidenceDetails(); });

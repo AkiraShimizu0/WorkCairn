@@ -95,7 +95,7 @@ bin/workcairn-daemon --vault "$beta_vault" --mobile
 
 WorkCairnは`.env`を自動読込しません。API key、Provider response、pairing codeをVaultやCommandへ保存しません。External Action用WordPress設定は任意で、通常のTask／Reviewには不要です。
 
-過去版でrepository rootの`.env`へ設定していた場合も、Go Only版は自動読込しません。値を移動せず、起動するterminal processへ安全に注入してください。Web UIの新規依頼ではModel名の選択は不要で、現在接続されたProviderをWorkCairnが利用します。接続不足の場合はProviderへ送信する前にMy Actionsへ案内し、別Providerへ無断で切り替えません。
+過去版でrepository rootの`.env`へ設定していた場合も、Go Only版は自動読込しません。値を移動せず、起動するterminal processへ安全に注入してください。Web UIの新規依頼ではModel名の選択は不要で、現在接続されたProviderをWorkCairnが利用します。`Settings → AI Connections`では値を表示せず接続状態とAutomatic routingを確認できます。接続不足の場合はProviderへ送信する前にMy Actionsへ案内し、別Providerへ無断で切り替えません。
 
 社員Markdownとtemporary Vaultの準備、初回Operator確認は[Public Beta Quickstart](docs/PublicBetaQuickstart.md)を参照してください。
 

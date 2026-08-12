@@ -15,6 +15,7 @@ WorkCairnのread-only操作とwriter操作は分離されています。`*-plan`
 - `running`、partial failure、stale Versionを推測で再実行しない。
 - `.env`をGo Runtimeへ読ませず、credentialは承認済みprocessの環境へだけ注入する。
 - daemonのProvider statusは起動processへ注入済みかだけをredacted inspectionし、remote Providerへ疎通しない。未接続時はPlan生成を開始せず、別Providerへfallbackしない。
+- Local Web UIの`AI Connections`は接続状態の確認専用です。mobile modeのHTTP経由でcredentialを入力せず、Public Betaの接続はMac側の承認済みprocess設定で行います。永続化を導入する場合はloopback限定SettingsとOS credential facilityを使います。
 - canonical artifact、Deliverable、Review JSON、Revision intent、Action evidenceを自動削除・上書きしない。
 
 ## 配布物の確認

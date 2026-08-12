@@ -27,6 +27,7 @@ WorkCairnは、自分専用のAI会社へ仕事を任せ、必要な質問と重
 - ADR-0034により正式製品名、binary、archive、Go module、固有環境変数をWorkCairnへ統一しました。Local Web UIはiPhone既定のMy ActionsとPC／iPad既定のCompany Viewを持ち、既存Next Action／Organization／evidenceだけを投影します。
 - ADR-0035のAutonomy ContractはWorkflow承認範囲を安全側のtyped valueへ固定します。Proof of Work／CEO AttentionはInteraction、Task、Deliverable、canonical Review、Revision intent、Command Ledger、Auditから再構成するread-only projectionで、新しいsource of truthや自動修復を持ちません。
 - ADR-0036によりdaemonは起動時Provider設定をnetwork accessなしのredacted statusとして公開し、未接続時はPlan生成前に案内します。新規Web Interactionは依頼ごとのModel選択を要求せず論理`workcairn-auto`を使います。Role／Task別routingは既存Runner Registry手前の将来typed policyであり、未接続Providerへのfallbackはしません。
+- Local Web UIの`AI Connections`はClaudeのredacted接続状態とAutomatic routingを表示するread-only Settingsです。trusted LANからsecretを入力せず、将来の永続接続はMac loopback限定SettingsからRuntime edgeのCredential Store Adapterを通してmacOS Keychainへ保存する方針を第一候補とします。
 - RevisionはADR-0012のimmutable intent、TaskService.Create、`revision.created`、Auditをtemporary VaultでEnd-to-End検証済みです。
 - Go Review PromptBuilder、構造化結果parser、ReviewService、ADR-0010 Vault Review Store、`workcairn review-*`は実装済みです。
 - ADR-0011 Review orchestrationがcanonical JSON commit後だけ`review.completed`を発行し、Vault Audit subscriberが保存します。projection／Event失敗はartifactを保持したpartial failureです。

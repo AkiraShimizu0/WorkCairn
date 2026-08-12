@@ -18,7 +18,10 @@
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
         <span><strong>WorkCairn</strong><small>Your AI company</small></span>
       </a>
-      <span id="connection-status" class="status-dot">接続確認中</span>
+      <div class="topbar-actions">
+        <span id="connection-status" class="status-dot">接続確認中</span>
+        <button id="settings-button" class="settings-button" type="button" hidden aria-label="AI Connectionsを開く">Settings</button>
+      </div>
     </header>
 
     <main>
@@ -130,6 +133,36 @@
 
   <dialog id="action-dialog" class="sheet-dialog">
     <form id="action-form" method="dialog" class="sheet"></form>
+  </dialog>
+
+  <dialog id="settings-dialog" class="sheet-dialog">
+    <section class="sheet" aria-labelledby="settings-heading">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-heading">
+        <div>
+          <p class="eyebrow">SETTINGS</p>
+          <h2 id="settings-heading">AI Connections</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button>
+      </div>
+      <p class="supporting">AIサービスを接続すると、WorkCairnが社員の役割と仕事に合う実行先を選びます。</p>
+      <div id="provider-settings" aria-live="polite"></div>
+      <section class="routing-settings" aria-labelledby="routing-heading">
+        <div class="settings-section-heading">
+          <div><p class="eyebrow">ROUTING</p><h3 id="routing-heading">Automatic</h3></div>
+          <span class="state-chip">推奨</span>
+        </div>
+        <p>通常はModel IDを選ぶ必要はありません。接続済みサービスからWorkCairnが選択します。</p>
+        <details class="advanced-settings">
+          <summary>Advanced</summary>
+          <p>EmployeeごとのProvider・Model固定やMaker／Reviewerの分離は将来のoverrideとして追加予定です。</p>
+        </details>
+      </section>
+      <div class="sheet-actions settings-actions">
+        <button id="provider-status-refresh" class="button quiet" type="button">状態を再確認</button>
+        <button class="button primary" type="button" data-close-dialog>閉じる</button>
+      </div>
+    </section>
   </dialog>
 
   <div id="busy-overlay" class="busy-overlay" hidden>

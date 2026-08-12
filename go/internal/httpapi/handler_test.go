@@ -200,6 +200,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		`ui.requestForm.addEventListener("submit", prepareNewRequest)`, `requestJSON("/v1/interaction-plans"`,
 		`showError(error, "依頼内容を確認できませんでした")`,
 		`requestJSON("/v1/provider-status")`, "PROVIDER_CONFIGURATION_REQUIRED", "AIサービスへ接続してください",
+		"openSettingsDialog", "renderProviderSettings", "秘密情報はiPhoneやbrowser storageへ保存しません",
 	} {
 		if !strings.Contains(asset.Body.String(), required) {
 			t.Fatalf("mobile UI is missing command continuity boundary %q", required)
@@ -207,12 +208,12 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 	}
 	index := httptest.NewRecorder()
 	handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/", nil))
-	for _, required := range []string{"My Actions", "Company View", "AI社員", "RESPONSIBILITY FLOW", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION", "接続済みAIサービスから、WorkCairnが実行先を選びます"} {
+	for _, required := range []string{"My Actions", "Company View", "AI社員", "RESPONSIBILITY FLOW", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION", "AI Connections", "Automatic", "接続済みAIサービスから、WorkCairnが実行先を選びます"} {
 		if !strings.Contains(index.Body.String(), required) {
 			t.Fatalf("mobile UI is missing Living Company Dashboard surface %q", required)
 		}
 	}
-	for _, forbidden := range []string{`name="model"`, "利用モデル"} {
+	for _, forbidden := range []string{`name="model"`, `type="password"`, "利用モデル"} {
 		if strings.Contains(index.Body.String(), forbidden) {
 			t.Fatalf("mobile UI still asks for per-request model selection %q", forbidden)
 		}
