@@ -181,7 +181,19 @@ function showError(error, title = "処理を完了できませんでした") {
   const stage = detail?.stage;
   const providerSetupRequired = code === "PROVIDER_CONFIGURATION_REQUIRED";
   const providerGenerationFailed = code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_generation";
-  const providerIssue = providerSetupRequired || providerGenerationFailed;
+  const providerFailures = {
+    PROVIDER_AUTHENTICATION_REQUIRED: "Claudeの接続を確認してください。credentialが無効・失効している可能性があります。",
+    PROVIDER_BILLING_REQUIRED: "Claude側の請求・支払い設定を確認してください。WorkCairnは自動retryしません。",
+    PROVIDER_PERMISSION_DENIED: "Claude側で、この接続に必要な利用権限を確認してください。",
+    PROVIDER_REQUEST_INVALID: "WorkCairnからClaudeへ送ったrequestが拒否されました。自動retryせず、問い合わせIDを確認してください。",
+    PROVIDER_RATE_LIMITED: "Claudeの利用上限に達しました。時間を置き、状態を確認してから新しいCommandとして再開してください。",
+    PROVIDER_UNAVAILABLE: "Claudeへ接続できないか、Claude側が一時的に利用できません。自動fallbackやretryは行っていません。",
+    PROVIDER_RESPONSE_INVALID: "Claudeから正常に読み取れる応答を受け取れませんでした。自動retryせず、問い合わせIDを確認してください。",
+  };
+  const providerFailureCopy = providerFailures[code];
+  const providerIssue = providerSetupRequired || providerGenerationFailed || Boolean(providerFailureCopy);
+  const providerRequestID = detail?.provider_failure?.request_id;
+  const providerSettingsAction = providerSetupRequired || code === "PROVIDER_AUTHENTICATION_REQUIRED" || code === "PROVIDER_PERMISSION_DENIED";
   const pending = sessionStorage.getItem(STORAGE_PENDING);
   ui.activeCard.className = "action-card attention";
   ui.activeCard.replaceChildren(
@@ -189,15 +201,18 @@ function showError(error, title = "処理を完了できませんでした") {
     node("h2", {}, title),
     node("p", { class: "lead" }, providerSetupRequired
       ? "AIサービスの接続設定が不足しています。Providerへ依頼は送信されていません。Macで設定してdaemonを再起動してください。"
+      : providerFailureCopy
+        ? providerFailureCopy
       : providerGenerationFailed
         ? "AIサービスでPlanを生成できませんでした。自動retryや別Providerへの切替は行っていません。接続状態を確認してください。"
       : "成立済みの記録を推測で変更せず、現在の状態を確認してください。"),
     node("div", { class: "error-box" },
       node("strong", {}, code),
       stage ? node("div", {}, `stage: ${stage}`) : null,
+      providerRequestID ? node("div", {}, `問い合わせID: ${providerRequestID}`) : null,
     ),
     node("div", { class: "button-row" },
-      button(providerIssue ? "AI Connectionsを開く" : (pending ? "Command状態を再確認" : "状態を再確認"), "primary", () => providerIssue ? openSettingsDialog() : (pending ? resumePendingCommand(pending) : refreshCurrent())),
+      button(providerSettingsAction ? "AI Connectionsを開く" : (providerIssue ? "Plan作成待ちへ戻る" : (pending ? "Command状態を再確認" : "状態を再確認")), "primary", () => providerSettingsAction ? openSettingsDialog() : (pending ? resumePendingCommand(pending) : refreshCurrent())),
       button("依頼一覧へ", "quiet", () => selectSession(null)),
     ),
   );
@@ -409,7 +424,6 @@ function renderProviderSetup() {
   const invalid = state.providerStatus?.invalid || [];
   const reasons = [];
   if (missing.includes("credential")) reasons.push("Provider credentialが起動processへ渡されていません");
-  if (missing.includes("provider_model")) reasons.push("接続先で使うProvider modelが未設定です");
   if (invalid.length) reasons.push("Provider設定を安全に検証できませんでした");
   if (!reasons.length) reasons.push("接続状態を取得できませんでした");
   ui.activeCard.className = "action-card attention";
@@ -792,10 +806,12 @@ async function monitorAcceptedCommand(command) {
     }
     if (record.state === "failed" || record.state === "partial_failure") {
       sessionStorage.removeItem(STORAGE_PENDING);
+	  const providerFailure = record.result?.provider_failure;
       throw new APIError(record.failure?.code || "COMMAND_FAILED", 422, {
         code: record.failure?.code || "COMMAND_FAILED",
         stage: record.failure?.stage,
         recovery_required: record.state === "partial_failure",
+		provider_failure: providerFailure,
       });
     }
     if (record.state !== "running") {

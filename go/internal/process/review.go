@@ -150,6 +150,11 @@ func ExecuteReview(ctx context.Context, input ExecuteReviewInput, provider Claud
 	if !input.Approved {
 		return ReviewExecutionResult{}, ErrReviewApprovalRequired
 	}
+	var err error
+	provider, err = resolveClaudeProcessConfig(provider)
+	if err != nil {
+		return ReviewExecutionResult{}, err
+	}
 	claim, err := claimReviewCommand(ctx, input, provider)
 	if err != nil {
 		return ReviewExecutionResult{}, err

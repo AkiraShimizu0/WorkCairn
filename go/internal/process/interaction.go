@@ -46,6 +46,16 @@ type InteractionPlanResult struct {
 	Session          interaction.Record    `json:"session"`
 	SessionCommitted bool                  `json:"session_committed"`
 	Generation       service.CEOPlanResult `json:"generation"`
+	ProviderFailure  *ProviderFailure      `json:"provider_failure,omitempty"`
+}
+
+// ProviderFailure is redacted diagnostic evidence derived from a typed
+// Adapter error. It never contains credential values or Provider messages.
+type ProviderFailure struct {
+	Category     string `json:"category"`
+	HTTPStatus   int    `json:"http_status,omitempty"`
+	ProviderType string `json:"provider_error_type,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
 }
 
 type InteractionApplyResult struct {
@@ -134,6 +144,11 @@ func ExecuteInteractionPlanGeneration(
 	if !approved {
 		return InteractionPlanResult{}, ErrInteractionApprovalRequired
 	}
+	var err error
+	provider, err = resolveClaudeProcessConfig(provider)
+	if err != nil {
+		return InteractionPlanResult{}, err
+	}
 	input.SessionID = strings.TrimSpace(input.SessionID)
 	if interaction.ValidateSessionID(input.SessionID) != nil || input.ExpectedVersion == 0 || input.CurrentTime.IsZero() ||
 		commandledger.ValidateCommandID(input.CommandID) != nil {
@@ -171,7 +186,8 @@ func ExecuteInteractionPlanGeneration(
 		VaultRoot: input.VaultRoot, Request: request, Model: record.Model, Approved: true,
 	}, provider, httpClient)
 	if generationErr != nil {
-		return finishInteractionPlan(ctx, claim, InteractionPlanResult{Session: record, Generation: generation}, generationErr, "interaction_plan_generation", false)
+		result := InteractionPlanResult{Session: record, Generation: generation, ProviderFailure: providerFailure(generationErr)}
+		return finishInteractionPlan(ctx, claim, result, generationErr, "interaction_plan_generation", false)
 	}
 	next, err := record.RecordPlan(generation.Plan, input.CurrentTime)
 	if err != nil {
@@ -187,8 +203,46 @@ func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, resul
 	if errors.Is(err, claude.ErrInvalidConfig) {
 		code = "PROVIDER_CONFIGURATION_REQUIRED"
 		stage = "provider_configuration"
+	} else if result.ProviderFailure != nil {
+		code = providerFailureCode(result.ProviderFailure.Category)
 	}
 	return result, finishDurableCommand(ctx, claim, result, err, code, stage, partial)
+}
+
+func providerFailure(err error) *ProviderFailure {
+	var failure *claude.Error
+	if !errors.As(err, &failure) {
+		return nil
+	}
+	category := failure.Category
+	if category == "" {
+		category = claude.FailureUnknown
+	}
+	return &ProviderFailure{
+		Category: string(category), HTTPStatus: failure.StatusCode,
+		ProviderType: failure.ProviderType, RequestID: failure.RequestID,
+	}
+}
+
+func providerFailureCode(category string) string {
+	switch claude.FailureCategory(category) {
+	case claude.FailureAuthentication:
+		return "PROVIDER_AUTHENTICATION_REQUIRED"
+	case claude.FailureBilling:
+		return "PROVIDER_BILLING_REQUIRED"
+	case claude.FailurePermission:
+		return "PROVIDER_PERMISSION_DENIED"
+	case claude.FailureInvalidRequest:
+		return "PROVIDER_REQUEST_INVALID"
+	case claude.FailureRateLimited:
+		return "PROVIDER_RATE_LIMITED"
+	case claude.FailureUnavailable, claude.FailureTransport:
+		return "PROVIDER_UNAVAILABLE"
+	case claude.FailureResponse:
+		return "PROVIDER_RESPONSE_INVALID"
+	default:
+		return "INTERACTION_PLAN_FAILED"
+	}
 }
 
 type InteractionAnswerInput struct {

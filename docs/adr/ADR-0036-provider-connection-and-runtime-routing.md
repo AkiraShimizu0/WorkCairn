@@ -18,9 +18,11 @@ Provider credential、Provider model ID、Base URL、HTTP clientは引き続きp
 
 Local Web UIの`AI Connections`はredactedな接続状態とAutomatic routing方針を表示するread-only foundationとします。trusted LAN mobile modeは暗号化されていないため、iPhoneからcredentialを入力・送信・保存するendpointを提供しません。Public Betaでbackend-sideの永続接続を追加する場合は、Macのloopback限定Settingsからsame-originで受け、Runtime edgeのCredential Store Adapterを通してmacOS Keychainへ保存する方式を第一候補とします。secretをresponse、log、Audit、Vault、browser storageへ返さず、process memoryへ必要時だけ取り出します。Linux等は各OS credential facilityを別Adapterとして追加し、平文設定fileを共通fallbackにはしません。実credentialの移行や保存開始はOperatorの明示操作を必要とします。
 
-daemonは起動時に現在注入されたClaude Adapter設定をnetwork accessなしで検証し、redactedなread-only statusを同一origin APIへ公開します。statusはProvider種別、設定可否、`credential`／`provider_model`等の欠落category、設定不正categoryだけを返し、値、長さ、fingerprint、model ID、Base URLを返しません。`configured`はAdapterを構築可能という意味で、remote credentialの有効性やProvider到達性を保証しません。
+daemonは起動時に現在注入されたClaude Adapter設定をnetwork accessなしで検証し、redactedなread-only statusを同一origin APIへ公開します。statusはProvider種別、設定可否、`credential`等の欠落category、設定不正categoryだけを返し、値、長さ、fingerprint、model ID、Base URLを返しません。`configured`はAdapterを構築可能という意味で、remote credentialの有効性やProvider到達性を保証しません。
 
 Interaction Plan生成前に設定不足を検出した場合、`PROVIDER_CONFIGURATION_REQUIRED`／`provider_configuration`としてCommand Ledgerへterminal failureを記録し、Providerを呼びません。UIはPlan承認操作の代わりにMac側の接続設定とdaemon再起動を案内します。別Providerへのfallback、自動retry、terminal failureの再実行は行いません。
+
+Providerがrequestを受理してerror responseを返した場合、Claude Adapterだけがboundedなerror envelopeをparseします。raw messageとresponse bodyは破棄し、公式error typeとHTTP statusから`authentication_required`、`billing_required`、`permission_denied`、`invalid_provider_request`、`rate_limited`、`provider_unavailable`へ分類します。sanitized request ID、HTTP status、Provider error type、分類だけをInteraction command resultへredacted diagnostic evidenceとして保存し、Ledger failure codeとMy Actionsの次Actionへ投影します。分類は実responseに基づき、credential、request payload、error messageを保存・表示しません。自動retry、fallback、既存terminal Commandの再実行は引き続き行いません。
 
 ### Automatic selection foundation
 
@@ -37,7 +39,9 @@ Interaction Plan生成前に設定不足を検出した場合、`PROVIDER_CONFIG
 
 Routeは論理model、Runner identity、Provider connection identity、capability、選択理由を持ち、Provider credentialや生model catalogを持ちません。Runner Registryは解決済みRouteのRunnerを取得する既存境界として再利用します。候補がない、allow-listと交差しない、Reviewer separationを満たせない場合はdefault denyで停止します。未接続Providerへのfallbackや、承認済みrouteを実行中に差し替えることは禁止します。
 
-Public Beta Acceptance修正では新しいProvider、Subscription-backed Runtime、role catalog、cost model、Advanced Settings永続化は実装しません。現在は接続済みClaude Adapterをconnection defaultとして使い、論理`workcairn-auto`を既存Provider-neutral Prompt／Runner要求へ渡します。
+Public Beta Acceptanceでは新しいProvider、Subscription-backed Runtime、role catalog、cost model、Advanced Settings永続化は実装しません。現在は論理`workcairn-auto`をClaude Adapter edgeのversioned supported-model policyへ渡し、`workcairn-claude-model-policy.v1`が公式にsupportされるconnection defaultを具体modelへ解決します。具体model IDはInteraction、Task、Workflow、UI、Domainへ持ち込まず、durable Commandのclaim前に解決してrequest identityへ拘束します。未知の`workcairn-*` routeは推測せず拒否します。明示的に注入されたProvider modelはtestと将来のAdvanced overrideだけに使い、製品CLI／daemonはmodel環境変数を読みません。
+
+`workcairn-claude-model-policy.v1`のconnection defaultは、Anthropic公式のcurrent model catalogでClaude API全利用者向けとされるClaude Sonnet 5（Provider model ID `claude-sonnet-5`）です。これはProvider Adapter package内だけで管理します。Provider廃止やsupported catalog変更時は既存policyを黙って差し替えず、policy version、contract test、Release Checklistを更新します。Models APIによる実行時探索、自動fallback、失敗後の別model retryは今回導入しません。
 
 ## Consequences
 
@@ -45,5 +49,6 @@ Public Beta Acceptance修正では新しいProvider、Subscription-backed Runtim
 - credential未設定はProvider transport failureと区別され、Provider呼出し前に安全に案内されます。
 - iPhoneとMacのSettingsで接続状態とAutomatic routingを確認できますが、credential登録はまだ行わず、trusted LANへsecret mutation surfaceを増やしません。
 - 利用者は通常の依頼でModel名を選ばず、WorkCairnが選ぶ製品体験へ移行できます。
+- Claude接続に必要な通常設定はcredentialだけとなり、model環境変数は製品surfaceから廃止されます。
 - Core、TaskService、Approval、Command Ledger、Recovery、JSON Contract v1は変更しません。
 - 本格的なRole／Task routingは複数Provider／Runtime inventoryを導入するフェーズで、typed Routeとapproval digest／Ledger identityへの拘束を別途実装します。

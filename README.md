@@ -89,13 +89,12 @@ UIへ到達するだけならcredentialは不要です。Plan生成やTask実行
 
 ```bash
 ANTHROPIC_API_KEY='<provider key>' \
-WORKCAIRN_CLAUDE_PROVIDER_MODEL='<supported provider model id>' \
 bin/workcairn-daemon --vault "$beta_vault" --mobile
 ```
 
 WorkCairnは`.env`を自動読込しません。API key、Provider response、pairing codeをVaultやCommandへ保存しません。External Action用WordPress設定は任意で、通常のTask／Reviewには不要です。
 
-過去版でrepository rootの`.env`へ設定していた場合も、Go Only版は自動読込しません。値を移動せず、起動するterminal processへ安全に注入してください。Web UIの新規依頼ではModel名の選択は不要で、現在接続されたProviderをWorkCairnが利用します。`Settings → AI Connections`では値を表示せず接続状態とAutomatic routingを確認できます。接続不足の場合はProviderへ送信する前にMy Actionsへ案内し、別Providerへ無断で切り替えません。
+過去版でrepository rootの`.env`へ設定していた場合も、Go Only版は自動読込しません。credentialの値を移動せず、起動するterminal processへ安全に注入してください。Provider model IDの設定は不要です。Web UIの新規依頼は論理Route `workcairn-auto`を使い、WorkCairnが管理するsupported-model policyからClaudeの実行先を解決します。`Settings → AI Connections`では値を表示せず接続状態とAutomatic routingを確認できます。接続不足の場合はProviderへ送信する前にMy Actionsへ案内し、別Providerへ無断で切り替えません。
 
 社員Markdownとtemporary Vaultの準備、初回Operator確認は[Public Beta Quickstart](docs/PublicBetaQuickstart.md)を参照してください。
 

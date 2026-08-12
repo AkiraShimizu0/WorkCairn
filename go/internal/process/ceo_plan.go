@@ -32,6 +32,11 @@ func GenerateCEOPlan(ctx context.Context, input CEOPlanGenerationInput, provider
 	if !input.Approved {
 		return service.CEOPlanResult{}, ErrCEOPlanGenerationApproval
 	}
+	var err error
+	provider, err = resolveClaudeProcessConfig(provider)
+	if err != nil {
+		return service.CEOPlanResult{}, err
+	}
 	loader, err := vault.NewLoader(input.VaultRoot)
 	if err != nil {
 		return service.CEOPlanResult{}, err

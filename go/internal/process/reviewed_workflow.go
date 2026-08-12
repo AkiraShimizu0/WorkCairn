@@ -87,6 +87,11 @@ func ExecuteReviewedWorkflow(
 	if !input.Approved {
 		return service.ReviewedWorkflowRunResult{}, ErrReviewedWorkflowApprovalRequired
 	}
+	var err error
+	provider, err = resolveClaudeProcessConfig(provider)
+	if err != nil {
+		return service.ReviewedWorkflowRunResult{}, err
+	}
 	if strings.TrimSpace(input.CommandID) == "" {
 		return service.ReviewedWorkflowRunResult{}, ErrReviewedWorkflowCommandIDRequired
 	}

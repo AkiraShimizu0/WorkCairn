@@ -183,12 +183,11 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			return 1
 		}
 		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
-		providerModel, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_PROVIDER_MODEL")
 		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
 		result, err := workspaceprocess.GenerateCEOPlan(ctx, workspaceprocess.CEOPlanGenerationInput{
 			VaultRoot: options.vaultRoot, Request: options.ceoRequest, Model: options.model, Approved: true,
 		}, workspaceprocess.ClaudeProcessConfig{
-			APIKey: apiKey, ProviderModel: providerModel, BaseURL: baseURL,
+			APIKey: apiKey, BaseURL: baseURL,
 		}, dependencies.newHTTPClient(options.timeout))
 		if err != nil {
 			response := failureResponse("CEO_PLAN_GENERATION_FAILED", "")
@@ -316,13 +315,12 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			return 1
 		}
 		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
-		providerModel, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_PROVIDER_MODEL")
 		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
 		result, err := workspaceprocess.ExecuteInteractionPlanGeneration(ctx, workspaceprocess.InteractionPlanGenerationInput{
 			VaultRoot: options.vaultRoot, SessionID: options.sessionID, ExpectedVersion: options.expectedVersion,
 			CurrentTime: currentTime, CommandID: options.commandID,
 		}, workspaceprocess.ClaudeProcessConfig{
-			APIKey: apiKey, ProviderModel: providerModel, BaseURL: baseURL,
+			APIKey: apiKey, BaseURL: baseURL,
 		}, dependencies.newHTTPClient(options.timeout), true)
 		if err != nil {
 			response := durableCommandFailureResponse(err, "INTERACTION_PLAN_FAILED", "interaction_plan_generation")
@@ -395,7 +393,6 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			return 1
 		}
 		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
-		providerModel, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_PROVIDER_MODEL")
 		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
 		result, err := workspaceprocess.ExecuteInteractionWorkflow(ctx, workspaceprocess.ExecuteInteractionWorkflowInput{
 			InteractionWorkflowPlanInput: workspaceprocess.InteractionWorkflowPlanInput{
@@ -404,7 +401,7 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			},
 			WorkflowPlanDigest: options.workflowDigest, ApprovalReference: options.approvalReference, CommandID: options.commandID,
 		}, workspaceprocess.ClaudeProcessConfig{
-			APIKey: apiKey, ProviderModel: providerModel, BaseURL: baseURL,
+			APIKey: apiKey, BaseURL: baseURL,
 		}, dependencies.newHTTPClient(options.timeout), true)
 		if err != nil {
 			response := durableCommandFailureResponse(err, "INTERACTION_WORKFLOW_FAILED", "interaction_workflow_execute")
@@ -876,7 +873,6 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		return 0
 	}
 	apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
-	providerModel, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_PROVIDER_MODEL")
 	baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
 	if operation == "workflow-execute" {
 		result, err := workspaceprocess.ExecuteWorkflow(ctx, workspaceprocess.ExecuteWorkflowInput{
@@ -885,7 +881,7 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			},
 			Approved: true, ApprovalReference: options.approvalReference, CommandID: options.commandID, MaxTasks: options.maxTasks,
 		}, workspaceprocess.ClaudeProcessConfig{
-			APIKey: apiKey, ProviderModel: providerModel, BaseURL: baseURL,
+			APIKey: apiKey, BaseURL: baseURL,
 		}, dependencies.newHTTPClient(options.timeout))
 		if err != nil {
 			writeCommandResponse(output, durableCommandFailureResponse(err, "WORKFLOW_EXECUTION_FAILED", "workflow_execute"))
@@ -904,7 +900,7 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			},
 			Approved: true, ApprovalReference: options.approvalReference, CommandID: options.commandID, MaxTasks: options.maxTasks,
 		}, workspaceprocess.ClaudeProcessConfig{
-			APIKey: apiKey, ProviderModel: providerModel, BaseURL: baseURL,
+			APIKey: apiKey, BaseURL: baseURL,
 		}, dependencies.newHTTPClient(options.timeout))
 		if err != nil {
 			writeCommandResponse(output, durableCommandFailureResponse(err, "REVIEWED_WORKFLOW_FAILED", "workflow_reviewed_execute"))
@@ -921,7 +917,7 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			},
 			Approved: true, CommandID: options.commandID,
 		}, workspaceprocess.ClaudeProcessConfig{
-			APIKey: apiKey, ProviderModel: providerModel, BaseURL: baseURL,
+			APIKey: apiKey, BaseURL: baseURL,
 		}, dependencies.newHTTPClient(options.timeout))
 		if err != nil {
 			writeCommandResponse(output, reviewFailureResponse(err, result))
@@ -935,7 +931,7 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		ApprovalReference: options.approvalReference,
 		ExecutionID:       options.executionID, CommandID: options.commandID,
 	}, workspaceprocess.ClaudeProcessConfig{
-		APIKey: apiKey, ProviderModel: providerModel, BaseURL: baseURL,
+		APIKey: apiKey, BaseURL: baseURL,
 	}, dependencies.newHTTPClient(options.timeout))
 	if err != nil {
 		writeCommandResponse(output, executionFailureResponse(err))

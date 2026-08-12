@@ -42,10 +42,21 @@ func (*ExecutionPreflightError) Is(target error) bool { return target == ErrExec
 // ClaudeProcessConfig is supplied by a future command/config Adapter. The
 // process package never reads environment files or global credentials.
 type ClaudeProcessConfig struct {
-	APIKey        string
+	APIKey string
+	// ProviderModel is reserved for injected Adapter tests and a future
+	// Advanced override. Product commands use the Automatic policy.
 	ProviderModel string
 	BaseURL       string
 	MaxTokens     int
+}
+
+func resolveClaudeProcessConfig(config ClaudeProcessConfig) (ClaudeProcessConfig, error) {
+	resolution, err := claude.ResolveModel(config.ProviderModel)
+	if err != nil {
+		return ClaudeProcessConfig{}, err
+	}
+	config.ProviderModel = resolution.ProviderModel
+	return config, nil
 }
 
 // ExecuteTaskInput adds explicit approval identity to the same deterministic
@@ -73,6 +84,11 @@ func ExecuteTask(
 	}
 	if !input.Approved {
 		return execution.Result{}, ErrExecutionApprovalRequired
+	}
+	var err error
+	provider, err = resolveClaudeProcessConfig(provider)
+	if err != nil {
+		return execution.Result{}, err
 	}
 	approvalSource := strings.TrimSpace(input.ApprovalSource)
 	if approvalSource == "" {

@@ -106,6 +106,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Runner Registry | 社員model値をProvider非依存のRunner Adapterへ明示的に解決する |
 | Go Claude Runner Adapter | Provider設定を注入され、Anthropic Messages APIとProvider非依存Runner契約を相互変換する |
 | Provider Connection Status | Runtime edgeへ注入済み設定をnetwork accessなしでredacted inspectionし、credential／modelの値を公開しない |
+| Provider Failure Diagnostics | Claude Adapterが実HTTP status／公式error typeを安全な分類へ変換し、raw messageを破棄してrequest IDとredacted分類だけをInteraction／Ledgerへ渡す |
 | Go Runtime | PromptBuilder、Runner Registry、Claude Adapter、TaskStore、DeliverableStore、Audit Handlerをcompositionし、明示承認付きExecution入口を提供する |
 | Go Vault Context Adapter | 現行Vault Markdownを読み取り、Employee、Project、Task、dependencyの構造化Execution Contextへ変換する |
 | Go Vault TaskStore Adapter | 5列Tasks.mdとmanaged metadataを単一ファイルで原子的に置換し、永続Version/CASとfailure／hold reasonを提供する |
@@ -159,7 +160,7 @@ ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環�
 
 - 依存解析や実行可否判定などの副作用のないCoreを含め、中核ルールはGoを正本とします。
 - MarkdownやObsidianのファイルI/OはCoreの外側に置きます。
-- 通常Task、Review、Revisionのprocess入口はGoです。RevisionはADR-0012に従ってimmutable intentを先行commitし、TaskService.Create後に`revision.created`を発行します。AuditはEvent subscriberであり、partial failureを隠しません。Go Claude Adapterは`.env`を読まず、APIキー、Provider model、HTTP clientをRuntimeから受け取ります。
+- 通常Task、Review、Revisionのprocess入口はGoです。RevisionはADR-0012に従ってimmutable intentを先行commitし、TaskService.Create後に`revision.created`を発行します。AuditはEvent subscriberであり、partial failureを隠しません。Go Claude Adapterは`.env`を読まず、APIキーとHTTP clientをRuntimeから受け取り、具体Provider modelはAdapter edgeのversioned supported-model policyで解決します。
 - Go Coreは外部LLM SDK、別言語runtime、`.env`へ依存しません。
 - Rustへの主移行は行わず、GoをWorkCairnの中核実装として育てます。
 
@@ -351,6 +352,6 @@ Provider固有のLLM呼び出し、Schedule永続形式、Obsidian I/OはKernel�
 
 ## Runner拡張
 
-Go製品Runtimeは論理model値を`runner.Registry`でRunner Adapterへ解決し、未知のモデル値や未登録Runnerを安全に拒否します。Provider model ID、APIキー、HTTP timeoutはClaude AdapterのconstructorへRuntimeから注入し、Kernel、WorkerService、Employee Contextへ持ち込みません。Adapterは自動retry、Task状態変更、成果物保存、Auditを行いません。
+Go製品Runtimeは論理model値を`runner.Registry`でRunner Adapterへ解決し、未知のモデル値や未登録Runnerを安全に拒否します。Claudeの`workcairn-auto`はAdapter edgeのversioned policyが具体Provider modelへ解決し、APIキーとHTTP timeoutはRuntimeからconstructorへ注入します。具体model ID、APIキー、HTTP timeoutをKernel、WorkerService、Employee Contextへ持ち込みません。Adapterは自動retry、Task状態変更、成果物保存、Auditを行いません。
 
 OpenAI、Gemini、Ollamaなどは、同じ`run()`契約を実装して登録する拡張を想定しています。

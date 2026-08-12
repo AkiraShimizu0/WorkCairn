@@ -137,7 +137,7 @@ make public-beta-smoke
 実Provider確認はPublic Beta公開者が別途行います。このrepository作業では実行しません。
 
 - temporary Vaultとtest用Provider credentialだけを使う
-- process環境へ`ANTHROPIC_API_KEY`と`WORKCAIRN_CLAUDE_PROVIDER_MODEL`を注入する
+- process環境へ`ANTHROPIC_API_KEY`だけを注入する。Provider model IDはWorkCairnのAutomatic policyが解決する
 - `.env`へ保存しない
 - Web UIでModel名を選ぶ必要はない。daemonは起動時設定を値を出さず検査し、未接続ならProviderを呼ぶ前にMy Actionsへ案内する
 - read-only plan、request digest、Command ID、承認対象を確認する

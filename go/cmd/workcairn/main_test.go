@@ -626,7 +626,7 @@ func TestCEOPlanGenerateAndApplyUseGoOnlyProductPath(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	environment := map[string]string{"ANTHROPIC_API_KEY": "fake-key", "WORKCAIRN_CLAUDE_PROVIDER_MODEL": "claude-test", "WORKCAIRN_CLAUDE_BASE_URL": server.URL}
+	environment := map[string]string{"ANTHROPIC_API_KEY": "fake-key", "WORKCAIRN_CLAUDE_BASE_URL": server.URL}
 	dependencies := commandDependencies{
 		lookupEnv: func(key string) (string, bool) { value, ok := environment[key]; return value, ok },
 		now:       commandTestTime, newHTTPClient: func(time.Duration) claude.HTTPDoer { return server.Client() },
@@ -747,7 +747,7 @@ func TestExecuteCommandUsesMockProviderAndTemporaryVault(t *testing.T) {
 	}))
 	defer server.Close()
 	environment := map[string]string{
-		"ANTHROPIC_API_KEY": "fake-api-key", "WORKCAIRN_CLAUDE_PROVIDER_MODEL": "claude-sonnet-5",
+		"ANTHROPIC_API_KEY":         "fake-api-key",
 		"WORKCAIRN_CLAUDE_BASE_URL": server.URL,
 	}
 	args := append([]string{"execute"}, commandArgs(root)...)
@@ -787,24 +787,31 @@ func TestExecuteCommandUsesMockProviderAndTemporaryVault(t *testing.T) {
 func TestExecuteCommandNeverWritesSecretToFailureResponse(t *testing.T) {
 	root := writeCommandVault(t)
 	const secret = "secret-must-not-appear"
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
 	var output bytes.Buffer
 	exitCode := run(context.Background(), append(append([]string{"execute"}, commandArgs(root)...), "--approved"), &output, commandDependencies{
 		lookupEnv: func(key string) (string, bool) {
 			if key == "ANTHROPIC_API_KEY" {
 				return secret, true
 			}
+			if key == "WORKCAIRN_CLAUDE_BASE_URL" {
+				return server.URL, true
+			}
 			return "", false
 		},
 		now: commandTestTime,
 		newHTTPClient: func(time.Duration) claude.HTTPDoer {
-			return http.DefaultClient
+			return server.Client()
 		},
 	})
 	if exitCode != 1 || strings.Contains(output.String(), secret) {
 		t.Fatalf("unsafe failure response exit=%d output=%s", exitCode, output.String())
 	}
 	response := decodeCommandResponse(t, output.Bytes())
-	if response.Error == nil || response.Error.Code != "EXECUTION_FAILED" {
+	if response.Error == nil || response.Error.Code != "WORKER_FAILED" || response.Error.Stage != "worker" {
 		t.Fatalf("response = %#v", response)
 	}
 }
@@ -826,7 +833,7 @@ func TestReviewCommandsPlanWithoutSecretsAndExecuteWithMockProvider(t *testing.T
 	}))
 	defer server.Close()
 	environment := map[string]string{
-		"ANTHROPIC_API_KEY": "fake-api-key", "WORKCAIRN_CLAUDE_PROVIDER_MODEL": "claude-sonnet-5", "WORKCAIRN_CLAUDE_BASE_URL": server.URL,
+		"ANTHROPIC_API_KEY": "fake-api-key", "WORKCAIRN_CLAUDE_BASE_URL": server.URL,
 	}
 	dependencies := commandDependencies{
 		lookupEnv:     func(key string) (string, bool) { value, found := environment[key]; return value, found },
@@ -894,7 +901,7 @@ func TestRevisionCommandsNeedNeitherProviderSecretsNorHTTP(t *testing.T) {
 	var executeOutput bytes.Buffer
 	if exit := run(context.Background(), append(append([]string{"execute"}, commandArgs(root)...), "--approved"), &executeOutput, commandDependencies{
 		lookupEnv: func(key string) (string, bool) {
-			values := map[string]string{"ANTHROPIC_API_KEY": "fake", "WORKCAIRN_CLAUDE_PROVIDER_MODEL": "claude-sonnet-5", "WORKCAIRN_CLAUDE_BASE_URL": server.URL}
+			values := map[string]string{"ANTHROPIC_API_KEY": "fake", "WORKCAIRN_CLAUDE_BASE_URL": server.URL}
 			value, found := values[key]
 			return value, found
 		},

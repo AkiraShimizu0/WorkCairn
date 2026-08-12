@@ -79,7 +79,7 @@ targetごとにclean output directoryを使います。
 ### Provider
 
 - [ ] temporary Vaultとtest用credentialでPlan生成1回、Task1件、Review1回を実行した。
-- [ ] Provider model ID、timeout、usage、error表示を確認した。
+- [ ] Automatic policyが選ぶsupported Provider model、timeout、usage、error表示を確認した（利用者によるModel ID入力は不要）。
 - [ ] credentialをVault、Command、log、shell history、screenshotへ残していない。
 - [ ] test後にcredentialを失効またはrotationした。
 

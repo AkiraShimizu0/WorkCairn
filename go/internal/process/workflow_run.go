@@ -110,6 +110,11 @@ func ExecuteWorkflow(
 	if !input.Approved {
 		return service.WorkflowRunResult{}, ErrWorkflowApprovalRequired
 	}
+	var err error
+	provider, err = resolveClaudeProcessConfig(provider)
+	if err != nil {
+		return service.WorkflowRunResult{}, err
+	}
 	if strings.TrimSpace(input.CommandID) == "" {
 		return service.WorkflowRunResult{}, ErrWorkflowCommandIDRequired
 	}

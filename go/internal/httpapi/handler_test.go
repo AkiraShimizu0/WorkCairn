@@ -201,6 +201,9 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		`showError(error, "依頼内容を確認できませんでした")`,
 		`requestJSON("/v1/provider-status")`, "PROVIDER_CONFIGURATION_REQUIRED", "AIサービスへ接続してください",
 		"openSettingsDialog", "renderProviderSettings", "秘密情報はiPhoneやbrowser storageへ保存しません",
+		"PROVIDER_AUTHENTICATION_REQUIRED", "PROVIDER_BILLING_REQUIRED", "PROVIDER_PERMISSION_DENIED",
+		"PROVIDER_REQUEST_INVALID", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "provider_failure",
+		"PROVIDER_RESPONSE_INVALID",
 	} {
 		if !strings.Contains(asset.Body.String(), required) {
 			t.Fatalf("mobile UI is missing command continuity boundary %q", required)
@@ -227,17 +230,16 @@ func TestProviderStatusIsRedactedAndDoesNotCallProvider(t *testing.T) {
 		providerCalls++
 		return nil, errors.New("unexpected Provider call")
 	})
-	configured, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{
-		APIKey: "secret-that-must-not-appear", ProviderModel: "provider-model-that-must-not-appear",
-	}, client)
+	configured, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{APIKey: "secret-that-must-not-appear"}, client)
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler, _ := NewHandler(configured, configured)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/provider-status", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"configured":true`) || providerCalls != 0 ||
-		strings.Contains(response.Body.String(), "secret-that-must-not-appear") || strings.Contains(response.Body.String(), "provider-model-that-must-not-appear") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"configured":true`) ||
+		!strings.Contains(response.Body.String(), `"selection_mode":"automatic"`) || providerCalls != 0 ||
+		strings.Contains(response.Body.String(), "secret-that-must-not-appear") || strings.Contains(response.Body.String(), "claude-sonnet-5") {
 		t.Fatalf("configured Provider status = %d %s calls=%d", response.Code, response.Body.String(), providerCalls)
 	}
 
@@ -246,7 +248,7 @@ func TestProviderStatusIsRedactedAndDoesNotCallProvider(t *testing.T) {
 	unconfiguredResponse := httptest.NewRecorder()
 	unconfiguredHandler.ServeHTTP(unconfiguredResponse, httptest.NewRequest(http.MethodGet, "/v1/provider-status", nil))
 	if unconfiguredResponse.Code != http.StatusOK || !strings.Contains(unconfiguredResponse.Body.String(), `"configured":false`) ||
-		!strings.Contains(unconfiguredResponse.Body.String(), `"credential"`) || !strings.Contains(unconfiguredResponse.Body.String(), `"provider_model"`) || providerCalls != 0 {
+		!strings.Contains(unconfiguredResponse.Body.String(), `"credential"`) || strings.Contains(unconfiguredResponse.Body.String(), `"provider_model"`) || providerCalls != 0 {
 		t.Fatalf("unconfigured Provider status = %d %s calls=%d", unconfiguredResponse.Code, unconfiguredResponse.Body.String(), providerCalls)
 	}
 }
@@ -560,6 +562,12 @@ func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(
 		if request.URL.Path != "/v1/messages" || request.Header.Get("x-api-key") != "fake-mobile-key" || providerCalls >= len(providerOutputs) {
 			t.Fatalf("unexpected mock Provider request path=%s calls=%d", request.URL.Path, providerCalls)
 		}
+		var providerRequest struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&providerRequest); err != nil || providerRequest.Model != "claude-sonnet-5" {
+			t.Fatalf("automatic Provider model request = %#v, %v", providerRequest, err)
+		}
 		output := providerOutputs[providerCalls]
 		providerCalls++
 		response.Header().Set("Content-Type", "application/json")
@@ -570,7 +578,7 @@ func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(
 	}))
 	defer providerServer.Close()
 	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{
-		APIKey: "fake-mobile-key", ProviderModel: "claude-mobile-test", BaseURL: providerServer.URL,
+		APIKey: "fake-mobile-key", BaseURL: providerServer.URL,
 	}, providerServer.Client())
 	if err != nil {
 		t.Fatal(err)

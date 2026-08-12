@@ -63,7 +63,9 @@ Local Web UIはこの順序を再実装しません。`interaction-next`が返�
 
 `workcairn-daemon --mobile`は、同じWi-Fi等のtrusted local network上のiPhoneへmobile-first Web UIを配信します。起動時にprivate IPv4を自動選択し、terminalへURLとprocess lifetimeだけ有効なpairing codeを表示します。codeはVault、`.env`、Interaction Session、browser storageへ保存されません。
 
-通常の依頼ではModel名を選びません。新規Interactionは論理値`workcairn-auto`を使い、現在はRuntime edgeへ明示接続されたClaude Adapterを選択します。daemonはProviderへ通信せず起動設定だけをredacted statusとして検査し、未接続ならPlan承認の前にMac側設定を案内します。Local Web UIの`AI Connections`はClaudeの接続可否とAutomatic routingを表示しますが、credential、Provider model ID、Base URLをUIやSessionへ出しません。trusted LANはHTTPのためcredential登録を提供せず、将来はMac loopbackからOS credential facilityへ保存するRuntime Adapterを境界とします。本格的なRole／Task別routingはADR-0036のtyped policyとして既存Runner Registryの手前へ追加し、未接続Providerへの暗黙fallbackは行いません。
+通常の依頼ではModel名を選びません。新規Interactionは論理値`workcairn-auto`を使い、Claude Adapter edgeのversioned supported-model policyが具体modelを自動解決します。製品daemon／CLIはmodel環境変数を読みません。daemonはProviderへ通信せずcredentialの起動設定だけをredacted statusとして検査し、未接続ならPlan承認の前にMac側設定を案内します。Local Web UIの`AI Connections`はClaudeの接続可否とAutomatic routingを表示しますが、credential、Provider model ID、Base URLをUIやSessionへ出しません。trusted LANはHTTPのためcredential登録を提供せず、将来はMac loopbackからOS credential facilityへ保存するRuntime Adapterを境界とします。本格的なRole／Task別routingはADR-0036のtyped policyとして既存Runner Registryの手前へ追加し、未接続Providerへの暗黙fallbackは行いません。
+
+Claudeがerror responseを返した場合、Adapterは実HTTP statusと公式error typeだけから認証、請求、権限、request不正、rate limit、一時利用不可を分類します。Provider messageは保存せず、sanitized request IDとredacted分類だけをCommand Ledgerへ残すため、My Actionsは秘密情報を出さず次の確認先を案内できます。分類不能な旧evidenceや未知errorを推測せず、自動retryや別Providerへのfallbackを行いません。
 
 ```text
 iPhone browser

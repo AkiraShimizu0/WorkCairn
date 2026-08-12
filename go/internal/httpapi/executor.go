@@ -79,14 +79,11 @@ func NewProcessExecutorWithActionConfig(vaultRoot string, provider workspaceproc
 // values.
 func (executor *ProcessExecutor) InspectProviderStatus() ProviderStatus {
 	status := ProviderStatus{
-		Version: ProviderStatusVersion, Provider: "anthropic", SelectionMode: "connection_default",
+		Version: ProviderStatusVersion, Provider: "anthropic", SelectionMode: "automatic",
 		Missing: []string{}, Invalid: []string{},
 	}
 	if strings.TrimSpace(executor.provider.APIKey) == "" {
 		status.Missing = append(status.Missing, "credential")
-	}
-	if strings.TrimSpace(executor.provider.ProviderModel) == "" {
-		status.Missing = append(status.Missing, "provider_model")
 	}
 	if len(status.Missing) != 0 {
 		return status

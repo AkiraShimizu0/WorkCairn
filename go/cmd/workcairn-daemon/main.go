@@ -52,8 +52,7 @@ func run() error {
 		return errors.New("Vault root and positive timeouts are required")
 	}
 	executor, err := httpapi.NewProcessExecutorWithActionConfig(vaultRoot, workspaceprocess.ClaudeProcessConfig{
-		APIKey: os.Getenv("ANTHROPIC_API_KEY"), ProviderModel: os.Getenv("WORKCAIRN_CLAUDE_PROVIDER_MODEL"),
-		BaseURL: os.Getenv("WORKCAIRN_CLAUDE_BASE_URL"),
+		APIKey: os.Getenv("ANTHROPIC_API_KEY"), BaseURL: os.Getenv("WORKCAIRN_CLAUDE_BASE_URL"),
 	}, workspaceprocess.WordPressProcessConfig{
 		TargetID: os.Getenv("WORKCAIRN_WORDPRESS_TARGET_ID"), BaseURL: os.Getenv("WORKCAIRN_WORDPRESS_BASE_URL"),
 		Username: os.Getenv("WORKCAIRN_WORDPRESS_USERNAME"), ApplicationPassword: os.Getenv("WORKCAIRN_WORDPRESS_APPLICATION_PASSWORD"),

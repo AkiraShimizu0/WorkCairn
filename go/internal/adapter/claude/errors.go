@@ -13,13 +13,29 @@ var (
 	ErrInvalidResponse = errors.New("invalid Claude provider response")
 )
 
+type FailureCategory string
+
+const (
+	FailureAuthentication FailureCategory = "authentication_required"
+	FailureBilling        FailureCategory = "billing_required"
+	FailurePermission     FailureCategory = "permission_denied"
+	FailureInvalidRequest FailureCategory = "invalid_provider_request"
+	FailureRateLimited    FailureCategory = "rate_limited"
+	FailureUnavailable    FailureCategory = "provider_unavailable"
+	FailureTransport      FailureCategory = "provider_transport"
+	FailureResponse       FailureCategory = "invalid_provider_response"
+	FailureUnknown        FailureCategory = "provider_failure"
+)
+
 // Error retains machine-readable Adapter failure details without exposing the
 // Provider response body or credential-bearing request data in its text.
 type Error struct {
-	Kind       error
-	StatusCode int
-	RequestID  string
-	Err        error
+	Kind         error
+	StatusCode   int
+	RequestID    string
+	ProviderType string
+	Category     FailureCategory
+	Err          error
 }
 
 func (failure *Error) Error() string {

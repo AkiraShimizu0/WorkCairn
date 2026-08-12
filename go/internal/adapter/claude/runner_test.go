@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -91,14 +93,14 @@ func TestRunnerBuildsMessagesRequestAndMapsResponse(t *testing.T) {
 }
 
 func TestNewValidatesConfigAndAppliesStableDefaults(t *testing.T) {
-	valid := Config{APIKey: "fake-api-key", ProviderModel: "claude-sonnet-5"}
+	valid := Config{APIKey: "fake-api-key"}
 	doer := doerFunc(func(*http.Request) (*http.Response, error) { return nil, nil })
 	runner, err := New(valid, doer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runner.endpoint != "https://api.anthropic.com/v1/messages" || runner.apiVersion != "2023-06-01" || runner.maxTokens != 3000 {
-		t.Fatalf("defaults = endpoint %q, API version %q, max tokens %d", runner.endpoint, runner.apiVersion, runner.maxTokens)
+	if runner.endpoint != "https://api.anthropic.com/v1/messages" || runner.apiVersion != "2023-06-01" || runner.maxTokens != 3000 || runner.providerModel != "claude-sonnet-5" {
+		t.Fatalf("defaults = endpoint %q, API version %q, max tokens %d, Provider model %q", runner.endpoint, runner.apiVersion, runner.maxTokens, runner.providerModel)
 	}
 
 	var nilDoer *http.Client
@@ -108,7 +110,6 @@ func TestNewValidatesConfigAndAppliesStableDefaults(t *testing.T) {
 		client HTTPDoer
 	}{
 		{"API key", Config{ProviderModel: "claude-sonnet-5"}, doer},
-		{"Provider model", Config{APIKey: "fake-api-key"}, doer},
 		{"HTTP client", valid, nil},
 		{"typed nil HTTP client", valid, nilDoer},
 		{"negative max tokens", Config{APIKey: "fake-api-key", ProviderModel: "claude-sonnet-5", MaxTokens: -1}, doer},
@@ -120,6 +121,22 @@ func TestNewValidatesConfigAndAppliesStableDefaults(t *testing.T) {
 				t.Fatalf("New() error = %v", err)
 			}
 		})
+	}
+}
+
+func TestAutomaticModelPolicyResolvesOnlySupportedLogicalRoute(t *testing.T) {
+	for _, requested := range []string{"", AutomaticRoute} {
+		resolution, err := ResolveModel(requested)
+		if err != nil || resolution.LogicalRoute != AutomaticRoute || resolution.PolicyVersion != AutomaticModelPolicyVersion || resolution.ProviderModel != "claude-sonnet-5" {
+			t.Fatalf("ResolveModel(%q) = %#v, %v", requested, resolution, err)
+		}
+	}
+	override, err := ResolveModel("mock-provider-model")
+	if err != nil || override.LogicalRoute != "explicit" || override.ProviderModel != "mock-provider-model" {
+		t.Fatalf("explicit override = %#v, %v", override, err)
+	}
+	if _, err := ResolveModel("workcairn-unknown"); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("unknown logical route error = %v", err)
 	}
 }
 
@@ -165,6 +182,61 @@ func TestRunnerReturnsTypedProviderErrorWithoutResponseBody(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "sensitive provider detail") {
 		t.Fatal("Provider response body leaked through Error()")
+	}
+}
+
+func TestRunnerClassifiesProviderErrorsWithoutRetainingMessages(t *testing.T) {
+	for _, test := range []struct {
+		name, providerType string
+		status             int
+		category           FailureCategory
+	}{
+		{"authentication", "authentication_error", 401, FailureAuthentication},
+		{"billing", "billing_error", 402, FailureBilling},
+		{"permission", "permission_error", 403, FailurePermission},
+		{"request", "invalid_request_error", 400, FailureInvalidRequest},
+		{"rate limit", "rate_limit_error", 429, FailureRateLimited},
+		{"overloaded", "overloaded_error", 529, FailureUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"type":"error","error":{"type":%q,"message":"secret provider detail"},"request_id":"req_safe_123"}`, test.providerType)
+			runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+				return jsonResponse(test.status, body, ""), nil
+			}))
+			_, err := runner.Run(context.Background(), validRunRequest())
+			var failure *Error
+			if !errors.As(err, &failure) || failure.StatusCode != test.status || failure.ProviderType != test.providerType ||
+				failure.Category != test.category || failure.RequestID != "req_safe_123" || strings.Contains(err.Error(), "secret provider detail") {
+				t.Fatalf("Provider failure = %#v, %v", failure, err)
+			}
+		})
+	}
+}
+
+func TestRunnerSendsSonnetFiveCompatibleMinimalPayload(t *testing.T) {
+	var payload map[string]any
+	runner := configuredRunner(t, doerFunc(func(request *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		return jsonResponse(http.StatusOK, `{"model":"claude-sonnet-5","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`, "req-compatible"), nil
+	}))
+	if _, err := runner.Run(context.Background(), validRunRequest()); err != nil {
+		t.Fatal(err)
+	}
+	wantKeys := []string{"max_tokens", "messages", "model", "system"}
+	keys := make([]string, 0, len(payload))
+	for key := range payload {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	if !reflect.DeepEqual(keys, wantKeys) {
+		t.Fatalf("Messages payload keys = %v, want %v", keys, wantKeys)
+	}
+	for _, forbidden := range []string{"thinking", "temperature", "top_p", "top_k"} {
+		if _, exists := payload[forbidden]; exists {
+			t.Fatalf("Messages payload contains Sonnet 5-incompatible field %q", forbidden)
+		}
 	}
 }
 

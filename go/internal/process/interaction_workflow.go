@@ -116,6 +116,11 @@ func ExecuteInteractionWorkflow(
 	if !approved {
 		return InteractionWorkflowResult{}, ErrInteractionApprovalRequired
 	}
+	var err error
+	provider, err = resolveClaudeProcessConfig(provider)
+	if err != nil {
+		return InteractionWorkflowResult{}, err
+	}
 	input.SessionID, input.ReviewerID = strings.TrimSpace(input.SessionID), strings.TrimSpace(input.ReviewerID)
 	input.WorkflowPlanDigest, input.ApprovalReference = strings.TrimSpace(input.WorkflowPlanDigest), strings.TrimSpace(input.ApprovalReference)
 	if interaction.ValidateSessionID(input.SessionID) != nil || input.ExpectedVersion == 0 || input.ReviewerID == "" ||

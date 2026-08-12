@@ -22,6 +22,7 @@ const (
 	defaultBaseURL    = "https://api.anthropic.com"
 	defaultAPIVersion = "2023-06-01"
 	defaultMaxTokens  = 3000
+	maxErrorBodyBytes = 64 << 10
 )
 
 // HTTPDoer is the transport seam used by Runtime composition and contract
@@ -33,7 +34,9 @@ type HTTPDoer interface {
 // Config contains Provider-specific settings supplied by a future Runtime.
 // It never reads environment variables or secret stores itself.
 type Config struct {
-	APIKey        string
+	APIKey string
+	// ProviderModel is an optional explicit Adapter override. Product Runtime
+	// leaves it empty so ResolveModel applies the Automatic supported policy.
 	ProviderModel string
 	MaxTokens     int
 	BaseURL       string
@@ -55,15 +58,16 @@ var _ runner.Runner = (*Runner)(nil)
 
 func New(config Config, client HTTPDoer) (*Runner, error) {
 	config.APIKey = strings.TrimSpace(config.APIKey)
-	config.ProviderModel = strings.TrimSpace(config.ProviderModel)
 	config.BaseURL = strings.TrimSpace(config.BaseURL)
 	config.APIVersion = strings.TrimSpace(config.APIVersion)
+	resolution, err := ResolveModel(config.ProviderModel)
+	if err != nil {
+		return nil, err
+	}
+	config.ProviderModel = resolution.ProviderModel
 
 	if config.APIKey == "" {
 		return nil, fmt.Errorf("%w: API key is required", ErrInvalidConfig)
-	}
-	if config.ProviderModel == "" {
-		return nil, fmt.Errorf("%w: Provider model is required", ErrInvalidConfig)
 	}
 	if isNilHTTPDoer(client) {
 		return nil, fmt.Errorf("%w: HTTP client is required", ErrInvalidConfig)
@@ -136,31 +140,36 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 		if contextError := ctx.Err(); contextError != nil {
 			return worker.RunResult{}, contextError
 		}
-		return worker.RunResult{}, &Error{Kind: ErrTransport, Err: err}
+		return worker.RunResult{}, &Error{Kind: ErrTransport, Category: FailureTransport, Err: err}
 	}
 	if response == nil || response.Body == nil {
-		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse}
+		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, Category: FailureResponse}
 	}
 	defer response.Body.Close()
 
 	requestID := strings.TrimSpace(response.Header.Get("request-id"))
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		_, _ = io.Copy(io.Discard, response.Body)
+		providerType, bodyRequestID := readProviderFailure(response.Body)
+		if requestID == "" {
+			requestID = bodyRequestID
+		}
 		return worker.RunResult{}, &Error{
-			Kind:       ErrProvider,
-			StatusCode: response.StatusCode,
-			RequestID:  requestID,
+			Kind:         ErrProvider,
+			StatusCode:   response.StatusCode,
+			RequestID:    requestID,
+			ProviderType: providerType,
+			Category:     classifyProviderFailure(response.StatusCode, providerType),
 		}
 	}
 
 	var providerResponse messageResponse
 	decoder := json.NewDecoder(response.Body)
 	if err := decoder.Decode(&providerResponse); err != nil {
-		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Err: err}
+		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureResponse, Err: err}
 	}
 	content := providerResponse.markdown()
 	if content == "" || strings.TrimSpace(providerResponse.Model) == "" {
-		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID}
+		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureResponse}
 	}
 
 	result := worker.RunResult{
@@ -175,9 +184,70 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 		Metadata: cloneMetadata(request.Metadata),
 	}
 	if err := result.Validate(); err != nil {
-		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Err: err}
+		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureResponse, Err: err}
 	}
 	return result, nil
+}
+
+func readProviderFailure(body io.Reader) (string, string) {
+	limited := io.LimitReader(body, maxErrorBodyBytes)
+	var envelope struct {
+		Error struct {
+			Type string `json:"type"`
+		} `json:"error"`
+		RequestID string `json:"request_id"`
+	}
+	if json.NewDecoder(limited).Decode(&envelope) != nil {
+		return "", ""
+	}
+	return safeDiagnosticToken(envelope.Error.Type, 64), safeDiagnosticToken(envelope.RequestID, 128)
+}
+
+func safeDiagnosticToken(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > limit {
+		return ""
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') && character != '_' && character != '-' {
+			return ""
+		}
+	}
+	return value
+}
+
+func classifyProviderFailure(status int, providerType string) FailureCategory {
+	switch providerType {
+	case "authentication_error":
+		return FailureAuthentication
+	case "billing_error":
+		return FailureBilling
+	case "permission_error":
+		return FailurePermission
+	case "invalid_request_error", "not_found_error", "request_too_large":
+		return FailureInvalidRequest
+	case "rate_limit_error":
+		return FailureRateLimited
+	case "api_error", "timeout_error", "overloaded_error":
+		return FailureUnavailable
+	}
+	switch status {
+	case http.StatusUnauthorized:
+		return FailureAuthentication
+	case http.StatusPaymentRequired:
+		return FailureBilling
+	case http.StatusForbidden:
+		return FailurePermission
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusRequestEntityTooLarge:
+		return FailureInvalidRequest
+	case http.StatusTooManyRequests:
+		return FailureRateLimited
+	}
+	if status >= http.StatusInternalServerError {
+		return FailureUnavailable
+	}
+	return FailureUnknown
 }
 
 type messageRequest struct {

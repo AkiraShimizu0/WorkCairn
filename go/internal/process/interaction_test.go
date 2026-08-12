@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -191,6 +192,51 @@ func TestInteractionPlanRecordsProviderConfigurationRequiredWithoutProviderCall(
 	record, ledgerErr := ledger.Get(context.Background(), "CMD-PROVIDER-SETUP-PLAN")
 	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil || record.Failure.Code != "PROVIDER_CONFIGURATION_REQUIRED" {
 		t.Fatalf("provider setup Ledger = %#v, %v", record, ledgerErr)
+	}
+}
+
+func TestInteractionPlanRecordsRedactedTypedProviderFailure(t *testing.T) {
+	fixture := loadCEOPlanFixture(t)
+	root := ceoPlanVault(t, fixture.Employees)
+	at := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	start := InteractionStartInput{
+		VaultRoot: root, SessionID: "SESSION-PROVIDER-AUTH", Request: fixture.Request,
+		Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-PROVIDER-AUTH-START",
+	}
+	plan, err := PlanInteractionStart(context.Background(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.RequestDigest = plan.Session.RequestDigest
+	if _, err := ExecuteInteractionStart(context.Background(), start, true); err != nil {
+		t.Fatal(err)
+	}
+	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
+		header := make(http.Header)
+		header.Set("request-id", "req_auth_safe")
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized, Header: header,
+			Body: io.NopCloser(strings.NewReader(`{"type":"error","error":{"type":"authentication_error","message":"must not be stored"}}`)),
+		}, nil
+	})
+	result, err := ExecuteInteractionPlanGeneration(context.Background(), InteractionPlanGenerationInput{
+		VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: 1,
+		CurrentTime: at.Add(time.Minute), CommandID: "CMD-PROVIDER-AUTH-PLAN",
+	}, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
+	var recorded *RecordedCommandError
+	if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_AUTHENTICATION_REQUIRED" || result.ProviderFailure == nil ||
+		result.ProviderFailure.Category != "authentication_required" || result.ProviderFailure.HTTPStatus != http.StatusUnauthorized ||
+		result.ProviderFailure.ProviderType != "authentication_error" || result.ProviderFailure.RequestID != "req_auth_safe" {
+		t.Fatalf("typed Provider failure = %#v, %#v, %v", recorded, result.ProviderFailure, err)
+	}
+	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
+	record, ledgerErr := ledger.Get(context.Background(), "CMD-PROVIDER-AUTH-PLAN")
+	var stored InteractionPlanResult
+	decodeErr := json.Unmarshal(record.Result, &stored)
+	if ledgerErr != nil || record.Failure == nil || record.Failure.Code != "PROVIDER_AUTHENTICATION_REQUIRED" ||
+		decodeErr != nil || stored.ProviderFailure == nil || stored.ProviderFailure.HTTPStatus != http.StatusUnauthorized ||
+		strings.Contains(string(record.Result), "must not be stored") {
+		t.Fatalf("redacted Provider Ledger = %#v, %v, decode=%v", record, ledgerErr, decodeErr)
 	}
 }
 
