@@ -1,7 +1,6 @@
 const INTERACTION_VERSION = "workspace-interaction.v1";
 const COMMAND_VERSION = "workspace-command.v1";
 const STORAGE_SESSION = "workcairn.active-session";
-const STORAGE_MODEL = "workcairn.preferred-model";
 const STORAGE_PENDING = "workcairn.pending-command";
 const STORAGE_VIEW = "workcairn.active-view";
 
@@ -43,6 +42,7 @@ const state = {
   evidence: new Map(),
   workReport: null,
   workReportError: null,
+  providerStatus: null,
   busy: false,
 };
 
@@ -176,18 +176,25 @@ function showError(error, title = "処理を完了できませんでした") {
   const detail = error instanceof APIError ? error.detail : null;
   const code = detail?.code || error.message || "UNKNOWN_ERROR";
   const stage = detail?.stage;
+  const providerSetupRequired = code === "PROVIDER_CONFIGURATION_REQUIRED";
+  const providerGenerationFailed = code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_generation";
+  const providerIssue = providerSetupRequired || providerGenerationFailed;
   const pending = sessionStorage.getItem(STORAGE_PENDING);
   ui.activeCard.className = "action-card attention";
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, "確認が必要です"),
     node("h2", {}, title),
-    node("p", { class: "lead" }, "成立済みの記録を推測で変更せず、現在の状態を確認してください。"),
+    node("p", { class: "lead" }, providerSetupRequired
+      ? "AIサービスの接続設定が不足しています。Providerへ依頼は送信されていません。Macで設定してdaemonを再起動してください。"
+      : providerGenerationFailed
+        ? "AIサービスでPlanを生成できませんでした。自動retryや別Providerへの切替は行っていません。接続状態を確認してください。"
+      : "成立済みの記録を推測で変更せず、現在の状態を確認してください。"),
     node("div", { class: "error-box" },
       node("strong", {}, code),
       stage ? node("div", {}, `stage: ${stage}`) : null,
     ),
     node("div", { class: "button-row" },
-      button(pending ? "Command状態を再確認" : "状態を再確認", "primary", () => pending ? resumePendingCommand(pending) : refreshCurrent()),
+      button(providerIssue ? "AIサービス状態を確認" : (pending ? "Command状態を再確認" : "状態を再確認"), "primary", () => providerIssue ? refreshProviderStatus() : (pending ? resumePendingCommand(pending) : refreshCurrent())),
       button("依頼一覧へ", "quiet", () => selectSession(null)),
     ),
   );
@@ -213,13 +220,29 @@ async function startWorkspace() {
   ui.pairingView.hidden = true;
   ui.workspaceView.hidden = false;
   setConnected(true);
-  await loadSessions();
+  await Promise.all([loadSessions(), loadProviderStatus()]);
   const stored = localStorage.getItem(STORAGE_SESSION);
   const candidate = state.sessions.find((record) => record.session_id === stored) ||
     state.sessions.find((record) => !["completed", "action_completed"].includes(record.state)) || state.sessions[0];
   await selectSession(candidate?.session_id || null);
   const preferredView = localStorage.getItem(STORAGE_VIEW);
   setView(preferredView || (window.matchMedia("(min-width: 900px)").matches ? "company" : "actions"), false);
+}
+
+async function loadProviderStatus() {
+  try {
+    state.providerStatus = await requestJSON("/v1/provider-status");
+  } catch {
+    state.providerStatus = { configured: false, missing: [], invalid: ["status_unavailable"] };
+  }
+}
+
+async function refreshProviderStatus() {
+  setBusy(true, "AIサービスを確認しています", "credentialの値やProviderへの通信は行わず、起動時設定だけを確認します。");
+  await loadProviderStatus();
+  setBusy(false);
+  if (state.record) renderNext();
+  toast(state.providerStatus?.configured ? "AIサービスを利用できます。" : "Mac側のAIサービス設定を確認し、daemonを再起動してください。");
 }
 
 async function loadSessions() {
@@ -317,6 +340,7 @@ function renderNext() {
 }
 
 function renderPlanGeneration(next) {
+  if (!state.providerStatus?.configured) return renderProviderSetup();
   const hasAnswers = state.record.turns.some((turn) => turn.kind === "clarification_answered");
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, hasAnswers ? "回答を反映" : "最初の確認"),
@@ -324,7 +348,7 @@ function renderPlanGeneration(next) {
     node("p", { class: "lead" }, "AIはまだWorkspaceを変更しません。依頼内容を整理し、必要な質問と実行Planを作成します。"),
     approvalFacts([
       ["依頼", state.record.request],
-      ["モデル", state.record.model],
+      ["AIサービス", "WorkCairnが接続設定から選択"],
       ["Session", state.record.session_id],
     ]),
     node("div", { class: "button-row" },
@@ -334,6 +358,28 @@ function renderPlanGeneration(next) {
         current_time: now(),
       }, "Planを作成しています", "質問または実行Planができるまでお待ちください。")),
       button("今は承認しない", "quiet", () => toast("変更せず、承認待ちのまま保存されています。")),
+    ),
+  );
+}
+
+function renderProviderSetup() {
+  const missing = state.providerStatus?.missing || [];
+  const invalid = state.providerStatus?.invalid || [];
+  const reasons = [];
+  if (missing.includes("credential")) reasons.push("Provider credentialが起動processへ渡されていません");
+  if (missing.includes("provider_model")) reasons.push("接続先で使うProvider modelが未設定です");
+  if (invalid.length) reasons.push("Provider設定を安全に検証できませんでした");
+  if (!reasons.length) reasons.push("接続状態を取得できませんでした");
+  ui.activeCard.className = "action-card attention";
+  ui.activeCard.replaceChildren(
+    node("span", { class: "step-label" }, "Mac側の設定が必要です"),
+    node("h2", {}, "AIサービスへ接続してください"),
+    node("p", { class: "lead" }, "この依頼は保存済みです。設定が整うまでProviderへ送信せず、Plan生成を開始しません。"),
+    node("ul", { class: "trust-list" }, ...reasons.map((reason) => node("li", {}, reason))),
+    node("p", { class: "supporting" }, "MacでWorkCairn daemonを停止し、AIサービス設定を起動processへ渡して再起動してください。別Providerへの自動fallbackは行いません。"),
+    node("div", { class: "button-row" },
+      button("接続状態を再確認", "primary", refreshProviderStatus),
+      button("今は設定しない", "quiet", () => toast("依頼はPlan作成待ちのまま保存されています。")),
     ),
   );
 }
@@ -1055,7 +1101,6 @@ function detailBlock(title, rows) {
 
 function openRequestDialog() {
   ui.requestForm.reset();
-  document.querySelector("#model-name").value = localStorage.getItem(STORAGE_MODEL) || "Claude Sonnet 5";
   ui.requestDialog.showModal();
   setTimeout(() => document.querySelector("#request-text").focus(), 80);
 }
@@ -1065,10 +1110,8 @@ async function prepareNewRequest(event) {
   try {
     const data = new FormData(ui.requestForm);
     const request = data.get("request")?.toString().trim();
-    const model = data.get("model")?.toString().trim();
-    if (!request || !model) return toast("依頼内容とモデルを入力してください。");
-    localStorage.setItem(STORAGE_MODEL, model);
-    const input = { version: INTERACTION_VERSION, session_id: sessionID(), request, model, current_time: now() };
+    if (!request) return toast("依頼内容を入力してください。");
+    const input = { version: INTERACTION_VERSION, session_id: sessionID(), request, current_time: now() };
     ui.requestDialog.close();
     setBusy(true, "依頼内容を確認しています", "まだWorkspaceやProviderは変更しません。");
     const plan = await requestJSON("/v1/interaction-plans", { method: "POST", body: JSON.stringify(input) });
@@ -1076,13 +1119,13 @@ async function prepareNewRequest(event) {
     showApprovalSheet({
       title: "この依頼を開始しますか？",
       description: "承認するとInteraction Sessionだけを作成します。AIによるPlan作成は次の確認で行います。",
-      facts: [["依頼", request], ["モデル", model], ["Request digest", plan.session.request_digest]],
+      facts: [["依頼", request], ["AIサービス", "WorkCairnが接続設定から選択"], ["Request digest", plan.session.request_digest]],
       approveLabel: "依頼を開始",
       onApprove: async () => {
         localStorage.setItem(STORAGE_SESSION, input.session_id);
         await executeNextCommand({ operation: "interaction.start" }, {
           session_id: input.session_id, request, request_digest: plan.session.request_digest,
-          model, current_time: input.current_time,
+          model: plan.session.model, current_time: input.current_time,
         }, "依頼を保存しています", "Sessionを作成しています。", commandID());
       },
     });

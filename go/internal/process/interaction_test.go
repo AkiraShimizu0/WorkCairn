@@ -155,6 +155,45 @@ func TestInteractionStartRejectsStaleApprovalDigestBeforeClaim(t *testing.T) {
 	}
 }
 
+func TestInteractionPlanRecordsProviderConfigurationRequiredWithoutProviderCall(t *testing.T) {
+	fixture := loadCEOPlanFixture(t)
+	root := ceoPlanVault(t, fixture.Employees)
+	at := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	start := InteractionStartInput{
+		VaultRoot: root, SessionID: "SESSION-PROVIDER-SETUP", Request: fixture.Request,
+		Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-PROVIDER-SETUP-START",
+	}
+	plan, err := PlanInteractionStart(context.Background(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.RequestDigest = plan.Session.RequestDigest
+	if _, err := ExecuteInteractionStart(context.Background(), start, true); err != nil {
+		t.Fatal(err)
+	}
+	providerCalled := false
+	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
+		providerCalled = true
+		return nil, errors.New("Provider must not be called")
+	})
+	_, err = ExecuteInteractionPlanGeneration(context.Background(), InteractionPlanGenerationInput{
+		VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: 1,
+		CurrentTime: at.Add(time.Minute), CommandID: "CMD-PROVIDER-SETUP-PLAN",
+	}, ClaudeProcessConfig{}, client, true)
+	var recorded *RecordedCommandError
+	if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_CONFIGURATION_REQUIRED" || recorded.Stage != "provider_configuration" || recorded.Partial || providerCalled {
+		t.Fatalf("provider setup failure = %#v, %v, called=%t", recorded, err, providerCalled)
+	}
+	ledger, ledgerErr := vault.NewWorkspaceCommandLedgerStore(root)
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, ledgerErr := ledger.Get(context.Background(), "CMD-PROVIDER-SETUP-PLAN")
+	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil || record.Failure.Code != "PROVIDER_CONFIGURATION_REQUIRED" {
+		t.Fatalf("provider setup Ledger = %#v, %v", record, ledgerErr)
+	}
+}
+
 func TestInteractionProviderSuccessThenSessionCASConflictIsPartialFailure(t *testing.T) {
 	fixture := loadCEOPlanFixture(t)
 	root := ceoPlanVault(t, fixture.Employees)

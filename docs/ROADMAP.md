@@ -322,6 +322,7 @@ Public Beta公開前に残る人間／実環境確認：
 - macOS／arm64のnative CLI／daemon／iPhone実機smoke
 - 配布する追加targetごとのnative filesystem／daemon smoke
 - temporary Vaultとtest credentialによる最小Provider smoke
+- ADR-0036のProvider Connection Statusと`workcairn-auto`を起点に、Employee Role／Task capability／接続済みRuntime／quality・cost・latency policyからtyped Routeを解決するProvider／Model Routing（暗黙fallbackなし）
 - tag、Release note、archive checksumの最終sign-off
 
 ## Cross-Cutting Gates

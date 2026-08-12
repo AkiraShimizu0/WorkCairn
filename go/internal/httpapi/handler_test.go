@@ -56,6 +56,12 @@ type fakeAsyncBackend struct {
 	record      commandledger.Record
 }
 
+type providerStatusHTTPDoer func(*http.Request) (*http.Response, error)
+
+func (doer providerStatusHTTPDoer) Do(request *http.Request) (*http.Response, error) {
+	return doer(request)
+}
+
 func (fake *fakeAsyncBackend) ValidateCommand(command Command) error {
 	if fake.validateErr != nil {
 		return fake.validateErr
@@ -193,6 +199,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"cryptoAPI.getRandomValues", "BROWSER_SECURE_RANDOM_UNAVAILABLE",
 		`ui.requestForm.addEventListener("submit", prepareNewRequest)`, `requestJSON("/v1/interaction-plans"`,
 		`showError(error, "依頼内容を確認できませんでした")`,
+		`requestJSON("/v1/provider-status")`, "PROVIDER_CONFIGURATION_REQUIRED", "AIサービスへ接続してください",
 	} {
 		if !strings.Contains(asset.Body.String(), required) {
 			t.Fatalf("mobile UI is missing command continuity boundary %q", required)
@@ -200,10 +207,46 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 	}
 	index := httptest.NewRecorder()
 	handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/", nil))
-	for _, required := range []string{"My Actions", "Company View", "AI社員", "RESPONSIBILITY FLOW", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION"} {
+	for _, required := range []string{"My Actions", "Company View", "AI社員", "RESPONSIBILITY FLOW", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION", "接続済みAIサービスから、WorkCairnが実行先を選びます"} {
 		if !strings.Contains(index.Body.String(), required) {
 			t.Fatalf("mobile UI is missing Living Company Dashboard surface %q", required)
 		}
+	}
+	for _, forbidden := range []string{`name="model"`, "利用モデル"} {
+		if strings.Contains(index.Body.String(), forbidden) {
+			t.Fatalf("mobile UI still asks for per-request model selection %q", forbidden)
+		}
+	}
+}
+
+func TestProviderStatusIsRedactedAndDoesNotCallProvider(t *testing.T) {
+	root := t.TempDir()
+	providerCalls := 0
+	client := providerStatusHTTPDoer(func(*http.Request) (*http.Response, error) {
+		providerCalls++
+		return nil, errors.New("unexpected Provider call")
+	})
+	configured, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{
+		APIKey: "secret-that-must-not-appear", ProviderModel: "provider-model-that-must-not-appear",
+	}, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(configured, configured)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/provider-status", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"configured":true`) || providerCalls != 0 ||
+		strings.Contains(response.Body.String(), "secret-that-must-not-appear") || strings.Contains(response.Body.String(), "provider-model-that-must-not-appear") {
+		t.Fatalf("configured Provider status = %d %s calls=%d", response.Code, response.Body.String(), providerCalls)
+	}
+
+	unconfigured, _ := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{}, client)
+	unconfiguredHandler, _ := NewHandler(unconfigured, unconfigured)
+	unconfiguredResponse := httptest.NewRecorder()
+	unconfiguredHandler.ServeHTTP(unconfiguredResponse, httptest.NewRequest(http.MethodGet, "/v1/provider-status", nil))
+	if unconfiguredResponse.Code != http.StatusOK || !strings.Contains(unconfiguredResponse.Body.String(), `"configured":false`) ||
+		!strings.Contains(unconfiguredResponse.Body.String(), `"credential"`) || !strings.Contains(unconfiguredResponse.Body.String(), `"provider_model"`) || providerCalls != 0 {
+		t.Fatalf("unconfigured Provider status = %d %s calls=%d", unconfiguredResponse.Code, unconfiguredResponse.Body.String(), providerCalls)
 	}
 }
 
@@ -456,6 +499,27 @@ func TestInteractionWorkflowPlanHTTPUsesVersionedReadOnlyContract(t *testing.T) 
 	handler.ServeHTTP(invalidResponse, invalid)
 	if invalidResponse.Code != http.StatusBadRequest {
 		t.Fatalf("invalid Interaction Workflow plan = %d %s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+}
+
+func TestInteractionPlanDefaultsToAutomaticRuntimeSelection(t *testing.T) {
+	root := t.TempDir()
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(executor, executor)
+	response := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-plans", map[string]any{
+		"version": InteractionContractVersion, "session_id": "SESSION-AUTO-MODEL-001",
+		"request": "役割に適したAIで仕事を計画して", "current_time": "2026-08-12T12:00:00+09:00",
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("automatic model plan = %d %s", response.Code, response.Body.String())
+	}
+	var plan workspaceprocess.InteractionStartPlan
+	decodeHTTPResult(t, response, &plan)
+	if plan.Session.Model != AutomaticInteractionModel || !plan.Executable {
+		t.Fatalf("automatic model plan = %#v", plan)
 	}
 }
 

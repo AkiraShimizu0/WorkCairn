@@ -53,6 +53,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0004: Event DrivenをWorkspace OSの基本設計とする（当時の名称）](adr/ADR-0004-event-system.md)
 - [ADR-0005: Task lifecycleをGo TaskServiceの責務とする](adr/ADR-0005-task-lifecycle.md)
 - [ADR-0006: WorkerとRunnerをProvider非依存の境界で分離する](adr/ADR-0006-worker-runner-boundary.md)
+- [ADR-0036: Provider接続状態とRuntime routingを分離する](adr/ADR-0036-provider-connection-and-runtime-routing.md)
 - [ADR-0007: Workflow executionとPolicyをTask lifecycleから分離する](adr/ADR-0007-workflow-execution-policy.md)
 - [ADR-0008: Tasks.mdの5列表とmanaged metadataを同一ファイルで永続化する](adr/ADR-0008-vault-taskstore-metadata.md)
 - [ADR-0009: DeliverableをTask完了より先にcommitする](adr/ADR-0009-deliverable-commit-ordering.md)
@@ -104,6 +105,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Vault Revision Intent Store | ADR-0012のimmutable intentを原子的に作成し、canonical Review参照と既存metadata重複検知を保持する |
 | Go Runner Registry | 社員model値をProvider非依存のRunner Adapterへ明示的に解決する |
 | Go Claude Runner Adapter | Provider設定を注入され、Anthropic Messages APIとProvider非依存Runner契約を相互変換する |
+| Provider Connection Status | Runtime edgeへ注入済み設定をnetwork accessなしでredacted inspectionし、credential／modelの値を公開しない |
 | Go Runtime | PromptBuilder、Runner Registry、Claude Adapter、TaskStore、DeliverableStore、Audit Handlerをcompositionし、明示承認付きExecution入口を提供する |
 | Go Vault Context Adapter | 現行Vault Markdownを読み取り、Employee、Project、Task、dependencyの構造化Execution Contextへ変換する |
 | Go Vault TaskStore Adapter | 5列Tasks.mdとmanaged metadataを単一ファイルで原子的に置換し、永続Version/CASとfailure／hold reasonを提供する |

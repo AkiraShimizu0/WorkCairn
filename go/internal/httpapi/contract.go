@@ -18,6 +18,8 @@ import (
 const (
 	ContractVersion            = "workspace-command.v1"
 	InteractionContractVersion = "workspace-interaction.v1"
+	ProviderStatusVersion      = "workcairn-provider-status.v1"
+	AutomaticInteractionModel  = "workcairn-auto"
 )
 
 var (
@@ -64,6 +66,17 @@ type InteractionPlanRequest struct {
 	CurrentTime time.Time `json:"current_time"`
 }
 
+// ProviderStatus is a redacted Runtime-edge inspection. Configured means the
+// Adapter can be constructed; it does not perform a network connection check.
+type ProviderStatus struct {
+	Version       string   `json:"version"`
+	Provider      string   `json:"provider"`
+	Configured    bool     `json:"configured"`
+	SelectionMode string   `json:"selection_mode"`
+	Missing       []string `json:"missing"`
+	Invalid       []string `json:"invalid"`
+}
+
 type InteractionWorkflowPlanRequest struct {
 	Version         string             `json:"version"`
 	SessionID       string             `json:"session_id"`
@@ -91,6 +104,13 @@ func (request InteractionPlanRequest) Validate() error {
 		return ErrInvalidCommand
 	}
 	return nil
+}
+
+func (request InteractionPlanRequest) withDefaults() InteractionPlanRequest {
+	if strings.TrimSpace(request.Model) == "" {
+		request.Model = AutomaticInteractionModel
+	}
+	return request
 }
 
 func (request InteractionWorkflowPlanRequest) Validate() error {

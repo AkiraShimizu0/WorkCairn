@@ -34,6 +34,7 @@ type Handler struct {
 	organizationInspector      OrganizationInspector
 	taskEvidenceInspector      TaskEvidenceInspector
 	workReportInspector        WorkReportInspector
+	providerStatusInspector    ProviderStatusInspector
 	localAccess                *LocalAccess
 	asyncCommands              *asyncCommandRunner
 	mux                        *http.ServeMux
@@ -81,6 +82,10 @@ type TaskEvidenceInspector interface {
 
 type WorkReportInspector interface {
 	InspectWorkReport(ctx context.Context, sessionID string) (workspaceprocess.WorkReport, error)
+}
+
+type ProviderStatusInspector interface {
+	InspectProviderStatus() ProviderStatus
 }
 
 func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
@@ -144,7 +149,20 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 		handler.workReportInspector = workReportInspector
 		handler.mux.HandleFunc("GET /v1/interactions/{session_id}/work-report", handler.inspectWorkReport)
 	}
+	if providerStatusInspector, ok := executor.(ProviderStatusInspector); ok {
+		handler.providerStatusInspector = providerStatusInspector
+		handler.mux.HandleFunc("GET /v1/provider-status", handler.inspectProviderStatus)
+	}
 	return handler, nil
+}
+
+func (handler *Handler) inspectProviderStatus(response http.ResponseWriter, _ *http.Request) {
+	encoded, err := json.Marshal(handler.providerStatusInspector.InspectProviderStatus())
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ProviderStatusVersion, OK: false, Error: &CommandError{Code: "PROVIDER_STATUS_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: ProviderStatusVersion, OK: true, Result: encoded})
 }
 
 func (handler *Handler) inspectWorkReport(response http.ResponseWriter, request *http.Request) {
@@ -286,7 +304,12 @@ func (handler *Handler) planInteraction(response http.ResponseWriter, request *h
 		return
 	}
 	var planRequest InteractionPlanRequest
-	if err := decodePayload(content, &planRequest); err != nil || planRequest.Validate() != nil {
+	if err := decodePayload(content, &planRequest); err != nil {
+		writeCommandResponse(response, http.StatusBadRequest, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "INVALID_INTERACTION_PLAN"}})
+		return
+	}
+	planRequest = planRequest.withDefaults()
+	if planRequest.Validate() != nil {
 		writeCommandResponse(response, http.StatusBadRequest, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "INVALID_INTERACTION_PLAN"}})
 		return
 	}

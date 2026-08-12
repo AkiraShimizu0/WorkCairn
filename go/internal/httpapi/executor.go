@@ -74,6 +74,34 @@ func NewProcessExecutorWithActionConfig(vaultRoot string, provider workspaceproc
 	}, nil
 }
 
+// InspectProviderStatus reports only whether the configured Adapter can be
+// constructed. It never performs a Provider request or exposes configuration
+// values.
+func (executor *ProcessExecutor) InspectProviderStatus() ProviderStatus {
+	status := ProviderStatus{
+		Version: ProviderStatusVersion, Provider: "anthropic", SelectionMode: "connection_default",
+		Missing: []string{}, Invalid: []string{},
+	}
+	if strings.TrimSpace(executor.provider.APIKey) == "" {
+		status.Missing = append(status.Missing, "credential")
+	}
+	if strings.TrimSpace(executor.provider.ProviderModel) == "" {
+		status.Missing = append(status.Missing, "provider_model")
+	}
+	if len(status.Missing) != 0 {
+		return status
+	}
+	if _, err := claude.New(claude.Config{
+		APIKey: executor.provider.APIKey, ProviderModel: executor.provider.ProviderModel,
+		BaseURL: executor.provider.BaseURL, MaxTokens: executor.provider.MaxTokens,
+	}, executor.httpClient); err != nil {
+		status.Invalid = append(status.Invalid, "provider_configuration")
+		return status
+	}
+	status.Configured = true
+	return status
+}
+
 type taskExecutePayload struct {
 	ProjectID         string    `json:"project_id"`
 	ProjectName       string    `json:"project_name"`

@@ -139,6 +139,7 @@ make public-beta-smoke
 - temporary Vaultとtest用Provider credentialだけを使う
 - process環境へ`ANTHROPIC_API_KEY`と`WORKCAIRN_CLAUDE_PROVIDER_MODEL`を注入する
 - `.env`へ保存しない
+- Web UIでModel名を選ぶ必要はない。daemonは起動時設定を値を出さず検査し、未接続ならProviderを呼ぶ前にMy Actionsへ案内する
 - read-only plan、request digest、Command ID、承認対象を確認する
 - Plan生成1回、通常Task1件、Review1回に上限を設け、usageをProvider側でも確認する
 - 終了後にcredentialを失効またはrotationし、terminal historyへ値が残っていないことを確認する

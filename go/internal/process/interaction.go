@@ -183,7 +183,12 @@ func ExecuteInteractionPlanGeneration(
 }
 
 func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, result InteractionPlanResult, err error, stage string, partial bool) (InteractionPlanResult, error) {
-	return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_PLAN_FAILED", stage, partial)
+	code := "INTERACTION_PLAN_FAILED"
+	if errors.Is(err, claude.ErrInvalidConfig) {
+		code = "PROVIDER_CONFIGURATION_REQUIRED"
+		stage = "provider_configuration"
+	}
+	return result, finishDurableCommand(ctx, claim, result, err, code, stage, partial)
 }
 
 type InteractionAnswerInput struct {

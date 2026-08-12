@@ -61,6 +61,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	providerStatus := executor.InspectProviderStatus()
+	if !providerStatus.Configured {
+		fmt.Fprintln(os.Stdout, "AI Provider: setup required before Plan generation; the Web UI remains available for read-only use.")
+	}
 	scheduleStore, err := vault.NewScheduleStore(vaultRoot)
 	if err != nil {
 		return err

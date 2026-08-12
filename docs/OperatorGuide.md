@@ -14,6 +14,7 @@ WorkCairnのread-only操作とwriter操作は分離されています。`*-plan`
 - 同じ論理操作の再送には同じCommand IDと同じrequestを使う。内容が変わる場合は新しいCommand IDを使う。
 - `running`、partial failure、stale Versionを推測で再実行しない。
 - `.env`をGo Runtimeへ読ませず、credentialは承認済みprocessの環境へだけ注入する。
+- daemonのProvider statusは起動processへ注入済みかだけをredacted inspectionし、remote Providerへ疎通しない。未接続時はPlan生成を開始せず、別Providerへfallbackしない。
 - canonical artifact、Deliverable、Review JSON、Revision intent、Action evidenceを自動削除・上書きしない。
 
 ## 配布物の確認
