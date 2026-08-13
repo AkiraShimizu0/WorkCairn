@@ -21,12 +21,16 @@ type generationFixture struct {
 	ExpectedPlan Plan                    `json:"expected_plan"`
 }
 
-func TestCEOPlanMatchesMigrationFixture(t *testing.T) {
+// TestCEOPlanCanonicalContractMatchesMigrationFixture validates the
+// canonical layer (ParseRunnerOutput/ValidateApprovedPlan) directly against
+// its golden fixture. It intentionally no longer asserts BuildPrompt's
+// output against fixture.SystemPrompt: BuildPrompt now generates the small
+// Intent contract (see TestCEOPlanIntentPromptExampleIsValidAndContractIsExplicit),
+// while this fixture's runner_output/expected_plan still exercise the
+// canonical Plan contract that NormalizeIntent's Go Normalizer also feeds
+// into — that contract is unchanged by the Intent migration.
+func TestCEOPlanCanonicalContractMatchesMigrationFixture(t *testing.T) {
 	fixture := loadGenerationFixture(t)
-	prompt, err := BuildPrompt(fixture.Request, fixture.Employees)
-	if err != nil || prompt.System != fixture.SystemPrompt || prompt.User != fixture.Request {
-		t.Fatalf("prompt mismatch err=%v\nsystem=%q", err, prompt.System)
-	}
 	plan, err := ParseRunnerOutput(string(fixture.RunnerOutput), fixture.Employees)
 	if err != nil || !reflect.DeepEqual(plan, fixture.ExpectedPlan) {
 		t.Fatalf("plan=%#v\nwant=%#v\nerr=%v", plan, fixture.ExpectedPlan, err)
@@ -154,7 +158,12 @@ func TestCEOPlanPromptIsDeterministicAndPreservesUnicodeJSON(t *testing.T) {
 	}
 }
 
-func TestCEOPlanPromptExampleIsValidAndOutputContractIsExplicit(t *testing.T) {
+// TestCEOPlanIntentPromptExampleIsValidAndContractIsExplicit mirrors the
+// previous canonical-layer version of this test, updated for the Intent
+// contract: BuildPrompt's own embedded example must satisfy ParseIntent,
+// and the Prompt text must make the small Intent output contract explicit
+// (no employee/task/dependency identity requested from the LLM).
+func TestCEOPlanIntentPromptExampleIsValidAndContractIsExplicit(t *testing.T) {
 	employees := []organization.Identity{{ID: "CONTENT-001", Department: "コンテンツ部", Role: "Content Writer"}}
 	built, err := BuildPrompt("依頼", employees)
 	if err != nil {
@@ -167,11 +176,15 @@ func TestCEOPlanPromptExampleIsValidAndOutputContractIsExplicit(t *testing.T) {
 		t.Fatal("Prompt does not make the strict output contract explicit")
 	}
 	for _, heading := range []string{
-		"## 必須出力ルール（例外なし）", "## top-level fields", "## proposed_tasksの各要素",
-		"## assignment rules", "## dependency rules", "## 出力例",
+		"## 必須出力ルール（例外なし）", "## top-level fields", "## stepsの各要素", "## 出力例",
 	} {
 		if !strings.Contains(built.System, heading) {
 			t.Fatalf("Prompt is missing section %q", heading)
+		}
+	}
+	for _, forbidden := range []string{"assignee_id", "dependency_ids", "proposal_id"} {
+		if strings.Contains(built.System, forbidden) {
+			t.Fatalf("Prompt must not ask the LLM for %q — Go derives it", forbidden)
 		}
 	}
 
@@ -185,31 +198,30 @@ func TestCEOPlanPromptExampleIsValidAndOutputContractIsExplicit(t *testing.T) {
 	}
 	example := strings.TrimSpace(built.System[exampleHeading+relativeStart:])
 
-	plan, err := ParseRunnerOutput(example, employees)
+	intent, err := ParseIntent(example)
 	if err != nil {
-		t.Fatalf("Prompt example does not satisfy its own parser contract: %v", err)
+		t.Fatalf("Prompt example does not satisfy its own Intent parser contract: %v", err)
 	}
-	if plan.ProjectName == "" || plan.Objective == "" || plan.Summary == "" || len(plan.ProposedTasks) != 1 {
-		t.Fatalf("Prompt example parsed unexpectedly: %#v", plan)
+	if intent.ProjectName == "" || intent.Objective == "" || intent.Summary == "" || len(intent.Steps) == 0 {
+		t.Fatalf("Prompt example parsed unexpectedly: %#v", intent)
+	}
+	plan, err := NormalizeIntent(intent, employees)
+	if err != nil || plan.ProjectName == "" || len(plan.ProposedTasks) == 0 {
+		t.Fatalf("Prompt example does not normalize against its own roster: %#v, %v", plan, err)
 	}
 
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(example), &raw); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{
-		"project_name", "objective", "summary", "required_departments", "required_roles",
-		"assigned_existing_employees", "proposed_tasks", "risks", "ceo_questions",
-	} {
+	for _, key := range []string{"project_name", "objective", "summary", "steps", "ceo_questions"} {
 		if _, exists := raw[key]; !exists {
 			t.Fatalf("Prompt example is missing top-level key %q", key)
 		}
 	}
-	for _, key := range []string{"assigned_existing_employees", "risks", "ceo_questions"} {
-		var list []any
-		if err := json.Unmarshal(raw[key], &list); err != nil || list == nil {
-			t.Fatalf("Prompt example key %q is not an explicit array: %s", key, raw[key])
-		}
+	var questions []any
+	if err := json.Unmarshal(raw["ceo_questions"], &questions); err != nil || questions == nil {
+		t.Fatalf("Prompt example key %q is not an explicit array: %s", "ceo_questions", raw["ceo_questions"])
 	}
 }
 

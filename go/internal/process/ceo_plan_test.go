@@ -25,23 +25,34 @@ type ceoPlanHTTPDoer func(*http.Request) (*http.Response, error)
 
 func (doer ceoPlanHTTPDoer) Do(request *http.Request) (*http.Response, error) { return doer(request) }
 
+// TestGenerateCEOPlanUsesClaudeAdapterAndTemporaryVault exercises the full
+// generation pipeline (Vault Organization Adapter → Claude Adapter →
+// ceoplan.ParseIntent/NormalizeIntent) through a mocked HTTP transport. The
+// mock Provider response is the small Intent contract, not the historical
+// canonical-plan shape in fixtures/ceo/plan_generation_v1.json — Go, not
+// the Runner, now builds the Canonical Plan (that fixture's own contract is
+// still exercised directly by ceoplan.TestCEOPlanCanonicalContractMatchesMigrationFixture).
 func TestGenerateCEOPlanUsesClaudeAdapterAndTemporaryVault(t *testing.T) {
 	fixture := loadCEOPlanFixture(t)
 	root := ceoPlanVault(t, fixture.Employees)
-	raw, _ := json.Marshal(fixture.RunnerOutput)
+	intentOutput, _ := json.Marshal(map[string]any{
+		"project_name": "家計簿Webアプリ", "objective": "日々の収支を簡単に記録できるようにする",
+		"summary": "MVPとして収支登録と一覧表示を提供する",
+		"steps": []map[string]any{
+			{"kind": "write", "description": "MVP要件を整理する", "required_role": "Product Manager"},
+			{"kind": "implement", "description": "収支登録画面を実装する", "required_role": "Backend Engineer"},
+		},
+		"ceo_questions": []string{},
+	})
 	providerResponse, _ := json.Marshal(map[string]any{
-		"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(raw)}},
+		"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(intentOutput)}},
 		"usage": map[string]int{"input_tokens": 10, "output_tokens": 20},
 	})
 	called := false
 	client := ceoPlanHTTPDoer(func(request *http.Request) (*http.Response, error) {
 		called = true
 		body, _ := io.ReadAll(request.Body)
-		var payload struct {
-			System string `json:"system"`
-		}
-		_ = json.Unmarshal(body, &payload)
-		if payload.System != fixture.SystemPrompt || request.Header.Get("x-api-key") != "fake-key" {
+		if request.Header.Get("x-api-key") != "fake-key" {
 			t.Fatalf("unexpected Provider request: %s", body)
 		}
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
@@ -50,8 +61,22 @@ func TestGenerateCEOPlanUsesClaudeAdapterAndTemporaryVault(t *testing.T) {
 		t.Fatalf("unapproved result err=%v called=%t", err, called)
 	}
 	result, err := GenerateCEOPlan(context.Background(), CEOPlanGenerationInput{VaultRoot: root, Request: fixture.Request, Model: "Claude Sonnet 5", Approved: true}, ClaudeProcessConfig{APIKey: "fake-key", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}, client)
-	if err != nil || !reflect.DeepEqual(result.Plan, fixture.ExpectedPlan) || !called {
+	if err != nil || !called {
 		t.Fatalf("result=%#v err=%v called=%t", result, err, called)
+	}
+	plan := result.Plan
+	if plan.ProjectName != "家計簿Webアプリ" || len(plan.ProposedTasks) != 2 {
+		t.Fatalf("plan = %#v", plan)
+	}
+	if plan.ProposedTasks[0].AssigneeID == nil || *plan.ProposedTasks[0].AssigneeID != "PLAN-001" || len(plan.ProposedTasks[0].DependencyIDs) != 0 {
+		t.Fatalf("task 1 assignment/dependency = %#v", plan.ProposedTasks[0])
+	}
+	if plan.ProposedTasks[1].AssigneeID == nil || *plan.ProposedTasks[1].AssigneeID != "DEV-001" ||
+		!reflect.DeepEqual(plan.ProposedTasks[1].DependencyIDs, []string{"PROPOSED-001"}) {
+		t.Fatalf("task 2 assignment/dependency (Go-built linear chain) = %#v", plan.ProposedTasks[1])
+	}
+	if len(plan.MissingRoles) != 0 {
+		t.Fatalf("plan has missing roles despite every step resolving: %#v", plan.MissingRoles)
 	}
 }
 

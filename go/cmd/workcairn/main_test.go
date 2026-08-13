@@ -617,11 +617,26 @@ func TestCEOPlanGenerateAndApplyUseGoOnlyProductPath(t *testing.T) {
 	if after := commandVaultSnapshot(t, root); !reflect.DeepEqual(before, after) {
 		t.Fatal("unapproved CEO generation changed Vault")
 	}
-	rawOutput, _ := json.Marshal(fixture.RunnerOutput)
+	// Intent-shaped mock Provider output: both steps resolve uniquely against
+	// fixture.Employees (Product Manager -> PLAN-001, Backend Engineer ->
+	// DEV-001). NormalizeIntent now safely rejects rather than silently
+	// leaving unassigned a required_role with zero matching employees, so
+	// this E2E no longer reuses the historical canonical fixture's second
+	// task ("UI/UX Designer", intentionally unfilled) -- that fixture's own
+	// contract is still exercised directly by ceoplan's own fixture test.
+	intentOutput, _ := json.Marshal(map[string]any{
+		"project_name": fixture.ExpectedPlan.ProjectName, "objective": fixture.ExpectedPlan.Objective,
+		"summary": fixture.ExpectedPlan.Summary,
+		"steps": []map[string]any{
+			{"kind": "write", "description": "MVP要件を整理する", "required_role": "Product Manager"},
+			{"kind": "implement", "description": "収支登録画面を実装する", "required_role": "Backend Engineer"},
+		},
+		"ceo_questions": []string{},
+	})
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(response).Encode(map[string]any{
-			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(rawOutput)}},
+			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(intentOutput)}},
 			"usage": map[string]int{"input_tokens": 10, "output_tokens": 20},
 		})
 	}))
@@ -638,7 +653,9 @@ func TestCEOPlanGenerateAndApplyUseGoOnlyProductPath(t *testing.T) {
 	generated := decodeCommandResponse(t, generatedOutput.Bytes())
 	encodedResult, _ := json.Marshal(generated.Result)
 	var generationResult service.CEOPlanResult
-	if err := json.Unmarshal(encodedResult, &generationResult); err != nil || !reflect.DeepEqual(generationResult.Plan, fixture.ExpectedPlan) {
+	if err := json.Unmarshal(encodedResult, &generationResult); err != nil ||
+		generationResult.Plan.ProjectName != fixture.ExpectedPlan.ProjectName ||
+		len(generationResult.Plan.ProposedTasks) != 2 || len(generationResult.Plan.MissingRoles) != 0 {
 		t.Fatalf("generation result=%s err=%v", encodedResult, err)
 	}
 	planJSON, _ := json.Marshal(generationResult.Plan)

@@ -1,0 +1,39 @@
+{
+  "request": "りんごの紹介文を100文字程度で作成して",
+  "employees": [
+    {"id": "CONTENT-001", "name": "佐藤 陽菜", "department": "コンテンツ部", "role": "Content Writer", "model": "Claude Sonnet 5"},
+    {"id": "QA-001", "name": "伊藤 健太", "department": "品質保証部", "role": "QA Engineer", "model": "Claude Sonnet 5"}
+  ],
+  "intent_output": {
+    "project_name": "りんご紹介文プロジェクト",
+    "objective": "りんごの紹介文を作成する",
+    "summary": "100文字程度の紹介文を作成し、内容を確認する",
+    "steps": [
+      {"kind": "write", "description": "100文字程度の紹介文を作成する", "required_role": "Content Writer"},
+      {"kind": "review", "description": "内容と文字数を確認する"}
+    ],
+    "ceo_questions": []
+  },
+  "expected_plan": {
+    "project_name": "りんご紹介文プロジェクト",
+    "objective": "りんごの紹介文を作成する",
+    "summary": "100文字程度の紹介文を作成し、内容を確認する",
+    "required_departments": ["コンテンツ部"],
+    "required_roles": ["Content Writer"],
+    "assigned_existing_employees": ["CONTENT-001"],
+    "missing_roles": [],
+    "proposed_tasks": [
+      {
+        "proposal_id": "PROPOSED-001",
+        "title": "100文字程度の紹介文を作成する",
+        "required_role": "Content Writer",
+        "assignee_id": "CONTENT-001",
+        "dependency_ids": [],
+        "rationale": "100文字程度の紹介文を作成する"
+      }
+    ],
+    "risks": [],
+    "ceo_questions": [],
+    "plan_only": true
+  }
+}

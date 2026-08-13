@@ -384,7 +384,14 @@ function showError(error, title = "処理を完了できませんでした") {
   const providerSetupRequired = code === "PROVIDER_CONFIGURATION_REQUIRED";
   const providerGenerationFailed = code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_generation";
   const planCommitConflict = code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_commit_cas";
-  const planResponseInvalid = code === "INTERACTION_PLAN_FAILED" && stage === "ceo_plan_parser";
+  // Covers every CEO Plan generation-side stage that can no longer produce
+  // a safe Canonical Plan: the small Intent contract itself was malformed
+  // ("ceo_plan_intent"), Go could not deterministically resolve an Employee
+  // assignment ("ceo_plan_normalization"), or the Go-constructed candidate
+  // still failed final canonical validation ("ceo_plan_parser", kept as
+  // defense-in-depth). All three share the same safe, unapplied outcome.
+  const planResponseInvalid = code === "INTERACTION_PLAN_FAILED" &&
+    (stage === "ceo_plan_intent" || stage === "ceo_plan_normalization" || stage === "ceo_plan_parser");
   const workflowAssignmentRequired = code === "WORKFLOW_TASK_ASSIGNMENT_REQUIRED";
   const workflowReviewerRequired = code === "WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED";
   // Safety net for the rare case where automatic Project name disambiguation

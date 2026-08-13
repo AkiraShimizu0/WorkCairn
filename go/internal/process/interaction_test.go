@@ -42,18 +42,25 @@ func TestInteractionClarificationPlanApprovalAndApplyE2E(t *testing.T) {
 		t.Fatalf("start = %#v, %v", started, err)
 	}
 
-	outputWithQuestion := fixture.RunnerOutput
-	planWithoutQuestions := fixture.ExpectedPlan
-	planWithoutQuestions.CEOQuestions = []string{}
+	// Intent-shaped mock Provider output: both steps resolve uniquely
+	// against fixture.Employees (Product Manager -> PLAN-001, Backend
+	// Engineer -> DEV-001) since NormalizeIntent now safely rejects (rather
+	// than silently leaving unassigned) a required_role with zero matching
+	// employees -- unlike the historical canonical fixture's second task
+	// ("UI/UX Designer", intentionally unfilled), which this E2E no longer
+	// exercises here (see ceoplan's own fixture-contract test for that).
+	ceoQuestion := fixture.ExpectedPlan.CEOQuestions[0]
+	intentSteps := []map[string]any{
+		{"kind": "write", "description": "MVP要件を整理する", "required_role": "Product Manager"},
+		{"kind": "implement", "description": "収支登録画面を実装する", "required_role": "Backend Engineer"},
+	}
+	outputWithQuestion, _ := json.Marshal(map[string]any{
+		"project_name": fixture.ExpectedPlan.ProjectName, "objective": fixture.ExpectedPlan.Objective,
+		"summary": fixture.ExpectedPlan.Summary, "steps": intentSteps, "ceo_questions": []string{ceoQuestion},
+	})
 	outputWithoutQuestions, _ := json.Marshal(map[string]any{
-		"project_name": planWithoutQuestions.ProjectName, "objective": planWithoutQuestions.Objective,
-		"summary": planWithoutQuestions.Summary, "required_departments": planWithoutQuestions.RequiredDepartments,
-		"required_roles": planWithoutQuestions.RequiredRoles, "assigned_existing_employees": planWithoutQuestions.AssignedExistingEmployees,
-		"proposed_tasks": []map[string]any{
-			{"title": planWithoutQuestions.ProposedTasks[0].Title, "required_role": planWithoutQuestions.ProposedTasks[0].RequiredRole, "assignee_id": *planWithoutQuestions.ProposedTasks[0].AssigneeID, "dependency_ids": []string{}, "rationale": planWithoutQuestions.ProposedTasks[0].Rationale},
-			{"title": planWithoutQuestions.ProposedTasks[1].Title, "required_role": planWithoutQuestions.ProposedTasks[1].RequiredRole, "assignee_id": nil, "dependency_ids": []string{"PROPOSED-001"}, "rationale": planWithoutQuestions.ProposedTasks[1].Rationale},
-		},
-		"risks": planWithoutQuestions.Risks, "ceo_questions": []string{},
+		"project_name": fixture.ExpectedPlan.ProjectName, "objective": fixture.ExpectedPlan.Objective,
+		"summary": fixture.ExpectedPlan.Summary, "steps": intentSteps, "ceo_questions": []string{},
 	})
 	providerCalls := 0
 	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
@@ -350,19 +357,19 @@ func TestInteractionPlanRecordsSafeParserSubstageWithoutCommittingPlan(t *testin
 		CurrentTime: at.Add(time.Minute), CommandID: "CMD-PLAN-PARSER-GENERATE",
 	}, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
 	var recorded *RecordedCommandError
-	if !errors.As(err, &recorded) || recorded.Code != "INTERACTION_PLAN_FAILED" || recorded.Stage != "ceo_plan_parser" ||
+	if !errors.As(err, &recorded) || recorded.Code != "INTERACTION_PLAN_FAILED" || recorded.Stage != "ceo_plan_intent" ||
 		recorded.Partial || providerCalls != 1 || result.ProviderFailure != nil || result.SessionCommitted ||
-		result.ParseFailureReason != string(ceoplan.ParseFailureJSONDecodeFailed) {
+		result.ParseFailureReason != string(ceoplan.IntentParseJSONDecodeFailed) {
 		t.Fatalf("parser failure = %#v, result=%#v, calls=%d, err=%v", recorded, result, providerCalls, err)
 	}
 	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
 	record, ledgerErr := ledger.Get(context.Background(), "CMD-PLAN-PARSER-GENERATE")
 	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil ||
-		record.Failure.Stage != "ceo_plan_parser" {
+		record.Failure.Stage != "ceo_plan_intent" {
 		t.Fatalf("parser failure Ledger = %#v, %v", record, ledgerErr)
 	}
 	var storedResult InteractionPlanResult
-	if json.Unmarshal(record.Result, &storedResult) != nil || storedResult.ParseFailureReason != string(ceoplan.ParseFailureJSONDecodeFailed) {
+	if json.Unmarshal(record.Result, &storedResult) != nil || storedResult.ParseFailureReason != string(ceoplan.IntentParseJSONDecodeFailed) {
 		t.Fatalf("stored parse failure reason = %#v", storedResult)
 	}
 	stored, inspectErr := InspectInteraction(context.Background(), root, start.SessionID)
@@ -384,9 +391,17 @@ func TestInteractionProviderSuccessThenSessionCASConflictIsPartialFailure(t *tes
 	if _, err := ExecuteInteractionStart(context.Background(), start, true); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(fixture.RunnerOutput)
+	intentOutput, _ := json.Marshal(map[string]any{
+		"project_name": fixture.ExpectedPlan.ProjectName, "objective": fixture.ExpectedPlan.Objective,
+		"summary": fixture.ExpectedPlan.Summary,
+		"steps": []map[string]any{
+			{"kind": "write", "description": "MVP要件を整理する", "required_role": "Product Manager"},
+			{"kind": "implement", "description": "収支登録画面を実装する", "required_role": "Backend Engineer"},
+		},
+		"ceo_questions": []string{},
+	})
 	providerResponse, _ := json.Marshal(map[string]any{
-		"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(raw)}},
+		"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(intentOutput)}},
 		"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
 	})
 	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {

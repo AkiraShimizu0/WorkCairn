@@ -226,7 +226,8 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"openSettingsDialog", "renderProviderSettings", "秘密情報はiPhoneやbrowser storageへ保存しません",
 		"PROVIDER_AUTHENTICATION_REQUIRED", "PROVIDER_BILLING_REQUIRED", "PROVIDER_PERMISSION_DENIED",
 		"PROVIDER_REQUEST_INVALID", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "provider_failure",
-		"PROVIDER_RESPONSE_INVALID", "ceo_plan_parser", "進め方は保存・適用されていません", "WORKFLOW_TASK_ASSIGNMENT_REQUIRED",
+		"PROVIDER_RESPONSE_INVALID", "ceo_plan_parser", "ceo_plan_intent", "ceo_plan_normalization",
+		"進め方は保存・適用されていません", "WORKFLOW_TASK_ASSIGNMENT_REQUIRED",
 		"REVIEW_PROMPT_FAILED", "REVIEW_ROUTE_FAILED", "REVIEW_RESULT_INVALID", "reviewContractFailures",
 		"AIのレビュー結果を正しく解釈できませんでした。成果物は保持されています。",
 		"PROJECT_NAME_COLLISION", "同じ名前の仕事がすでにあります。新しい仕事として作成できませんでした。",
@@ -821,10 +822,8 @@ func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(
 	planOutput := func(questions []string) string {
 		encoded, _ := json.Marshal(map[string]any{
 			"project_name": "iPhone依頼", "objective": "依頼から成果物を完成させる", "summary": "mobile E2E",
-			"required_departments": []string{"企画部"}, "required_roles": []string{"Product Manager"},
-			"assigned_existing_employees": []string{},
-			"proposed_tasks":              []map[string]any{{"title": "要件をまとめる", "required_role": "Product Manager", "assignee_id": nil, "dependency_ids": []string{}, "rationale": "依頼を形にするため"}},
-			"risks":                       []string{}, "ceo_questions": questions,
+			"steps":         []map[string]any{{"kind": "write", "description": "要件をまとめる", "required_role": "Product Manager"}},
+			"ceo_questions": questions,
 		})
 		return string(encoded)
 	}
@@ -982,10 +981,8 @@ func TestMobileInteractionHTTPFlowRequestChangesRevisionReReviewToCompletion(t *
 	}
 	planOutput, _ := json.Marshal(map[string]any{
 		"project_name": "iPhone依頼2", "objective": "依頼から成果物を完成させる", "summary": "mobile revision E2E",
-		"required_departments": []string{"企画部"}, "required_roles": []string{"Product Manager"},
-		"assigned_existing_employees": []string{},
-		"proposed_tasks":              []map[string]any{{"title": "要件をまとめる", "required_role": "Product Manager", "assignee_id": nil, "dependency_ids": []string{}, "rationale": "依頼を形にするため"}},
-		"risks":                       []string{}, "ceo_questions": []string{},
+		"steps":         []map[string]any{{"kind": "write", "description": "要件をまとめる", "required_role": "Product Manager"}},
+		"ceo_questions": []string{},
 	})
 	reviewOutput := func(verdict string) string {
 		issues := `[]`
@@ -1123,10 +1120,8 @@ func TestMobileInteractionHTTPFlowMalformedReviewResponseClassifiesOuterCommand(
 	}
 	planOutput, _ := json.Marshal(map[string]any{
 		"project_name": "iPhone依頼3", "objective": "依頼から成果物を完成させる", "summary": "mobile malformed review E2E",
-		"required_departments": []string{"企画部"}, "required_roles": []string{"Product Manager"},
-		"assigned_existing_employees": []string{},
-		"proposed_tasks":              []map[string]any{{"title": "要件をまとめる", "required_role": "Product Manager", "assignee_id": nil, "dependency_ids": []string{}, "rationale": "依頼を形にするため"}},
-		"risks":                       []string{}, "ceo_questions": []string{},
+		"steps":         []map[string]any{{"kind": "write", "description": "要件をまとめる", "required_role": "Product Manager"}},
+		"ceo_questions": []string{},
 	})
 	providerOutputs := []string{
 		string(planOutput),
@@ -1245,10 +1240,8 @@ func TestMobileInteractionHTTPFlowSameRequestTwiceCreatesDistinctProjectsSafely(
 	const sharedProjectName = "りんご説明文作成プロジェクト"
 	planOutput, _ := json.Marshal(map[string]any{
 		"project_name": sharedProjectName, "objective": "依頼から成果物を完成させる", "summary": "duplicate request E2E",
-		"required_departments": []string{"企画部"}, "required_roles": []string{"Product Manager"},
-		"assigned_existing_employees": []string{},
-		"proposed_tasks":              []map[string]any{{"title": "要件をまとめる", "required_role": "Product Manager", "assignee_id": nil, "dependency_ids": []string{}, "rationale": "依頼を形にするため"}},
-		"risks":                       []string{}, "ceo_questions": []string{},
+		"steps":         []map[string]any{{"kind": "write", "description": "要件をまとめる", "required_role": "Product Manager"}},
+		"ceo_questions": []string{},
 	})
 	approveReview := wrapStructuredReviewOutput("# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Approve\",\"issues\":[]}\nREVIEW_RESULT_JSON_END")
 	providerOutputs := []string{
@@ -1376,10 +1369,10 @@ func TestMobileInteractionHTTPFlowSameRequestTwiceCreatesDistinctProjectsSafely(
 
 // TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand
 // exercises the real daemon/process composition when the Runner's CEO Plan
-// response violates the typed Plan contract (malformed JSON, a realistic
+// response violates the typed Intent contract (malformed JSON, a realistic
 // Claude Sonnet 5 slip) instead of the Provider transport layer. It verifies
 // the outer interaction.plan.generate Command surfaces the same
-// INTERACTION_PLAN_FAILED/ceo_plan_parser classification and a sanitized
+// INTERACTION_PLAN_FAILED/ceo_plan_intent classification and a sanitized
 // parse_failure_reason. Valid CEO Plan generation is already exercised end
 // to end by TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion.
 func TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand(t *testing.T) {
@@ -1437,7 +1430,7 @@ func TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand
 	if err := json.Unmarshal(generateResponse.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.OK || envelope.Error == nil || envelope.Error.Code != "INTERACTION_PLAN_FAILED" || envelope.Error.Stage != "ceo_plan_parser" {
+	if envelope.OK || envelope.Error == nil || envelope.Error.Code != "INTERACTION_PLAN_FAILED" || envelope.Error.Stage != "ceo_plan_intent" {
 		t.Fatalf("plan generation response = %#v", envelope)
 	}
 	var syncResult workspaceprocess.InteractionPlanResult
@@ -1453,7 +1446,7 @@ func TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand
 	var record commandledger.Record
 	decodeHTTPResult(t, statusResponse, &record)
 	if record.State != commandledger.StateFailed || record.Failure == nil ||
-		record.Failure.Code != "INTERACTION_PLAN_FAILED" || record.Failure.Stage != "ceo_plan_parser" {
+		record.Failure.Code != "INTERACTION_PLAN_FAILED" || record.Failure.Stage != "ceo_plan_intent" {
 		t.Fatalf("outer Command status = %#v", record)
 	}
 	var storedResult workspaceprocess.InteractionPlanResult

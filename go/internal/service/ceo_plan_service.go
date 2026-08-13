@@ -18,6 +18,18 @@ type CEOPlanStage string
 const (
 	CEOPlanPromptStage CEOPlanStage = "ceo_plan_prompt"
 	CEOPlanRunnerStage CEOPlanStage = "ceo_plan_runner"
+	// CEOPlanIntentStage classifies a Runner response that failed the small
+	// Intent contract (ceoplan.ParseIntent) — malformed JSON, an unknown
+	// step kind, or a missing semantic field.
+	CEOPlanIntentStage CEOPlanStage = "ceo_plan_intent"
+	// CEOPlanNormalizationStage classifies a well-formed Intent that Go
+	// could not deterministically turn into a Canonical Plan — currently
+	// only Employee assignment ambiguity (ceoplan.NormalizeIntent).
+	CEOPlanNormalizationStage CEOPlanStage = "ceo_plan_normalization"
+	// CEOPlanParserStage classifies a canonical-shape failure. It now fires
+	// only via the Go-constructed candidate NormalizeIntent hands to the
+	// existing, unmodified ceoplan.NormalizeCandidate — kept as
+	// defense-in-depth, not deleted.
 	CEOPlanParserStage CEOPlanStage = "ceo_plan_parser"
 )
 
@@ -74,7 +86,7 @@ func (service *CEOPlanService) Generate(ctx context.Context, input CEOPlanInput)
 	result, err := service.runner.Run(ctx, worker.RunRequest{
 		Model: input.Model, SystemPrompt: prompt.System, UserPrompt: prompt.User,
 		Metadata:         map[string]string{"operation": "ceo_plan_generation"},
-		StructuredOutput: &worker.StructuredOutputContract{Schema: ceoplan.OutputJSONSchema()},
+		StructuredOutput: &worker.StructuredOutputContract{Schema: ceoplan.IntentJSONSchema()},
 	})
 	if err != nil {
 		return CEOPlanResult{}, &CEOPlanError{Stage: CEOPlanRunnerStage, Err: err}
@@ -82,9 +94,18 @@ func (service *CEOPlanService) Generate(ctx context.Context, input CEOPlanInput)
 	if err := result.Validate(); err != nil {
 		return CEOPlanResult{}, &CEOPlanError{Stage: CEOPlanRunnerStage, Err: err}
 	}
-	plan, err := ceoplan.ParseRunnerOutput(result.Content, input.Employees)
+	intent, err := ceoplan.ParseIntent(result.Content)
 	if err != nil {
-		return CEOPlanResult{}, &CEOPlanError{Stage: CEOPlanParserStage, Err: err}
+		return CEOPlanResult{}, &CEOPlanError{Stage: CEOPlanIntentStage, Err: err}
+	}
+	plan, err := ceoplan.NormalizeIntent(intent, input.Employees)
+	if err != nil {
+		stage := CEOPlanParserStage
+		var normalizationErr *ceoplan.NormalizationError
+		if errors.As(err, &normalizationErr) {
+			stage = CEOPlanNormalizationStage
+		}
+		return CEOPlanResult{}, &CEOPlanError{Stage: stage, Err: err}
 	}
 	return CEOPlanResult{Plan: plan, Runner: result.Runner, Model: result.Model, Usage: result.Usage, Duration: result.Duration.Nanoseconds()}, nil
 }

@@ -221,16 +221,29 @@ func interactionPlanGenerationStage(err error) string {
 	return "interaction_plan_generation"
 }
 
-// ceoPlanParseFailureReason extracts the sanitized ceoplan.ParseFailureReason
-// from a CEO Plan generation failure, when the underlying cause was a
-// *ceoplan.ParseError (ceo_plan_parser stage). It returns "" for every other
-// failure kind (Provider, prompt build, runner).
+// ceoPlanParseFailureReason extracts a sanitized, non-identifying failure
+// reason from a CEO Plan generation failure. It checks, in the order a
+// generation failure can occur: the small Intent contract
+// (*ceoplan.IntentParseError, ceo_plan_intent stage), Go's deterministic
+// Employee assignment resolution (*ceoplan.NormalizationError,
+// ceo_plan_normalization stage), and the existing canonical-shape parser
+// (*ceoplan.ParseError, ceo_plan_parser stage — now reached only via the
+// Go-constructed candidate NormalizeIntent hands to NormalizeCandidate). It
+// returns "" for every other failure kind (Provider, prompt build, runner).
 func ceoPlanParseFailureReason(err error) string {
-	var parseErr *ceoplan.ParseError
-	if !errors.As(err, &parseErr) {
-		return ""
+	var intentErr *ceoplan.IntentParseError
+	if errors.As(err, &intentErr) {
+		return string(intentErr.Reason)
 	}
-	return string(parseErr.Reason)
+	var normalizationErr *ceoplan.NormalizationError
+	if errors.As(err, &normalizationErr) {
+		return string(normalizationErr.Reason)
+	}
+	var parseErr *ceoplan.ParseError
+	if errors.As(err, &parseErr) {
+		return string(parseErr.Reason)
+	}
+	return ""
 }
 
 func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, result InteractionPlanResult, err error, stage string, partial bool) (InteractionPlanResult, error) {

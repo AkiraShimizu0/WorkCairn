@@ -26,7 +26,7 @@ func (fake *ceoPlanFakeRunner) Run(_ context.Context, request worker.RunRequest)
 
 func TestCEOPlanServiceUsesProviderNeutralRunnerAndTypedParser(t *testing.T) {
 	fake := &ceoPlanFakeRunner{result: worker.RunResult{
-		Content: `{"project_name":"P","objective":"O","summary":"S","required_departments":[],"required_roles":["Planner"],"assigned_existing_employees":[],"proposed_tasks":[{"title":"T","required_role":"Planner","assignee_id":null,"dependency_ids":[],"rationale":"R"}],"risks":[],"ceo_questions":[]}`,
+		Content: `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"T","required_role":"Planner"}],"ceo_questions":[]}`,
 		Runner:  "FakeCEOPlanRunner", Model: "logical-model", Duration: time.Second,
 	}}
 	service, err := NewCEOPlanService(fake)
@@ -41,28 +41,33 @@ func TestCEOPlanServiceUsesProviderNeutralRunnerAndTypedParser(t *testing.T) {
 		t.Fatalf("result=%#v request=%#v err=%v", result, fake.request, err)
 	}
 	if fake.request.StructuredOutput == nil || fake.request.StructuredOutput.ContentField != "" ||
-		!reflect.DeepEqual(fake.request.StructuredOutput.Schema, ceoplan.OutputJSONSchema()) {
-		t.Fatalf("Runner request did not carry the CEO Plan Structured Output contract: %#v", fake.request.StructuredOutput)
+		!reflect.DeepEqual(fake.request.StructuredOutput.Schema, ceoplan.IntentJSONSchema()) {
+		t.Fatalf("Runner request did not carry the CEO Plan Intent Structured Output contract: %#v", fake.request.StructuredOutput)
 	}
 }
 
-func TestCEOPlanServiceMapsRunnerAndParserFailures(t *testing.T) {
+func TestCEOPlanServiceMapsRunnerIntentNormalizationAndParserFailures(t *testing.T) {
 	runnerFailure := errors.New("provider unavailable")
+	employees := []organization.Identity{{ID: "E-001", Department: "D", Role: "R"}}
+	validStep := `{"kind":"write","description":"T","required_role":"R"}`
 	for _, test := range []struct {
 		name, content string
 		runnerErr     error
 		stage         CEOPlanStage
 	}{
 		{"runner", "", runnerFailure, CEOPlanRunnerStage},
-		{"parser", "not-json", nil, CEOPlanParserStage},
+		{"intent malformed JSON", "not-json", nil, CEOPlanIntentStage},
+		{"intent unknown step kind", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"bogus","description":"T","required_role":"R"}],"ceo_questions":[]}`, nil, CEOPlanIntentStage},
+		{"normalization no matching employee", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"T","required_role":"Nonexistent"}],"ceo_questions":[]}`, nil, CEOPlanNormalizationStage},
+		{"canonical validation (Go-constructed project name)", `{"project_name":"a/b","objective":"O","summary":"S","steps":[` + validStep + `],"ceo_questions":[]}`, nil, CEOPlanParserStage},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fake := &ceoPlanFakeRunner{err: test.runnerErr, result: worker.RunResult{Content: test.content, Runner: "Fake", Model: "m"}}
 			service, _ := NewCEOPlanService(fake)
-			_, err := service.Generate(context.Background(), CEOPlanInput{Request: "r", Model: "m", Employees: []organization.Identity{{ID: "E-001", Role: "R"}}})
+			_, err := service.Generate(context.Background(), CEOPlanInput{Request: "r", Model: "m", Employees: employees})
 			var planError *CEOPlanError
 			if !errors.As(err, &planError) || planError.Stage != test.stage {
-				t.Fatalf("err=%v", err)
+				t.Fatalf("err=%v, want stage %v", err, test.stage)
 			}
 		})
 	}
