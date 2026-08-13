@@ -365,7 +365,12 @@ func ExecuteInteractionPlanApply(ctx context.Context, input InteractionApplyInpu
 	}, true)
 	result := InteractionApplyResult{Session: record, Apply: applyResult}
 	if applyErr != nil {
-		return finishInteractionApply(ctx, claim, result, applyErr, "interaction_plan_apply", ceoApplyPartiallyCommitted(applyResult))
+		// Mirror the CEO Plan Apply child's own typed classification (e.g.
+		// PROJECT_NAME_COLLISION/preflight, or ceo_apply_project/task/
+		// dependencies) instead of flattening every apply failure into the
+		// generic INTERACTION_APPLY_FAILED/interaction_plan_apply pair.
+		code, stage := ceoApplyCommandFailure(applyErr)
+		return result, finishDurableCommand(ctx, claim, result, applyErr, code, stage, ceoApplyPartiallyCommitted(applyResult))
 	}
 	next, err := record.RecordApplied(input.ProjectID, applyResult.ProjectName, digest, input.CurrentTime)
 	if err != nil {

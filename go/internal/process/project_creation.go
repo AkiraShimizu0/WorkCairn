@@ -29,13 +29,26 @@ type ProjectBootstrapInput struct {
 }
 
 type ProjectBootstrapPlan struct {
-	ProjectID        string   `json:"project_id"`
-	ProjectName      string   `json:"project_name"`
-	ManagedFiles     []string `json:"managed_files"`
-	Executable       bool     `json:"executable"`
-	BlockingReasons  []string `json:"blocking_reasons"`
-	ApprovalRequired bool     `json:"approval_required"`
+	ProjectID   string `json:"project_id"`
+	ProjectName string `json:"project_name"`
+	// RequestedProjectName is the name as originally proposed (by a CEO Plan
+	// or direct request) before collision-avoidance. It equals ProjectName
+	// unless a Project directory with that exact name already existed, in
+	// which case ProjectName is a deterministically suffixed name that does
+	// not yet exist and RequestedProjectNameTaken is true.
+	RequestedProjectName      string   `json:"requested_project_name,omitempty"`
+	RequestedProjectNameTaken bool     `json:"requested_project_name_taken,omitempty"`
+	ManagedFiles              []string `json:"managed_files"`
+	Executable                bool     `json:"executable"`
+	BlockingReasons           []string `json:"blocking_reasons"`
+	ApprovalRequired          bool     `json:"approval_required"`
 }
+
+// maxProjectNameSuffix bounds the deterministic "<name> (2)", "<name> (3)",
+// ... search for a free Project directory name. Exhausting it is treated as
+// a genuine project_already_exists blocking reason rather than an unbounded
+// loop.
+const maxProjectNameSuffix = 50
 
 func PlanProjectBootstrap(ctx context.Context, input ProjectBootstrapInput) (ProjectBootstrapPlan, error) {
 	if ctx == nil {
@@ -52,19 +65,51 @@ func PlanProjectBootstrap(ctx context.Context, input ProjectBootstrapInput) (Pro
 	if err != nil {
 		return ProjectBootstrapPlan{}, err
 	}
-	exists, err := store.Exists(definition)
+	resolvedName, requestedTaken, exhausted, err := resolveProjectDirectoryName(store, definition)
 	if err != nil {
 		return ProjectBootstrapPlan{}, err
 	}
 	blocking := []string{}
-	if exists {
+	if exhausted {
 		blocking = append(blocking, "project_already_exists")
 	}
 	return ProjectBootstrapPlan{
-		ProjectID: definition.ID, ProjectName: definition.Name,
+		ProjectID: definition.ID, ProjectName: resolvedName,
+		RequestedProjectName: definition.Name, RequestedProjectNameTaken: requestedTaken,
 		ManagedFiles: []string{"Project.md", "Tasks.md", "Decisions.md", "Progress.md"},
 		Executable:   len(blocking) == 0, BlockingReasons: blocking, ApprovalRequired: true,
 	}, nil
+}
+
+// resolveProjectDirectoryName returns the first available Project directory
+// name for definition.Name: the requested name itself, or a deterministic
+// "<name> (2)", "<name> (3)", ... suffix when it is already taken. It never
+// adopts, merges into, or reuses an existing Project directory -- only a
+// name Exists() reports as free is ever returned. requestedTaken reports
+// whether the originally requested name collided; exhausted reports that no
+// free name was found within maxProjectNameSuffix attempts, in which case
+// the original (colliding) name is returned unchanged for the caller to
+// surface as a project_already_exists blocking reason.
+func resolveProjectDirectoryName(store *vault.ProjectStore, definition project.Definition) (resolvedName string, requestedTaken bool, exhausted bool, err error) {
+	exists, err := store.Exists(definition)
+	if err != nil {
+		return "", false, false, err
+	}
+	if !exists {
+		return definition.Name, false, false, nil
+	}
+	for suffix := 2; suffix <= maxProjectNameSuffix; suffix++ {
+		candidate := definition
+		candidate.Name = fmt.Sprintf("%s (%d)", definition.Name, suffix)
+		candidateExists, err := store.Exists(candidate)
+		if err != nil {
+			return "", true, false, err
+		}
+		if !candidateExists {
+			return candidate.Name, true, false, nil
+		}
+	}
+	return definition.Name, true, true, nil
 }
 
 func ExecuteProjectBootstrap(ctx context.Context, input ProjectBootstrapInput, approved bool) (vault.ProjectRecord, error) {

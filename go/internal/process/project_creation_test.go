@@ -3,6 +3,7 @@ package process
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -56,6 +57,78 @@ func TestProjectAndTaskCreationPlanBeforeApprovedExecution(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "プロジェクト", "ToDoアプリ", "Audit Log.md")); err != nil {
 		t.Fatalf("Task Audit missing: %v", err)
+	}
+}
+
+func TestPlanProjectBootstrapResolvesDeterministicSuffixOnNameCollisionWithoutTouchingExisting(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "プロジェクト"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC)
+	first := ProjectBootstrapInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "りんご説明文作成プロジェクト", Description: "1回目", CurrentTime: at}
+	plan, err := PlanProjectBootstrap(context.Background(), first)
+	if err != nil || plan.ProjectName != "りんご説明文作成プロジェクト" || plan.RequestedProjectNameTaken || !plan.Executable {
+		t.Fatalf("first plan = %#v, %v", plan, err)
+	}
+	if _, err := ExecuteProjectBootstrap(context.Background(), first, true); err != nil {
+		t.Fatal(err)
+	}
+	firstProjectMD, readErr := os.ReadFile(filepath.Join(root, "プロジェクト", "りんご説明文作成プロジェクト", "Project.md"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+
+	// Same display name, new Command/Project ID (a second CEO Plan Apply for
+	// a similar natural-language request) must not adopt, merge into, or
+	// overwrite the first Project directory.
+	second := ProjectBootstrapInput{VaultRoot: root, ProjectID: "PROJECT-002", ProjectName: "りんご説明文作成プロジェクト", Description: "2回目", CurrentTime: at.Add(time.Hour)}
+	secondPlan, err := PlanProjectBootstrap(context.Background(), second)
+	if err != nil || secondPlan.ProjectName != "りんご説明文作成プロジェクト (2)" || !secondPlan.RequestedProjectNameTaken ||
+		secondPlan.RequestedProjectName != "りんご説明文作成プロジェクト" || !secondPlan.Executable || len(secondPlan.BlockingReasons) != 0 {
+		t.Fatalf("second plan = %#v, %v", secondPlan, err)
+	}
+	secondRecord, err := ExecuteProjectBootstrap(context.Background(), second, true)
+	if err != nil || secondRecord.ProjectName != "りんご説明文作成プロジェクト (2)" || secondRecord.ProjectID != "PROJECT-002" {
+		t.Fatalf("second Project record = %#v, %v", secondRecord, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "プロジェクト", "りんご説明文作成プロジェクト (2)", "Project.md")); statErr != nil {
+		t.Fatalf("second Project directory missing: %v", statErr)
+	}
+	afterFirstProjectMD, readErr := os.ReadFile(filepath.Join(root, "プロジェクト", "りんご説明文作成プロジェクト", "Project.md"))
+	if readErr != nil || string(afterFirstProjectMD) != string(firstProjectMD) {
+		t.Fatalf("first Project.md changed after second apply: before=%q after=%q, %v", firstProjectMD, afterFirstProjectMD, readErr)
+	}
+
+	// A third request resolves to the next free suffix, not the one already
+	// taken by the second.
+	third := ProjectBootstrapInput{VaultRoot: root, ProjectID: "PROJECT-003", ProjectName: "りんご説明文作成プロジェクト", Description: "3回目", CurrentTime: at.Add(2 * time.Hour)}
+	thirdPlan, err := PlanProjectBootstrap(context.Background(), third)
+	if err != nil || thirdPlan.ProjectName != "りんご説明文作成プロジェクト (3)" {
+		t.Fatalf("third plan = %#v, %v", thirdPlan, err)
+	}
+}
+
+func TestPlanProjectBootstrapReportsBlockingWhenSuffixSearchIsExhausted(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "プロジェクト"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "プロジェクト", "満員プロジェクト"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for suffix := 2; suffix <= maxProjectNameSuffix; suffix++ {
+		if err := os.Mkdir(filepath.Join(root, "プロジェクト", fmt.Sprintf("満員プロジェクト (%d)", suffix)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC)
+	plan, err := PlanProjectBootstrap(context.Background(), ProjectBootstrapInput{
+		VaultRoot: root, ProjectID: "PROJECT-EXHAUSTED", ProjectName: "満員プロジェクト", CurrentTime: at,
+	})
+	if err != nil || plan.Executable || !reflect.DeepEqual(plan.BlockingReasons, []string{"project_already_exists"}) ||
+		plan.ProjectName != "満員プロジェクト" || !plan.RequestedProjectNameTaken {
+		t.Fatalf("exhausted plan = %#v, %v", plan, err)
 	}
 }
 

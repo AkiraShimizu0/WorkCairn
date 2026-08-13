@@ -69,13 +69,20 @@ type CEOPlanApplyInput struct {
 }
 
 type CEOPlanApplyPlan struct {
-	ProjectID        string            `json:"project_id"`
-	Plan             ceoplan.Plan      `json:"plan"`
-	TaskIDs          map[string]string `json:"proposed_to_task_id_map"`
-	Warnings         []string          `json:"warnings"`
-	Executable       bool              `json:"executable"`
-	BlockingReasons  []string          `json:"blocking_reasons"`
-	ApprovalRequired bool              `json:"approval_required"`
+	ProjectID string            `json:"project_id"`
+	Plan      ceoplan.Plan      `json:"plan"`
+	TaskIDs   map[string]string `json:"proposed_to_task_id_map"`
+	Warnings  []string          `json:"warnings"`
+	// ResolvedProjectName is the Project directory name that will actually be
+	// created. It equals Plan.ProjectName (the approved, digest-covered name)
+	// unless that name already exists, in which case it is a deterministic
+	// "<name> (2)", "<name> (3)", ... name from PlanProjectBootstrap. Plan
+	// itself is never mutated, so the approved plan digest stays valid.
+	ResolvedProjectName       string   `json:"resolved_project_name"`
+	RequestedProjectNameTaken bool     `json:"requested_project_name_taken,omitempty"`
+	Executable                bool     `json:"executable"`
+	BlockingReasons           []string `json:"blocking_reasons"`
+	ApprovalRequired          bool     `json:"approval_required"`
 }
 
 type CEOPlanApplyResult struct {
@@ -88,11 +95,16 @@ type CEOPlanApplyResult struct {
 	UnassignedTasks []string                       `json:"unassigned_tasks"`
 	MissingRoles    []string                       `json:"missing_roles"`
 	Warnings        []string                       `json:"warnings"`
+	// BlockingReasons is set only when apply failed before any commit, at the
+	// preflight stage (see CEOApplyPreflightStage), e.g. "project_already_exists"
+	// when Project name disambiguation was exhausted.
+	BlockingReasons []string `json:"blocking_reasons,omitempty"`
 }
 
 type CEOPlanApplyStage string
 
 const (
+	CEOApplyPreflightStage    CEOPlanApplyStage = "preflight"
 	CEOApplyProjectStage      CEOPlanApplyStage = "ceo_apply_project"
 	CEOApplyTaskStage         CEOPlanApplyStage = "ceo_apply_task"
 	CEOApplyDependenciesStage CEOPlanApplyStage = "ceo_apply_dependencies"
@@ -145,6 +157,7 @@ func PlanCEOPlanApply(ctx context.Context, input CEOPlanApplyInput) (CEOPlanAppl
 	warnings := planWarnings(validated)
 	return CEOPlanApplyPlan{
 		ProjectID: input.ProjectID, Plan: validated, TaskIDs: taskIDs, Warnings: warnings,
+		ResolvedProjectName: projectPlan.ProjectName, RequestedProjectNameTaken: projectPlan.RequestedProjectNameTaken,
 		Executable: len(blocking) == 0, BlockingReasons: blocking, ApprovalRequired: true,
 	}, nil
 }
@@ -173,18 +186,29 @@ func ExecuteCEOPlanApply(ctx context.Context, input CEOPlanApplyInput, approved 
 func executeClaimedCEOPlanApply(ctx context.Context, input CEOPlanApplyInput) (CEOPlanApplyResult, error) {
 	plan, err := PlanCEOPlanApply(ctx, input)
 	if err != nil {
-		return CEOPlanApplyResult{}, err
+		return CEOPlanApplyResult{}, &CEOPlanApplyError{Stage: CEOApplyPreflightStage, Err: err}
 	}
 	if !plan.Executable {
-		return CEOPlanApplyResult{}, fmt.Errorf("CEO plan apply preflight failed: %s", strings.Join(plan.BlockingReasons, ","))
+		blocking := CEOPlanApplyResult{BlockingReasons: append([]string(nil), plan.BlockingReasons...)}
+		return blocking, &CEOPlanApplyError{
+			Stage: CEOApplyPreflightStage, Result: blocking,
+			Err: fmt.Errorf("CEO plan apply preflight failed: %s", strings.Join(plan.BlockingReasons, ",")),
+		}
 	}
+	// plan.ResolvedProjectName -- not plan.Plan.ProjectName -- is the
+	// directory that will actually be created and must be used for every
+	// subsequent writer below. plan.Plan.ProjectName is the originally
+	// approved (digest-covered) name and is preserved unmodified for display
+	// and audit continuity, but writing Tasks/Dependencies against it would
+	// silently target a pre-existing, unrelated Project when the requested
+	// name collided.
 	result := CEOPlanApplyResult{
-		Status: "applying", ProjectName: plan.Plan.ProjectName,
+		Status: "applying", ProjectName: plan.ResolvedProjectName,
 		Tasks: []TaskCreationResult{}, TaskIDs: map[string]string{},
 		UnassignedTasks: []string{}, MissingRoles: plan.Plan.MissingRoles, Warnings: plan.Warnings,
 	}
 	projectRecord, err := ExecuteProjectBootstrap(ctx, ProjectBootstrapInput{
-		VaultRoot: input.VaultRoot, ProjectID: plan.ProjectID, ProjectName: plan.Plan.ProjectName,
+		VaultRoot: input.VaultRoot, ProjectID: plan.ProjectID, ProjectName: plan.ResolvedProjectName,
 		Description: planDescription(plan.Plan), CurrentTime: input.CurrentTime,
 	}, true)
 	if projectRecord.Committed {
@@ -195,7 +219,7 @@ func executeClaimedCEOPlanApply(ctx context.Context, input CEOPlanApplyInput) (C
 	}
 	for _, proposed := range plan.Plan.ProposedTasks {
 		created, createErr := ExecuteTaskCreation(ctx, TaskCreationInput{
-			VaultRoot: input.VaultRoot, ProjectName: plan.Plan.ProjectName,
+			VaultRoot: input.VaultRoot, ProjectName: plan.ResolvedProjectName,
 			Title: proposed.Title, AssigneeID: proposed.AssigneeID, CurrentTime: input.CurrentTime,
 			EventObservers: input.EventObservers,
 		}, true)
@@ -222,7 +246,7 @@ func executeClaimedCEOPlanApply(ctx context.Context, input CEOPlanApplyInput) (C
 		})
 	}
 	dependencyRecord, err := ExecuteProjectDependencies(ctx, ProjectDependenciesInput{
-		VaultRoot: input.VaultRoot, ProjectName: plan.Plan.ProjectName,
+		VaultRoot: input.VaultRoot, ProjectName: plan.ResolvedProjectName,
 		Rows: rows, CurrentTime: input.CurrentTime,
 	}, true)
 	if dependencyRecord.Committed {
@@ -235,15 +259,32 @@ func executeClaimedCEOPlanApply(ctx context.Context, input CEOPlanApplyInput) (C
 	return result, nil
 }
 
+// ceoApplyCommandFailure classifies a CEO plan apply failure into a typed
+// (code, stage) pair. project_already_exists is distinguished from other
+// preflight failures with its own code because it is a distinct, expected
+// structural condition (not a Provider or infrastructure failure) that a
+// caller can explain to the CEO without exposing raw blocking reasons.
 func ceoApplyCommandFailure(err error) (string, string) {
 	if err == nil {
 		return "", ""
 	}
 	var applyError *CEOPlanApplyError
-	if errors.As(err, &applyError) {
-		return "CEO_PLAN_APPLY_FAILED", string(applyError.Stage)
+	if !errors.As(err, &applyError) {
+		return "CEO_PLAN_APPLY_FAILED", "preflight"
 	}
-	return "CEO_PLAN_APPLY_FAILED", "preflight"
+	if applyError.Stage == CEOApplyPreflightStage && containsBlockingReason(applyError.Result.BlockingReasons, "project_already_exists") {
+		return "PROJECT_NAME_COLLISION", string(applyError.Stage)
+	}
+	return "CEO_PLAN_APPLY_FAILED", string(applyError.Stage)
+}
+
+func containsBlockingReason(reasons []string, reason string) bool {
+	for _, current := range reasons {
+		if current == reason {
+			return true
+		}
+	}
+	return false
 }
 
 func planDescription(plan ceoplan.Plan) string {

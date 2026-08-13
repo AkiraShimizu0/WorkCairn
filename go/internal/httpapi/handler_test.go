@@ -229,6 +229,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"PROVIDER_RESPONSE_INVALID", "ceo_plan_parser", "進め方は保存・適用されていません", "WORKFLOW_TASK_ASSIGNMENT_REQUIRED",
 		"REVIEW_PROMPT_FAILED", "REVIEW_ROUTE_FAILED", "REVIEW_RESULT_INVALID", "reviewContractFailures",
 		"AIのレビュー結果を正しく解釈できませんでした。成果物は保持されています。",
+		"PROJECT_NAME_COLLISION", "同じ名前の仕事がすでにあります。新しい仕事として作成できませんでした。",
 		"interaction_plan_commit_cas", "同じ依頼の状態が先に更新されたため、この進め方は保存していません。",
 		"WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED", "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。",
 		"renderTimeline", "rememberError", "setBackgroundWorking", `requestJSON("/v1/workspace-status")`, "最初のAIチームを確認",
@@ -1212,6 +1213,160 @@ func TestMobileInteractionHTTPFlowMalformedReviewResponseClassifiesOuterCommand(
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "プロジェクト", "iPhone依頼3", "Reviews", "TASK-001.review.json")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("canonical Review artifact should not exist after parser failure: %v", statErr)
+	}
+}
+
+// TestMobileInteractionHTTPFlowSameRequestTwiceCreatesDistinctProjectsSafely
+// sends the same natural-language request through the real daemon/process
+// composition twice. CEO Plan generation is expected to independently
+// propose the same Project name both times (this is normal, not an error --
+// see CMD-2B6DE5E3-...). The second request must complete end to end under a
+// distinctly named Project, without touching, merging into, or adopting the
+// first Project's evidence.
+func TestMobileInteractionHTTPFlowSameRequestTwiceCreatesDistinctProjectsSafely(t *testing.T) {
+	root := t.TempDir()
+	for _, directory := range []string{"社員", "プロジェクト"} {
+		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, content := range map[string]string{
+		"山本 真帆.md": "---\nid: PLAN-001\ndepartment: 企画部\nrole: Product Manager\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n",
+		"伊藤 健太.md": "---\nid: QA-001\ndepartment: 品質保証部\nrole: QA Engineer\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, "社員", name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const sharedProjectName = "りんご説明文作成プロジェクト"
+	planOutput, _ := json.Marshal(map[string]any{
+		"project_name": sharedProjectName, "objective": "依頼から成果物を完成させる", "summary": "duplicate request E2E",
+		"required_departments": []string{"企画部"}, "required_roles": []string{"Product Manager"},
+		"assigned_existing_employees": []string{},
+		"proposed_tasks":              []map[string]any{{"title": "要件をまとめる", "required_role": "Product Manager", "assignee_id": nil, "dependency_ids": []string{}, "rationale": "依頼を形にするため"}},
+		"risks":                       []string{}, "ceo_questions": []string{},
+	})
+	approveReview := "# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Approve\",\"issues\":[]}\nREVIEW_RESULT_JSON_END"
+	providerOutputs := []string{
+		string(planOutput), "# 成果物（1回目）\n\n最初の依頼の成果物です。", approveReview,
+		string(planOutput), "# 成果物（2回目）\n\n2回目の依頼の成果物です。", approveReview,
+	}
+	providerCalls := 0
+	providerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/messages" || providerCalls >= len(providerOutputs) {
+			t.Fatalf("unexpected mock Provider request path=%s calls=%d", request.URL.Path, providerCalls)
+		}
+		output := providerOutputs[providerCalls]
+		providerCalls++
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"model": "claude-mobile-test", "content": []map[string]string{{"type": "text", "text": output}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer providerServer.Close()
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{
+		APIKey: "fake-mobile-key", BaseURL: providerServer.URL,
+	}, providerServer.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(executor, executor)
+	base := time.Date(2026, time.August, 10, 9, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+
+	runToCompletion := func(run int, at time.Time) string {
+		sessionID := fmt.Sprintf("SESSION-DUPLICATE-REQUEST-%03d", run)
+		prefix := fmt.Sprintf("CMD-MOBILE-DUP-%03d", run)
+		planRequest := map[string]any{
+			"version": InteractionContractVersion, "session_id": sessionID, "request": "りんごについて100文字程度で説明して",
+			"model": "Claude Sonnet 5", "current_time": at,
+		}
+		planResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-plans", planRequest)
+		var startPlan workspaceprocess.InteractionStartPlan
+		decodeHTTPResult(t, planResponse, &startPlan)
+		performSuccessfulCommand(t, handler, map[string]any{
+			"version": ContractVersion, "command_id": prefix + "-START", "operation": "interaction.start", "approved": true,
+			"payload": map[string]any{"session_id": sessionID, "request": planRequest["request"], "request_digest": startPlan.Session.RequestDigest, "model": planRequest["model"], "current_time": at},
+		})
+		performSuccessfulCommand(t, handler, map[string]any{
+			"version": ContractVersion, "command_id": prefix + "-PLAN", "operation": "interaction.plan.generate", "approved": true,
+			"payload": map[string]any{"session_id": sessionID, "expected_version": 1, "current_time": at.Add(time.Minute)},
+		})
+		next := inspectInteractionNextHTTP(t, handler, sessionID)
+		if next.Kind != interaction.NextApprovePlanApply || next.PlanDigest == "" {
+			t.Fatalf("run %d: plan apply next = %#v", run, next)
+		}
+		performSuccessfulCommand(t, handler, map[string]any{
+			"version": ContractVersion, "command_id": prefix + "-APPLY", "operation": "interaction.plan.apply", "approved": true,
+			"payload": map[string]any{"session_id": sessionID, "expected_version": next.ExpectedVersion, "project_id": fmt.Sprintf("PROJECT-DUPLICATE-%03d", run), "plan_digest": next.PlanDigest, "current_time": at.Add(2 * time.Minute)},
+		})
+		next = inspectInteractionNextHTTP(t, handler, sessionID)
+		appliedProjectID, appliedProjectName, ok := func() (string, string, bool) {
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/v1/interactions/"+sessionID, nil))
+			var record interaction.Record
+			decodeHTTPResult(t, resp, &record)
+			return record.AppliedProject()
+		}()
+		if !ok {
+			t.Fatalf("run %d: Session has no applied Project", run)
+		}
+		workflowTime := at.Add(3 * time.Minute)
+		workflowPlanResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-workflow-plans", map[string]any{
+			"version": InteractionContractVersion, "session_id": sessionID, "expected_version": next.ExpectedVersion,
+			"reviewer_id": "QA-001", "current_time": workflowTime, "max_tasks": 10,
+		})
+		var workflowPlan workspaceprocess.InteractionWorkflowPlan
+		decodeHTTPResult(t, workflowPlanResponse, &workflowPlan)
+		performAcceptedCommand(t, handler, map[string]any{
+			"version": ContractVersion, "command_id": prefix + "-WORKFLOW", "operation": "interaction.workflow.execute", "approved": true,
+			"payload": map[string]any{
+				"session_id": sessionID, "expected_version": next.ExpectedVersion, "reviewer_id": "QA-001", "current_time": workflowTime,
+				"max_tasks": 10, "autonomy_contract": workflowPlan.Autonomy, "workflow_plan_digest": workflowPlan.WorkflowPlanDigest, "approval_reference": prefix + "-approval",
+			},
+		})
+		waitForCommandStateHTTP(t, handler, prefix+"-WORKFLOW", commandledger.StateSucceeded)
+		_ = appliedProjectID
+		return appliedProjectName
+	}
+
+	firstProjectName := runToCompletion(1, base)
+	if firstProjectName != sharedProjectName {
+		t.Fatalf("first run Project name = %q, want %q", firstProjectName, sharedProjectName)
+	}
+	firstDeliverable, readErr := os.ReadFile(filepath.Join(root, "プロジェクト", firstProjectName, "Deliverables", "TASK-001.md"))
+	if readErr != nil || !strings.Contains(string(firstDeliverable), "最初の依頼の成果物です") {
+		t.Fatalf("first Deliverable = %q, %v", firstDeliverable, readErr)
+	}
+
+	secondProjectName := runToCompletion(2, base.Add(time.Hour))
+	if secondProjectName == firstProjectName {
+		t.Fatalf("second run reused the first Project name %q instead of creating a distinct Project", secondProjectName)
+	}
+	if secondProjectName != sharedProjectName+" (2)" {
+		t.Fatalf("second run Project name = %q, want %q", secondProjectName, sharedProjectName+" (2)")
+	}
+	if providerCalls != len(providerOutputs) {
+		t.Fatalf("providerCalls = %d, want %d", providerCalls, len(providerOutputs))
+	}
+
+	// The first Project's evidence must be untouched by the second run.
+	afterFirstDeliverable, readErr := os.ReadFile(filepath.Join(root, "プロジェクト", firstProjectName, "Deliverables", "TASK-001.md"))
+	if readErr != nil || string(afterFirstDeliverable) != string(firstDeliverable) {
+		t.Fatalf("first Deliverable changed after second run: before=%q after=%q, %v", firstDeliverable, afterFirstDeliverable, readErr)
+	}
+	secondDeliverable, readErr := os.ReadFile(filepath.Join(root, "プロジェクト", secondProjectName, "Deliverables", "TASK-001.md"))
+	if readErr != nil || !strings.Contains(string(secondDeliverable), "2回目の依頼の成果物です") {
+		t.Fatalf("second Deliverable = %q, %v", secondDeliverable, readErr)
+	}
+	for _, projectName := range []string{firstProjectName, secondProjectName} {
+		evidenceResponse := httptest.NewRecorder()
+		handler.ServeHTTP(evidenceResponse, httptest.NewRequest(http.MethodGet, "/v1/projects/"+url.PathEscape(projectName)+"/tasks/TASK-001/evidence", nil))
+		var evidence workspaceprocess.TaskEvidenceInspection
+		decodeHTTPResult(t, evidenceResponse, &evidence)
+		if evidence.Deliverable == nil || len(evidence.Reviews) != 1 || evidence.Reviews[0].Decision.Verdict != "Approve" {
+			t.Fatalf("Project %q evidence = %#v", projectName, evidence)
+		}
 	}
 }
 

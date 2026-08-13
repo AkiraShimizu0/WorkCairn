@@ -377,6 +377,11 @@ function showError(error, title = "処理を完了できませんでした") {
   const planResponseInvalid = code === "INTERACTION_PLAN_FAILED" && stage === "ceo_plan_parser";
   const workflowAssignmentRequired = code === "WORKFLOW_TASK_ASSIGNMENT_REQUIRED";
   const workflowReviewerRequired = code === "WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED";
+  // Safety net for the rare case where automatic Project name disambiguation
+  // itself was exhausted. The common case (same request sent twice) is
+  // handled silently by creating a distinctly named Project, so this should
+  // be uncommon; when it happens, never suggest editing a directory name.
+  const projectNameCollision = code === "PROJECT_NAME_COLLISION";
   const providerFailures = {
     PROVIDER_AUTHENTICATION_REQUIRED: "Claudeの接続を確認してください。credentialが無効・失効している可能性があります。",
     PROVIDER_BILLING_REQUIRED: "Claude側の請求・支払い設定を確認してください。WorkCairnは自動retryしません。",
@@ -416,6 +421,8 @@ function showError(error, title = "処理を完了できませんでした") {
         ? providerFailureCopy
       : reviewContractCopy
         ? reviewContractCopy
+      : projectNameCollision
+        ? "同じ名前の仕事がすでにあります。新しい仕事として作成できませんでした。少し時間を置くか、依頼の表現を変えて改めて送ってください。"
       : planResponseInvalid
         ? "AIサービスから応答を受信しましたが、安全な進め方として確認できる形式ではありませんでした。進め方は保存・適用されていません。"
       : planCommitConflict

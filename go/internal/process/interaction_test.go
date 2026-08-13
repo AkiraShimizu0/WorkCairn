@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 )
@@ -133,6 +135,84 @@ func TestInteractionClarificationPlanApprovalAndApplyE2E(t *testing.T) {
 	replayed, err := ExecuteInteractionPlanApply(context.Background(), applyInput, true)
 	if err != nil || !reflect.DeepEqual(applied, replayed) || !reflect.DeepEqual(beforeReplay, organizationProcessSnapshot(t, root)) {
 		t.Fatalf("apply replay = %#v, %v", replayed, err)
+	}
+}
+
+// TestInteractionPlanApplyPropagatesProjectNameCollisionInsteadOfGenericCode
+// covers the outer-Interaction side of the Project name collision safety
+// net: when disambiguation is exhausted, ExecuteInteractionPlanApply must
+// surface the CEO Plan Apply child's own PROJECT_NAME_COLLISION/preflight
+// classification instead of the generic INTERACTION_APPLY_FAILED/
+// interaction_plan_apply pair, and must not commit or mutate the Session.
+func TestInteractionPlanApplyPropagatesProjectNameCollisionInsteadOfGenericCode(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "プロジェクト"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeOrganizationProcessFile(t, filepath.Join(root, "社員", "田中 美咲.md"), "---\nid: PLAN-001\ndepartment: 企画部\nrole: Product Manager\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n")
+	at := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
+	assignee := "PLAN-001"
+	plan := ceoplan.Plan{
+		ProjectName: "満員プロジェクト", Objective: "目的", Summary: "概要",
+		RequiredDepartments: []string{"企画部"}, RequiredRoles: []string{"Product Manager"},
+		AssignedExistingEmployees: []string{assignee}, MissingRoles: []string{},
+		ProposedTasks: []ceoplan.ProposedTask{{
+			ProposalID: "PROPOSED-001", Title: "最初のタスク", AssigneeID: &assignee,
+			DependencyIDs: []string{}, Rationale: "必要",
+		}},
+		Risks: []string{}, CEOQuestions: []string{}, PlanOnly: true,
+	}
+	sessionID := "SESSION-COLLISION-001"
+	record, err := interaction.New(sessionID, "依頼", "Claude Sonnet 5", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withPlan, err := record.RecordPlan(plan, at.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, digest, _ := withPlan.CurrentPlan()
+	store, err := vault.NewInteractionStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(context.Background(), withPlan, record.Version); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Mkdir(filepath.Join(root, "プロジェクト", plan.ProjectName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for suffix := 2; suffix <= maxProjectNameSuffix; suffix++ {
+		if err := os.Mkdir(filepath.Join(root, "プロジェクト", fmt.Sprintf("%s (%d)", plan.ProjectName, suffix)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, applyErr := ExecuteInteractionPlanApply(context.Background(), InteractionApplyInput{
+		VaultRoot: root, SessionID: sessionID, ExpectedVersion: withPlan.Version,
+		ProjectID: "PROJECT-COLLISION", PlanDigest: digest, CurrentTime: at.Add(2 * time.Minute),
+		CommandID: "CMD-INTERACTION-APPLY-COLLISION",
+	}, true)
+	var recorded *RecordedCommandError
+	if !errors.As(applyErr, &recorded) || recorded.Code != "PROJECT_NAME_COLLISION" || recorded.Stage != "preflight" || result.SessionCommitted {
+		t.Fatalf("apply = %#v, %v", result, applyErr)
+	}
+	ledger, ledgerErr := vault.NewWorkspaceCommandLedgerStore(root)
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	ledgerRecord, getErr := ledger.Get(context.Background(), "CMD-INTERACTION-APPLY-COLLISION")
+	if getErr != nil || ledgerRecord.State != commandledger.StateFailed || ledgerRecord.Failure == nil ||
+		ledgerRecord.Failure.Code != "PROJECT_NAME_COLLISION" || ledgerRecord.Failure.Stage != "preflight" {
+		t.Fatalf("outer Ledger = %#v, %v", ledgerRecord, getErr)
+	}
+	stored, inspectErr := InspectInteraction(context.Background(), root, sessionID)
+	if inspectErr != nil || stored.Version != withPlan.Version || stored.State != interaction.StatePlanApprovalRequired {
+		t.Fatalf("Session mutated after collision failure: %#v, %v", stored, inspectErr)
 	}
 }
 
