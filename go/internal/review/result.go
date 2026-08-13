@@ -11,11 +11,6 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
-const (
-	ResultJSONStart = "REVIEW_RESULT_JSON_START"
-	ResultJSONEnd   = "REVIEW_RESULT_JSON_END"
-)
-
 var ErrInvalidResult = errors.New("invalid review result")
 
 // ParseFailureReason is a sanitized, non-identifying classification of why a
@@ -25,14 +20,13 @@ var ErrInvalidResult = errors.New("invalid review result")
 type ParseFailureReason string
 
 const (
-	ParseFailureMarkerMissing        ParseFailureReason = "marker_missing"
-	ParseFailureMarkerDuplicate      ParseFailureReason = "marker_duplicate"
 	ParseFailureJSONDecodeFailed     ParseFailureReason = "json_decode_failed"
+	ParseFailureUnknownField         ParseFailureReason = "unknown_field"
 	ParseFailureTrailingContent      ParseFailureReason = "trailing_content"
+	ParseFailureObjectRequired       ParseFailureReason = "object_required"
 	ParseFailureMissingRequiredField ParseFailureReason = "missing_required_field"
 	ParseFailureInvalidVerdict       ParseFailureReason = "invalid_verdict"
 	ParseFailureInvalidIssuesShape   ParseFailureReason = "invalid_issues_shape"
-	ParseFailureHumanMarkdownMissing ParseFailureReason = "human_markdown_missing"
 )
 
 // ParseError pairs ErrInvalidResult with a sanitized ParseFailureReason. The
@@ -67,6 +61,13 @@ type Issue struct {
 type Decision struct {
 	Verdict Verdict `json:"verdict"`
 	Issues  []Issue `json:"issues"`
+	// Summary is the Reviewer's short qualitative summary. It is left out
+	// of Validate()'s requirements deliberately: pre-migration canonical
+	// Review JSON committed before this field existed has no summary key
+	// and must keep decoding via DecodeDecision without error. New Reviews
+	// always carry a non-empty Summary because ParseTypedDecision requires
+	// it at the LLM-output boundary, before a Decision is ever constructed.
+	Summary string `json:"summary,omitempty"`
 }
 
 func (decision Decision) Validate() error {
@@ -93,82 +94,64 @@ func (decision Decision) Validate() error {
 // ExecutionResult is a validated Provider result before artifact persistence.
 // It does not imply Task mutation or Review artifact commit.
 type ExecutionResult struct {
-	HumanMarkdown string            `json:"human_markdown"`
-	Decision      Decision          `json:"decision"`
-	ReviewerID    string            `json:"reviewer_id"`
-	TaskID        string            `json:"task_id"`
-	Runner        string            `json:"runner"`
-	Model         string            `json:"model"`
-	Usage         worker.TokenUsage `json:"usage"`
-	Duration      time.Duration     `json:"duration"`
-	Metadata      map[string]string `json:"metadata,omitempty"`
+	Decision   Decision          `json:"decision"`
+	ReviewerID string            `json:"reviewer_id"`
+	TaskID     string            `json:"task_id"`
+	Runner     string            `json:"runner"`
+	Model      string            `json:"model"`
+	Usage      worker.TokenUsage `json:"usage"`
+	Duration   time.Duration     `json:"duration"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
-// ParseOutput separates human Markdown from the marked JSON result and
-// applies the versioned allow-list normalization fixed by golden tests.
-func ParseOutput(output string) (string, Decision, error) {
-	if strings.TrimSpace(output) == "" {
-		return "", Decision{}, newParseError(ParseFailureHumanMarkdownMissing, fmt.Errorf("%w: output is required", ErrInvalidResult))
+// ParseTypedDecision strictly decodes a Runner's raw output as the small
+// Typed Review Decision contract: a single flat JSON object with exactly
+// verdict, issues, and summary — no markers, no embedded Markdown. It is
+// the LLM-output boundary: summary is required here (unlike parseDecision's
+// shared re-read path) because every freshly generated Review must carry
+// one, while artifacts committed before this field existed must still
+// decode via DecodeDecision.
+func ParseTypedDecision(content string) (Decision, error) {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return Decision{}, newParseError(ParseFailureJSONDecodeFailed, fmt.Errorf("%w: output is required", ErrInvalidResult))
 	}
-	if startCount := strings.Count(output, ResultJSONStart); startCount != 1 {
-		reason := ParseFailureMarkerMissing
-		if startCount > 1 {
-			reason = ParseFailureMarkerDuplicate
-		}
-		return "", Decision{}, newParseError(reason, fmt.Errorf("%w: exactly one start marker is required", ErrInvalidResult))
+	if trimmed[0] != '{' {
+		return Decision{}, newParseError(ParseFailureObjectRequired, fmt.Errorf("%w: object required", ErrInvalidResult))
 	}
-	if endCount := strings.Count(output, ResultJSONEnd); endCount != 1 {
-		reason := ParseFailureMarkerMissing
-		if endCount > 1 {
-			reason = ParseFailureMarkerDuplicate
-		}
-		return "", Decision{}, newParseError(reason, fmt.Errorf("%w: exactly one end marker is required", ErrInvalidResult))
-	}
-
-	start := strings.Index(output, ResultJSONStart)
-	jsonStart := start + len(ResultJSONStart)
-	relativeEnd := strings.Index(output[jsonStart:], ResultJSONEnd)
-	if relativeEnd < 0 {
-		return "", Decision{}, newParseError(ParseFailureMarkerMissing, fmt.Errorf("%w: markers are out of order", ErrInvalidResult))
-	}
-	end := jsonStart + relativeEnd
-
-	decision, err := parseDecision([]byte(strings.TrimSpace(output[jsonStart:end])))
-	if err != nil {
-		return "", Decision{}, err
-	}
-	human := strings.TrimSpace(output[:start] + output[end+len(ResultJSONEnd):])
-	if human == "" {
-		return "", Decision{}, newParseError(ParseFailureHumanMarkdownMissing, fmt.Errorf("%w: human Markdown is required", ErrInvalidResult))
-	}
-	return human, decision, nil
+	return parseDecision([]byte(trimmed), true)
 }
 
-func parseDecision(content []byte) (Decision, error) {
+func parseDecision(content []byte, requireSummary bool) (Decision, error) {
 	decoder := json.NewDecoder(bytes.NewReader(content))
-	var object map[string]json.RawMessage
-	if err := decoder.Decode(&object); err != nil || object == nil {
-		return Decision{}, newParseError(ParseFailureJSONDecodeFailed, fmt.Errorf("%w: malformed JSON", ErrInvalidResult))
+	decoder.DisallowUnknownFields()
+	var candidate struct {
+		Verdict Verdict `json:"verdict"`
+		Issues  []Issue `json:"issues"`
+		Summary string  `json:"summary"`
+	}
+	if err := decoder.Decode(&candidate); err != nil {
+		reason := ParseFailureJSONDecodeFailed
+		if strings.Contains(err.Error(), "unknown field") {
+			reason = ParseFailureUnknownField
+		}
+		return Decision{}, newParseError(reason, fmt.Errorf("%w: malformed JSON", ErrInvalidResult))
 	}
 	if decoder.More() {
 		return Decision{}, newParseError(ParseFailureTrailingContent, fmt.Errorf("%w: trailing content after JSON object", ErrInvalidResult))
 	}
-	var verdict Verdict
-	if err := json.Unmarshal(object["verdict"], &verdict); err != nil {
-		return Decision{}, newParseError(ParseFailureMissingRequiredField, fmt.Errorf("%w: verdict must be a string", ErrInvalidResult))
-	}
-	if verdict != VerdictApprove && verdict != VerdictRequestChanges {
+	if candidate.Verdict != VerdictApprove && candidate.Verdict != VerdictRequestChanges {
 		return Decision{}, newParseError(ParseFailureInvalidVerdict, fmt.Errorf("%w: unsupported verdict", ErrInvalidResult))
 	}
-	rawIssues, exists := object["issues"]
-	if !exists || string(rawIssues) == "null" {
+	if candidate.Issues == nil {
 		return Decision{}, newParseError(ParseFailureMissingRequiredField, fmt.Errorf("%w: issues must be an array", ErrInvalidResult))
 	}
-	var issues []Issue
-	if err := json.Unmarshal(rawIssues, &issues); err != nil || issues == nil {
-		return Decision{}, newParseError(ParseFailureInvalidIssuesShape, fmt.Errorf("%w: issues must be an array", ErrInvalidResult))
+	summary := strings.TrimSpace(candidate.Summary)
+	if requireSummary && summary == "" {
+		return Decision{}, newParseError(ParseFailureMissingRequiredField, fmt.Errorf("%w: summary", ErrInvalidResult))
 	}
-	decision := Decision{Verdict: verdict, Issues: issues}
+	issues := candidate.Issues
+	decision := Decision{Verdict: candidate.Verdict, Issues: issues, Summary: summary}
 	for index := range issues {
 		issue := &issues[index]
 		if !allowed(issue.Category, "date", "format", "requirements", "context", "todo", "other") {

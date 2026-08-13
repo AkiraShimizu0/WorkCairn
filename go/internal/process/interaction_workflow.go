@@ -11,7 +11,6 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
-	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
@@ -119,11 +118,11 @@ func PlanInteractionWorkflow(ctx context.Context, input InteractionWorkflowPlanI
 		}
 		return InteractionWorkflowPlan{}, &InteractionWorkflowPlanError{Stage: stage, Err: err}
 	}
-	canonicalPlan, _, hasCanonicalPlan := record.CurrentPlan()
+	_, _, hasCanonicalPlan := record.CurrentPlan()
 	if !hasCanonicalPlan {
 		return InteractionWorkflowPlan{}, ErrInteractionWorkflowPrecondition
 	}
-	reviewerID, err := resolveInteractionWorkflowReviewer(ctx, input, projectName, step, canonicalPlan)
+	reviewerID, err := resolveInteractionWorkflowReviewer(ctx, input, projectName, step)
 	if err != nil {
 		stage := InteractionWorkflowReviewerStage
 		if errors.Is(err, vault.ErrAssigneeMissing) {
@@ -335,12 +334,18 @@ func interactionWorkflowEvidence(
 	return evidence, nil
 }
 
+// resolveInteractionWorkflowReviewer derives the Reviewer Requirement's
+// candidate purely from live Go-owned state: the current Task Store (via
+// the shared taskMakerIDs policy) and the Organization roster. It never
+// reads the CEO Plan for Reviewer identity — a Plan-authored "review task"
+// has no bearing on who actually reviews (see ADR-0039/ADR-0040) — so a
+// Revision-created Task's assignee is correctly excluded as a Maker even
+// though it was never part of the original ProposedTasks snapshot.
 func resolveInteractionWorkflowReviewer(
 	ctx context.Context,
 	input InteractionWorkflowPlanInput,
 	projectName string,
 	step service.WorkflowStepPlan,
-	canonicalPlan ceoplan.Plan,
 ) (string, error) {
 	if step.Completed || strings.TrimSpace(step.TaskID) == "" {
 		return "", ErrInteractionWorkflowReviewerRequired
@@ -353,36 +358,22 @@ func resolveInteractionWorkflowReviewer(
 	if err != nil {
 		return "", err
 	}
-	makerIDs, explicitReviewerID, err := interactionReviewerIntent(canonicalPlan)
-	if err != nil {
-		return "", err
-	}
 	nextTaskFound := false
-	actualAssignees := make(map[string]struct{}, len(tasks))
 	for _, current := range tasks {
 		if current.ID == step.TaskID {
 			nextTaskFound = true
+			break
 		}
-		if current.Status == task.StatusCompleted {
-			continue
-		}
-		if current.AssigneeID == nil || strings.TrimSpace(*current.AssigneeID) == "" {
-			return "", vault.ErrAssigneeMissing
-		}
-		actualAssignees[strings.TrimSpace(*current.AssigneeID)] = struct{}{}
 	}
 	if !nextTaskFound {
 		return "", ErrInteractionWorkflowPrecondition
 	}
-	for _, makerID := range makerIDs {
-		if _, exists := actualAssignees[makerID]; !exists {
-			return "", ErrInteractionWorkflowPrecondition
-		}
+	makerIDs, err := taskMakerIDs(tasks)
+	if err != nil {
+		return "", err
 	}
-	if explicitReviewerID != nil {
-		if _, exists := actualAssignees[*explicitReviewerID]; !exists {
-			return "", ErrInteractionWorkflowPrecondition
-		}
+	if len(makerIDs) == 0 {
+		return "", ErrInteractionWorkflowReviewerRequired
 	}
 	loader, err := vault.NewLoader(input.VaultRoot)
 	if err != nil {
@@ -401,7 +392,7 @@ func resolveInteractionWorkflowReviewer(
 	}
 	resolved, err := organization.ResolveReviewerAssignment(organization.ReviewerAssignmentRequest{
 		RequiredRole: interactionWorkflowReviewerRole, MakerEmployeeIDs: makerIDs,
-		AllowedEmployeeIDs: allowed, ProposedEmployeeID: explicitReviewerID,
+		AllowedEmployeeIDs: allowed, ProposedEmployeeID: nil,
 	}, inventory.Employees)
 	if err != nil {
 		return "", err
@@ -410,37 +401,6 @@ func resolveInteractionWorkflowReviewer(
 		return "", fmt.Errorf("%w: %s", ErrInteractionWorkflowReviewerRequired, resolved.Status)
 	}
 	return *resolved.EmployeeID, nil
-}
-
-func interactionReviewerIntent(plan ceoplan.Plan) ([]string, *string, error) {
-	makers := make([]string, 0, len(plan.ProposedTasks))
-	seenMakers := make(map[string]struct{}, len(plan.ProposedTasks))
-	var reviewerID *string
-	for _, proposed := range plan.ProposedTasks {
-		if strings.EqualFold(strings.TrimSpace(proposed.RequiredRole), interactionWorkflowReviewerRole) {
-			if proposed.AssigneeID == nil || strings.TrimSpace(*proposed.AssigneeID) == "" {
-				continue
-			}
-			candidate := strings.TrimSpace(*proposed.AssigneeID)
-			if reviewerID != nil && *reviewerID != candidate {
-				return nil, nil, ErrInteractionWorkflowReviewerRequired
-			}
-			reviewerID = &candidate
-			continue
-		}
-		if proposed.AssigneeID == nil || strings.TrimSpace(*proposed.AssigneeID) == "" {
-			return nil, nil, vault.ErrAssigneeMissing
-		}
-		makerID := strings.TrimSpace(*proposed.AssigneeID)
-		if _, exists := seenMakers[makerID]; !exists {
-			seenMakers[makerID] = struct{}{}
-			makers = append(makers, makerID)
-		}
-	}
-	if len(makers) == 0 {
-		return nil, nil, ErrInteractionWorkflowReviewerRequired
-	}
-	return makers, reviewerID, nil
 }
 
 func resolveAutonomyContract(ctx context.Context, input InteractionWorkflowPlanInput, reviewed ReviewedWorkflowPlan) (autonomy.Contract, error) {

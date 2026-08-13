@@ -7,91 +7,84 @@ import (
 	"testing"
 )
 
-func TestParseOutputMatchesCanonicalNormalization(t *testing.T) {
-	human, decision, err := ParseOutput(
-		"## レビュー\n\n日付を修正してください。\n\n" + ResultJSONStart + "\n" +
-			`{"verdict":"Request Changes","ignored":true,"issues":[{` +
+func TestParseTypedDecisionMatchesCanonicalNormalization(t *testing.T) {
+	decision, err := ParseTypedDecision(
+		`{"verdict":"Request Changes","issues":[{` +
 			`"category":"date","severity":"high",` +
 			`"description":"  日付が矛盾しています。  ",` +
-			`"suggested_action":" executed_atに合わせてください。 ","extra":1}]}` + "\n" +
-			ResultJSONEnd,
+			`"suggested_action":" executed_atに合わせてください。 "}],` +
+			`"summary":"  日付の不整合を修正してください。  "}`,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if human != "## レビュー\n\n日付を修正してください。" {
-		t.Fatalf("human = %q", human)
+	want := Decision{
+		Verdict: VerdictRequestChanges,
+		Issues: []Issue{{
+			Category: "date", Severity: "high",
+			Description: "日付が矛盾しています。", SuggestedAction: "executed_atに合わせてください。",
+		}},
+		Summary: "日付の不整合を修正してください。",
 	}
-	want := Decision{Verdict: VerdictRequestChanges, Issues: []Issue{{
-		Category:        "date",
-		Severity:        "high",
-		Description:     "日付が矛盾しています。",
-		SuggestedAction: "executed_atに合わせてください。",
-	}}}
 	if !reflect.DeepEqual(decision, want) {
 		t.Fatalf("decision = %#v, want %#v", decision, want)
 	}
 }
 
-func TestParseOutputAcceptsApproveWithEmptyIssues(t *testing.T) {
-	_, decision, err := ParseOutput(
-		"レビュー\n" + ResultJSONStart +
-			`{"verdict":"Approve","issues":[]}` + ResultJSONEnd,
-	)
+func TestParseTypedDecisionAcceptsApproveWithEmptyIssues(t *testing.T) {
+	decision, err := ParseTypedDecision(`{"verdict":"Approve","issues":[],"summary":"問題ありません。"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Verdict != VerdictApprove || len(decision.Issues) != 0 {
+	if decision.Verdict != VerdictApprove || len(decision.Issues) != 0 || decision.Summary != "問題ありません。" {
 		t.Fatalf("decision = %#v", decision)
 	}
 }
 
-func TestParseOutputRejectsInvalidContract(t *testing.T) {
+func TestParseTypedDecisionRejectsInvalidContract(t *testing.T) {
 	tests := []string{
 		"",
-		"human only",
-		ResultJSONStart + `{"verdict":"Approve","issues":[]}` + ResultJSONEnd,
-		"human" + ResultJSONStart + "{invalid}" + ResultJSONEnd,
-		"human" + ResultJSONStart + `{"verdict":"Reject","issues":[]}` + ResultJSONEnd,
-		"human" + ResultJSONStart + `{"verdict":"Approve"}` + ResultJSONEnd,
-		"human" + ResultJSONStart + `{"verdict":"Request Changes","issues":[]}` + ResultJSONEnd,
-		"human" + ResultJSONStart + `{"verdict":"Request Changes","issues":[{"category":"bad","severity":"high","description":"x","suggested_action":"y"}]}` + ResultJSONEnd,
-		"human" + ResultJSONStart + `{"verdict":"Request Changes","issues":[{"category":"date","severity":"urgent","description":"x","suggested_action":"y"}]}` + ResultJSONEnd,
-		"human" + ResultJSONStart + `{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","description":" ","suggested_action":"y"}]}` + ResultJSONEnd,
+		"not json",
+		`{invalid}`,
+		`{"verdict":"Reject","issues":[],"summary":"x"}`,
+		`{"verdict":"Approve","summary":"x"}`,
+		`{"verdict":"Approve","issues":[],"summary":""}`,
+		`{"verdict":"Request Changes","issues":[],"summary":"x"}`,
+		`{"verdict":"Request Changes","issues":[{"category":"bad","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`,
+		`{"verdict":"Request Changes","issues":[{"category":"date","severity":"urgent","description":"x","suggested_action":"y"}],"summary":"x"}`,
+		`{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","description":" ","suggested_action":"y"}],"summary":"x"}`,
+		`{"verdict":"Approve","issues":[],"summary":"x","extra":true}`,
 	}
 	for index, output := range tests {
-		if _, _, err := ParseOutput(output); !errors.Is(err, ErrInvalidResult) {
+		if _, err := ParseTypedDecision(output); !errors.Is(err, ErrInvalidResult) {
 			t.Errorf("case %d error = %v, want ErrInvalidResult", index, err)
 		}
 	}
 }
 
-func TestParseOutputClassifiesSanitizedParseFailureReasonWithoutRawText(t *testing.T) {
+func TestParseTypedDecisionClassifiesSanitizedParseFailureReasonWithoutRawText(t *testing.T) {
 	secret := "PROVIDER_SECRET_MARKER_MUST_NOT_APPEAR_IN_REASON"
 	tests := []struct {
 		name   string
 		output string
 		reason ParseFailureReason
 	}{
-		{"empty output", "", ParseFailureHumanMarkdownMissing},
-		{"no markers", "human only " + secret, ParseFailureMarkerMissing},
-		{"missing end marker", "human" + ResultJSONStart + `{"verdict":"Approve","issues":[]}` + " " + secret, ParseFailureMarkerMissing},
-		{"duplicate start marker", "human" + ResultJSONStart + ResultJSONStart + `{"verdict":"Approve","issues":[]}` + ResultJSONEnd, ParseFailureMarkerDuplicate},
-		{"duplicate end marker", "human" + ResultJSONStart + `{"verdict":"Approve","issues":[]}` + ResultJSONEnd + ResultJSONEnd, ParseFailureMarkerDuplicate},
-		{"markers out of order", "human" + ResultJSONEnd + `{"verdict":"Approve","issues":[]}` + ResultJSONStart, ParseFailureMarkerMissing},
-		{"code fence wrapped JSON", "human" + ResultJSONStart + "```json\n" + secret + `{"verdict":"Approve","issues":[]}` + "\n```" + ResultJSONEnd, ParseFailureJSONDecodeFailed},
-		{"malformed JSON", "human" + ResultJSONStart + "{" + secret + ResultJSONEnd, ParseFailureJSONDecodeFailed},
-		{"trailing content after JSON", "human" + ResultJSONStart + `{"verdict":"Approve","issues":[]} ` + secret + ResultJSONEnd, ParseFailureTrailingContent},
-		{"missing verdict field", "human" + ResultJSONStart + `{"issues":[],"note":"` + secret + `"}` + ResultJSONEnd, ParseFailureMissingRequiredField},
-		{"missing issues field", "human" + ResultJSONStart + `{"verdict":"Approve","note":"` + secret + `"}` + ResultJSONEnd, ParseFailureMissingRequiredField},
-		{"invalid verdict value", "human" + ResultJSONStart + `{"verdict":"` + secret + `","issues":[]}` + ResultJSONEnd, ParseFailureInvalidVerdict},
-		{"issues not an array", "human" + ResultJSONStart + `{"verdict":"Approve","issues":"` + secret + `"}` + ResultJSONEnd, ParseFailureInvalidIssuesShape},
-		{"invalid issue category", "human" + ResultJSONStart + `{"verdict":"Request Changes","issues":[{"category":"` + secret + `","severity":"high","description":"x","suggested_action":"y"}]}` + ResultJSONEnd, ParseFailureInvalidIssuesShape},
-		{"empty issues on Request Changes", "human" + ResultJSONStart + `{"verdict":"Request Changes","issues":[]}` + ResultJSONEnd, ParseFailureInvalidIssuesShape},
+		{"empty output", "", ParseFailureJSONDecodeFailed},
+		{"not an object", "[]", ParseFailureObjectRequired},
+		{"unknown top-level field", `{"verdict":"Approve","issues":[],"summary":"x","note":"` + secret + `"}`, ParseFailureUnknownField},
+		{"malformed JSON", "{" + secret, ParseFailureJSONDecodeFailed},
+		{"trailing content after JSON", `{"verdict":"Approve","issues":[],"summary":"x"} ` + secret, ParseFailureTrailingContent},
+		{"missing verdict field", `{"issues":[],"summary":"x","note":"` + secret + `"}`, ParseFailureUnknownField},
+		{"missing issues field", `{"verdict":"Approve","summary":"` + secret + `"}`, ParseFailureMissingRequiredField},
+		{"missing summary field", `{"verdict":"Approve","issues":[]}`, ParseFailureMissingRequiredField},
+		{"invalid verdict value", `{"verdict":"` + secret + `","issues":[],"summary":"x"}`, ParseFailureInvalidVerdict},
+		{"issues not an array", `{"verdict":"Approve","issues":"` + secret + `","summary":"x"}`, ParseFailureJSONDecodeFailed},
+		{"invalid issue category", `{"verdict":"Request Changes","issues":[{"category":"` + secret + `","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`, ParseFailureInvalidIssuesShape},
+		{"empty issues on Request Changes", `{"verdict":"Request Changes","issues":[],"summary":"x"}`, ParseFailureInvalidIssuesShape},
 	}
 	for _, current := range tests {
 		t.Run(current.name, func(t *testing.T) {
-			_, _, err := ParseOutput(current.output)
+			_, err := ParseTypedDecision(current.output)
 			var parseErr *ParseError
 			if !errors.As(err, &parseErr) {
 				t.Fatalf("error = %v, want *ParseError", err)
@@ -106,5 +99,22 @@ func TestParseOutputClassifiesSanitizedParseFailureReasonWithoutRawText(t *testi
 				t.Fatalf("Reason leaked raw output content: %q", parseErr.Reason)
 			}
 		})
+	}
+}
+
+func TestDecodeDecisionAcceptsCanonicalJSONWithAndWithoutSummary(t *testing.T) {
+	old, err := DecodeDecision([]byte(`{"verdict":"Approve","issues":[]}`))
+	if err != nil {
+		t.Fatalf("pre-migration canonical JSON without summary must still decode: %v", err)
+	}
+	if old.Summary != "" {
+		t.Fatalf("summary = %q, want empty for pre-migration artifact", old.Summary)
+	}
+	current, err := DecodeDecision([]byte(`{"verdict":"Approve","issues":[],"summary":"問題ありません。"}`))
+	if err != nil {
+		t.Fatalf("new canonical JSON with summary must decode: %v", err)
+	}
+	if current.Summary != "問題ありません。" {
+		t.Fatalf("summary = %q", current.Summary)
 	}
 }

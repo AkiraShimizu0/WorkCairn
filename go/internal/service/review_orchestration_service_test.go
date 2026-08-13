@@ -136,9 +136,8 @@ func newTestReviewOrchestration(t *testing.T, order *[]string, record review.Rec
 
 func testReviewExecutionResult() review.ExecutionResult {
 	return review.ExecutionResult{
-		HumanMarkdown: "## レビュー\n\n問題ありません。",
-		Decision:      review.Decision{Verdict: review.VerdictApprove, Issues: []review.Issue{}},
-		ReviewerID:    "QA-001", TaskID: "TASK-001", Runner: "ClaudeRunner", Model: "Claude Sonnet 5",
+		Decision:   review.Decision{Verdict: review.VerdictApprove, Issues: []review.Issue{}, Summary: "問題ありません。"},
+		ReviewerID: "QA-001", TaskID: "TASK-001", Runner: "ClaudeRunner", Model: "Claude Sonnet 5",
 	}
 }
 

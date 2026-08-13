@@ -21,6 +21,66 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
+// TestPlanReviewedWorkflowRejectsReviewerThatIsALiveTaskMaker covers the
+// direct/CLI/HTTP entry point's real gap fixed this round: unlike the
+// Interaction path (which never accepts a caller-proposed Reviewer),
+// workflow-reviewed-plan|execute historically trusted a caller-supplied
+// ReviewerID with no Maker-exclusion check at all — self-review was only
+// ever caught deep inside a specific Task's Review execution, potentially
+// after other Tasks in the same run had already executed. PlanReviewedWorkflow
+// now rejects it up front, before any Task/Review Command runs.
+func TestPlanReviewedWorkflowRejectsReviewerThatIsALiveTaskMaker(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 13, 9, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	before := planVaultSnapshot(t, root)
+	_, err := PlanReviewedWorkflow(context.Background(), ReviewedWorkflowPlanInput{
+		WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+		ReviewerID:        "PLAN-001",
+	})
+	if !errors.Is(err, ErrReviewedWorkflowReviewerIsMaker) {
+		t.Fatalf("PlanReviewedWorkflow() error = %v, want ErrReviewedWorkflowReviewerIsMaker", err)
+	}
+	if !reflect.DeepEqual(before, planVaultSnapshot(t, root)) {
+		t.Fatal("rejected reviewed Workflow plan changed temporary Vault")
+	}
+
+	var providerCalls int
+	client := httpDoerFunc(func(*http.Request) (*http.Response, error) {
+		providerCalls++
+		return nil, errors.New("Provider must not be called before the Maker-exclusion preflight rejects the plan")
+	})
+	result, err := ExecuteReviewedWorkflow(context.Background(), ExecuteReviewedWorkflowInput{
+		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
+			WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+			ReviewerID:        "PLAN-001",
+		},
+		Approved: true, CommandID: "CMD-REVIEWED-SELF-REVIEW-PREFLIGHT", MaxTasks: 10,
+	}, ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}, client)
+	if err == nil || providerCalls != 0 || len(result.Tasks) != 0 {
+		t.Fatalf("ExecuteReviewedWorkflow() = %#v, %v calls=%d, want a preflight rejection before any child Command", result, err, providerCalls)
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, getErr := ledger.Get(context.Background(), "CMD-REVIEWED-SELF-REVIEW-PREFLIGHT")
+	if getErr != nil || record.Failure == nil || record.Failure.Code != "REVIEWED_WORKFLOW_PREFLIGHT_FAILED" || record.Failure.Stage != "preflight" {
+		t.Fatalf("outer reviewed Workflow Ledger = %#v, %v", record, getErr)
+	}
+}
+
+func TestPlanReviewedWorkflowRejectsNonexistentReviewer(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 13, 9, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	_, err := PlanReviewedWorkflow(context.Background(), ReviewedWorkflowPlanInput{
+		WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+		ReviewerID:        "NOBODY-001",
+	})
+	if err == nil || errors.Is(err, ErrReviewedWorkflowReviewerIsMaker) {
+		t.Fatalf("PlanReviewedWorkflow() error = %v, want a real-employee-lookup failure for a nonexistent Reviewer", err)
+	}
+}
+
 func TestReviewedWorkflowTemporaryVaultRequestChangesRevisionReReviewAndReplay(t *testing.T) {
 	root := writeReviewedWorkflowVault(t)
 	at := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.FixedZone("JST", 9*60*60))
@@ -226,12 +286,12 @@ func TestReviewedWorkflowReviewProviderFailureClassifiesOuterCommandAndPreserves
 }
 
 // TestReviewedWorkflowReviewResultInvalidClassifiesOuterCommandWithoutProviderFailure
-// covers the non-Provider Review failure class: the Runner responded, but the
-// structured Review result failed the typed parser contract (marked-JSON
-// verdict/issues). No ProviderFailure exists on the Review child in this
-// case, so the outer Command must fall back to the child's own typed
-// classification (REVIEW_RESULT_INVALID/review_result_parser) instead of the
-// generic REVIEWED_WORKFLOW_FAILED/review pair.
+// covers the non-Provider Review failure class: the Runner responded, but
+// the Typed Decision failed the strict parser contract. No ProviderFailure
+// exists on the Review child in this case, so the outer Command must fall
+// back to the child's own typed classification
+// (REVIEW_RESULT_INVALID/review_result_parser) instead of the generic
+// REVIEWED_WORKFLOW_FAILED/review pair.
 func TestReviewedWorkflowReviewResultInvalidClassifiesOuterCommandWithoutProviderFailure(t *testing.T) {
 	root := writeReviewedWorkflowVault(t)
 	at := time.Date(2026, time.August, 9, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))
@@ -240,13 +300,14 @@ func TestReviewedWorkflowReviewResultInvalidClassifiesOuterCommandWithoutProvide
 		calls++
 		text := "# TASK-001 deliverable\n\n本文"
 		if calls == 2 {
-			// A well-formed Runner response whose marked JSON is wrapped in a
-			// Markdown code fence, violating the "JSON only between markers"
-			// rule -- a real Claude Sonnet 5 contract slip, not a Provider or
-			// transport failure. Structured Outputs only guarantees the outer
-			// envelope is well-formed JSON; it does not stop this slip inside
-			// the wrapped string.
-			text = wrapStructuredReviewOutput("# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n```json\n{\"verdict\":\"Approve\",\"issues\":[]}\n```\nREVIEW_RESULT_JSON_END")
+			// A well-formed Runner response whose otherwise-valid Typed
+			// Decision JSON is wrapped in a Markdown code fence, violating
+			// the "response is exactly one JSON object" rule -- a real
+			// Claude Sonnet 5 contract slip, not a Provider or transport
+			// failure. Structured Outputs guarantees the field set is
+			// well-formed JSON; it does not stop this slip from prefixing
+			// that JSON with fence text.
+			text = "```json\n" + reviewProviderOutput(review.VerdictApprove) + "\n```"
 		}
 		encoded, _ := json.Marshal(map[string]any{
 			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": text}},
@@ -272,7 +333,7 @@ func TestReviewedWorkflowReviewResultInvalidClassifiesOuterCommandWithoutProvide
 	current := result.Tasks[0]
 	if current.TaskID != "TASK-001" || current.Review == nil || current.Review.ProviderFailure != nil ||
 		current.Review.FailureCode != "REVIEW_RESULT_INVALID" || current.Review.FailureStage != "review_result_parser" ||
-		current.Review.ParseFailureReason != string(review.ParseFailureJSONDecodeFailed) {
+		current.Review.ParseFailureReason != string(review.ParseFailureObjectRequired) {
 		t.Fatalf("Review parser failure = %#v", current.Review)
 	}
 	ledger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
@@ -316,10 +377,16 @@ func writeReviewedWorkflowVault(t *testing.T) string {
 }
 
 func reviewProviderOutput(verdict review.Verdict) string {
-	issues := `[]`
+	issues, summary := `[]`, "問題ありません。"
 	if verdict == review.VerdictRequestChanges {
 		issues = `[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}]`
+		summary = "要件不足のため修正を依頼します。"
 	}
-	text := "# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"" + string(verdict) + "\",\"issues\":" + issues + "}\nREVIEW_RESULT_JSON_END"
-	return wrapStructuredReviewOutput(text)
+	encoded, err := json.Marshal(map[string]any{
+		"verdict": string(verdict), "issues": json.RawMessage(issues), "summary": summary,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }

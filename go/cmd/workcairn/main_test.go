@@ -840,8 +840,9 @@ func TestReviewCommandsPlanWithoutSecretsAndExecuteWithMockProvider(t *testing.T
 		content, _ := io.ReadAll(request.Body)
 		text := `# 成果物\n\n本文`
 		if strings.Contains(string(content), "レビュー方針") {
-			reviewText := "## レビュー\n\n問題ありません。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Approve\",\"issues\":[]}\nREVIEW_RESULT_JSON_END"
-			encoded, err := json.Marshal(map[string]string{review.StructuredOutputContentField: reviewText})
+			encoded, err := json.Marshal(map[string]any{
+				"verdict": "Approve", "issues": []any{}, "summary": "問題ありません。",
+			})
 			if err != nil {
 				t.Fatal(err)
 			}

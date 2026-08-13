@@ -147,7 +147,19 @@ func TestInteractionWorkflowPlanAutomaticallyResolvesUniqueReviewer(t *testing.T
 	}
 }
 
-func TestInteractionWorkflowPlanUsesValidatedExplicitReviewerFromCanonicalPlan(t *testing.T) {
+// TestInteractionWorkflowPlanIgnoresReviewFlavoredPlanTaskAsMakerSource
+// replaces the retired "explicit reviewer from canonical Plan" mechanism
+// (interactionReviewerIntent, deleted this round). Since ADR-0039, a CEO
+// Plan Intent "review" step never becomes a ProposedTasks entry, so a hand
+// -authored Plan with a "QA Engineer"-flavored ProposedTask whose assignee
+// is also a live Task's real assignee is exactly the scenario the live
+// Task Store-based Maker derivation must treat as an ordinary Maker, not a
+// privileged "explicit reviewer" — the assignee is excluded from Reviewer
+// candidacy like any other Maker, matching the fact that WorkCairn already
+// reviews every Task automatically and a Plan-authored "review task" has
+// no independent meaning. Only a QA Engineer who is not currently assigned
+// to any active Task can be selected.
+func TestInteractionWorkflowPlanIgnoresReviewFlavoredPlanTaskAsMakerSource(t *testing.T) {
 	root := writeReviewedWorkflowVault(t)
 	writePlanFile(t, filepath.Join(root, "社員", "佐藤 葵.md"), "---\nid: CONTENT-001\ndepartment: コンテンツ部\nrole: Content Writer\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n")
 	store, err := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: root, ProjectName: "ToDoアプリ"})
@@ -179,11 +191,52 @@ func TestInteractionWorkflowPlanUsesValidatedExplicitReviewerFromCanonicalPlan(t
 	}
 	ready := writeReadyInteractionSessionForPlan(t, root, "SESSION-WORKFLOW-EXPLICIT-REVIEWER", at.Add(-time.Hour), plan)
 
-	workflowPlan, err := PlanInteractionWorkflow(context.Background(), InteractionWorkflowPlanInput{
+	_, err = PlanInteractionWorkflow(context.Background(), InteractionWorkflowPlanInput{
 		VaultRoot: root, SessionID: ready.SessionID, ExpectedVersion: ready.Version, CurrentTime: at, MaxTasks: 10,
 	})
-	if err != nil || workflowPlan.ReviewerID != qaID || workflowPlan.Next.TaskID != "TASK-001" {
-		t.Fatalf("explicit reviewer Workflow plan=%#v err=%v", workflowPlan, err)
+	var planError *InteractionWorkflowPlanError
+	if !errors.As(err, &planError) || planError.Stage != InteractionWorkflowReviewerStage ||
+		!errors.Is(err, ErrInteractionWorkflowReviewerRequired) {
+		t.Fatalf("QA-001 is a live Task Maker and must not be selectable as Reviewer just because a Plan Task named it \"Review\": err=%v", err)
+	}
+}
+
+// TestInteractionWorkflowPlanExcludesAdHocTaskAssigneeNeverPresentInCanonicalPlan
+// is the regression test for the fixed staleness bug: before this round,
+// resolveInteractionWorkflowReviewer derived the Maker set only from
+// canonicalPlan.ProposedTasks, so a Task created directly via
+// ExecuteTaskCreation (never part of any CEO Plan Intent, e.g. an ad-hoc
+// Task, or historically a Revision-created Task before ADR-0024's targeted
+// readiness made its assignee traceable another way) had an assignee the
+// old code could never see and therefore could never correctly exclude
+// from Reviewer candidacy. taskMakerIDs fixes this by deriving Makers from
+// the live Task Store directly, so QA-001 — the organization's only QA
+// Engineer — must be excluded here even though no CEO Plan ever mentions
+// it.
+func TestInteractionWorkflowPlanExcludesAdHocTaskAssigneeNeverPresentInCanonicalPlan(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 13, 12, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	qaAssignee := "QA-001"
+	if _, err := ExecuteTaskCreation(context.Background(), TaskCreationInput{
+		VaultRoot: root, ProjectName: "ToDoアプリ", Title: "QA-001が直接担当する臨時Task",
+		AssigneeID: &qaAssignee, CurrentTime: at,
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	// The session's canonical Plan (writeReadyInteractionSession) has a
+	// single ProposedTask assigned to PLAN-001 only — QA-001 never appears
+	// in it, exactly the condition the old ProposedTasks-only derivation
+	// could not see.
+	ready := writeReadyInteractionSession(t, root, "SESSION-WORKFLOW-AD-HOC-MAKER", at.Add(-time.Hour))
+
+	_, err := PlanInteractionWorkflow(context.Background(), InteractionWorkflowPlanInput{
+		VaultRoot: root, SessionID: ready.SessionID, ExpectedVersion: ready.Version,
+		CurrentTime: at, MaxTasks: 10,
+	})
+	var planError *InteractionWorkflowPlanError
+	if !errors.As(err, &planError) || planError.Stage != InteractionWorkflowReviewerStage ||
+		!errors.Is(err, ErrInteractionWorkflowReviewerRequired) {
+		t.Fatalf("ad-hoc Task assignee must be excluded as Reviewer candidate: planError=%#v err=%v", planError, err)
 	}
 }
 

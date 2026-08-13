@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 var (
 	ErrReviewedWorkflowApprovalRequired  = errors.New("explicit reviewed Workflow approval is required")
 	ErrReviewedWorkflowCommandIDRequired = errors.New("reviewed Workflow Command ID is required")
+	ErrReviewedWorkflowReviewerIsMaker   = errors.New("reviewer must not be an assignee of an active Task in this Workflow")
 )
 
 type ReviewedWorkflowPlanInput struct {
@@ -59,6 +61,21 @@ func PlanReviewedWorkflow(ctx context.Context, input ReviewedWorkflowPlanInput) 
 	step, err := planReviewedWorkflowStep(ctx, input.WorkflowPlanInput)
 	if err != nil {
 		return ReviewedWorkflowPlan{}, err
+	}
+	taskStore, err := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: input.VaultRoot, ProjectName: input.ProjectName})
+	if err != nil {
+		return ReviewedWorkflowPlan{}, fmt.Errorf("plan reviewed Workflow reviewer: %w", err)
+	}
+	tasks, err := taskStore.InspectAll(ctx)
+	if err != nil {
+		return ReviewedWorkflowPlan{}, fmt.Errorf("plan reviewed Workflow reviewer: %w", err)
+	}
+	makerIDs, err := taskMakerIDs(tasks)
+	if err != nil {
+		return ReviewedWorkflowPlan{}, fmt.Errorf("plan reviewed Workflow reviewer: %w", err)
+	}
+	if slices.Contains(makerIDs, input.ReviewerID) {
+		return ReviewedWorkflowPlan{}, ErrReviewedWorkflowReviewerIsMaker
 	}
 	loader, err := vault.NewLoader(input.VaultRoot)
 	if err != nil {
@@ -226,6 +243,31 @@ func reviewedWorkflowFailureClassification(result service.ReviewedWorkflowRunRes
 		}
 	}
 	return "REVIEWED_WORKFLOW_FAILED", stage
+}
+
+// taskMakerIDs is the single, shared definition of "who is a Maker right
+// now": every currently-non-completed Task's assignee. It is the sole
+// source Reviewer resolution excludes candidates against, whether the
+// Reviewer ID was Go-derived (Interaction path) or caller-supplied
+// (direct/CLI/HTTP path) — replacing the previous CEO-Plan-Task-snapshot
+// derivation, which missed Revision-created Tasks entirely.
+func taskMakerIDs(tasks []task.Task) ([]string, error) {
+	seen := make(map[string]struct{}, len(tasks))
+	makers := make([]string, 0, len(tasks))
+	for _, current := range tasks {
+		if current.Status == task.StatusCompleted {
+			continue
+		}
+		if current.AssigneeID == nil || strings.TrimSpace(*current.AssigneeID) == "" {
+			return nil, vault.ErrAssigneeMissing
+		}
+		id := strings.TrimSpace(*current.AssigneeID)
+		if _, exists := seen[id]; !exists {
+			seen[id] = struct{}{}
+			makers = append(makers, id)
+		}
+	}
+	return makers, nil
 }
 
 func planReviewedWorkflowStep(ctx context.Context, input WorkflowPlanInput) (service.WorkflowStepPlan, error) {

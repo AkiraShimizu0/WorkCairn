@@ -11,9 +11,14 @@ result_file: TASK-001.review.json
 
 # TASK-001 Review
 
-## レビュー
+## 概要
 
 要件の説明を追加してください。
+
+## 指摘事項
+
+- **[requirements / medium]** 要件の説明が不足しています。
+  - 対応案: 要件の根拠を追記してください。
 
 ## 判定
 

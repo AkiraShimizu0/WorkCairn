@@ -69,8 +69,7 @@ func (service *ReviewService) Execute(ctx context.Context, input review.PromptIn
 		UserPrompt:   prompt.User,
 		Metadata:     cloneMetadata(input.Metadata),
 		StructuredOutput: &worker.StructuredOutputContract{
-			Schema:       review.OutputJSONSchema(),
-			ContentField: review.StructuredOutputContentField,
+			Schema: review.TypedDecisionJSONSchema(),
 		},
 	})
 	if err != nil {
@@ -88,19 +87,18 @@ func (service *ReviewService) Execute(ctx context.Context, input review.PromptIn
 		return review.ExecutionResult{}, newWorkerError(WorkerErrorInvalidRunnerResult, err)
 	}
 
-	human, decision, err := review.ParseOutput(runResult.Content)
+	decision, err := review.ParseTypedDecision(runResult.Content)
 	if err != nil {
 		return review.ExecutionResult{}, newWorkerError(WorkerErrorInvalidReviewResult, err)
 	}
 	return review.ExecutionResult{
-		HumanMarkdown: human,
-		Decision:      decision,
-		ReviewerID:    input.Reviewer.EmployeeID,
-		TaskID:        input.Task.TaskID,
-		Runner:        runResult.Runner,
-		Model:         runResult.Model,
-		Usage:         runResult.Usage,
-		Duration:      runResult.Duration,
-		Metadata:      cloneMetadata(runResult.Metadata),
+		Decision:   decision,
+		ReviewerID: input.Reviewer.EmployeeID,
+		TaskID:     input.Task.TaskID,
+		Runner:     runResult.Runner,
+		Model:      runResult.Model,
+		Usage:      runResult.Usage,
+		Duration:   runResult.Duration,
+		Metadata:   cloneMetadata(runResult.Metadata),
 	}, nil
 }

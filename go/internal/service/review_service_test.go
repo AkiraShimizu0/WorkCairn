@@ -53,8 +53,7 @@ func (builder failingReviewBuilder) BuildReview(context.Context, review.PromptIn
 
 func TestReviewServiceUsesConcreteBuilderAndRunnerRegistry(t *testing.T) {
 	fixture := loadReviewServiceFixture(t)
-	fake := &capturingReviewRunner{content: "## レビュー\n\n問題ありません。\n" +
-		review.ResultJSONStart + `{"verdict":"Approve","issues":[]}` + review.ResultJSONEnd}
+	fake := &capturingReviewRunner{content: `{"verdict":"Approve","issues":[],"summary":"問題ありません。"}`}
 	registry := runner.NewRegistry()
 	if err := registry.Register(fake); err != nil {
 		t.Fatal(err)
@@ -76,11 +75,11 @@ func TestReviewServiceUsesConcreteBuilderAndRunnerRegistry(t *testing.T) {
 		t.Fatalf("Runner prompt did not match golden fixture")
 	}
 	if fake.request.StructuredOutput == nil ||
-		fake.request.StructuredOutput.ContentField != review.StructuredOutputContentField ||
-		!reflect.DeepEqual(fake.request.StructuredOutput.Schema, review.OutputJSONSchema()) {
+		fake.request.StructuredOutput.ContentField != "" ||
+		!reflect.DeepEqual(fake.request.StructuredOutput.Schema, review.TypedDecisionJSONSchema()) {
 		t.Fatalf("Runner request did not carry the Review Structured Output contract: %#v", fake.request.StructuredOutput)
 	}
-	if result.Decision.Verdict != review.VerdictApprove || result.HumanMarkdown != "## レビュー\n\n問題ありません。" {
+	if result.Decision.Verdict != review.VerdictApprove || result.Decision.Summary != "問題ありません。" {
 		t.Fatalf("result = %#v", result)
 	}
 	if result.ReviewerID != "QA-001" || result.TaskID != "TASK-001" {

@@ -134,9 +134,30 @@ func renderReviewProjection(document review.Document, resultFile string) string 
 		"result_file: " + resultFile + "\n" +
 		"---\n\n" +
 		"# " + document.Execution.TaskID + " Review\n\n" +
-		strings.TrimSpace(document.Execution.HumanMarkdown) + "\n\n" +
-		"## 判定\n\n" +
-		string(document.Execution.Decision.Verdict) + "\n"
+		renderReviewBody(document.Execution.Decision)
+}
+
+// renderReviewBody deterministically projects the canonical Decision into
+// human-readable Markdown. Unlike the retired LLM-authored HumanMarkdown,
+// this body is Go-owned and reproducible from the canonical JSON alone.
+func renderReviewBody(decision review.Decision) string {
+	body := strings.Builder{}
+	body.WriteString("## 概要\n\n")
+	body.WriteString(strings.TrimSpace(decision.Summary) + "\n\n")
+	body.WriteString("## 指摘事項\n\n")
+	if len(decision.Issues) == 0 {
+		body.WriteString("指摘事項はありません。\n\n")
+	} else {
+		for _, issue := range decision.Issues {
+			body.WriteString(fmt.Sprintf(
+				"- **[%s / %s]** %s\n  - 対応案: %s\n",
+				issue.Category, issue.Severity, issue.Description, issue.SuggestedAction,
+			))
+		}
+		body.WriteString("\n")
+	}
+	body.WriteString("## 判定\n\n" + string(decision.Verdict) + "\n")
+	return body.String()
 }
 
 var _ review.Store = (*ReviewStore)(nil)

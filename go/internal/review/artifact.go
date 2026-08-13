@@ -56,7 +56,7 @@ func (document Document) Validate() error {
 	if strings.TrimSpace(document.Execution.ReviewerID) == "" || strings.ContainsAny(document.Execution.ReviewerID, "\r\n") || strings.ContainsAny(document.Execution.Runner, "\r\n") || strings.ContainsAny(document.Execution.Model, "\r\n") {
 		return fmt.Errorf("%w: Review execution identity is invalid", ErrInvalidDocument)
 	}
-	if strings.TrimSpace(document.Execution.HumanMarkdown) == "" || strings.TrimSpace(document.Execution.Runner) == "" || strings.TrimSpace(document.Execution.Model) == "" {
+	if strings.TrimSpace(document.Execution.Decision.Summary) == "" || strings.TrimSpace(document.Execution.Runner) == "" || strings.TrimSpace(document.Execution.Model) == "" {
 		return fmt.Errorf("%w: Review execution content is invalid", ErrInvalidDocument)
 	}
 	if err := document.Execution.Decision.Validate(); err != nil {

@@ -165,11 +165,14 @@ func testReviewDocument() review.Document {
 		TaskTitle:   "要件を整理する",
 		ReviewedAt:  time.Date(2026, time.August, 6, 17, 0, 0, 0, time.FixedZone("JST", 9*60*60)),
 		Execution: review.ExecutionResult{
-			HumanMarkdown: "\n## レビュー\n\n要件の説明を追加してください。\n",
-			Decision: review.Decision{Verdict: review.VerdictRequestChanges, Issues: []review.Issue{{
-				Category: "requirements", Severity: "medium",
-				Description: "要件の説明が不足しています。", SuggestedAction: "要件の根拠を追記してください。",
-			}}},
+			Decision: review.Decision{
+				Verdict: review.VerdictRequestChanges,
+				Issues: []review.Issue{{
+					Category: "requirements", Severity: "medium",
+					Description: "要件の説明が不足しています。", SuggestedAction: "要件の根拠を追記してください。",
+				}},
+				Summary: "要件の説明を追加してください。",
+			},
 			ReviewerID: "QA-001", TaskID: "TASK-001", Runner: "ClaudeRunner", Model: "Claude Sonnet 5",
 			Usage:    worker.TokenUsage{InputTokens: &inputTokens, OutputTokens: &outputTokens},
 			Duration: 2 * time.Second,

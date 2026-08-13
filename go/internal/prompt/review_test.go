@@ -62,21 +62,19 @@ func TestReviewBuilderIsDeterministicAndKeepsSectionOrder(t *testing.T) {
 		}
 		previous = position
 	}
-	if !strings.Contains(first.System, "マーカーの間にはJSON以外のテキスト、Markdown code fence（```）、コメントを一切含めないでください") ||
-		!strings.Contains(first.System, "JSONのtop-level fieldはverdictとissuesの2つだけにしてください") ||
+	if !strings.Contains(first.System, "応答全体をJSONオブジェクト1つだけにしてください。前後にMarkdown、code fence（```）、説明文、コメントを一切含めないでください。") ||
+		!strings.Contains(first.System, "JSONのtop-level fieldはverdict・issues・summaryの3つだけにしてください") ||
 		!strings.Contains(first.System, `"Approve" または "Request Changes"`) {
 		t.Fatal("Review Prompt does not make the strict parser contract explicit")
 	}
-	markerHeadingPosition := strings.Index(first.System, "## 必須マーカー（例外なし）")
-	numberedFormatHeadingPosition := strings.Index(first.System, "## 出力形式")
-	if markerHeadingPosition < 0 || numberedFormatHeadingPosition < 0 || markerHeadingPosition >= numberedFormatHeadingPosition {
-		t.Fatal("mandatory marker contract must appear before the numbered JSON-shape list")
+	formatHeadingPosition := strings.Index(first.System, "## 出力形式（例外なし）")
+	exampleHeadingPosition := strings.Index(first.System, "## 出力例")
+	if formatHeadingPosition < 0 || exampleHeadingPosition < 0 || formatHeadingPosition >= exampleHeadingPosition {
+		t.Fatal("output format contract must appear before the example")
 	}
-	if !strings.Contains(first.System, "成果物の長さ、verdict、issuesの有無にかかわらず、すべての応答で必ず出力してください") ||
-		!strings.Contains(first.System, "成果物が短い、レビューが簡潔、Approveで指摘なし、のいずれの場合も省略しないでください") ||
-		!strings.Contains(first.System, "この2つのマーカーまたはJSONを省略した応答はWorkCairnで処理できません") ||
-		!strings.Contains(first.System, "REVIEW_RESULT_JSON_START（正確に1回） → JSONオブジェクト1つだけ → REVIEW_RESULT_JSON_END（正確に1回）を厳守してください") {
-		t.Fatal("Review Prompt does not make marker compliance mandatory regardless of deliverable length or verdict")
+	if !strings.Contains(first.System, "人間向けのレビュー本文（Markdown）はWorkCairnが機械的に生成するため、あなたは作成しません。") ||
+		!strings.Contains(first.System, "summaryは、今回の判定理由を短く要約した文字列にしてください。空文字列は禁止です。") {
+		t.Fatal("Review Prompt does not make the Go-owned Markdown / required summary responsibility explicit")
 	}
 }
 

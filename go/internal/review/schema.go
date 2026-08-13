@@ -1,32 +1,40 @@
 package review
 
-// StructuredOutputContentField names the single JSON Schema property whose
-// value carries the Review Runner's existing free-form contract: human
-// Markdown followed by a REVIEW_RESULT_JSON_START/END-marked decision
-// block. ParseOutput/parseDecision are unchanged and still own every
-// business rule for that inner content — Structured Outputs here only
-// guarantees the Runner's raw response is exactly one well-formed JSON
-// string field, eliminating stray prose or code fences around it.
-const StructuredOutputContentField = "response"
-
-// OutputJSONSchema returns the JSON Schema used to request Anthropic
-// Structured Outputs for Review execution. The Review contract mixes
-// human-readable Markdown with an embedded, marker-delimited JSON decision
-// block (see ResultJSONStart/ResultJSONEnd) — a shape that predates this
-// migration and is preserved deliberately (see ParseOutput). That shape
-// cannot itself be expressed as a JSON Schema object, so this schema wraps
-// it in a single required string field instead of replacing it; the
-// Prompt's existing marker instructions remain exactly as written.
-func OutputJSONSchema() map[string]any {
+// TypedDecisionJSONSchema returns the JSON Schema used to request Anthropic
+// Structured Outputs for Review execution. Unlike the retired marker-based
+// contract, the schema's own JSON output *is* the desired Runner Content —
+// no wrapper/ContentField is needed (mirrors ceoplan.IntentJSONSchema()'s
+// usage). The three top-level fields are exactly what the LLM is now
+// responsible for: verdict, issues, and a short qualitative summary. Task
+// ID, Reviewer ID, Review ID, artifact paths, and canonical metadata are
+// Go's responsibility and never appear here.
+func TypedDecisionJSONSchema() map[string]any {
+	issueSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"category":         map[string]any{"type": "string", "enum": []string{"date", "format", "requirements", "context", "todo", "other"}},
+			"severity":         map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
+			"description":      map[string]any{"type": "string", "description": "Why this is an issue, grounded only in the reviewed deliverable and its context."},
+			"suggested_action": map[string]any{"type": "string", "description": "A concrete fix."},
+		},
+		"required":             []string{"category", "severity", "description", "suggested_action"},
+		"additionalProperties": false,
+	}
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			StructuredOutputContentField: map[string]any{
-				"type":        "string",
-				"description": "The complete response exactly as instructed: human Markdown followed by the REVIEW_RESULT_JSON_START/END-marked JSON decision block.",
+			"verdict": map[string]any{
+				"type": "string", "enum": []string{string(VerdictApprove), string(VerdictRequestChanges)},
+			},
+			"issues": map[string]any{
+				"type": "array", "items": issueSchema,
+				"description": "Empty array when there is nothing to flag. Required non-empty when verdict is \"Request Changes\".",
+			},
+			"summary": map[string]any{
+				"type": "string", "description": "A short qualitative summary of the review decision.",
 			},
 		},
-		"required":             []string{StructuredOutputContentField},
+		"required":             []string{"verdict", "issues", "summary"},
 		"additionalProperties": false,
 	}
 }

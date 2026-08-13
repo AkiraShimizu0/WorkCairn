@@ -289,9 +289,16 @@ func TestRunnerSendsStructuredOutputConfigWhenRequested(t *testing.T) {
 	}
 }
 
+// TestRunnerUnwrapsStructuredOutputContentField locks the generic
+// ContentField unwrap mechanism itself (worker.StructuredOutputContract),
+// independent of any specific Domain package's use of it. No production
+// caller currently sets ContentField (both ceoplan and review request the
+// schema's own JSON as Content directly), but the mechanism stays generic
+// and reusable for a future caller whose contract is a free-form string a
+// JSON Schema cannot itself express.
 func TestRunnerUnwrapsStructuredOutputContentField(t *testing.T) {
 	runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
-		envelope := `{"response":"# Review\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Approve\",\"issues\":[]}\nREVIEW_RESULT_JSON_END"}`
+		envelope := `{"response":"free-form content a JSON Schema object cannot itself express"}`
 		body := `{"model":"claude-sonnet-5","content":[{"type":"text","text":` + jsonQuote(t, envelope) + `}],"usage":{"input_tokens":1,"output_tokens":1}}`
 		return jsonResponse(http.StatusOK, body, "req-unwrap"), nil
 	}))
@@ -304,7 +311,7 @@ func TestRunnerUnwrapsStructuredOutputContentField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "# Review\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Approve\",\"issues\":[]}\nREVIEW_RESULT_JSON_END"
+	want := "free-form content a JSON Schema object cannot itself express"
 	if result.Content != want {
 		t.Fatalf("unwrapped Content = %q, want %q", result.Content, want)
 	}
