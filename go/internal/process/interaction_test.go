@@ -48,8 +48,8 @@ func TestInteractionClarificationPlanApprovalAndApplyE2E(t *testing.T) {
 		"summary": planWithoutQuestions.Summary, "required_departments": planWithoutQuestions.RequiredDepartments,
 		"required_roles": planWithoutQuestions.RequiredRoles, "assigned_existing_employees": planWithoutQuestions.AssignedExistingEmployees,
 		"proposed_tasks": []map[string]any{
-			{"title": planWithoutQuestions.ProposedTasks[0].Title, "assignee_id": *planWithoutQuestions.ProposedTasks[0].AssigneeID, "dependency_ids": []string{}, "rationale": planWithoutQuestions.ProposedTasks[0].Rationale},
-			{"title": planWithoutQuestions.ProposedTasks[1].Title, "assignee_id": nil, "dependency_ids": []string{"PROPOSED-001"}, "rationale": planWithoutQuestions.ProposedTasks[1].Rationale},
+			{"title": planWithoutQuestions.ProposedTasks[0].Title, "required_role": planWithoutQuestions.ProposedTasks[0].RequiredRole, "assignee_id": *planWithoutQuestions.ProposedTasks[0].AssigneeID, "dependency_ids": []string{}, "rationale": planWithoutQuestions.ProposedTasks[0].Rationale},
+			{"title": planWithoutQuestions.ProposedTasks[1].Title, "required_role": planWithoutQuestions.ProposedTasks[1].RequiredRole, "assignee_id": nil, "dependency_ids": []string{"PROPOSED-001"}, "rationale": planWithoutQuestions.ProposedTasks[1].Rationale},
 		},
 		"risks": planWithoutQuestions.Risks, "ceo_questions": []string{},
 	})
@@ -237,6 +237,52 @@ func TestInteractionPlanRecordsRedactedTypedProviderFailure(t *testing.T) {
 		decodeErr != nil || stored.ProviderFailure == nil || stored.ProviderFailure.HTTPStatus != http.StatusUnauthorized ||
 		strings.Contains(string(record.Result), "must not be stored") {
 		t.Fatalf("redacted Provider Ledger = %#v, %v, decode=%v", record, ledgerErr, decodeErr)
+	}
+}
+
+func TestInteractionPlanRecordsSafeParserSubstageWithoutCommittingPlan(t *testing.T) {
+	fixture := loadCEOPlanFixture(t)
+	root := ceoPlanVault(t, fixture.Employees)
+	at := time.Date(2026, 8, 12, 13, 0, 0, 0, time.UTC)
+	start := InteractionStartInput{
+		VaultRoot: root, SessionID: "SESSION-PLAN-PARSER", Request: fixture.Request,
+		Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-PLAN-PARSER-START",
+	}
+	plan, err := PlanInteractionStart(context.Background(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.RequestDigest = plan.Session.RequestDigest
+	if _, err := ExecuteInteractionStart(context.Background(), start, true); err != nil {
+		t.Fatal(err)
+	}
+	providerCalls := 0
+	providerResponse, _ := json.Marshal(map[string]any{
+		"model": "claude-sonnet-5", "content": []map[string]string{{"type": "text", "text": "not a JSON plan"}},
+		"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+	})
+	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
+		providerCalls++
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
+	})
+	result, err := ExecuteInteractionPlanGeneration(context.Background(), InteractionPlanGenerationInput{
+		VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: 1,
+		CurrentTime: at.Add(time.Minute), CommandID: "CMD-PLAN-PARSER-GENERATE",
+	}, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
+	var recorded *RecordedCommandError
+	if !errors.As(err, &recorded) || recorded.Code != "INTERACTION_PLAN_FAILED" || recorded.Stage != "ceo_plan_parser" ||
+		recorded.Partial || providerCalls != 1 || result.ProviderFailure != nil || result.SessionCommitted {
+		t.Fatalf("parser failure = %#v, result=%#v, calls=%d, err=%v", recorded, result, providerCalls, err)
+	}
+	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
+	record, ledgerErr := ledger.Get(context.Background(), "CMD-PLAN-PARSER-GENERATE")
+	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil ||
+		record.Failure.Stage != "ceo_plan_parser" {
+		t.Fatalf("parser failure Ledger = %#v, %v", record, ledgerErr)
+	}
+	stored, inspectErr := InspectInteraction(context.Background(), root, start.SessionID)
+	if inspectErr != nil || stored.Version != 1 || stored.State != interaction.StatePlanGenerationApprovalRequired || len(stored.Turns) != 0 {
+		t.Fatalf("parser failure committed Plan = %#v, %v", stored, inspectErr)
 	}
 }
 

@@ -56,6 +56,69 @@ func TestCEOPlanRejectsUnknownAssigneeAndDependencyCycle(t *testing.T) {
 	}
 }
 
+func TestCEOPlanAutomaticallyAssignsUniqueRequiredRole(t *testing.T) {
+	fixture := loadGenerationFixture(t)
+	var candidate map[string]any
+	if err := json.Unmarshal(fixture.RunnerOutput, &candidate); err != nil {
+		t.Fatal(err)
+	}
+	tasks := candidate["proposed_tasks"].([]any)
+	first := tasks[0].(map[string]any)
+	first["assignee_id"] = nil
+	first["required_role"] = "Product Manager"
+	candidate["assigned_existing_employees"] = []any{}
+	encoded, _ := json.Marshal(candidate)
+
+	plan, err := ParseRunnerOutput(string(encoded), fixture.Employees)
+	if err != nil || plan.ProposedTasks[0].AssigneeID == nil || *plan.ProposedTasks[0].AssigneeID != "PLAN-001" {
+		t.Fatalf("plan=%#v err=%v", plan, err)
+	}
+	if !containsString(plan.AssignedExistingEmployees, "PLAN-001") {
+		t.Fatalf("resolved employee missing from assignment inventory: %v", plan.AssignedExistingEmployees)
+	}
+}
+
+func TestCEOPlanLeavesAmbiguousOrMissingRoleUnassigned(t *testing.T) {
+	fixture := loadGenerationFixture(t)
+	var candidate map[string]any
+	if err := json.Unmarshal(fixture.RunnerOutput, &candidate); err != nil {
+		t.Fatal(err)
+	}
+	tasks := candidate["proposed_tasks"].([]any)
+	first := tasks[0].(map[string]any)
+	first["assignee_id"] = nil
+	first["required_role"] = "Product Manager"
+	employees := append([]organization.Identity(nil), fixture.Employees...)
+	employees = append(employees, organization.Identity{ID: "PLAN-002", Role: "Product Manager"})
+	encoded, _ := json.Marshal(candidate)
+	plan, err := ParseRunnerOutput(string(encoded), employees)
+	if err != nil || plan.ProposedTasks[0].AssigneeID != nil {
+		t.Fatalf("ambiguous plan=%#v err=%v", plan, err)
+	}
+
+	first["required_role"] = "Writer"
+	encoded, _ = json.Marshal(candidate)
+	plan, err = ParseRunnerOutput(string(encoded), fixture.Employees)
+	if err != nil || plan.ProposedTasks[0].AssigneeID != nil || !containsString(plan.MissingRoles, "Writer") {
+		t.Fatalf("missing plan=%#v err=%v", plan, err)
+	}
+}
+
+func TestCEOPlanRejectsProviderAssigneeWithWrongRole(t *testing.T) {
+	fixture := loadGenerationFixture(t)
+	var candidate map[string]any
+	if err := json.Unmarshal(fixture.RunnerOutput, &candidate); err != nil {
+		t.Fatal(err)
+	}
+	first := candidate["proposed_tasks"].([]any)[0].(map[string]any)
+	first["assignee_id"] = "PLAN-001"
+	first["required_role"] = "Backend Engineer"
+	encoded, _ := json.Marshal(candidate)
+	if _, err := ParseRunnerOutput(string(encoded), fixture.Employees); err == nil {
+		t.Fatal("Provider-proposed employee with wrong role accepted")
+	}
+}
+
 func TestCEOPlanRejectsUnknownOutputFieldAndUnvalidatedApplyPlan(t *testing.T) {
 	fixture := loadGenerationFixture(t)
 	var candidate map[string]any
@@ -97,6 +160,7 @@ func TestCEOPlanRoleMatchingUsesCanonicalUnicodeCaseFold(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate["required_roles"] = []any{"STRASSE"}
+	candidate["proposed_tasks"].([]any)[0].(map[string]any)["required_role"] = "STRASSE"
 	employees := append([]organization.Identity(nil), fixture.Employees...)
 	employees[0].Role = "Straße"
 	encoded, _ := json.Marshal(candidate)
@@ -104,7 +168,7 @@ func TestCEOPlanRoleMatchingUsesCanonicalUnicodeCaseFold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.MissingRoles) != 0 {
+	if containsString(plan.MissingRoles, "STRASSE") {
 		t.Fatalf("Unicode-equivalent role treated as missing: %v", plan.MissingRoles)
 	}
 }

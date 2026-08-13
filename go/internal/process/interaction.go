@@ -187,7 +187,7 @@ func ExecuteInteractionPlanGeneration(
 	}, provider, httpClient)
 	if generationErr != nil {
 		result := InteractionPlanResult{Session: record, Generation: generation, ProviderFailure: providerFailure(generationErr)}
-		return finishInteractionPlan(ctx, claim, result, generationErr, "interaction_plan_generation", false)
+		return finishInteractionPlan(ctx, claim, result, generationErr, interactionPlanGenerationStage(generationErr), false)
 	}
 	next, err := record.RecordPlan(generation.Plan, input.CurrentTime)
 	if err != nil {
@@ -196,6 +196,14 @@ func ExecuteInteractionPlanGeneration(
 	commit, commitErr := interactionService.Update(ctx, next, record.Version)
 	result := InteractionPlanResult{Session: commit.Record, SessionCommitted: commit.Committed, Generation: generation}
 	return finishInteractionPlan(ctx, claim, result, commitErr, "interaction_plan_commit", commitErr != nil)
+}
+
+func interactionPlanGenerationStage(err error) string {
+	var planError *service.CEOPlanError
+	if errors.As(err, &planError) && planError.Stage != "" {
+		return string(planError.Stage)
+	}
+	return "interaction_plan_generation"
 }
 
 func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, result InteractionPlanResult, err error, stage string, partial bool) (InteractionPlanResult, error) {

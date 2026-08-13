@@ -6,6 +6,8 @@ WorkCairnは「自分専用のAI会社を持つ」local-first製品です。自�
 
 Conceptは`Your AI company that manages itself.`、中心思想は「会社は見える。仕事も見える。でも管理しなくていい。」です。現在の製品RuntimeはGo Only、Public Beta候補は`v1.0.0-beta.1`です。正本の運用入口は`workcairn`と`workcairn-daemon`のLocal Web UI、中核のビジネスルールはGo Domain／Service、運用データはVault Adapterが管理します。
 
+macOSの初回起動では、利用者がnative pickerでWorkCairn専用directoryを明示選択します。iCloud Driveを推奨しますが、既存Vaultを探索・変更しません。選択済みrootはRuntime edgeのApplication Support configから再起動時にcomposeし、Starter Organizationは既存Organization writer、Claude credentialはMac native inputとKeychain Adapterを通します。iPhoneはpath／secretを送らず、redactedなsetup状態とNext Actionだけを表示します。
+
 この文書は「現在どう動くか」を説明します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、個別判断の理由は[ADR](adr/)、詳細なpackage構造は[Architecture.md](Architecture.md)、安全な導入は[PublicBetaQuickstart.md](PublicBetaQuickstart.md)と[OperatorGuide.md](OperatorGuide.md)、HTTP運用は[HTTPAPI.md](HTTPAPI.md)、今後の順序は[ROADMAP.md](ROADMAP.md)を正とします。
 
 ## 外側から見た利用フロー
@@ -63,7 +65,7 @@ Local Web UIはこの順序を再実装しません。`interaction-next`が返�
 
 `workcairn-daemon --mobile`は、同じWi-Fi等のtrusted local network上のiPhoneへmobile-first Web UIを配信します。起動時にprivate IPv4を自動選択し、terminalへURLとprocess lifetimeだけ有効なpairing codeを表示します。codeはVault、`.env`、Interaction Session、browser storageへ保存されません。
 
-通常の依頼ではModel名を選びません。新規Interactionは論理値`workcairn-auto`を使い、Claude Adapter edgeのversioned supported-model policyが具体modelを自動解決します。製品daemon／CLIはmodel環境変数を読みません。daemonはProviderへ通信せずcredentialの起動設定だけをredacted statusとして検査し、未接続ならPlan承認の前にMac側設定を案内します。Local Web UIの`AI Connections`はClaudeの接続可否とAutomatic routingを表示しますが、credential、Provider model ID、Base URLをUIやSessionへ出しません。trusted LANはHTTPのためcredential登録を提供せず、将来はMac loopbackからOS credential facilityへ保存するRuntime Adapterを境界とします。本格的なRole／Task別routingはADR-0036のtyped policyとして既存Runner Registryの手前へ追加し、未接続Providerへの暗黙fallbackは行いません。
+通常の依頼ではModel名を選びません。新規Interactionは論理値`workcairn-auto`を使い、Claude Adapter edgeのversioned supported-model policyが具体modelを自動解決します。製品daemon／CLIはmodel環境変数を読みません。daemonはProviderへ通信せずKeychain／起動時overrideだけをredacted statusとして検査し、未接続ならPlan承認の前にMac側設定を案内します。Local Web UIの`AI Connections`はClaudeの接続可否とAutomatic routingを表示しますが、credential、Provider model ID、Base URLをUIやSessionへ出しません。credential登録はMac本体のsame-origin操作からnative hidden-inputを開き、値をHTTPへ載せずKeychainへ保存します。trusted LANのiPhoneは接続状態だけを読みます。本格的なRole／Task別routingはADR-0036のtyped policyとして既存Runner Registryの手前へ追加し、未接続Providerへの暗黙fallbackは行いません。
 
 Claudeがerror responseを返した場合、Adapterは実HTTP statusと公式error typeだけから認証、請求、権限、request不正、rate limit、一時利用不可を分類します。Provider messageは保存せず、sanitized request IDとredacted分類だけをCommand Ledgerへ残すため、My Actionsは秘密情報を出さず次の確認先を案内できます。分類不能な旧evidenceや未知errorを推測せず、自動retryや別Providerへのfallbackを行いません。
 
@@ -82,7 +84,11 @@ iPhone browser
 - `My Actions`: iPhone既定。次の質問、承認、Recoveryだけを最優先表示する
 - `Company View`: PC／iPad既定。AI社員を人型で示し、担当、Maker、Reviewer、Revision、blocked／completedとhandoffを表示する
 
-いずれもInteraction Next Action、Organization inventory、Workflow／Task evidenceを表示するだけで、Task遷移やReview判断をJavaScriptへ複製しません。対応不要なら`Your company is working. No action needed.`を明示します。Prompt、Provider生response、API key、Vault pathは表示しません。External ActionはWorkflow完了後に利用者が明示的に選んだ場合だけ、別のsource／Action digest承認へ進みます。
+いずれもInteraction Next Action、Organization inventory、Workflow／Task evidenceを表示するだけで、Task遷移やReview判断をJavaScriptへ複製しません。対応不要なら`Your company is working. No action needed.`を明示し、承認済みCommandの実行中は小さなbackground indicatorへ退きます。clarification、approval、failure、partial failure、Recovery、connection lossだけを前面へ出します。一般画面ではPlanを「進め方」として自然文で表示し、内部IDやdigestは詳細へ分離します。Session turn、Workflow／Action summary、canonical evidenceからTimelineを投影し、failureはsanitized detail付きでMy Actions、依頼一覧、Timelineから再確認できます。Prompt、Provider生response、API key、Vault pathは表示しません。External ActionはWorkflow完了後に利用者が明示的に選んだ場合だけ、別のsource／Action digest承認へ進みます。
+
+同一Session、Version、Next Actionをpollするだけではaction form、Timeline、詳細DOMを再生成しません。入力中text、select、focus、開いている詳細はclient memoryに保ち、Sessionが本当に次Version／stageへ進んだ場合だけ古いUIを閉じます。未送信draftをVaultやbrowser storageへ永続化しません。
+
+First-run Wizardは、macOS native pickerで明示選択された専用rootのstorage種別、WorkCairn layout、Starter Organization、AI Connectionをredactedに確認します。明示承認された`workspace.setup`だけがCommand Ledgerへclaimし、layoutをatomic createした後、Product Manager、Content Writer、QA Engineerの不足分を既存Employee writerで作ります。Starter teamはRuntime bootstrap dataでありCoreの既定社員ではありません。absolute path、Employee ID／model、credentialはstatus APIへ出しません。iCloud Driveを使う場合は利用者が空の専用directoryを作成／選択し、同じVaultへのwriterは1 daemonに限定します。既存の個人Obsidian Vaultを自動探索・変更しません。
 
 Workflowを承認する前に、ADR-0035の`workcairn-autonomy.v1`で今回任せる範囲を確認します。Public BetaではTask実行とRevisionを委任し、各成果物のReviewを必須、External publishを別承認、支出を禁止する安全側の標準契約です。参加Employee ID、Employee inventory由来の論理model、Task上限をWorkflow plan digestへ含めるため、承認後に範囲だけを差し替えられません。これは既存Approval、Execution Policy、Command Ledgerを置き換える機構ではありません。
 
@@ -145,6 +151,8 @@ Vaultは現在の運用データの正ですが、Go Coreからはport越しに�
 - `Audit Log.md`: Event subscriberが既存互換の人間可読履歴を追記する
 - `社員/`、`会社/Workspace State.md`: Employee identityをcanonical、会社一覧をprojectionとして扱う
 - `.workspace-os/schedules/`: 承認済みone-shot Command、due time、Version／CAS、dispatch／terminal stateを持つmachine metadata
+
+macOSではWorkCairn専用rootをiCloud Drive上に置き、Obsidianから同じfolderを開けます。ただしiCloudは同期transportであり複数writerのlock／transactionではありません。1 daemon writer、既存atomic replacement、file lock、Version／CASを維持し、同期競合を推測修復しません。
 
 単一ファイルは同一directoryのtemporary file、flush／sync、rename、directory syncで置換します。既存immutable artifactは上書きしません。Task表とmanaged metadataの欠落、破損、重複、不整合は推測せず拒否します。複数ファイル操作はtransactionではないため、各ADRのcommit orderingとpartial stateが回復判断の根拠です。
 

@@ -19,6 +19,7 @@
         <span><strong>WorkCairn</strong><small>Your AI company</small></span>
       </a>
       <div class="topbar-actions">
+        <span id="background-status" class="background-status" hidden><i aria-hidden="true"></i><span>会社が働いています</span></span>
         <span id="connection-status" class="status-dot">接続確認中</span>
         <button id="settings-button" class="settings-button" type="button" hidden aria-label="AI Connectionsを開く">Settings</button>
       </div>
@@ -65,6 +66,11 @@
             </div>
             <div id="session-list" class="session-list"></div>
           </section>
+
+          <section class="history-section" aria-labelledby="timeline-heading">
+            <div class="section-heading"><div><p class="eyebrow">ACTIVITY</p><h2 id="timeline-heading">この依頼の歩み</h2></div></div>
+            <div id="activity-timeline" class="activity-timeline"></div>
+          </section>
         </section>
 
         <section id="company-view" hidden>
@@ -95,6 +101,10 @@
               <div><p class="eyebrow">RESPONSIBILITY FLOW</p><h2 id="flow-heading">仕事の流れ</h2></div>
             </div>
             <div id="company-flow" class="company-flow"></div>
+          </section>
+          <section class="company-section" aria-labelledby="company-history-heading">
+            <div class="section-heading"><div><p class="eyebrow">ACTIVITY HISTORY</p><h2 id="company-history-heading">会社の動き</h2></div></div>
+            <div id="company-timeline" class="activity-timeline compact-timeline"></div>
           </section>
           <section class="company-section company-insight-grid" aria-label="自律範囲と仕事の証明">
             <article class="company-insight" aria-labelledby="autonomy-heading">
@@ -147,6 +157,7 @@
       </div>
       <p class="supporting">AIサービスを接続すると、WorkCairnが社員の役割と仕事に合う実行先を選びます。</p>
       <div id="provider-settings" aria-live="polite"></div>
+      <div id="storage-settings" aria-live="polite"></div>
       <section class="routing-settings" aria-labelledby="routing-heading">
         <div class="settings-section-heading">
           <div><p class="eyebrow">ROUTING</p><h3 id="routing-heading">Automatic</h3></div>
@@ -162,6 +173,18 @@
         <button id="provider-status-refresh" class="button quiet" type="button">状態を再確認</button>
         <button class="button primary" type="button" data-close-dialog>閉じる</button>
       </div>
+    </section>
+  </dialog>
+
+  <dialog id="setup-dialog" class="sheet-dialog setup-dialog">
+    <section class="sheet" aria-labelledby="setup-heading">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-heading">
+        <div><p class="eyebrow">FIRST-RUN SETUP</p><h2 id="setup-heading">WorkCairnへようこそ</h2></div>
+        <button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button>
+      </div>
+      <p class="supporting">専用の会社データ、最小のAIチーム、AI Connectionを順番に確認します。既存のObsidian Vaultは変更しません。</p>
+      <div id="setup-content" class="setup-content" aria-live="polite"></div>
     </section>
   </dialog>
 

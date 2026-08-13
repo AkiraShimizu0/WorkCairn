@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -57,6 +58,25 @@ type fakeAsyncBackend struct {
 }
 
 type providerStatusHTTPDoer func(*http.Request) (*http.Response, error)
+
+type fakeLocalSetup struct {
+	connectCalls int
+	revealCalls  int
+	onConnect    func()
+}
+
+func (setup *fakeLocalSetup) ConnectClaude(context.Context) error {
+	setup.connectCalls++
+	if setup.onConnect != nil {
+		setup.onConnect()
+	}
+	return nil
+}
+
+func (setup *fakeLocalSetup) RevealWorkspace(context.Context) error {
+	setup.revealCalls++
+	return nil
+}
 
 func (doer providerStatusHTTPDoer) Do(request *http.Request) (*http.Response, error) {
 	return doer(request)
@@ -199,11 +219,17 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"cryptoAPI.getRandomValues", "BROWSER_SECURE_RANDOM_UNAVAILABLE",
 		`ui.requestForm.addEventListener("submit", prepareNewRequest)`, `requestJSON("/v1/interaction-plans"`,
 		`showError(error, "依頼内容を確認できませんでした")`,
+		`form.question-list[data-clarification-key]`, "currentForm?.dataset.clarificationKey === clarificationKey",
+		`form.stack-form[data-workflow-form-key]`, "currentForm?.dataset.workflowFormKey === workflowFormKey", `form.dataset.submitting === "true"`,
 		`requestJSON("/v1/provider-status")`, "PROVIDER_CONFIGURATION_REQUIRED", "AIサービスへ接続してください",
 		"openSettingsDialog", "renderProviderSettings", "秘密情報はiPhoneやbrowser storageへ保存しません",
 		"PROVIDER_AUTHENTICATION_REQUIRED", "PROVIDER_BILLING_REQUIRED", "PROVIDER_PERMISSION_DENIED",
 		"PROVIDER_REQUEST_INVALID", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "provider_failure",
-		"PROVIDER_RESPONSE_INVALID",
+		"PROVIDER_RESPONSE_INVALID", "ceo_plan_parser", "進め方は保存・適用されていません", "WORKFLOW_TASK_ASSIGNMENT_REQUIRED",
+		"WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED", "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。",
+		"renderTimeline", "rememberError", "setBackgroundWorking", `requestJSON("/v1/workspace-status")`, "最初のAIチームを確認",
+		`requestJSON("/v1/local-setup/claude"`, `requestJSON("/v1/local-setup/reveal-workspace"`, "会社を始める",
+		"state.renderKey === key", "state.detailRenderKey === key", "state.timelineRenderKey === key",
 	} {
 		if !strings.Contains(asset.Body.String(), required) {
 			t.Fatalf("mobile UI is missing command continuity boundary %q", required)
@@ -211,7 +237,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 	}
 	index := httptest.NewRecorder()
 	handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/", nil))
-	for _, required := range []string{"My Actions", "Company View", "AI社員", "RESPONSIBILITY FLOW", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION", "AI Connections", "Automatic", "接続済みAIサービスから、WorkCairnが実行先を選びます"} {
+	for _, required := range []string{"My Actions", "Company View", "AI社員", "RESPONSIBILITY FLOW", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION", "AI Connections", "Automatic", "接続済みAIサービスから、WorkCairnが実行先を選びます", "この依頼の歩み", "会社の動き", "FIRST-RUN SETUP"} {
 		if !strings.Contains(index.Body.String(), required) {
 			t.Fatalf("mobile UI is missing Living Company Dashboard surface %q", required)
 		}
@@ -220,6 +246,90 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		if strings.Contains(index.Body.String(), forbidden) {
 			t.Fatalf("mobile UI still asks for per-request model selection %q", forbidden)
 		}
+	}
+}
+
+func TestInteractionHistoryRemainsReadableAfterRuntimeRestart(t *testing.T) {
+	root := t.TempDir()
+	first, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := first.PlanInteraction(context.Background(), InteractionPlanRequest{
+		Version: InteractionContractVersion, SessionID: "SESSION-FIRST-RUN-RESTART-001",
+		Request: "最初の依頼を記録する", Model: AutomaticInteractionModel,
+		CurrentTime: time.Date(2026, 8, 13, 17, 0, 0, 0, time.FixedZone("JST", 9*60*60)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"session_id": plan.Session.SessionID, "request": plan.Session.Request,
+		"request_digest": plan.Session.RequestDigest, "model": plan.Session.Model, "current_time": plan.Session.CreatedAt,
+	})
+	if _, err := first.Execute(context.Background(), Command{
+		Version: ContractVersion, CommandID: "CMD-FIRST-RUN-RESTART-001", Operation: "interaction.start", Approved: true, Payload: payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(second, second)
+	list := httptest.NewRecorder()
+	handler.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/v1/interactions", nil))
+	detail := httptest.NewRecorder()
+	handler.ServeHTTP(detail, httptest.NewRequest(http.MethodGet, "/v1/interactions/SESSION-FIRST-RUN-RESTART-001", nil))
+	if list.Code != http.StatusOK || detail.Code != http.StatusOK || !strings.Contains(list.Body.String(), "SESSION-FIRST-RUN-RESTART-001") ||
+		!strings.Contains(detail.Body.String(), "最初の依頼を記録する") || !strings.Contains(detail.Body.String(), "plan_generation_approval_required") {
+		t.Fatalf("restarted history list=%d %s detail=%d %s", list.Code, list.Body.String(), detail.Code, detail.Body.String())
+	}
+}
+
+func TestWorkspaceStatusAndExplicitStarterSetupUseSelectedTemporaryRoot(t *testing.T) {
+	root := t.TempDir()
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(executor, executor)
+	before := httptest.NewRecorder()
+	handler.ServeHTTP(before, httptest.NewRequest(http.MethodGet, "/v1/workspace-status", nil))
+	if before.Code != http.StatusOK || !strings.Contains(before.Body.String(), `"storage_kind":"temporary"`) ||
+		!strings.Contains(before.Body.String(), `"layout_ready":false`) || strings.Contains(before.Body.String(), root) ||
+		strings.Contains(before.Body.String(), `"model"`) || strings.Contains(before.Body.String(), `"id"`) {
+		t.Fatalf("before setup = %d %s", before.Code, before.Body.String())
+	}
+	setupBody, _ := json.Marshal(map[string]any{
+		"version": ContractVersion, "command_id": "CMD-WORKSPACE-SETUP-HTTP-001", "operation": "workspace.setup", "approved": true,
+		"payload": map[string]any{"current_time": "2026-08-13T15:00:00+09:00"},
+	})
+	setupRequest := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewReader(setupBody))
+	setupRequest.Header.Set("Content-Type", "application/json")
+	setupRequest.Header.Set("Prefer", "respond-async")
+	setup := httptest.NewRecorder()
+	handler.ServeHTTP(setup, setupRequest)
+	if setup.Code != http.StatusAccepted || setup.Header().Get("Preference-Applied") != "respond-async" {
+		t.Fatalf("setup = %d %s", setup.Code, setup.Body.String())
+	}
+	shutdownContext, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := handler.Shutdown(shutdownContext); err != nil {
+		t.Fatal(err)
+	}
+	ledger := httptest.NewRecorder()
+	handler.ServeHTTP(ledger, httptest.NewRequest(http.MethodGet, "/v1/commands/CMD-WORKSPACE-SETUP-HTTP-001?scope=workspace", nil))
+	if ledger.Code != http.StatusOK || !strings.Contains(ledger.Body.String(), `"state":"succeeded"`) ||
+		!strings.Contains(ledger.Body.String(), `"complete":true`) {
+		t.Fatalf("setup ledger = %d %s", ledger.Code, ledger.Body.String())
+	}
+	after := httptest.NewRecorder()
+	handler.ServeHTTP(after, httptest.NewRequest(http.MethodGet, "/v1/workspace-status", nil))
+	if after.Code != http.StatusOK || !strings.Contains(after.Body.String(), `"organization_ready":true`) ||
+		!strings.Contains(after.Body.String(), `"missing_roles":[]`) || strings.Contains(after.Body.String(), root) {
+		t.Fatalf("after setup = %d %s", after.Code, after.Body.String())
 	}
 }
 
@@ -250,6 +360,66 @@ func TestProviderStatusIsRedactedAndDoesNotCallProvider(t *testing.T) {
 	if unconfiguredResponse.Code != http.StatusOK || !strings.Contains(unconfiguredResponse.Body.String(), `"configured":false`) ||
 		!strings.Contains(unconfiguredResponse.Body.String(), `"credential"`) || strings.Contains(unconfiguredResponse.Body.String(), `"provider_model"`) || providerCalls != 0 {
 		t.Fatalf("unconfigured Provider status = %d %s calls=%d", unconfiguredResponse.Code, unconfiguredResponse.Body.String(), providerCalls)
+	}
+}
+
+func TestMacLocalSetupConnectsProviderWithoutAcceptingASecretOrLANMutation(t *testing.T) {
+	root := t.TempDir()
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup := &fakeLocalSetup{onConnect: func() {
+		if err := executor.SetClaudeCredential("fake-key-never-returned"); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler, _ := NewHandler(executor, executor)
+	if err := handler.EnableLocalSetup(setup, "192.168.1.20"); err != nil {
+		t.Fatal(err)
+	}
+
+	local := httptest.NewRequest(http.MethodPost, "/v1/local-setup/claude", strings.NewReader(`{}`))
+	local.RemoteAddr = "127.0.0.1:54321"
+	local.Host = "127.0.0.1:8787"
+	local.Header.Set("Origin", "http://127.0.0.1:8787")
+	local.Header.Set(localIntentHeader, localIntentValue)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, local)
+	if response.Code != http.StatusOK || setup.connectCalls != 1 || !strings.Contains(response.Body.String(), `"configured":true`) ||
+		strings.Contains(response.Body.String(), "fake-key-never-returned") {
+		t.Fatalf("local setup = %d %s calls=%d", response.Code, response.Body.String(), setup.connectCalls)
+	}
+
+	remote := httptest.NewRequest(http.MethodPost, "/v1/local-setup/reveal-workspace", strings.NewReader(`{}`))
+	remote.RemoteAddr = "192.168.1.44:54321"
+	remote.Host = "192.168.1.20:8787"
+	remote.Header.Set("Origin", "http://192.168.1.20:8787")
+	remote.Header.Set(localIntentHeader, localIntentValue)
+	remoteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(remoteResponse, remote)
+	if remoteResponse.Code != http.StatusForbidden || setup.revealCalls != 0 || strings.Contains(remoteResponse.Body.String(), root) {
+		t.Fatalf("remote setup = %d %s calls=%d", remoteResponse.Code, remoteResponse.Body.String(), setup.revealCalls)
+	}
+}
+
+func TestLocalAccessStatusAdvertisesMacSetupOnlyToTheMac(t *testing.T) {
+	backend := &fakeCommandBackend{}
+	handler, _ := NewHandler(backend, backend)
+	if err := handler.EnableLocalSetup(&fakeLocalSetup{}, "192.168.1.20"); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		remote string
+		want   bool
+	}{{"127.0.0.1:1234", true}, {"192.168.1.20:1234", true}, {"192.168.1.44:1234", false}} {
+		request := httptest.NewRequest(http.MethodGet, "/v1/local-access/status", nil)
+		request.RemoteAddr = test.remote
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if !strings.Contains(response.Body.String(), fmt.Sprintf(`"local_setup_available":%t`, test.want)) {
+			t.Fatalf("status for %s = %s", test.remote, response.Body.String())
+		}
 	}
 }
 
@@ -288,6 +458,9 @@ func TestAsyncInteractionCommandSurvivesRequestCancellationAndUsesLedgerLocation
 }
 
 func TestAsyncInteractionCommandRejectsInvalidUnsupportedAndExcessWorkBeforeExecution(t *testing.T) {
+	if !supportsAsyncOperation("interaction.answer") || !supportsAsyncOperation("workspace.setup") || supportsAsyncOperation("task.execute") {
+		t.Fatal("async operation allow-list changed")
+	}
 	invalid := &fakeAsyncBackend{validateErr: ErrInvalidCommand, started: make(chan struct{}), release: make(chan struct{}), completed: make(chan error, 1)}
 	handler, _ := NewHandler(invalid, invalid)
 	request := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewBufferString(
@@ -488,7 +661,7 @@ func TestInteractionWorkflowPlanHTTPUsesVersionedReadOnlyContract(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := `{"version":"workspace-interaction.v1","session_id":"SESSION-HTTP-001","expected_version":3,"reviewer_id":"QA-001","current_time":"2026-08-09T12:00:00Z","max_tasks":10}`
+	body := `{"version":"workspace-interaction.v1","session_id":"SESSION-HTTP-001","expected_version":3,"current_time":"2026-08-09T12:00:00Z","max_tasks":10}`
 	request := httptest.NewRequest(http.MethodPost, "/v1/interaction-workflow-plans", bytes.NewBufferString(body))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -502,6 +675,50 @@ func TestInteractionWorkflowPlanHTTPUsesVersionedReadOnlyContract(t *testing.T) 
 	handler.ServeHTTP(invalidResponse, invalid)
 	if invalidResponse.Code != http.StatusBadRequest {
 		t.Fatalf("invalid Interaction Workflow plan = %d %s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+}
+
+func TestInteractionWorkflowPlanHTTPClassifiesAssignmentRequired(t *testing.T) {
+	backend := &fakeInteractionWorkflowBackend{}
+	backend.err = &workspaceprocess.InteractionWorkflowPlanError{
+		Stage: workspaceprocess.InteractionWorkflowAssignmentStage,
+		Err:   vault.ErrAssigneeMissing,
+	}
+	handler, err := NewHandler(backend, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version":"workspace-interaction.v1","session_id":"SESSION-HTTP-001","expected_version":5,"reviewer_id":"QA-001","current_time":"2026-08-12T14:00:00Z","max_tasks":20}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/interaction-workflow-plans", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(response.Body.String(), `"code":"WORKFLOW_TASK_ASSIGNMENT_REQUIRED"`) ||
+		!strings.Contains(response.Body.String(), `"stage":"interaction_workflow_task_assignment"`) || backend.calls != 0 {
+		t.Fatalf("assignment-required Workflow plan = %d %s calls=%d", response.Code, response.Body.String(), backend.calls)
+	}
+}
+
+func TestInteractionWorkflowPlanHTTPClassifiesReviewerAssignmentRequired(t *testing.T) {
+	backend := &fakeInteractionWorkflowBackend{}
+	backend.err = &workspaceprocess.InteractionWorkflowPlanError{
+		Stage: workspaceprocess.InteractionWorkflowReviewerStage,
+		Err:   workspaceprocess.ErrInteractionWorkflowReviewerRequired,
+	}
+	handler, err := NewHandler(backend, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version":"workspace-interaction.v1","session_id":"SESSION-HTTP-001","expected_version":5,"current_time":"2026-08-12T14:00:00Z","max_tasks":20}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/interaction-workflow-plans", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(response.Body.String(), `"code":"WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED"`) ||
+		!strings.Contains(response.Body.String(), `"stage":"interaction_workflow_reviewer_assignment"`) || backend.calls != 0 {
+		t.Fatalf("reviewer-required Workflow plan = %d %s calls=%d", response.Code, response.Body.String(), backend.calls)
 	}
 }
 
@@ -545,8 +762,8 @@ func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(
 		encoded, _ := json.Marshal(map[string]any{
 			"project_name": "iPhone依頼", "objective": "依頼から成果物を完成させる", "summary": "mobile E2E",
 			"required_departments": []string{"企画部"}, "required_roles": []string{"Product Manager"},
-			"assigned_existing_employees": []string{"PLAN-001"},
-			"proposed_tasks":              []map[string]any{{"title": "要件をまとめる", "assignee_id": "PLAN-001", "dependency_ids": []string{}, "rationale": "依頼を形にするため"}},
+			"assigned_existing_employees": []string{},
+			"proposed_tasks":              []map[string]any{{"title": "要件をまとめる", "required_role": "Product Manager", "assignee_id": nil, "dependency_ids": []string{}, "rationale": "依頼を形にするため"}},
 			"risks":                       []string{}, "ceo_questions": questions,
 		})
 		return string(encoded)

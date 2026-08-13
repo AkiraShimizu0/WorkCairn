@@ -106,6 +106,104 @@ func TestInteractionWorkflowTemporaryVaultReviewRevisionAndReplay(t *testing.T) 
 	}
 }
 
+func TestInteractionWorkflowPlanClassifiesUnassignedTaskWithoutWriting(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	if _, err := ExecuteTaskCreation(context.Background(), TaskCreationInput{
+		VaultRoot: root, ProjectName: "ToDoアプリ", Title: "担当を決める必要があるTask", CurrentTime: at,
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	ready := writeReadyInteractionSession(t, root, "SESSION-WORKFLOW-UNASSIGNED", at.Add(-time.Hour))
+	before := planVaultSnapshot(t, root)
+	_, err := PlanInteractionWorkflow(context.Background(), InteractionWorkflowPlanInput{
+		VaultRoot: root, SessionID: ready.SessionID, ExpectedVersion: ready.Version,
+		ReviewerID: "QA-001", CurrentTime: at, MaxTasks: 10,
+	})
+	var planError *InteractionWorkflowPlanError
+	if !errors.As(err, &planError) || planError.Stage != InteractionWorkflowAssignmentStage || !errors.Is(err, vault.ErrAssigneeMissing) {
+		t.Fatalf("unassigned Workflow plan error = %#v, %v", planError, err)
+	}
+	if !reflect.DeepEqual(before, planVaultSnapshot(t, root)) {
+		t.Fatal("failed Workflow plan changed temporary Vault")
+	}
+}
+
+func TestInteractionWorkflowPlanAutomaticallyResolvesUniqueReviewer(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	ready := writeReadyInteractionSession(t, root, "SESSION-WORKFLOW-REVIEWER", at.Add(-time.Hour))
+	before := planVaultSnapshot(t, root)
+
+	plan, err := PlanInteractionWorkflow(context.Background(), InteractionWorkflowPlanInput{
+		VaultRoot: root, SessionID: ready.SessionID, ExpectedVersion: ready.Version,
+		CurrentTime: at, MaxTasks: 10,
+	})
+	if err != nil || plan.ReviewerID != "QA-001" || plan.ReviewerRole != "QA Engineer" || plan.Next.TaskID != "TASK-001" {
+		t.Fatalf("automatic reviewer plan = %#v, %v", plan, err)
+	}
+	if !reflect.DeepEqual(before, planVaultSnapshot(t, root)) {
+		t.Fatal("automatic reviewer planning changed temporary Vault")
+	}
+}
+
+func TestInteractionWorkflowPlanUsesValidatedExplicitReviewerFromCanonicalPlan(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	writePlanFile(t, filepath.Join(root, "社員", "佐藤 葵.md"), "---\nid: CONTENT-001\ndepartment: コンテンツ部\nrole: Content Writer\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n")
+	store, err := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: root, ProjectName: "ToDoアプリ"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := store.InspectAll(context.Background())
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("tasks=%#v err=%v", tasks, err)
+	}
+	for index, assignee := range []string{"CONTENT-001", "QA-001"} {
+		expectedVersion := tasks[index].Version
+		tasks[index].AssigneeID = &assignee
+		tasks[index].Version++
+		if err := store.Update(context.Background(), tasks[index], expectedVersion); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := time.Date(2026, time.August, 13, 11, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	contentID, qaID := "CONTENT-001", "QA-001"
+	plan := ceoplan.Plan{
+		ProjectName: "ToDoアプリ", Objective: "説明文を作る", Summary: "作成後にReviewする",
+		RequiredDepartments: []string{"コンテンツ部", "品質保証部"}, RequiredRoles: []string{"Content Writer", "QA Engineer"},
+		AssignedExistingEmployees: []string{contentID, qaID}, MissingRoles: []string{},
+		ProposedTasks: []ceoplan.ProposedTask{
+			{ProposalID: "PROPOSED-001", Title: "作成", RequiredRole: "Content Writer", AssigneeID: &contentID, DependencyIDs: []string{}, Rationale: "作成するため"},
+			{ProposalID: "PROPOSED-002", Title: "Review", RequiredRole: "QA Engineer", AssigneeID: &qaID, DependencyIDs: []string{"PROPOSED-001"}, Rationale: "確認するため"},
+		}, Risks: []string{}, CEOQuestions: []string{}, PlanOnly: true,
+	}
+	ready := writeReadyInteractionSessionForPlan(t, root, "SESSION-WORKFLOW-EXPLICIT-REVIEWER", at.Add(-time.Hour), plan)
+
+	workflowPlan, err := PlanInteractionWorkflow(context.Background(), InteractionWorkflowPlanInput{
+		VaultRoot: root, SessionID: ready.SessionID, ExpectedVersion: ready.Version, CurrentTime: at, MaxTasks: 10,
+	})
+	if err != nil || workflowPlan.ReviewerID != qaID || workflowPlan.Next.TaskID != "TASK-001" {
+		t.Fatalf("explicit reviewer Workflow plan=%#v err=%v", workflowPlan, err)
+	}
+}
+
+func TestInteractionWorkflowPlanDeniesAmbiguousReviewer(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	writePlanFile(t, filepath.Join(root, "社員", "佐藤 花.md"), "---\nid: QA-002\ndepartment: 品質保証部\nrole: QA Engineer\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n")
+	at := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	ready := writeReadyInteractionSession(t, root, "SESSION-WORKFLOW-REVIEWER-AMBIGUOUS", at.Add(-time.Hour))
+
+	_, err := PlanInteractionWorkflow(context.Background(), InteractionWorkflowPlanInput{
+		VaultRoot: root, SessionID: ready.SessionID, ExpectedVersion: ready.Version,
+		CurrentTime: at, MaxTasks: 10,
+	})
+	var planError *InteractionWorkflowPlanError
+	if !errors.As(err, &planError) || planError.Stage != InteractionWorkflowReviewerStage ||
+		!errors.Is(err, ErrInteractionWorkflowReviewerRequired) {
+		t.Fatalf("ambiguous reviewer error = %#v, %v", planError, err)
+	}
+}
+
 func TestInteractionWorkflowPlanFixturePinsApprovalDigest(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join("..", "..", "..", "fixtures", "interaction", "workflow_plan_v1.json"))
 	if err != nil {
@@ -303,10 +401,6 @@ func TestInteractionWorkflowRejectsChangedApprovalPlanBeforeProvider(t *testing.
 
 func writeReadyInteractionSession(t *testing.T, root, sessionID string, at time.Time) interaction.Record {
 	t.Helper()
-	record, err := interaction.New(sessionID, "ToDoアプリを完成させる", "Claude Sonnet 5", at)
-	if err != nil {
-		t.Fatal(err)
-	}
 	assignee := "PLAN-001"
 	plan := ceoplan.Plan{
 		ProjectName: "ToDoアプリ", Objective: "完成させる", Summary: "既存Project",
@@ -317,6 +411,15 @@ func writeReadyInteractionSession(t *testing.T, root, sessionID string, at time.
 			DependencyIDs: []string{}, Rationale: "必要",
 		}},
 		Risks: []string{}, CEOQuestions: []string{}, PlanOnly: true,
+	}
+	return writeReadyInteractionSessionForPlan(t, root, sessionID, at, plan)
+}
+
+func writeReadyInteractionSessionForPlan(t *testing.T, root, sessionID string, at time.Time, plan ceoplan.Plan) interaction.Record {
+	t.Helper()
+	record, err := interaction.New(sessionID, "ToDoアプリを完成させる", "Claude Sonnet 5", at)
+	if err != nil {
+		t.Fatal(err)
 	}
 	withPlan, _ := record.RecordPlan(plan, at.Add(time.Minute))
 	_, digest, _ := withPlan.CurrentPlan()

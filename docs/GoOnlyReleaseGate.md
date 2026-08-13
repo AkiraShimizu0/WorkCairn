@@ -39,7 +39,7 @@ Go test内のRelease Gateはさらに次を拒否します。
 - Domain／Service／KernelからAdapter／Runtime／Processへの逆向き依存
 - Task lifecycle EventのTaskService外生成
 - 書込みcommandの承認前Vault／Provider I/O
-- Go製品sourceからの外部process起動
+- Go製品sourceからの外部process起動。ただしADR-0038のmacOS Local OS Adapterだけはnative picker、Keychain、Finder／browser openの固定absolute OS tool allow-listを許可し、専用testでshell／interpreter、動的command、secret argv混入を拒否する
 - `.py`、`.python-version`、`.venv`、`pyproject.toml`、`uv.lock`等、撤去済みruntime資産のrepository再混入
 
 Provider APIはMock HTTP serverだけ、Vaultはtemporary directoryだけで検証し、実API、実Vault、`.env`を使用しません。

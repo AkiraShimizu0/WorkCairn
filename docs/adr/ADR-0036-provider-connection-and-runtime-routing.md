@@ -16,7 +16,7 @@ Public Beta Acceptanceで、旧Python版がrepository rootの`.env`を自動読�
 
 Provider credential、Provider model ID、Base URL、HTTP clientは引き続きprocess／Runtime edgeだけからAdapterへ注入します。WorkCairnは`.env`、Vault、browser storage、Command payloadからcredentialを自動探索・移動・保存しません。Python版の暗黙`.env`読込を復活させません。
 
-Local Web UIの`AI Connections`はredactedな接続状態とAutomatic routing方針を表示するread-only foundationとします。trusted LAN mobile modeは暗号化されていないため、iPhoneからcredentialを入力・送信・保存するendpointを提供しません。Public Betaでbackend-sideの永続接続を追加する場合は、Macのloopback限定Settingsからsame-originで受け、Runtime edgeのCredential Store Adapterを通してmacOS Keychainへ保存する方式を第一候補とします。secretをresponse、log、Audit、Vault、browser storageへ返さず、process memoryへ必要時だけ取り出します。Linux等は各OS credential facilityを別Adapterとして追加し、平文設定fileを共通fallbackにはしません。実credentialの移行や保存開始はOperatorの明示操作を必要とします。
+Local Web UIの`AI Connections`はredactedな接続状態とAutomatic routing方針を表示します。trusted LAN mobile modeは暗号化されていないため、iPhoneからcredentialを入力・送信・保存するendpointを提供しません。ADR-0038は、Mac本体のsame-origin明示操作からnative hidden-inputを起動し、Runtime edgeのCredential Store Adapterを通してmacOS Keychainへ保存します。secretをHTTP request、response、log、Audit、Vault、browser storageへ返さず、process memoryへ必要時だけ取り出します。Linux等は各OS credential facilityを別Adapterとして追加し、平文設定fileを共通fallbackにはしません。実credentialの登録は利用者の明示操作を必要とします。
 
 daemonは起動時に現在注入されたClaude Adapter設定をnetwork accessなしで検証し、redactedなread-only statusを同一origin APIへ公開します。statusはProvider種別、設定可否、`credential`等の欠落category、設定不正categoryだけを返し、値、長さ、fingerprint、model ID、Base URLを返しません。`configured`はAdapterを構築可能という意味で、remote credentialの有効性やProvider到達性を保証しません。
 
@@ -47,7 +47,7 @@ Public Beta Acceptanceでは新しいProvider、Subscription-backed Runtime、ro
 
 - 過去credentialがファイルに存在しても、現在processへ注入されていなければ「接続済み」と誤表示しません。
 - credential未設定はProvider transport failureと区別され、Provider呼出し前に安全に案内されます。
-- iPhoneとMacのSettingsで接続状態とAutomatic routingを確認できますが、credential登録はまだ行わず、trusted LANへsecret mutation surfaceを増やしません。
+- iPhoneとMacのSettingsで接続状態とAutomatic routingを確認できます。credential登録はMac native dialogだけで行い、trusted LANへsecret値のmutation surfaceを増やしません。
 - 利用者は通常の依頼でModel名を選ばず、WorkCairnが選ぶ製品体験へ移行できます。
 - Claude接続に必要な通常設定はcredentialだけとなり、model環境変数は製品surfaceから廃止されます。
 - Core、TaskService、Approval、Command Ledger、Recovery、JSON Contract v1は変更しません。

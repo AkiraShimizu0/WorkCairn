@@ -13,9 +13,9 @@ WorkCairnのread-only操作とwriter操作は分離されています。`*-plan`
 - planでVault root、Project／Task／Employee ID、source digest、Command IDを確認する。
 - 同じ論理操作の再送には同じCommand IDと同じrequestを使う。内容が変わる場合は新しいCommand IDを使う。
 - `running`、partial failure、stale Versionを推測で再実行しない。
-- `.env`をGo Runtimeへ読ませず、credentialは承認済みprocessの環境へだけ注入する。
-- daemonのProvider statusは起動processへ注入済みかだけをredacted inspectionし、remote Providerへ疎通しない。未接続時はPlan生成を開始せず、別Providerへfallbackしない。
-- Local Web UIの`AI Connections`は接続状態の確認専用です。mobile modeのHTTP経由でcredentialを入力せず、Public Betaの接続はMac側の承認済みprocess設定で行います。永続化を導入する場合はloopback限定SettingsとOS credential facilityを使います。
+- `.env`をGo Runtimeへ読ませず、一般利用のcredentialはMac native inputからKeychainへ保存する。process環境は明示Operator testだけのoverrideとする。
+- daemonのProvider statusはKeychain／起動時overrideをredacted inspectionし、remote Providerへ疎通しない。未接続時はPlan生成を開始せず、別Providerへfallbackしない。
+- Local Web UIの`AI Connections`は接続状態を表示し、Mac本体の明示操作だけがnative hidden-inputを起動します。mobile modeのHTTP payloadからcredentialを入力・送信しません。
 - canonical artifact、Deliverable、Review JSON、Revision intent、Action evidenceを自動削除・上書きしない。
 
 ## 配布物の確認

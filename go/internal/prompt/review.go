@@ -89,6 +89,8 @@ func (builder Builder) BuildReview(ctx context.Context, input review.PromptInput
 		"- MVPとして適切か",
 		"指摘には理由と具体的な修正案を含めてください。",
 		"人間向けMarkdownの後に、指定されたマーカーでJSONを1つだけ出力してください。",
+		"マーカー間にはJSONオブジェクトだけを置き、Markdown code fenceや説明文を含めないでください。",
+		"開始・終了マーカーはそれぞれ正確に1回だけ使用してください。",
 		"JSONのverdictはApproveまたはRequest Changesのみ使用してください。",
 		"Request Changesの場合はissuesを1件以上含めてください。",
 		"categoryはdate|format|requirements|context|todo|otherのみ使用してください。",

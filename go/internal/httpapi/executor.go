@@ -3,9 +3,12 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
@@ -34,12 +37,19 @@ type Inspector interface {
 
 type ProcessExecutor struct {
 	vaultRoot     string
+	providerMu    sync.RWMutex
 	provider      workspaceprocess.ClaudeProcessConfig
 	actionConfig  workspaceprocess.WordPressProcessConfig
 	httpClient    claude.HTTPDoer
 	metrics       *metrics.Subscriber
 	notifications *vault.NotificationSubscriber
 	observers     []event.Observer
+}
+
+var starterOrganization = []organization.EmployeeCandidate{
+	{ID: "PLAN-001", Name: "田中 美咲", Department: "企画部", Role: "Product Manager", Model: "workcairn-auto"},
+	{ID: "CONTENT-001", Name: "佐藤 葵", Department: "コンテンツ部", Role: "Content Writer", Model: "workcairn-auto"},
+	{ID: "QA-001", Name: "伊藤 健太", Department: "品質保証部", Role: "QA Engineer", Model: "workcairn-auto"},
 }
 
 func NewProcessExecutor(vaultRoot string, provider workspaceprocess.ClaudeProcessConfig, httpClient claude.HTTPDoer) (*ProcessExecutor, error) {
@@ -78,25 +88,105 @@ func NewProcessExecutorWithActionConfig(vaultRoot string, provider workspaceproc
 // constructed. It never performs a Provider request or exposes configuration
 // values.
 func (executor *ProcessExecutor) InspectProviderStatus() ProviderStatus {
+	provider := executor.providerConfig()
 	status := ProviderStatus{
 		Version: ProviderStatusVersion, Provider: "anthropic", SelectionMode: "automatic",
 		Missing: []string{}, Invalid: []string{},
 	}
-	if strings.TrimSpace(executor.provider.APIKey) == "" {
+	if strings.TrimSpace(provider.APIKey) == "" {
 		status.Missing = append(status.Missing, "credential")
 	}
 	if len(status.Missing) != 0 {
 		return status
 	}
 	if _, err := claude.New(claude.Config{
-		APIKey: executor.provider.APIKey, ProviderModel: executor.provider.ProviderModel,
-		BaseURL: executor.provider.BaseURL, MaxTokens: executor.provider.MaxTokens,
+		APIKey: provider.APIKey, ProviderModel: provider.ProviderModel,
+		BaseURL: provider.BaseURL, MaxTokens: provider.MaxTokens,
 	}, executor.httpClient); err != nil {
 		status.Invalid = append(status.Invalid, "provider_configuration")
 		return status
 	}
 	status.Configured = true
 	return status
+}
+
+// SetClaudeCredential updates only the Runtime edge after an explicit local
+// macOS Keychain operation. The secret is never written to the Vault, command
+// payload, response, log, or browser storage.
+func (executor *ProcessExecutor) SetClaudeCredential(credential string) error {
+	credential = strings.TrimSpace(credential)
+	if credential == "" {
+		return errors.New("Claude credential is required")
+	}
+	executor.providerMu.Lock()
+	executor.provider.APIKey = credential
+	executor.providerMu.Unlock()
+	return nil
+}
+
+func (executor *ProcessExecutor) providerConfig() workspaceprocess.ClaudeProcessConfig {
+	executor.providerMu.RLock()
+	defer executor.providerMu.RUnlock()
+	return executor.provider
+}
+
+// InspectWorkspaceStatus exposes only setup capabilities, never the absolute
+// local path. Starter employees are Runtime bootstrap data and are still
+// validated and committed through the existing Organization command path.
+func (executor *ProcessExecutor) InspectWorkspaceStatus(ctx context.Context) (WorkspaceStatus, error) {
+	starterProjection := make([]StarterOrganizationMember, 0, len(starterOrganization))
+	for _, candidate := range starterOrganization {
+		starterProjection = append(starterProjection, StarterOrganizationMember{
+			Name: candidate.Name, Department: candidate.Department, Role: candidate.Role,
+		})
+	}
+	missingRoles := make([]string, 0, len(starterProjection))
+	for _, candidate := range starterProjection {
+		missingRoles = append(missingRoles, candidate.Role)
+	}
+	status := WorkspaceStatus{
+		Version: WorkspaceStatusVersion, StorageKind: workspaceStorageKind(executor.vaultRoot),
+		ObsidianCompatible: true, StarterOrganization: starterProjection,
+		MissingRoles: missingRoles,
+	}
+	for _, relative := range []string{"社員", "会社", "プロジェクト"} {
+		info, err := os.Stat(filepath.Join(executor.vaultRoot, relative))
+		if err != nil || !info.IsDir() {
+			return status, nil
+		}
+	}
+	if info, err := os.Stat(filepath.Join(executor.vaultRoot, "会社", "Workspace State.md")); err != nil || !info.Mode().IsRegular() {
+		return status, nil
+	}
+	status.LayoutReady = true
+	status.MissingRoles = []string{}
+	inspection, err := workspaceprocess.InspectOrganization(ctx, executor.vaultRoot)
+	if err != nil {
+		return status, err
+	}
+	roles := make(map[string]struct{}, len(inspection.Inventory.Employees))
+	for _, employee := range inspection.Inventory.Employees {
+		roles[strings.TrimSpace(employee.Role)] = struct{}{}
+	}
+	for _, candidate := range status.StarterOrganization {
+		if _, exists := roles[candidate.Role]; !exists {
+			status.MissingRoles = append(status.MissingRoles, candidate.Role)
+		}
+	}
+	status.OrganizationReady = len(status.MissingRoles) == 0
+	return status, nil
+}
+
+func workspaceStorageKind(root string) string {
+	absolute, _ := filepath.Abs(root)
+	clean := filepath.Clean(absolute)
+	if strings.Contains(clean, filepath.Join("Mobile Documents", "com~apple~CloudDocs")) {
+		return "icloud_drive"
+	}
+	if temporary := filepath.Clean(os.TempDir()); clean == temporary || strings.HasPrefix(clean, temporary+string(filepath.Separator)) {
+		return "temporary"
+	}
+	return "dedicated_local"
 }
 
 type taskExecutePayload struct {
@@ -258,11 +348,24 @@ type interactionActionExecutePayload struct {
 	ActionPlanDigest string    `json:"action_plan_digest"`
 }
 
+type workspaceSetupPayload struct {
+	CurrentTime time.Time `json:"current_time"`
+}
+
 func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (any, error) {
 	if err := executor.ValidateCommand(command); err != nil {
 		return nil, ErrInvalidCommand
 	}
 	switch command.Operation {
+	case "workspace.setup":
+		var payload workspaceSetupPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteWorkspaceSetup(ctx, workspaceprocess.WorkspaceSetupInput{
+			VaultRoot: executor.vaultRoot, Candidates: append([]organization.EmployeeCandidate(nil), starterOrganization...),
+			CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
+		}, true)
 	case "task.execute":
 		var payload taskExecutePayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -272,7 +375,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 			ExecutionPlanInput: workspaceprocess.ExecutionPlanInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, TaskID: payload.TaskID, CurrentTime: payload.CurrentTime},
 			Approved:           true, ApprovalSource: "http-api", ApprovalReference: payload.ApprovalReference,
 			ExecutionID: payload.ExecutionID, CommandID: command.CommandID, EventObservers: executor.observers,
-		}, executor.provider, executor.httpClient)
+		}, executor.providerConfig(), executor.httpClient)
 	case "review.execute":
 		var payload reviewExecutePayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -281,7 +384,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		return workspaceprocess.ExecuteReview(ctx, workspaceprocess.ExecuteReviewInput{
 			ReviewPlanInput: workspaceprocess.ReviewPlanInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, TaskID: payload.TaskID, ReviewerID: payload.ReviewerID, ReviewVersion: payload.ReviewVersion, CurrentTime: payload.CurrentTime},
 			Approved:        true, CommandID: command.CommandID, EventObservers: executor.observers,
-		}, executor.provider, executor.httpClient)
+		}, executor.providerConfig(), executor.httpClient)
 	case "revision.execute":
 		var payload revisionExecutePayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -300,7 +403,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 			WorkflowPlanInput: workspaceprocess.WorkflowPlanInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, ProjectName: payload.ProjectName, CurrentTime: payload.CurrentTime},
 			Approved:          true, ApprovalReference: payload.ApprovalReference, CommandID: command.CommandID, MaxTasks: payload.MaxTasks,
 			EventObservers: executor.observers,
-		}, executor.provider, executor.httpClient)
+		}, executor.providerConfig(), executor.httpClient)
 	case "workflow.reviewed.execute":
 		var payload reviewedWorkflowExecutePayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -315,7 +418,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 			},
 			Approved: true, ApprovalReference: payload.ApprovalReference, CommandID: command.CommandID, MaxTasks: payload.MaxTasks,
 			EventObservers: executor.observers,
-		}, executor.provider, executor.httpClient)
+		}, executor.providerConfig(), executor.httpClient)
 	case "ceo_plan.apply":
 		var payload ceoApplyPayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -339,7 +442,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		return workspaceprocess.ExecuteInteractionPlanGeneration(ctx, workspaceprocess.InteractionPlanGenerationInput{
 			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
 			CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
-		}, executor.provider, executor.httpClient, true)
+		}, executor.providerConfig(), executor.httpClient, true)
 	case "interaction.answer":
 		var payload interactionAnswerPayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -371,7 +474,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 			},
 			WorkflowPlanDigest: payload.WorkflowPlanDigest, ApprovalReference: payload.ApprovalReference,
 			CommandID: command.CommandID, EventObservers: executor.observers,
-		}, executor.provider, executor.httpClient, true)
+		}, executor.providerConfig(), executor.httpClient, true)
 	case "interaction.action.wordpress.publish":
 		var payload interactionActionExecutePayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -461,7 +564,7 @@ func (executor *ProcessExecutor) ValidateCommand(command Command) error {
 	if err := command.Validate(); err != nil || !command.Approved {
 		return ErrInvalidCommand
 	}
-	if (commandcontract.Schedulable(command.Operation) || strings.HasPrefix(command.Operation, "interaction.")) &&
+	if (commandcontract.Schedulable(command.Operation) || command.Operation == "workspace.setup" || strings.HasPrefix(command.Operation, "interaction.")) &&
 		commandcontract.ValidatePayload(command.Operation, command.Payload) != nil {
 		return ErrInvalidCommand
 	}

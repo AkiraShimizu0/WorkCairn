@@ -3,6 +3,7 @@ const COMMAND_VERSION = "workspace-command.v1";
 const STORAGE_SESSION = "workcairn.active-session";
 const STORAGE_PENDING = "workcairn.pending-command";
 const STORAGE_VIEW = "workcairn.active-view";
+const STORAGE_ERROR_PREFIX = "workcairn.last-error.";
 
 const ui = {
   pairingView: document.querySelector("#pairing-view"),
@@ -13,11 +14,14 @@ const ui = {
   myActionsTab: document.querySelector("#my-actions-tab"),
   companyTab: document.querySelector("#company-tab"),
   status: document.querySelector("#connection-status"),
+  backgroundStatus: document.querySelector("#background-status"),
   settingsButton: document.querySelector("#settings-button"),
   activeCard: document.querySelector("#active-card"),
   detailsPanel: document.querySelector("#details-panel"),
   details: document.querySelector("#details-content"),
   sessionList: document.querySelector("#session-list"),
+  timeline: document.querySelector("#activity-timeline"),
+  companyTimeline: document.querySelector("#company-timeline"),
   companyStatus: document.querySelector("#company-status"),
   employeeGrid: document.querySelector("#employee-grid"),
   teamCount: document.querySelector("#team-count"),
@@ -31,6 +35,9 @@ const ui = {
   actionForm: document.querySelector("#action-form"),
   settingsDialog: document.querySelector("#settings-dialog"),
   providerSettings: document.querySelector("#provider-settings"),
+  storageSettings: document.querySelector("#storage-settings"),
+  setupDialog: document.querySelector("#setup-dialog"),
+  setupContent: document.querySelector("#setup-content"),
   busy: document.querySelector("#busy-overlay"),
   busyTitle: document.querySelector("#busy-title"),
   busyMessage: document.querySelector("#busy-message"),
@@ -46,6 +53,13 @@ const state = {
   workReport: null,
   workReportError: null,
   providerStatus: null,
+  workspaceStatus: null,
+	localSetupAvailable: false,
+  lastError: null,
+  renderKey: "",
+  detailRenderKey: "",
+  timelineRenderKey: "",
+  activeCommandID: "",
   busy: false,
 };
 
@@ -101,9 +115,9 @@ function projectID() { return `PROJECT-${Date.now()}-${secureRandomUUID().slice(
 
 function stateLabel(value) {
   const labels = {
-    plan_generation_approval_required: "Plan作成待ち",
+    plan_generation_approval_required: "進め方の作成待ち",
     clarification_required: "回答待ち",
-    plan_approval_required: "Plan承認待ち",
+    plan_approval_required: "進め方の承認待ち",
     ready_to_execute: "実行承認待ち",
     workflow_attention_required: "確認が必要",
     completed: "仕事完了",
@@ -154,6 +168,81 @@ function setBusy(active, title = "処理しています", message = "この画�
   ui.busyMessage.textContent = message;
 }
 
+function setBackgroundWorking(active) {
+  ui.backgroundStatus.hidden = !active;
+  ui.backgroundStatus.setAttribute("aria-label", active ? "バックグラウンドで実行中" : "");
+}
+
+function errorStorageKey(sessionID = state.record?.session_id) {
+  return sessionID ? `${STORAGE_ERROR_PREFIX}${sessionID}` : "";
+}
+
+function rememberError(error, title, commandID = state.activeCommandID) {
+  const detail = error instanceof APIError ? error.detail : null;
+  const sessionID = state.record?.session_id || localStorage.getItem(STORAGE_SESSION);
+  if (!sessionID) return null;
+  const snapshot = {
+    session_id: sessionID,
+    session_version: state.record?.version || 0,
+    title,
+    code: detail?.code || error.message || "UNKNOWN_ERROR",
+    stage: detail?.stage || "",
+    command_id: detail?.command_id || commandID || "",
+    request_id: detail?.provider_failure?.request_id || "",
+    recovery_required: Boolean(detail?.recovery_required),
+    at: now(),
+  };
+  try {
+    const existing = JSON.parse(localStorage.getItem(errorStorageKey(sessionID)) || "null");
+    if (existing && existing.session_version === snapshot.session_version && existing.title === snapshot.title &&
+        existing.code === snapshot.code && existing.stage === snapshot.stage && existing.command_id === snapshot.command_id &&
+        existing.request_id === snapshot.request_id && existing.recovery_required === snapshot.recovery_required) {
+      state.lastError = existing;
+      return existing;
+    }
+  } catch {}
+  localStorage.setItem(errorStorageKey(sessionID), JSON.stringify(snapshot));
+  state.lastError = snapshot;
+  return snapshot;
+}
+
+function restoreError(record) {
+  state.lastError = null;
+  if (!record) return;
+  try {
+    const stored = JSON.parse(localStorage.getItem(errorStorageKey(record.session_id)) || "null");
+    if (!stored || stored.session_id !== record.session_id) return;
+    if (stored.session_version && record.version > stored.session_version && !["workflow_attention_required", "action_attention_required"].includes(record.state)) {
+      localStorage.removeItem(errorStorageKey(record.session_id));
+      return;
+    }
+    state.lastError = stored;
+  } catch {
+    localStorage.removeItem(errorStorageKey(record.session_id));
+  }
+}
+
+function clearCurrentError() {
+  const key = errorStorageKey();
+  if (key) localStorage.removeItem(key);
+  state.lastError = null;
+}
+
+async function copySanitizedError(error) {
+  const detail = [
+    `Error code: ${error.code || "UNKNOWN_ERROR"}`,
+    `Stage: ${error.stage || "—"}`,
+    `Command ID: ${error.command_id || "—"}`,
+    `Request ID: ${error.request_id || "—"}`,
+  ].join("\n");
+  try {
+    await navigator.clipboard.writeText(detail);
+    toast("エラー詳細をコピーしました。");
+  } catch {
+    toast("コピーできませんでした。詳細を長押ししてコピーしてください。");
+  }
+}
+
 function setView(name, remember = true) {
   const company = name === "company";
   ui.myActionsView.hidden = company;
@@ -176,11 +265,16 @@ function toast(message) {
 
 function showError(error, title = "処理を完了できませんでした") {
   setBusy(false);
+  setBackgroundWorking(false);
+  const remembered = rememberError(error, title);
   const detail = error instanceof APIError ? error.detail : null;
   const code = detail?.code || error.message || "UNKNOWN_ERROR";
   const stage = detail?.stage;
   const providerSetupRequired = code === "PROVIDER_CONFIGURATION_REQUIRED";
   const providerGenerationFailed = code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_generation";
+  const planResponseInvalid = code === "INTERACTION_PLAN_FAILED" && stage === "ceo_plan_parser";
+  const workflowAssignmentRequired = code === "WORKFLOW_TASK_ASSIGNMENT_REQUIRED";
+  const workflowReviewerRequired = code === "WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED";
   const providerFailures = {
     PROVIDER_AUTHENTICATION_REQUIRED: "Claudeの接続を確認してください。credentialが無効・失効している可能性があります。",
     PROVIDER_BILLING_REQUIRED: "Claude側の請求・支払い設定を確認してください。WorkCairnは自動retryしません。",
@@ -195,16 +289,25 @@ function showError(error, title = "処理を完了できませんでした") {
   const providerRequestID = detail?.provider_failure?.request_id;
   const providerSettingsAction = providerSetupRequired || code === "PROVIDER_AUTHENTICATION_REQUIRED" || code === "PROVIDER_PERMISSION_DENIED";
   const pending = sessionStorage.getItem(STORAGE_PENDING);
+  const errorRenderKey = `error:${JSON.stringify([remembered?.session_id || "", remembered?.session_version || 0, code, stage || "", remembered?.command_id || ""] )}`;
+  if (state.renderKey === errorRenderKey) return;
+  state.renderKey = errorRenderKey;
   ui.activeCard.className = "action-card attention";
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, "確認が必要です"),
     node("h2", {}, title),
     node("p", { class: "lead" }, providerSetupRequired
-      ? "AIサービスの接続設定が不足しています。Providerへ依頼は送信されていません。Macで設定してdaemonを再起動してください。"
+      ? "AIサービスの接続設定が不足しています。Providerへ依頼は送信されていません。MacのAI Connectionsから接続してください。"
       : providerFailureCopy
         ? providerFailureCopy
+      : planResponseInvalid
+        ? "AIサービスから応答を受信しましたが、安全な進め方として確認できる形式ではありませんでした。進め方は保存・適用されていません。"
+      : workflowAssignmentRequired
+        ? "担当AIを決められない仕事があるため、実行を開始していません。Organizationを確認してから、改めて実行内容を確認してください。"
+      : workflowReviewerRequired
+        ? "Makerと異なるReviewerを一意に決められなかったため、Workflowを開始していません。OrganizationのQA Engineerを確認してください。"
       : providerGenerationFailed
-        ? "AIサービスでPlanを生成できませんでした。自動retryや別Providerへの切替は行っていません。接続状態を確認してください。"
+        ? "AIサービスで進め方を生成できませんでした。自動retryや別サービスへの切替は行っていません。接続状態を確認してください。"
       : "成立済みの記録を推測で変更せず、現在の状態を確認してください。"),
     node("div", { class: "error-box" },
       node("strong", {}, code),
@@ -212,10 +315,14 @@ function showError(error, title = "処理を完了できませんでした") {
       providerRequestID ? node("div", {}, `問い合わせID: ${providerRequestID}`) : null,
     ),
     node("div", { class: "button-row" },
-      button(providerSettingsAction ? "AI Connectionsを開く" : (providerIssue ? "Plan作成待ちへ戻る" : (pending ? "Command状態を再確認" : "状態を再確認")), "primary", () => providerSettingsAction ? openSettingsDialog() : (pending ? resumePendingCommand(pending) : refreshCurrent())),
+      button(providerSettingsAction ? "AI Connectionsを開く" : (providerIssue ? "進め方の作成待ちへ戻る" : (pending ? "Command状態を再確認" : "状態を再確認")), "primary", () => providerSettingsAction ? openSettingsDialog() : (pending ? resumePendingCommand(pending) : refreshCurrent())),
       button("依頼一覧へ", "quiet", () => selectSession(null)),
     ),
   );
+  if (remembered) {
+    renderTimeline();
+    renderSessions();
+  }
 }
 
 async function pair(event) {
@@ -239,13 +346,22 @@ async function startWorkspace() {
   ui.workspaceView.hidden = false;
   ui.settingsButton.hidden = false;
   setConnected(true);
-  await Promise.all([loadSessions(), loadProviderStatus()]);
+  await Promise.all([loadSessions(), loadProviderStatus(), loadWorkspaceStatus(), loadOrganization().catch(() => null)]);
   const stored = localStorage.getItem(STORAGE_SESSION);
   const candidate = state.sessions.find((record) => record.session_id === stored) ||
     state.sessions.find((record) => !["completed", "action_completed"].includes(record.state)) || state.sessions[0];
   await selectSession(candidate?.session_id || null);
   const preferredView = localStorage.getItem(STORAGE_VIEW);
   setView(preferredView || (window.matchMedia("(min-width: 900px)").matches ? "company" : "actions"), false);
+  if (state.workspaceStatus && (!state.workspaceStatus.organization_ready || !state.providerStatus?.configured)) openSetupWizard();
+}
+
+async function loadWorkspaceStatus() {
+  try {
+    state.workspaceStatus = await requestJSON("/v1/workspace-status");
+  } catch {
+    state.workspaceStatus = null;
+  }
 }
 
 async function loadProviderStatus() {
@@ -260,9 +376,36 @@ async function refreshProviderStatus() {
   setBusy(true, "AIサービスを確認しています", "credentialの値やProviderへの通信は行わず、起動時設定だけを確認します。");
   await loadProviderStatus();
   setBusy(false);
-  if (state.record) renderNext();
+  if (state.record) renderNext(true);
   renderProviderSettings();
-  toast(state.providerStatus?.configured ? "AIサービスを利用できます。" : "Mac側のAIサービス設定を確認し、daemonを再起動してください。");
+  renderStorageSettings();
+  toast(state.providerStatus?.configured ? "AIサービスを利用できます。" : "MacのAI ConnectionsからClaudeを接続してください。");
+}
+
+async function connectClaudeOnMac() {
+	setBusy(true, "MacでClaudeへ接続しています", "Macに表示される安全な入力画面を確認してください。secretはbrowserへ送信しません。");
+	try {
+		state.providerStatus = await requestJSON("/v1/local-setup/claude", { method: "POST", body: "{}" });
+		setBusy(false);
+		renderProviderSettings();
+		if (state.workspaceStatus?.organization_ready) {
+			if (ui.settingsDialog.open) ui.settingsDialog.close();
+			openSetupWizard();
+		} else if (ui.setupDialog.open) renderSetupWizard();
+		toast("Claudeへ接続しました。RoutingはAutomaticです。");
+	} catch (error) {
+		setBusy(false);
+		toast(error.status === 403 ? "AI ConnectionはMac本体の画面から設定してください。" : "Claude接続は完了していません。Macの入力画面を確認してください。");
+	}
+}
+
+async function revealWorkspaceOnMac() {
+	try {
+		await requestJSON("/v1/local-setup/reveal-workspace", { method: "POST", body: "{}" });
+		toast("MacのFinderに会社データを表示しました。Obsidianでは「Open folder as vault」を選んでください。");
+	} catch (error) {
+		toast(error.status === 403 ? "会社データを開く操作はMac本体で行ってください。" : "会社データをFinderに表示できませんでした。");
+	}
 }
 
 function providerStatusCopy() {
@@ -293,12 +436,30 @@ function renderProviderSettings() {
       ),
       node("p", {}, copy.description),
       !state.providerStatus?.configured ? node("p", { class: "connection-safety" }, "秘密情報はiPhoneやbrowser storageへ保存しません。接続設定はMac側で行います。") : null,
+	  !state.providerStatus?.configured && state.localSetupAvailable ? button("MacでClaudeを接続", "primary", connectClaudeOnMac) : null,
+	  !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "connection-safety" }, "MacのWorkCairn画面でAI Connectionsを開いて接続してください。") : null,
     ),
   );
 }
 
+function storageStatusCopy() {
+  const kind = state.workspaceStatus?.storage_kind;
+  if (kind === "icloud_drive") return ["iCloud DriveのWorkCairn専用Vault", "Obsidianから同じfolderをVaultとして開けます。同期中もcanonical metadataとCASを維持します。"];
+  if (kind === "temporary") return ["Temporary Vault", "Acceptance専用です。通常利用では既存Vaultと分離したiCloud Drive / WorkCairnを選んでください。"];
+  return ["WorkCairn専用のローカルVault", "既存の個人Obsidian Vaultは変更しません。後からこのfolderをObsidianで開けます。"];
+}
+
+function renderStorageSettings() {
+  const [title, description] = storageStatusCopy();
+  ui.storageSettings.replaceChildren(node("section", { class: "storage-card" },
+	node("strong", {}, title), node("small", {}, description),
+	state.localSetupAvailable ? button("Macで会社データを見る", "quiet", revealWorkspaceOnMac) : node("small", {}, "Obsidianで見る場合は、MacでこのWorkCairn専用folderをVaultとして開きます。"),
+  ));
+}
+
 function openSettingsDialog() {
   renderProviderSettings();
+  renderStorageSettings();
   ui.settingsDialog.showModal();
 }
 
@@ -314,6 +475,10 @@ async function selectSession(id) {
     state.next = null;
     state.workReport = null;
     state.workReportError = null;
+    state.lastError = null;
+    state.renderKey = "";
+    state.detailRenderKey = "";
+    state.timelineRenderKey = "";
     localStorage.removeItem(STORAGE_SESSION);
     renderEmpty();
     renderDetails();
@@ -321,6 +486,9 @@ async function selectSession(id) {
     return;
   }
   localStorage.setItem(STORAGE_SESSION, id);
+  state.renderKey = "";
+  state.detailRenderKey = "";
+  state.timelineRenderKey = "";
   await refreshCurrent();
 }
 
@@ -342,14 +510,16 @@ async function refreshCurrent(silent = false) {
     state.next = next;
     state.workReport = reportResult.report || null;
     state.workReportError = reportResult.error || null;
+    restoreError(record);
     setConnected(true);
     renderNext();
     renderDetails();
     renderCompany();
+    renderTimeline();
     await loadSessions();
   } catch (error) {
     setConnected(false);
-    if (!silent) showError(error, "依頼の状態を取得できませんでした");
+    showError(error, silent ? "Macとの接続を確認してください" : "依頼の状態を取得できませんでした");
   }
 }
 
@@ -361,6 +531,7 @@ function renderEmpty() {
     node("p", { class: "lead" }, "依頼した後はAI社員が計画・実行・レビューを進め、必要な質問と承認だけをここに表示します。"),
     node("div", { class: "button-row" }, button("仕事を依頼する", "primary", openRequestDialog)),
   );
+  renderTimeline();
 }
 
 function renderSessions() {
@@ -368,20 +539,26 @@ function renderSessions() {
     ui.sessionList.replaceChildren(node("p", { class: "empty" }, "まだ依頼はありません。"));
     return;
   }
-  ui.sessionList.replaceChildren(...state.sessions.map((record) =>
-    node("button", { class: "session-item", type: "button", onclick: () => selectSession(record.session_id) },
+  ui.sessionList.replaceChildren(...state.sessions.map((record) => {
+    let hasError = false;
+    try { hasError = Boolean(JSON.parse(localStorage.getItem(errorStorageKey(record.session_id)) || "null")); } catch {}
+    return node("button", { class: "session-item", type: "button", onclick: () => selectSession(record.session_id) },
       node("span", {},
         node("strong", {}, record.request),
         node("small", {}, new Date(record.created_at).toLocaleString("ja-JP")),
       ),
-      node("span", { class: "state-chip" }, stateLabel(record.state)),
-    ),
-  ));
+      node("span", { class: `state-chip${hasError ? " error" : ""}` }, hasError ? "確認が必要" : stateLabel(record.state)),
+    );
+  }));
 }
 
-function renderNext() {
+function renderNext(force = false) {
   const next = state.next;
   if (!next) return renderEmpty();
+  const key = JSON.stringify([next.session_id, next.expected_version, next.kind, state.lastError?.code || "", state.lastError?.stage || ""]);
+  if (!force && state.renderKey === key) return;
+  state.renderKey = key;
+  if (state.lastError) return renderRememberedError(state.lastError);
   ui.activeCard.className = "action-card";
   switch (next.kind) {
   case "approve_plan_generation": return renderPlanGeneration(next);
@@ -396,24 +573,47 @@ function renderNext() {
   }
 }
 
+function renderRememberedError(error) {
+  ui.activeCard.className = "action-card attention";
+  ui.activeCard.replaceChildren(
+    node("span", { class: "step-label" }, error.recovery_required ? "Recoveryが必要です" : "確認が必要です"),
+    node("h2", {}, error.title || "処理を完了できませんでした"),
+    node("p", { class: "lead" }, "エラーは消さずに保存しています。成立済みの仕事は保持し、自動retryや推測修復は行っていません。"),
+    node("details", { class: "artifact-detail" },
+      node("summary", {}, "詳細を見る"),
+      approvalFacts([
+        ["Error code", error.code], ["Stage", error.stage || "—"],
+        ["Command ID", error.command_id || "未発行"], ["問い合わせID", error.request_id || "—"],
+      ]),
+    ),
+    node("div", { class: "button-row" },
+      button(error.command_id ? "Command状態を確認" : "状態を再確認", "primary", () => error.command_id
+        ? inspectCommands([{ scope: "workspace", command_id: error.command_id }])
+        : refreshCurrent()),
+      button("詳細をコピー", "quiet", () => copySanitizedError(error)),
+      button("新しい状態を確認", "quiet", async () => { clearCurrentError(); state.renderKey = ""; await refreshCurrent(); }),
+    ),
+  );
+}
+
 function renderPlanGeneration(next) {
   if (!state.providerStatus?.configured) return renderProviderSetup();
   const hasAnswers = state.record.turns.some((turn) => turn.kind === "clarification_answered");
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, hasAnswers ? "回答を反映" : "最初の確認"),
-    node("h2", {}, hasAnswers ? "回答をもとにPlanを作り直します" : "仕事のPlanを作成します"),
-    node("p", { class: "lead" }, "AIはまだWorkspaceを変更しません。依頼内容を整理し、必要な質問と実行Planを作成します。"),
+    node("h2", {}, hasAnswers ? "回答をもとに進め方を作り直します" : "仕事の進め方を作成します"),
+    node("p", { class: "lead" }, "AIはまだ会社データを変更しません。依頼内容を整理し、必要な質問と進め方を作成します。"),
     approvalFacts([
       ["依頼", state.record.request],
       ["AIサービス", "WorkCairnが接続設定から選択"],
       ["Session", state.record.session_id],
     ]),
     node("div", { class: "button-row" },
-      button("Plan作成を承認", "primary", () => executeNextCommand(next, {
+      button("進め方の作成を承認", "primary", () => executeNextCommand(next, {
         session_id: next.session_id,
         expected_version: next.expected_version,
         current_time: now(),
-      }, "Planを作成しています", "質問または実行Planができるまでお待ちください。")),
+      }, "進め方を作成しています", "質問または仕事の進め方ができるまでお待ちください。")),
       button("今は承認しない", "quiet", () => toast("変更せず、承認待ちのまま保存されています。")),
     ),
   );
@@ -423,25 +623,28 @@ function renderProviderSetup() {
   const missing = state.providerStatus?.missing || [];
   const invalid = state.providerStatus?.invalid || [];
   const reasons = [];
-  if (missing.includes("credential")) reasons.push("Provider credentialが起動processへ渡されていません");
+  if (missing.includes("credential")) reasons.push("Claudeがまだ接続されていません");
   if (invalid.length) reasons.push("Provider設定を安全に検証できませんでした");
   if (!reasons.length) reasons.push("接続状態を取得できませんでした");
   ui.activeCard.className = "action-card attention";
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, "Mac側の設定が必要です"),
     node("h2", {}, "AIサービスへ接続してください"),
-    node("p", { class: "lead" }, "この依頼は保存済みです。設定が整うまでProviderへ送信せず、Plan生成を開始しません。"),
+    node("p", { class: "lead" }, "この依頼は保存済みです。設定が整うまでAIサービスへ送信せず、進め方の作成を開始しません。"),
     node("ul", { class: "trust-list" }, ...reasons.map((reason) => node("li", {}, reason))),
-    node("p", { class: "supporting" }, "MacでWorkCairn daemonを停止し、AIサービス設定を起動processへ渡して再起動してください。別Providerへの自動fallbackは行いません。"),
+    node("p", { class: "supporting" }, "MacのAI ConnectionsからClaudeを接続してください。iPhoneからsecretは送らず、別Providerへの自動fallbackも行いません。"),
     node("div", { class: "button-row" },
       button("AI Connectionsを開く", "primary", openSettingsDialog),
-      button("今は設定しない", "quiet", () => toast("依頼はPlan作成待ちのまま保存されています。")),
+      button("今は設定しない", "quiet", () => toast("依頼は進め方の作成待ちのまま保存されています。")),
     ),
   );
 }
 
 function renderQuestions(next) {
-  const form = node("form", { class: "question-list" });
+  const clarificationKey = JSON.stringify([next.session_id, next.expected_version, next.questions]);
+  const currentForm = ui.activeCard.querySelector("form.question-list[data-clarification-key]");
+  if (currentForm?.dataset.clarificationKey === clarificationKey) return;
+  const form = node("form", { class: "question-list", dataset: { clarificationKey } });
   for (const [index, question] of next.questions.entries()) {
     form.append(node("label", { class: "question-card" },
       node("p", {}, question),
@@ -457,7 +660,7 @@ function renderQuestions(next) {
     const data = new FormData(form);
     const answers = next.questions.map((question, index) => ({ question, answer: data.get(`answer-${index}`)?.toString().trim() || "" }));
     if (answers.some((answer) => !answer.answer)) return toast("すべての質問に回答してください。");
-    executeNextCommand(next, { session_id: next.session_id, expected_version: next.expected_version, answers, current_time: now() }, "回答を保存しています", "保存後に次のPlan作成確認へ進みます。");
+    executeNextCommand(next, { session_id: next.session_id, expected_version: next.expected_version, answers, current_time: now() }, "回答を保存しています", "保存後に次の進め方の作成確認へ進みます。");
   });
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, `${next.questions.length}件の質問`),
@@ -475,26 +678,38 @@ function currentPlan() {
   return null;
 }
 
+function roleLabel(role) {
+  const labels = { "Product Manager": "企画担当", "Content Writer": "コンテンツ担当", "QA Engineer": "QA担当" };
+  return labels[role] || "担当AI";
+}
+
+function planStepCopy(task, index) {
+  const action = task.required_role === "QA Engineer" ? "内容を確認します" : task.title;
+  return `${index + 1}. ${roleLabel(task.required_role)}が${action}`;
+}
+
 function renderPlanApproval(next) {
   const current = currentPlan();
   if (!current) return showError(new Error("Plan evidence is missing"));
   const identifier = localStorage.getItem(`workcairn.project.${state.record.session_id}`) || projectID();
   localStorage.setItem(`workcairn.project.${state.record.session_id}`, identifier);
   const projectInput = node("input", { id: "project-id", value: identifier, required: true, autocomplete: "off", spellcheck: "false" });
-  const tasks = node("ul", {}, ...current.plan.proposed_tasks.map((task) => node("li", {}, `${task.title}${task.assignee_id ? ` — ${task.assignee_id}` : ""}`)));
+  const tasks = node("ol", { class: "public-plan" }, ...current.plan.proposed_tasks.map((task, index) => node("li", {}, planStepCopy(task, index).replace(/^\d+\. /, ""))));
   ui.activeCard.replaceChildren(
-    node("span", { class: "step-label" }, "Project作成の承認"),
+    node("span", { class: "step-label" }, "進め方の確認"),
     node("h2", {}, current.plan.project_name),
     node("p", { class: "lead" }, current.plan.summary),
     node("div", { class: "approval-box" },
-      node("strong", {}, "実行する内容"),
+      node("strong", {}, "このように進めます"),
       tasks,
-      node("label", { for: "project-id" }, "Project ID"),
-      projectInput,
-      approvalFacts([["Plan digest", shortDigest(current.digest)], ["Task数", String(current.plan.proposed_tasks.length)]]),
+      node("details", { class: "technical-details" },
+        node("summary", {}, "技術的な詳細を見る"),
+        node("label", { for: "project-id" }, "Project ID"), projectInput,
+        approvalFacts([["Plan digest", shortDigest(current.digest)], ["Task数", String(current.plan.proposed_tasks.length)]]),
+      ),
     ),
     node("div", { class: "button-row" },
-      button("このPlanを承認して作成", "primary", () => {
+      button("この進め方で始める", "primary", () => {
         const value = projectInput.value.trim();
         if (!value) return toast("Project IDを入力してください。");
         localStorage.setItem(`workcairn.project.${state.record.session_id}`, value);
@@ -508,91 +723,79 @@ function renderPlanApproval(next) {
   );
 }
 
-async function loadOrganization() {
-  if (!state.organization) state.organization = await requestJSON("/v1/organization");
+async function loadOrganization(force = false) {
+  if (force || !state.organization) state.organization = await requestJSON("/v1/organization");
   return state.organization;
 }
 
 async function renderWorkflowApproval(next) {
+  const workflowFormKey = JSON.stringify([next.session_id, next.expected_version]);
+  const currentForm = ui.activeCard.querySelector("form.stack-form[data-workflow-form-key]");
+  if (currentForm?.dataset.workflowFormKey === workflowFormKey) return;
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, "実行準備"),
     node("h2", {}, "担当AIに仕事を開始させます"),
-    node("p", { class: "lead" }, "各Taskを実行し、Reviewで修正が必要ならRevisionと再Reviewまで進めます。開始前にReviewerと上限を確認します。"),
-    node("p", { class: "empty" }, "Reviewerを読み込んでいます…"),
+    node("p", { class: "lead" }, "担当AIが順番に仕事を実行し、Reviewerの指摘があれば修正と再確認まで進めます。"),
   );
-  try {
-    const inspection = await loadOrganization();
-    if (state.next?.kind !== "approve_workflow") return;
-    const employees = inspection.inventory?.employees || [];
-    const form = node("form", { class: "stack-form" });
-    let reviewerControl;
-    if (employees.length) {
-      reviewerControl = node("select", { id: "reviewer-id", name: "reviewer", required: true },
-        node("option", { value: "" }, "Reviewerを選択"),
-        ...employees.map((employee) => node("option", { value: employee.id }, `${employee.name || employee.id} — ${employee.role || "役割未設定"}`)),
-      );
-    } else {
-      reviewerControl = node("input", { id: "reviewer-id", name: "reviewer", required: true, placeholder: "例：QA-001" });
+  const form = node("form", { class: "stack-form", dataset: { workflowFormKey } });
+  const maxTasks = node("input", { id: "max-tasks", name: "max_tasks", type: "number", min: "1", max: "100", value: "20", inputmode: "numeric", required: true });
+  form.append(
+    node("p", { class: "empty" }, "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。"),
+    node("label", { for: "max-tasks" }, "今回任せる仕事ステップの上限"), maxTasks,
+    node("div", { class: "button-row" },
+      button("実行内容を確認", "primary", null, "submit"),
+      button("今は実行しない", "quiet", () => toast("仕事は開始されていません。")),
+    ),
+  );
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (form.dataset.submitting === "true") return;
+    const limit = Number(maxTasks.value);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) return toast("1〜100のTask上限を確認してください。");
+    form.dataset.submitting = "true";
+    try {
+      await prepareWorkflowApproval(next, limit);
+    } finally {
+      delete form.dataset.submitting;
     }
-    const maxTasks = node("input", { id: "max-tasks", name: "max_tasks", type: "number", min: "1", max: "100", value: "20", inputmode: "numeric", required: true });
-    form.append(
-      node("label", { for: "reviewer-id" }, "Reviewer"), reviewerControl,
-      node("label", { for: "max-tasks" }, "今回実行するTask上限"), maxTasks,
-      node("div", { class: "button-row" },
-        button("実行内容を確認", "primary", null, "submit"),
-        button("今は実行しない", "quiet", () => toast("Taskは開始されていません。")),
-      ),
-    );
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const reviewerID = reviewerControl.value.trim();
-      const limit = Number(maxTasks.value);
-      if (!reviewerID || !Number.isInteger(limit) || limit < 1 || limit > 100) return toast("Reviewerと1〜100のTask上限を確認してください。");
-      await prepareWorkflowApproval(next, reviewerID, limit);
-    });
-    ui.activeCard.replaceChildren(
-      node("span", { class: "step-label" }, "実行準備"),
-      node("h2", {}, "担当AIに仕事を開始させます"),
-      node("p", { class: "lead" }, "各Taskを実行し、Reviewで修正が必要ならRevisionと再Reviewまで進めます。"),
-      form,
-    );
-  } catch (error) {
-    showError(error, "Reviewerを取得できませんでした");
-  }
+  });
+  ui.activeCard.append(form);
 }
 
-async function prepareWorkflowApproval(next, reviewerID, maxTasks) {
+async function prepareWorkflowApproval(next, maxTasks) {
   const currentTime = now();
   setBusy(true, "実行内容を確認しています", "TaskとReviewerの現在状態をread-onlyで検証しています。");
   try {
     const plan = await requestJSON("/v1/interaction-workflow-plans", {
       method: "POST",
-      body: JSON.stringify({ version: INTERACTION_VERSION, session_id: next.session_id, expected_version: next.expected_version, reviewer_id: reviewerID, current_time: currentTime, max_tasks: maxTasks }),
+      body: JSON.stringify({ version: INTERACTION_VERSION, session_id: next.session_id, expected_version: next.expected_version, current_time: currentTime, max_tasks: maxTasks }),
     });
     setBusy(false);
     showApprovalSheet({
-      title: "Workflowを実行しますか？",
-      description: "承認後はTask実行、Review、必要なRevisionを上限まで自律的に進めます。",
+      title: "会社にこの仕事を任せますか？",
+      description: "承認後は担当AIが成果物を作り、別のReviewerが確認し、必要な修正まで上限内で進めます。",
       facts: [
-        ["Project", `${plan.project_name} (${plan.project_id})`],
-        ["Reviewer", `${plan.reviewer_name} (${plan.reviewer_id})`],
-        ["次のTask", plan.next?.task_id || "readinessに従う"],
+        ["仕事", plan.project_name],
+        ["レビュー担当", plan.reviewer_name],
         ["任せる上限", `${plan.autonomy_contract.execution_limit}件の仕事ステップ`],
         ["任せるAI社員", plan.autonomy_contract.allowed_employee_ids.map(employeeLabel).join(" / ")],
         ["安全条件", "全成果物をReview・Revisionは委任・外部公開は別承認・支出は禁止"],
-        ["Plan digest", plan.workflow_plan_digest],
+      ],
+      technicalFacts: [
+        ["Project ID", plan.project_id], ["Reviewer ID", plan.reviewer_id],
+        ["Next Task", plan.next?.task_id || "readinessに従う"], ["Plan digest", plan.workflow_plan_digest],
       ],
       approveLabel: "承認して実行",
       onApprove: () => executeNextCommand(next, {
         session_id: next.session_id, expected_version: next.expected_version,
-        reviewer_id: reviewerID, current_time: currentTime, max_tasks: maxTasks,
+        reviewer_id: plan.reviewer_id, current_time: currentTime, max_tasks: maxTasks,
         autonomy_contract: plan.autonomy_contract,
         workflow_plan_digest: plan.workflow_plan_digest,
         approval_reference: `mobile-ui:${next.session_id}:v${next.expected_version}`,
       }, "Workflowを実行しています", "Task、Review、必要なRevisionを順番に進めています。"),
     });
   } catch (error) {
-    showError(error, "Workflow planを確認できませんでした");
+    showError(error, "実行内容を確認できませんでした");
   }
 }
 
@@ -600,7 +803,7 @@ function renderCompletion(next) {
   ui.activeCard.className = "action-card complete";
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, "仕事が完了しました"),
-    node("h2", {}, "すべてのTaskとReviewが完了しています"),
+    node("h2", {}, "すべての仕事とReviewが完了しています"),
     node("p", { class: "lead" }, "成果物はWorkspaceに保存されています。必要な場合だけ、別の承認で外部公開できます。"),
     node("div", { class: "button-row" },
       button("完了を確認", "primary", () => toast("この依頼は完了しています。")),
@@ -723,7 +926,7 @@ async function prepareActionApproval(next, taskID, targetID) {
 
 function closeActionDialog() { if (ui.actionDialog.open) ui.actionDialog.close(); }
 
-function showApprovalSheet({ title, description, facts, approveLabel, onApprove, approveKind = "primary", hideCancel = false }) {
+function showApprovalSheet({ title, description, facts, technicalFacts = [], approveLabel, onApprove, approveKind = "primary", hideCancel = false }) {
   const form = ui.actionForm;
   form.replaceChildren(
     node("div", { class: "sheet-handle" }),
@@ -733,6 +936,9 @@ function showApprovalSheet({ title, description, facts, approveLabel, onApprove,
     ),
     node("p", { class: "supporting" }, description),
     approvalFacts(facts),
+    technicalFacts.length ? node("details", { class: "technical-details" },
+      node("summary", {}, "技術的な詳細を見る"), approvalFacts(technicalFacts),
+    ) : null,
     node("div", { class: "sheet-actions" },
       hideCancel ? null : button("承認しない", "quiet", closeActionDialog),
       button(approveLabel, approveKind, null, "submit"),
@@ -766,6 +972,7 @@ async function executeNextCommand(next, payload, busyTitle, busyMessage, fixedCo
       approved: true,
       payload,
     };
+    state.activeCommandID = command.command_id;
     sessionStorage.setItem(STORAGE_PENDING, JSON.stringify(command));
     setBusy(true, busyTitle, busyMessage);
     await requestJSON("/v1/commands", {
@@ -777,9 +984,11 @@ async function executeNextCommand(next, payload, busyTitle, busyMessage, fixedCo
     await monitorAcceptedCommand(command);
     await refreshCurrent();
     setBusy(false);
+    return true;
   } catch (error) {
     if (!accepted && error.status !== 0) sessionStorage.removeItem(STORAGE_PENDING);
     showError(error);
+    return false;
   }
 }
 
@@ -788,7 +997,10 @@ function wait(milliseconds) {
 }
 
 async function monitorAcceptedCommand(command) {
-  setBusy(true, "Macで実行しています", "承認は受理されました。この画面を閉じてもMac上の処理は続きます。");
+  setBusy(false);
+  setBackgroundWorking(true);
+  state.activeCommandID = command.command_id;
+  renderCompany();
   let missing = 0;
   while (true) {
     let record;
@@ -802,19 +1014,24 @@ async function monitorAcceptedCommand(command) {
     }
     if (record.state === "succeeded") {
       sessionStorage.removeItem(STORAGE_PENDING);
+      setBackgroundWorking(false);
+      state.activeCommandID = "";
       return record;
     }
     if (record.state === "failed" || record.state === "partial_failure") {
       sessionStorage.removeItem(STORAGE_PENDING);
+	  setBackgroundWorking(false);
 	  const providerFailure = record.result?.provider_failure;
       throw new APIError(record.failure?.code || "COMMAND_FAILED", 422, {
         code: record.failure?.code || "COMMAND_FAILED",
         stage: record.failure?.stage,
         recovery_required: record.state === "partial_failure",
+		command_id: command.command_id,
 		provider_failure: providerFailure,
       });
     }
     if (record.state !== "running") {
+	  setBackgroundWorking(false);
       throw new APIError("COMMAND_LEDGER_INVALID", 500, { code: "COMMAND_LEDGER_INVALID", recovery_required: true });
     }
     await wait(1000);
@@ -839,8 +1056,54 @@ async function resumePendingCommand(serialized) {
     setBusy(false);
     toast("Macで完了した処理を反映しました。");
   } catch (error) {
+    setBackgroundWorking(false);
     showError(error, "前回のCommand状態を確認できませんでした");
   }
+}
+
+function timelineEntries() {
+  const record = state.record;
+  if (!record) return [];
+  const entries = [{ title: "依頼を受け付けました", description: record.request, at: record.created_at }];
+  for (const turn of record.turns || []) {
+    if (turn.kind === "plan_generated" && turn.plan) {
+      entries.push({ title: "進め方を作成しました", description: `${turn.plan.proposed_tasks.length}つの仕事に整理しました。`, at: turn.at, detail: `Plan digest: ${turn.plan_digest}` });
+    } else if (turn.kind === "clarification_answered") {
+      entries.push({ title: "質問への回答を受け取りました", description: "回答をもとに進め方を更新しました。", at: turn.at });
+    } else if (turn.kind === "plan_applied") {
+      entries.push({ title: "進め方が承認されました", description: `${turn.project_name}を作成し、担当AIへ仕事を渡しました。`, at: turn.at, detail: `Project: ${turn.project_id}` });
+    } else if (turn.workflow) {
+      for (const task of turn.workflow.tasks || []) {
+        entries.push({ title: task.targeted_revision ? "修正を完了しました" : "成果物を作成しました", description: `${task.task_id}の成果物を保存しました。`, at: turn.at, detail: `Execution: ${task.execution_command_id || "—"}` });
+        if (task.verdict) entries.push({ title: task.verdict === "request_changes" ? "Reviewerが修正を依頼しました" : "Reviewerが承認しました", description: task.revision_task_id ? `修正Task ${task.revision_task_id}へ引き渡しました。` : `${task.task_id}のReviewが完了しました。`, at: turn.at, detail: `Review: ${task.review_command_id || "—"}` });
+      }
+      if (turn.workflow.failure) entries.push({ title: "自動継続を停止しました", description: "成立済みの仕事を保持し、確認を待っています。", at: turn.at, attention: true, detail: `${turn.workflow.failure.code} / ${turn.workflow.failure.stage}` });
+    } else if (turn.action) {
+      entries.push({ title: turn.action.status === "published" ? "外部公開が完了しました" : "外部Actionを停止しました", description: turn.action.status === "published" ? "承認済みの成果物を外部へ反映しました。" : "成立済み記録を保持し、確認を待っています。", at: turn.at, attention: turn.action.status !== "published", detail: turn.action.command_id || "" });
+    }
+  }
+  if (state.lastError) entries.push({ title: state.lastError.title || "処理を停止しました", description: "自動retryせず、次の判断を待っています。", at: state.lastError.at, attention: true, detail: [state.lastError.code, state.lastError.stage, state.lastError.command_id, state.lastError.request_id].filter(Boolean).join("\n") });
+  return entries;
+}
+
+function timelineNode(entry) {
+  return node("article", { class: `timeline-entry${entry.attention ? " attention" : ""}` },
+    node("span", { class: "timeline-dot", "aria-hidden": "true" }),
+    node("div", { class: "timeline-copy" },
+      node("strong", {}, entry.title), node("p", {}, entry.description),
+      entry.at ? node("small", {}, new Date(entry.at).toLocaleString("ja-JP")) : null,
+      entry.detail ? node("details", { class: "timeline-technical" }, node("summary", {}, "詳細を見る"), node("code", {}, entry.detail)) : null,
+    ),
+  );
+}
+
+function renderTimeline() {
+  const entries = timelineEntries();
+  const key = JSON.stringify(entries);
+  if (state.timelineRenderKey === key) return;
+  state.timelineRenderKey = key;
+  ui.timeline.replaceChildren(...(entries.length ? entries.map(timelineNode) : [node("p", { class: "empty" }, "依頼すると、会社の動きがここに残ります。")]));
+  ui.companyTimeline.replaceChildren(...(entries.length ? entries.map(timelineNode) : [node("p", { class: "empty" }, "依頼すると、会社の動きがここに残ります。")]));
 }
 
 function renderDetails() {
@@ -848,15 +1111,22 @@ function renderDetails() {
   if (!record) {
     ui.detailsPanel.hidden = true;
     ui.details.replaceChildren();
+    state.detailRenderKey = "";
     return;
   }
+  const evidenceKey = [...state.evidence.entries()].map(([evidenceID, evidence]) => [
+    evidenceID, evidence?.task?.version || 0, evidence?.deliverable?.relative_path || "", (evidence?.reviews || []).length,
+  ]);
+  const key = JSON.stringify([record.session_id, record.version, evidenceKey]);
+  if (state.detailRenderKey === key) return;
+  state.detailRenderKey = key;
   ui.detailsPanel.hidden = false;
   const blocks = [
     detailBlock("依頼", [record.request, `Session: ${record.session_id}`, `Version: ${record.version} / ${stateLabel(record.state)}`]),
   ];
   const current = currentPlan();
   if (current) {
-    blocks.push(detailBlock("Plan", [
+    blocks.push(detailBlock("進め方（詳細）", [
       current.plan.objective,
       current.plan.summary,
       ...current.plan.proposed_tasks.map((task) => `${task.proposal_id}: ${task.title}${task.assignee_id ? ` — ${task.assignee_id}` : ""}`),
@@ -946,7 +1216,7 @@ function renderCompany() {
   if (!ui.companyStatus) return;
   const next = state.next;
   const pending = Boolean(sessionStorage.getItem(STORAGE_PENDING));
-  const requiresAction = next && !["optional_external_action_or_done", "done"].includes(next.kind);
+  const requiresAction = Boolean(state.lastError) || (next && !["optional_external_action_or_done", "done"].includes(next.kind));
   const proofNeedsAttention = Boolean(state.workReportError) || Boolean(state.workReport &&
     ["completed", "action_completed"].includes(state.record?.state) && !state.workReport.proof_of_work?.fully_verified);
   let icon = "✓";
@@ -980,6 +1250,66 @@ function renderCompany() {
   renderCEOAttention();
   renderAutonomy();
   renderProofOfWork();
+  renderTimeline();
+}
+
+function openSetupWizard() {
+  renderSetupWizard();
+  if (!ui.setupDialog.open) ui.setupDialog.showModal();
+}
+
+function renderSetupWizard() {
+  const workspace = state.workspaceStatus;
+  if (!workspace) {
+    ui.setupContent.replaceChildren(node("p", { class: "warning" }, "Mac側の会社データ状態を確認できません。daemonの接続を確認してください。"));
+    return;
+  }
+  const storage = storageStatusCopy();
+  const missing = new Set(workspace.missing_roles || []);
+  const people = (workspace.starter_organization || []).map((candidate) =>
+    node("div", { class: "setup-person" }, node("span", {}, candidate.role), node("strong", {}, missing.has(candidate.role) ? "追加が必要" : "準備済み")),
+  );
+  ui.setupContent.replaceChildren(
+    node("article", { class: `setup-step ${workspace.layout_ready ? "ready" : "attention"}` },
+      node("div", { class: "setup-step-heading" }, node("h3", {}, "1. 会社データの保存場所"), node("span", { class: "state-chip" }, workspace.layout_ready ? "準備済み" : "選択済み")),
+      node("p", {}, storage[0]), node("p", {}, storage[1]),
+      !workspace.layout_ready ? node("p", { class: "warning" }, "保存先は選択済みです。Starter Organizationの承認後、この専用directoryの中だけに会社データを準備します。") : null,
+      workspace.storage_kind === "icloud_drive" ? node("p", { class: "warning" }, "同じVaultへ書き込むWorkCairn daemonは1台だけにしてください。iCloud同期を複数writerの調停には使いません。") : null,
+    ),
+    node("article", { class: `setup-step ${workspace.organization_ready ? "ready" : "attention"}` },
+	  node("div", { class: "setup-step-heading" }, node("h3", {}, "2. 最初のAIチーム"), node("span", { class: "state-chip" }, workspace.organization_ready ? "準備済み" : "承認が必要")),
+      node("p", {}, "企画・作成・独立Reviewができる最小チームです。既存社員は変更しません。"),
+      node("div", { class: "setup-people" }, ...people),
+      !workspace.organization_ready ? node("p", { class: "warning" }, "社員の追加は会社データへの変更です。下の確認画面で明示承認した場合だけ、この専用Vaultへ追加します。秘密情報はbrowserへ保存しません。") : null,
+    ),
+    node("article", { class: `setup-step ${state.providerStatus?.configured ? "ready" : "attention"}` },
+      node("div", { class: "setup-step-heading" }, node("h3", {}, "3. AI Connection"), node("span", { class: "state-chip" }, state.providerStatus?.configured ? "Connected" : "Setup required")),
+	  node("p", {}, "RoutingはAutomaticです。Model IDを選ぶ必要はありません。credentialはbrowserへ保存しません。"),
+	  !state.providerStatus?.configured && state.localSetupAvailable ? button("MacでClaudeを接続", "quiet", connectClaudeOnMac) : null,
+	  !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "warning" }, "AI ConnectionはMac本体のWorkCairn画面から設定してください。") : null,
+    ),
+    node("div", { class: "setup-actions" },
+	  !workspace.organization_ready ? button("最初のAIチームを確認", "primary", () => { ui.setupDialog.close(); showApprovalSheet({
+		title: "最小のAIチームを作成しますか？",
+		description: "承認すると、このWorkCairn専用Vaultだけに企画・コンテンツ・QA担当を追加します。既存社員や個人Vaultは変更しません。",
+		facts: (workspace.starter_organization || []).map((candidate) => [candidate.role, candidate.name]),
+		approveLabel: "承認してセットアップ",
+			onApprove: async () => {
+				ui.setupDialog.close();
+				const completed = await executeNextCommand({ operation: "workspace.setup" }, { current_time: now() }, "会社を準備しています", "専用VaultへStarter Organizationを安全に作成しています。", commandID());
+				if (!completed) return;
+				await Promise.all([loadWorkspaceStatus(), loadOrganization(true)]);
+				renderCompany();
+				if (!state.providerStatus?.configured) openSettingsDialog();
+				else openSetupWizard();
+			},
+	  }); }) : null,
+      !state.providerStatus?.configured ? button("AI Connectionsを確認", "primary", () => { ui.setupDialog.close(); openSettingsDialog(); }) : null,
+	  workspace.organization_ready && state.providerStatus?.configured ? button("会社を始める", "primary", () => { ui.setupDialog.close(); setView("actions"); openRequestDialog(); }) : null,
+	  workspace.layout_ready && state.localSetupAvailable ? button("Obsidianで会社データを見る", "quiet", revealWorkspaceOnMac) : null,
+      button("Macで設定してから再確認", "quiet", async () => { await Promise.all([loadWorkspaceStatus(), loadProviderStatus(), loadOrganization().catch(() => null)]); renderSetupWizard(); }),
+    ),
+  );
 }
 
 function renderCEOAttention() {
@@ -1176,8 +1506,9 @@ async function prepareNewRequest(event) {
     setBusy(false);
     showApprovalSheet({
       title: "この依頼を開始しますか？",
-      description: "承認するとInteraction Sessionだけを作成します。AIによるPlan作成は次の確認で行います。",
-      facts: [["依頼", request], ["AIサービス", "WorkCairnが接続設定から選択"], ["Request digest", plan.session.request_digest]],
+      description: "承認すると依頼だけを保存します。AIによる進め方の作成は次の確認で行います。",
+      facts: [["依頼", request], ["AIサービス", "WorkCairnが接続設定から選択"]],
+      technicalFacts: [["Request digest", plan.session.request_digest]],
       approveLabel: "依頼を開始",
       onApprove: async () => {
         localStorage.setItem(STORAGE_SESSION, input.session_id);
@@ -1213,6 +1544,7 @@ document.querySelectorAll("[data-close-dialog]").forEach((control) => control.ad
 async function initialize() {
   try {
     const access = await requestJSON("/v1/local-access/status");
+	state.localSetupAvailable = Boolean(access.local_setup_available);
     if (!access.authenticated) {
       ui.pairingView.hidden = false;
       ui.workspaceView.hidden = true;
@@ -1230,7 +1562,7 @@ async function initialize() {
 }
 
 setInterval(() => {
-  if (!state.busy && !ui.actionDialog.open && !ui.requestDialog.open && !ui.detailsPanel.open && document.visibilityState === "visible" && state.record) {
+  if (!state.busy && !ui.actionDialog.open && !ui.requestDialog.open && !ui.setupDialog.open && document.visibilityState === "visible" && state.record) {
     refreshCurrent(true);
   }
 }, 5000);

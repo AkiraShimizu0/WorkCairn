@@ -23,6 +23,7 @@ var (
 type ProposedTask struct {
 	ProposalID    string   `json:"proposal_id"`
 	Title         string   `json:"title"`
+	RequiredRole  string   `json:"required_role,omitempty"`
 	AssigneeID    *string  `json:"assignee_id"`
 	DependencyIDs []string `json:"dependency_ids"`
 	Rationale     string   `json:"rationale"`
@@ -44,6 +45,7 @@ type Plan struct {
 
 type candidateTask struct {
 	Title         string   `json:"title"`
+	RequiredRole  string   `json:"required_role,omitempty"`
 	AssigneeID    *string  `json:"assignee_id"`
 	DependencyIDs []string `json:"dependency_ids"`
 	Rationale     string   `json:"rationale"`
@@ -122,15 +124,19 @@ func NormalizeCandidate(candidate candidatePlan, employees []organization.Identi
 		if err != nil {
 			return Plan{}, err
 		}
-		assignee := cloneString(candidateTask.AssigneeID)
-		if assignee != nil {
-			*assignee = strings.TrimSpace(*assignee)
-			if _, exists := employeesByID[*assignee]; !exists || *assignee == "" {
-				return Plan{}, fmt.Errorf("%w: unknown assignee %s", ErrInvalidPlan, *assignee)
-			}
-			if !containsString(assigned, *assignee) {
-				assigned = append(assigned, *assignee)
-			}
+		assignment, err := organization.ResolveTaskAssignment(organization.AssignmentRequest{
+			RequiredRole: candidateTask.RequiredRole, ProposedEmployeeID: candidateTask.AssigneeID,
+		}, employees)
+		if err != nil {
+			return Plan{}, fmt.Errorf("%w: task assignment: %v", ErrInvalidPlan, err)
+		}
+		requiredRole := assignment.RequiredRole
+		assignee := cloneString(assignment.EmployeeID)
+		if assignee != nil && !containsString(assigned, *assignee) {
+			assigned = append(assigned, *assignee)
+		}
+		if requiredRole != "" && !containsCanonicalRole(requiredRoles, requiredRole) {
+			requiredRoles = append(requiredRoles, requiredRole)
 		}
 		dependencies, err := optionalStringList(candidateTask.DependencyIDs, "dependency_ids")
 		if err != nil {
@@ -138,7 +144,7 @@ func NormalizeCandidate(candidate candidatePlan, employees []organization.Identi
 		}
 		tasks = append(tasks, ProposedTask{
 			ProposalID: fmt.Sprintf("PROPOSED-%03d", index+1), Title: title,
-			AssigneeID: assignee, DependencyIDs: dependencies, Rationale: rationale,
+			RequiredRole: requiredRole, AssigneeID: assignee, DependencyIDs: dependencies, Rationale: rationale,
 		})
 	}
 	if err := validateDependencyGraph(tasks); err != nil {
@@ -181,7 +187,7 @@ func ValidateApprovedPlan(plan Plan, employees []organization.Identity) (Plan, e
 		if task.ProposalID != fmt.Sprintf("PROPOSED-%03d", index+1) || !proposalIDPattern.MatchString(task.ProposalID) {
 			return Plan{}, fmt.Errorf("%w: proposal ID", ErrInvalidPlan)
 		}
-		candidate.ProposedTasks = append(candidate.ProposedTasks, candidateTask{Title: task.Title, AssigneeID: task.AssigneeID, DependencyIDs: task.DependencyIDs, Rationale: task.Rationale})
+		candidate.ProposedTasks = append(candidate.ProposedTasks, candidateTask{Title: task.Title, RequiredRole: task.RequiredRole, AssigneeID: task.AssigneeID, DependencyIDs: task.DependencyIDs, Rationale: task.Rationale})
 	}
 	validated, err := NormalizeCandidate(candidate, employees)
 	if err != nil {
@@ -209,6 +215,16 @@ func employeeIndex(employees []organization.Identity) (map[string]organization.I
 		roles[roleCaseFolder.String(role)] = struct{}{}
 	}
 	return byID, roles, nil
+}
+
+func containsCanonicalRole(values []string, candidate string) bool {
+	canonical := roleCaseFolder.String(candidate)
+	for _, value := range values {
+		if roleCaseFolder.String(value) == canonical {
+			return true
+		}
+	}
+	return false
 }
 
 func validateDependencyGraph(tasks []ProposedTask) error {

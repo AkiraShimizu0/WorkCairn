@@ -10,11 +10,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/localos"
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/bootstrap"
 	"github.com/AkiraShimizu0/workcairn/go/internal/buildinfo"
@@ -48,11 +50,32 @@ func run() error {
 	flag.DurationVar(&schedulerInterval, "scheduler-interval", time.Second, "one-shot Schedule polling interval")
 	flag.BoolVar(&mobile, "mobile", false, "serve the paired Web UI on a trusted local network")
 	flag.Parse()
-	if vaultRoot == "" || providerTimeout <= 0 || shutdownTimeout <= 0 || schedulerInterval <= 0 {
-		return errors.New("Vault root and positive timeouts are required")
+	managedFirstRun := strings.TrimSpace(vaultRoot) == ""
+	if providerTimeout <= 0 || shutdownTimeout <= 0 || schedulerInterval <= 0 {
+		return errors.New("positive timeouts are required")
+	}
+	if vaultRoot == "" {
+		var err error
+		vaultRoot, err = resolveWorkspaceRoot(context.Background())
+		if err != nil {
+			return err
+		}
+	} else {
+		var err error
+		vaultRoot, err = localos.ValidateWorkspaceRoot(vaultRoot)
+		if err != nil {
+			return err
+		}
+	}
+	credential := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	credentialStore := localos.NewClaudeCredentialStore()
+	if credential == "" {
+		if stored, loadErr := credentialStore.Load(context.Background()); loadErr == nil {
+			credential = stored
+		}
 	}
 	executor, err := httpapi.NewProcessExecutorWithActionConfig(vaultRoot, workspaceprocess.ClaudeProcessConfig{
-		APIKey: os.Getenv("ANTHROPIC_API_KEY"), BaseURL: os.Getenv("WORKCAIRN_CLAUDE_BASE_URL"),
+		APIKey: credential, BaseURL: os.Getenv("WORKCAIRN_CLAUDE_BASE_URL"),
 	}, workspaceprocess.WordPressProcessConfig{
 		TargetID: os.Getenv("WORKCAIRN_WORDPRESS_TARGET_ID"), BaseURL: os.Getenv("WORKCAIRN_WORDPRESS_BASE_URL"),
 		Username: os.Getenv("WORKCAIRN_WORDPRESS_USERNAME"), ApplicationPassword: os.Getenv("WORKCAIRN_WORDPRESS_APPLICATION_PASSWORD"),
@@ -125,8 +148,20 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	localAddress := addressHost(address)
+	if err := handler.EnableLocalSetup(&daemonLocalSetup{
+		executor: executor, credentialStore: credentialStore,
+		viewer: localos.NewWorkspaceViewer(), vaultRoot: vaultRoot,
+	}, localAddress); err != nil {
+		return err
+	}
 	serverErrors := make(chan error, 1)
 	go func() { serverErrors <- server.ListenAndServe() }()
+	if managedFirstRun && runtime.GOOS == "darwin" {
+		if openErr := localos.NewBrowserOpener().OpenURL(context.Background(), localURL(address)); openErr != nil {
+			fmt.Fprintln(os.Stdout, "Open the WorkCairn UI:", localURL(address))
+		}
+	}
 	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	select {
@@ -151,6 +186,63 @@ func run() error {
 		return nil
 	}
 	return err
+}
+
+func resolveWorkspaceRoot(ctx context.Context) (string, error) {
+	configRoot, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("locate WorkCairn settings: %w", err)
+	}
+	store, err := localos.NewWorkspaceLocationStore(configRoot)
+	if err != nil {
+		return "", err
+	}
+	if root, loadErr := store.Load(); loadErr == nil {
+		return root, nil
+	} else if !errors.Is(loadErr, localos.ErrNotConfigured) {
+		return "", loadErr
+	}
+	if runtime.GOOS != "darwin" {
+		return "", errors.New("no WorkCairn workspace is selected; pass -vault on this platform")
+	}
+	root, err := localos.NewWorkspaceSelector().Select(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := store.Save(root); err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
+type daemonLocalSetup struct {
+	executor        *httpapi.ProcessExecutor
+	credentialStore localos.ClaudeCredentialStore
+	viewer          localos.WorkspaceViewer
+	vaultRoot       string
+}
+
+func (setup *daemonLocalSetup) ConnectClaude(ctx context.Context) error {
+	credential, err := setup.credentialStore.RequestAndStore(ctx)
+	if err != nil {
+		return err
+	}
+	return setup.executor.SetClaudeCredential(credential)
+}
+
+func (setup *daemonLocalSetup) RevealWorkspace(ctx context.Context) error {
+	return setup.viewer.Reveal(ctx, setup.vaultRoot)
+}
+
+func addressHost(address string) string {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return "127.0.0.1"
+	}
+	if strings.EqualFold(host, "localhost") {
+		return "127.0.0.1"
+	}
+	return host
 }
 
 func discoverMobileAddress(port string) (string, error) {

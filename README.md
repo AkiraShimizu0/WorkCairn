@@ -59,23 +59,23 @@ cd workcairn_v1.0.0-beta.1_darwin_arm64
 bin/workcairn version
 ```
 
-### Loopback Web UIを開く
+### macOSで会社を始める
 
 ```bash
-beta_vault=$(mktemp -d)
-bin/workcairn-daemon --vault "$beta_vault"
+bin/workcairn-daemon
 ```
 
-Macのブラウザで`http://127.0.0.1:8787/`を開きます。この段階ではProvider credentialは不要で、実Vaultも変更しません。終了はterminalで`Ctrl-C`です。
+初回だけmacOSのfolder pickerが開きます。推奨のiCloud Drive内に空の`WorkCairn`専用folderを新規作成して選ぶと、Local Web UIが開きます。保存先はApplication Supportへ記録され、再起動後も同じ専用Vaultを使います。既存の個人Obsidian Vault、home、iCloud rootは選択できません。
+
+GUI WizardでStarter Organizationを明示承認し、Macのnative画面からClaudeをKeychainへ接続します。Model IDやRouteを入力する必要はありません。`会社を始める`から最初の依頼へ進めます。Obsidianは任意で、Finderに表示した専用folderを`Open folder as vault`で開けます。
 
 ## iPhoneから開く最短手順
 
 1. MacとiPhoneを同じ信頼できるWi-Fiへ接続する。
-2. temporary Vaultを指定してmobile modeを起動する。
+2. mobile modeを起動する。初回はMacで上記First-runを完了する。
 
 ```bash
-beta_vault=$(mktemp -d)
-bin/workcairn-daemon --vault "$beta_vault" --mobile
+bin/workcairn-daemon --mobile
 ```
 
 3. terminalに表示された`WorkCairn mobile UI`のURLをiPhone Safariで開く。
@@ -85,25 +85,17 @@ mobile modeはprivate／link-local addressだけを許可します。TLS、remot
 
 ## 自然言語依頼を試す前の設定
 
-UIへ到達するだけならcredentialは不要です。Plan生成やTask実行では、temporary Vaultに社員Markdownを用意し、起動processへ次を注入します。
+UIへ到達するだけならcredentialは不要です。Plan生成やTask実行では、Macの`Settings → AI Connections → MacでClaudeを接続`を使います。native hidden-inputへ入力したcredentialはmacOS Keychainだけに保存され、browser、Vault、Command、logへ渡りません。WorkCairnは`.env`を自動読込せず、Provider model IDの設定も不要です。論理Route `workcairn-auto`をsupported-model policyで解決し、接続不足ならProvider送信前に停止して別Providerへ無断で切り替えません。
 
-```bash
-ANTHROPIC_API_KEY='<provider key>' \
-bin/workcairn-daemon --vault "$beta_vault" --mobile
-```
-
-WorkCairnは`.env`を自動読込しません。API key、Provider response、pairing codeをVaultやCommandへ保存しません。External Action用WordPress設定は任意で、通常のTask／Reviewには不要です。
-
-過去版でrepository rootの`.env`へ設定していた場合も、Go Only版は自動読込しません。credentialの値を移動せず、起動するterminal processへ安全に注入してください。Provider model IDの設定は不要です。Web UIの新規依頼は論理Route `workcairn-auto`を使い、WorkCairnが管理するsupported-model policyからClaudeの実行先を解決します。`Settings → AI Connections`では値を表示せず接続状態とAutomatic routingを確認できます。接続不足の場合はProviderへ送信する前にMy Actionsへ案内し、別Providerへ無断で切り替えません。
-
-社員Markdownとtemporary Vaultの準備、初回Operator確認は[Public Beta Quickstart](docs/PublicBetaQuickstart.md)を参照してください。
+temporary／iCloud Drive専用Vault、First-run Wizard、初回Operator確認は[Public Beta Quickstart](docs/PublicBetaQuickstart.md)を参照してください。
+実機の一巡手順は[macOS First-run Acceptance](docs/PublicBetaFirstRunAcceptance.md)を参照してください。
 
 ## 基本フロー
 
 ```text
 自然言語で依頼
 → 必要なら質問へ回答
-→ Plan digestを確認して承認
+→ 一般向けの「進め方」を確認して承認（内部digestは詳細から確認）
 → Project / Taskを作成
 → Reviewed Workflowを承認
 → Task実行 → Review

@@ -313,6 +313,8 @@ ADR-0033に基づき、外部公開前に移行用compatibility distribution、t
 - ADR-0034に基づくWorkCairn product／binary／module／archive rename
 - iPhone既定のMy Actionsと、PC／iPad既定のCompany View foundation
 - ADR-0035に基づくWorkflow単位のAutonomy Contract、canonical evidence由来のProof of Work／CEO Attention
+- ADR-0036に基づくredacted Provider Connection StatusとAutomatic model resolution
+- ADR-0037に基づくFirst-run Wizard、明示Starter Organization setup、一般向け「進め方」、read-only Timeline、persistent failure、polling state保護
 
 Public Beta向け差別化foundationでは、安全側の固定contractだけを提供します。Shadow Mode、Employee Authority、支出上限、長期KPI Storeは既存Approval／Ledger／Adapter境界へ自然に追加できる設計だけを記録し、先取り実装しません。
 
@@ -322,7 +324,9 @@ Public Beta公開前に残る人間／実環境確認：
 - macOS／arm64のnative CLI／daemon／iPhone実機smoke
 - 配布する追加targetごとのnative filesystem／daemon smoke
 - temporary Vaultとtest credentialによる最小Provider smoke
-- ADR-0036のProvider Connection Statusと`workcairn-auto`を起点に、Employee Role／Task capability／接続済みRuntime／quality・cost・latency policyからtyped Routeを解決するProvider／Model Routing（暗黙fallbackなし）
+- iCloud Drive上のWorkCairn専用VaultをFinderで選択し、Obsidianで開くfirst-run実機smoke（既存個人Vaultは変更しない、writerは1 daemon）
+- [完了] native folder picker、Application Supportの再起動参照、Mac native hidden-input＋Keychainによりterminal不要のmacOS First-runを実装。trusted LANへpath／secret値を受けるendpointは追加しない
+- ADR-0036の`workcairn-auto`を起点に、複数Provider導入時だけEmployee Role／Task capability／接続済みRuntime／quality・cost・latency policyからtyped Routeを解決する拡張（暗黙fallbackなし）
 - tag、Release note、archive checksumの最終sign-off
 
 ## Cross-Cutting Gates

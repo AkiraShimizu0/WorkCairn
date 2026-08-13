@@ -22,6 +22,26 @@ const (
 	AutomaticInteractionModel  = "workcairn-auto"
 )
 
+const WorkspaceStatusVersion = "workcairn-workspace-status.v1"
+
+type WorkspaceStatus struct {
+	Version             string                      `json:"version"`
+	StorageKind         string                      `json:"storage_kind"`
+	ObsidianCompatible  bool                        `json:"obsidian_compatible"`
+	LayoutReady         bool                        `json:"layout_ready"`
+	OrganizationReady   bool                        `json:"organization_ready"`
+	StarterOrganization []StarterOrganizationMember `json:"starter_organization"`
+	MissingRoles        []string                    `json:"missing_roles"`
+}
+
+// StarterOrganizationMember is the redacted setup projection. Persistent IDs,
+// logical model routes, file paths, and Provider configuration stay server-side.
+type StarterOrganizationMember struct {
+	Name       string `json:"name"`
+	Department string `json:"department"`
+	Role       string `json:"role"`
+}
+
 var (
 	ErrInvalidCommand     = errors.New("invalid HTTP command")
 	ErrUnsupportedCommand = errors.New("unsupported HTTP command")
@@ -115,8 +135,8 @@ func (request InteractionPlanRequest) withDefaults() InteractionPlanRequest {
 
 func (request InteractionWorkflowPlanRequest) Validate() error {
 	if request.Version != InteractionContractVersion || interaction.ValidateSessionID(request.SessionID) != nil || request.ExpectedVersion == 0 ||
-		strings.TrimSpace(request.ReviewerID) == "" || request.ReviewerID != strings.TrimSpace(request.ReviewerID) ||
-		strings.ContainsAny(request.ReviewerID, "\r\n") || request.CurrentTime.IsZero() || request.MaxTasks <= 0 || request.MaxTasks > 100 {
+		(request.ReviewerID != "" && (request.ReviewerID != strings.TrimSpace(request.ReviewerID) || strings.ContainsAny(request.ReviewerID, "\r\n"))) ||
+		request.CurrentTime.IsZero() || request.MaxTasks <= 0 || request.MaxTasks > 100 {
 		return ErrInvalidCommand
 	}
 	if request.Autonomy != nil && (request.Autonomy.Validate() != nil || request.Autonomy.ExecutionLimit != request.MaxTasks) {

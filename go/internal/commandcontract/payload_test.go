@@ -73,3 +73,19 @@ func TestInteractionPayloadsAreStrictAndNotSchedulable(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspaceSetupPayloadIsStrictAndNotSchedulable(t *testing.T) {
+	valid := json.RawMessage(`{"current_time":"2026-08-13T15:00:00+09:00"}`)
+	if Schedulable("workspace.setup") || ValidatePayload("workspace.setup", valid) != nil {
+		t.Fatal("valid explicit Workspace setup payload was rejected or became schedulable")
+	}
+	for _, invalid := range []json.RawMessage{
+		json.RawMessage(`{}`),
+		json.RawMessage(`{"current_time":"2026-08-13T15:00:00+09:00","vault_path":"/private/example"}`),
+		json.RawMessage(`{"current_time":"2026-08-13T15:00:00+09:00","api_key":"secret"}`),
+	} {
+		if err := ValidatePayload("workspace.setup", invalid); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("invalid Workspace setup payload error = %v", err)
+		}
+	}
+}

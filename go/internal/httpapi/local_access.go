@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -52,12 +53,25 @@ func (handler *Handler) EnableLocalAccess(access *LocalAccess) error {
 }
 
 func (handler *Handler) localAccessStatus(response http.ResponseWriter, request *http.Request) {
-	authenticated := handler.localAccess == nil || handler.localAccess.authorized(request)
+	authenticated := handler.localAccess == nil || handler.localAccess.authorized(request) || handler.localSetupAvailable(request)
 	mode := "loopback"
 	if handler.localAccess != nil {
 		mode = "trusted_lan"
 	}
-	writeJSON(response, http.StatusOK, map[string]any{"mode": mode, "authenticated": authenticated})
+	writeJSON(response, http.StatusOK, map[string]any{"mode": mode, "authenticated": authenticated, "local_setup_available": handler.localSetupAvailable(request)})
+}
+
+func (handler *Handler) localSetupAvailable(request *http.Request) bool {
+	if handler.localSetup == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	remote := net.ParseIP(host)
+	allowed := net.ParseIP(handler.localSetupAddress)
+	return remote != nil && (remote.IsLoopback() || allowed != nil && remote.Equal(allowed))
 }
 
 func (handler *Handler) pairLocalAccess(response http.ResponseWriter, request *http.Request) {
@@ -118,7 +132,8 @@ func (handler *Handler) authorizeLocalRequest(response http.ResponseWriter, requ
 	if !strings.HasPrefix(request.URL.Path, "/v1/") {
 		return true
 	}
-	if !handler.localAccess.authorized(request) {
+	macLocal := handler.localSetupAvailable(request)
+	if !macLocal && !handler.localAccess.authorized(request) {
 		writeJSON(response, http.StatusUnauthorized, map[string]string{"error": "LOCAL_ACCESS_REQUIRED"})
 		return false
 	}

@@ -24,7 +24,7 @@ func (fake *ceoPlanFakeRunner) Run(_ context.Context, request worker.RunRequest)
 
 func TestCEOPlanServiceUsesProviderNeutralRunnerAndTypedParser(t *testing.T) {
 	fake := &ceoPlanFakeRunner{result: worker.RunResult{
-		Content: `{"project_name":"P","objective":"O","summary":"S","required_departments":[],"required_roles":["Planner"],"assigned_existing_employees":["PLAN-001"],"proposed_tasks":[{"title":"T","assignee_id":"PLAN-001","dependency_ids":[],"rationale":"R"}],"risks":[],"ceo_questions":[]}`,
+		Content: `{"project_name":"P","objective":"O","summary":"S","required_departments":[],"required_roles":["Planner"],"assigned_existing_employees":[],"proposed_tasks":[{"title":"T","required_role":"Planner","assignee_id":null,"dependency_ids":[],"rationale":"R"}],"risks":[],"ceo_questions":[]}`,
 		Runner:  "FakeCEOPlanRunner", Model: "logical-model", Duration: time.Second,
 	}}
 	service, err := NewCEOPlanService(fake)
@@ -35,7 +35,7 @@ func TestCEOPlanServiceUsesProviderNeutralRunnerAndTypedParser(t *testing.T) {
 		Request: "計画する", Model: "logical-model",
 		Employees: []organization.Identity{{ID: "PLAN-001", Department: "企画部", Role: "Planner"}},
 	})
-	if err != nil || result.Plan.ProjectName != "P" || fake.request.UserPrompt != "計画する" || fake.request.Metadata["operation"] != "ceo_plan_generation" {
+	if err != nil || result.Plan.ProjectName != "P" || result.Plan.ProposedTasks[0].AssigneeID == nil || *result.Plan.ProposedTasks[0].AssigneeID != "PLAN-001" || fake.request.UserPrompt != "計画する" || fake.request.Metadata["operation"] != "ceo_plan_generation" {
 		t.Fatalf("result=%#v request=%#v err=%v", result, fake.request, err)
 	}
 }

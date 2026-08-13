@@ -5,13 +5,13 @@
 ## 起動
 
 ```bash
-bin/workcairn-daemon --vault /path/to/temporary-or-approved-vault
+bin/workcairn-daemon
 ```
 
 iPhoneとMacを同じtrusted local networkへ接続し、次でmobile modeを起動します。
 
 ```bash
-bin/workcairn-daemon --vault /path/to/temporary-or-approved-vault --mobile
+bin/workcairn-daemon --mobile
 ```
 
 private IPv4を自動選択し、iPhoneで開くURLとpairing codeをterminalへ表示します。必要なら`--listen 192.168.x.x:8787`のように明示できます。`0.0.0.0`、public IP、hostnameは拒否します。pairing codeは起動ごとに変わり、Vault／Session／browser storageへ保存しません。mobile modeのeffect POSTはpairing cookie、same-origin、`X-Workspace-Intent: mobile-ui.v1`を要求します。
@@ -45,6 +45,7 @@ Interaction Sessionの開始前planはread-only `POST /v1/interaction-plans`、P
 
 | operation | scope | payloadの主なidentity |
 |---|---|---|
+| `workspace.setup` | workspace | 時刻。選択済み専用rootのlayoutとRuntime管理Starter Organizationを明示承認で作成。path／Employee／Provider設定はpayload外 |
 | `task.execute` | project | Project ID／name、Task ID、時刻、approval reference、Execution ID |
 | `review.execute` | project | Project、Task、Reviewer ID、Review version、時刻 |
 | `revision.execute` | project | Project、source Task、Review version、時刻 |
@@ -72,6 +73,8 @@ Payloadはunknown fieldを拒否します。CEO plan generation、read-only plan
 Local Web UIの`interaction.*` commandは、同じendpointへ`Prefer: respond-async`を付けられます。daemonはtyped payloadとapprovalを先に検証し、受理時に`202 Accepted`、`Preference-Applied: respond-async`、`Location: /v1/commands/{command_id}?scope=workspace`を返します。実行はrequest contextから切り離されますがdaemon process lifetimeには従い、UIは既存Ledgerをread-only pollingします。CLI、Project scope command、通常の同期HTTP responseは変更しません。
 
 これはdurable queueではありません。`202`後でもdurable claim前にprocessがcrashすればLedgerが存在しない可能性があります。`running`／partial／Ledger欠落を自動resume、retry、adoptせず、既存Recovery境界へ止めます。
+
+`GET /v1/workspace-status`は、選択済みrootのstorage種別、WorkCairn layout、Starter Organizationの準備状態だけをredactedに返します。absolute path、Employee ID／model、Provider設定は返しません。
 
 `GET /v1/interactions`と`GET /v1/interactions/{session_id}`はappend-only turn、state、Versionをread-onlyで返します。`GET /v1/interactions/{session_id}/next`は次のoperation、必要field、質問、承認要否、attention時のLedger参照を決定的に返します。Workflow turnは完全Result digestとbounded summaryを返し、Deliverable本文は複製しません。`GET /v1/interactions/{session_id}/work-report`は、保存済みInteraction、Task、Deliverable、canonical Review、Revision intent、Command Ledger、Auditを再読込し、Autonomy Contract、Proof of Work、CEO Attentionを返します。これは新しい永続sourceではなく、欠落を成功へ推測しないread-only projectionです。`GET /v1/organization`はReviewer選択用inventory、`GET /v1/projects/{project_name}/tasks/{task_id}/evidence`はcommit済みTask、Deliverable、canonical Reviewをread-onlyで返します。Session／成果物はredacted endpointではないため、loopbackまたはpairing済みtrusted LAN外へ公開しないでください。Interaction commandは人間の質問回答・承認を必要とするためScheduler対象ではありません。
 

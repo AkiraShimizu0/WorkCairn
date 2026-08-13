@@ -35,6 +35,8 @@ type Handler struct {
 	taskEvidenceInspector      TaskEvidenceInspector
 	workReportInspector        WorkReportInspector
 	providerStatusInspector    ProviderStatusInspector
+	localSetup                 LocalSetup
+	localSetupAddress          string
 	localAccess                *LocalAccess
 	asyncCommands              *asyncCommandRunner
 	mux                        *http.ServeMux
@@ -86,6 +88,17 @@ type WorkReportInspector interface {
 
 type ProviderStatusInspector interface {
 	InspectProviderStatus() ProviderStatus
+}
+
+type WorkspaceStatusInspector interface {
+	InspectWorkspaceStatus(ctx context.Context) (WorkspaceStatus, error)
+}
+
+// LocalSetup owns explicit, Mac-only OS integration. It must never accept a
+// credential or filesystem path from the HTTP request.
+type LocalSetup interface {
+	ConnectClaude(ctx context.Context) error
+	RevealWorkspace(ctx context.Context) error
 }
 
 func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
@@ -153,7 +166,75 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 		handler.providerStatusInspector = providerStatusInspector
 		handler.mux.HandleFunc("GET /v1/provider-status", handler.inspectProviderStatus)
 	}
+	if workspaceStatusInspector, ok := executor.(WorkspaceStatusInspector); ok {
+		handler.mux.HandleFunc("GET /v1/workspace-status", func(response http.ResponseWriter, request *http.Request) {
+			status, statusErr := workspaceStatusInspector.InspectWorkspaceStatus(request.Context())
+			if statusErr != nil {
+				writeCommandResponse(response, http.StatusUnprocessableEntity, Response{Version: WorkspaceStatusVersion, OK: false, Error: &CommandError{Code: "WORKSPACE_STATUS_FAILED", RecoveryRequired: true}})
+				return
+			}
+			encoded, encodeErr := json.Marshal(status)
+			if encodeErr != nil {
+				writeCommandResponse(response, http.StatusInternalServerError, Response{Version: WorkspaceStatusVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+				return
+			}
+			writeCommandResponse(response, http.StatusOK, Response{Version: WorkspaceStatusVersion, OK: true, Result: encoded})
+		})
+	}
 	return handler, nil
+}
+
+func (handler *Handler) EnableLocalSetup(setup LocalSetup, localAddress string) error {
+	if setup == nil || strings.TrimSpace(localAddress) == "" {
+		return errors.New("local setup and Mac address are required")
+	}
+	handler.localSetup = setup
+	handler.localSetupAddress = strings.TrimSpace(localAddress)
+	handler.mux.HandleFunc("POST /v1/local-setup/claude", handler.connectClaude)
+	handler.mux.HandleFunc("POST /v1/local-setup/reveal-workspace", handler.revealWorkspace)
+	return nil
+}
+
+func (handler *Handler) connectClaude(response http.ResponseWriter, request *http.Request) {
+	if !handler.authorizeLocalSetup(response, request) {
+		return
+	}
+	if err := handler.localSetup.ConnectClaude(request.Context()); err != nil {
+		writeCommandResponse(response, http.StatusUnprocessableEntity, Response{Version: ProviderStatusVersion, OK: false, Error: &CommandError{Code: "PROVIDER_CONNECTION_SETUP_FAILED"}})
+		return
+	}
+	encoded, _ := json.Marshal(handler.providerStatusInspector.InspectProviderStatus())
+	writeCommandResponse(response, http.StatusOK, Response{Version: ProviderStatusVersion, OK: true, Result: encoded})
+}
+
+func (handler *Handler) revealWorkspace(response http.ResponseWriter, request *http.Request) {
+	if !handler.authorizeLocalSetup(response, request) {
+		return
+	}
+	if err := handler.localSetup.RevealWorkspace(request.Context()); err != nil {
+		writeCommandResponse(response, http.StatusUnprocessableEntity, Response{Version: WorkspaceStatusVersion, OK: false, Error: &CommandError{Code: "WORKSPACE_REVEAL_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: WorkspaceStatusVersion, OK: true, Result: json.RawMessage(`{"revealed":true}`)})
+}
+
+func (handler *Handler) authorizeLocalSetup(response http.ResponseWriter, request *http.Request) bool {
+	if handler.localSetup == nil || !validLocalIntent(request) {
+		writeJSON(response, http.StatusForbidden, map[string]string{"error": "LOCAL_MAC_SETUP_REQUIRED"})
+		return false
+	}
+	host, _, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil {
+		writeJSON(response, http.StatusForbidden, map[string]string{"error": "LOCAL_MAC_SETUP_REQUIRED"})
+		return false
+	}
+	remote := net.ParseIP(host)
+	allowed := net.ParseIP(handler.localSetupAddress)
+	if remote == nil || !(remote.IsLoopback() || allowed != nil && remote.Equal(allowed)) {
+		writeJSON(response, http.StatusForbidden, map[string]string{"error": "LOCAL_MAC_SETUP_REQUIRED"})
+		return false
+	}
+	return true
 }
 
 func (handler *Handler) inspectProviderStatus(response http.ResponseWriter, _ *http.Request) {
@@ -282,7 +363,17 @@ func (handler *Handler) planInteractionWorkflow(response http.ResponseWriter, re
 	}
 	plan, err := handler.interactionWorkflowPlanner.PlanInteractionWorkflow(request.Context(), planRequest)
 	if err != nil {
-		writeCommandResponse(response, http.StatusUnprocessableEntity, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: "INTERACTION_WORKFLOW_PLAN_FAILED"}})
+		code, stage := "INTERACTION_WORKFLOW_PLAN_FAILED", ""
+		var planError *workspaceprocess.InteractionWorkflowPlanError
+		if errors.As(err, &planError) {
+			stage = string(planError.Stage)
+			if planError.Stage == workspaceprocess.InteractionWorkflowAssignmentStage {
+				code = "WORKFLOW_TASK_ASSIGNMENT_REQUIRED"
+			} else if planError.Stage == workspaceprocess.InteractionWorkflowReviewerStage {
+				code = "WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED"
+			}
+		}
+		writeCommandResponse(response, http.StatusUnprocessableEntity, Response{Version: InteractionContractVersion, OK: false, Error: &CommandError{Code: code, Stage: stage}})
 		return
 	}
 	encoded, err := json.Marshal(plan)
@@ -474,7 +565,7 @@ func (handler *Handler) execute(response http.ResponseWriter, request *http.Requ
 		return
 	}
 	if prefersAsync(request.Header.Get("Prefer")) {
-		if !strings.HasPrefix(command.Operation, "interaction.") {
+		if !supportsAsyncOperation(command.Operation) {
 			writeCommandResponse(response, http.StatusBadRequest, Response{Version: ContractVersion, CommandID: command.CommandID, OK: false, Error: &CommandError{Code: "ASYNC_OPERATION_UNSUPPORTED"}})
 			return
 		}
@@ -508,6 +599,10 @@ func (handler *Handler) execute(response http.ResponseWriter, request *http.Requ
 		return
 	}
 	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, CommandID: command.CommandID, OK: true, Result: encoded})
+}
+
+func supportsAsyncOperation(operation string) bool {
+	return strings.HasPrefix(operation, "interaction.") || operation == "workspace.setup"
 }
 
 func (handler *Handler) inspect(response http.ResponseWriter, request *http.Request) {

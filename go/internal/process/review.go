@@ -67,11 +67,12 @@ type ExecuteReviewInput struct {
 }
 
 type ReviewExecutionResult struct {
-	Status         string                  `json:"status"`
-	Execution      *review.ExecutionResult `json:"execution,omitempty"`
-	Artifact       *review.Record          `json:"artifact,omitempty"`
-	EventID        string                  `json:"event_id,omitempty"`
-	EventPublished bool                    `json:"event_published"`
+	Status          string                  `json:"status"`
+	Execution       *review.ExecutionResult `json:"execution,omitempty"`
+	Artifact        *review.Record          `json:"artifact,omitempty"`
+	EventID         string                  `json:"event_id,omitempty"`
+	EventPublished  bool                    `json:"event_published"`
+	ProviderFailure *ProviderFailure        `json:"provider_failure,omitempty"`
 }
 
 func PlanReview(ctx context.Context, input ReviewPlanInput) (ReviewPlan, error) {
@@ -163,6 +164,7 @@ func ExecuteReview(ctx context.Context, input ExecuteReviewInput, provider Claud
 		return claim.replay.result, claim.replay.err
 	}
 	result, reviewErr := executeClaimedReview(ctx, input, provider, httpClient)
+	result.ProviderFailure = providerFailure(reviewErr)
 	return result, finishReviewCommand(ctx, claim, result, reviewErr)
 }
 
@@ -255,7 +257,8 @@ func finishReviewCommand(ctx context.Context, claim reviewCommandClaim, result R
 	var failure *commandledger.Failure
 	if reviewErr != nil {
 		state = commandledger.StateFailed
-		failure = &commandledger.Failure{Code: "REVIEW_EXECUTION_FAILED", Stage: "process"}
+		code, stage := reviewFailureClassification(reviewErr, result.ProviderFailure)
+		failure = &commandledger.Failure{Code: code, Stage: stage}
 		if errors.Is(reviewErr, ErrReviewPreflightFailed) {
 			failure.Code = "REVIEW_PREFLIGHT_FAILED"
 			failure.Stage = "preflight"
@@ -273,6 +276,32 @@ func finishReviewCommand(ctx context.Context, claim reviewCommandClaim, result R
 		return errors.Join(reviewErr, &CommandLedgerCommitError{Err: err})
 	}
 	return reviewErr
+}
+
+func reviewFailureClassification(reviewErr error, provider *ProviderFailure) (string, string) {
+	if provider != nil {
+		return providerFailureCode(provider.Category), "review_provider"
+	}
+	var workerErr *service.WorkerExecutionError
+	if !errors.As(reviewErr, &workerErr) {
+		return "REVIEW_EXECUTION_FAILED", "process"
+	}
+	switch workerErr.Kind {
+	case service.WorkerErrorPromptBuildFailed, service.WorkerErrorInvalidPrompt:
+		return "REVIEW_PROMPT_FAILED", "review_prompt"
+	case service.WorkerErrorUnknownModel, service.WorkerErrorRunnerNotRegistered:
+		return "REVIEW_ROUTE_FAILED", "review_route"
+	case service.WorkerErrorInvalidRunnerResult:
+		return "PROVIDER_RESPONSE_INVALID", "review_provider_response"
+	case service.WorkerErrorInvalidReviewResult:
+		return "REVIEW_RESULT_INVALID", "review_result_parser"
+	case service.WorkerErrorTimeout:
+		return "PROVIDER_UNAVAILABLE", "review_provider"
+	case service.WorkerErrorCanceled:
+		return "REVIEW_EXECUTION_CANCELED", "review_provider"
+	default:
+		return "REVIEW_EXECUTION_FAILED", "review_service"
+	}
 }
 
 func executeClaimedReview(ctx context.Context, input ExecuteReviewInput, provider ClaudeProcessConfig, httpClient claude.HTTPDoer) (ReviewExecutionResult, error) {

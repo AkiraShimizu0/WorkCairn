@@ -36,66 +36,29 @@ make v1-release-gate
 
 Go 1.23以上だけを使用します。別言語runtimeやpackage managerは不要です。
 
-## Temporary Vaultを準備する
+## 一般ユーザーのmacOS First-run
 
-次は試用専用directoryへ最小Organizationを作成します。実Vaultのpathへ置き換えないでください。
+通常利用ではterminalでVault path、Employee ID、Role、Model IDを設定しません。
+
+```bash
+bin/workcairn-daemon --mobile
+```
+
+初回だけnative folder pickerが開きます。iCloud Drive内に空の`WorkCairn`専用folderを新規作成して選び、Web WizardでStarter Organizationを承認します。`AI Connections`はMacのnative hidden-inputからClaudeをmacOS Keychainへ接続し、RoutingはAutomaticのまま使用します。iPhoneにはcredential入力面を出しません。`会社を始める`から最初の依頼へ進みます。
+
+選択したpathはmacOS Application Supportへprivate local configとして保存され、再起動後に再検証されます。既存の個人Obsidian Vault、home、iCloud Drive root、別用途の非空directoryは受け入れません。同じVaultへ書くdaemonは1つだけです。
+
+## Temporary Vaultを準備する（開発・自動test）
+
+Acceptanceでは空の試用専用directoryを選びます。実Vaultのpathへ置き換えないでください。
 
 ```bash
 beta_vault=$(mktemp -d)
-mkdir -p "$beta_vault/会社" "$beta_vault/社員" "$beta_vault/プロジェクト"
 ```
 
-`会社/Workspace State.md`:
+daemon起動後、First-run Wizardが保存場所、最初のAIチーム、AI Connectionを順番に表示します。`最初のAIチームを確認`から明示承認すると、選択済みdirectoryだけへWorkCairn layoutとProduct Manager、Content Writer、QA Engineerを既存Organization writerで作成します。承認前はfileを作らず、既存fileを上書きしません。
 
-```markdown
-# Workspace State
-
-## Workspace Manager
-
-| ID | Name | Role |
-|---|---|---|
-| MGR-001 | Beta Operator | Workspace Manager |
-
-## 部署
-
-| Department |
-|---|
-```
-
-`社員/田中 美咲.md`:
-
-```markdown
----
-id: PLAN-001
-department: 企画部
-role: Product Manager
-model: Claude Sonnet 5
-status: 待機中
----
-
-# 田中 美咲
-```
-
-`社員/伊藤 健太.md`:
-
-```markdown
----
-id: QA-001
-department: 品質保証部
-role: QA Engineer
-model: Claude Sonnet 5
-status: 待機中
----
-
-# 伊藤 健太
-```
-
-最初にread-only検証します。
-
-```bash
-bin/workcairn organization-inspect --vault "$beta_vault"
-bin/workcairn identity-validate --vault "$beta_vault"
-```
+`--vault`はdevelopment Acceptance／automated test用の明示overrideです。選択済みの一般利用pathを変更せず、保存もしません。
 
 ## Providerなしでfirst-run
 
@@ -103,7 +66,7 @@ bin/workcairn identity-validate --vault "$beta_vault"
 bin/workcairn-daemon --vault "$beta_vault"
 ```
 
-ブラウザで`http://127.0.0.1:8787/`を開き、UI、`/healthz`、`/readyz`を確認します。credentialがなくても起動とread-only inspectionは可能です。Providerが必要な操作は安全に拒否されます。
+ブラウザで`http://127.0.0.1:8787/`を開き、First-run Wizard、`/healthz`、`/readyz`を確認します。credentialがなくてもStarter Organizationの明示セットアップとread-only inspectionは可能です。Providerが必要な操作は安全に拒否されます。
 
 ## iPhone Local Web UI
 
@@ -113,7 +76,7 @@ MacとiPhoneを同じ信頼できるWi-Fiへ接続します。
 bin/workcairn-daemon --vault "$beta_vault" --mobile
 ```
 
-terminalのURLをiPhone Safariで開き、pairing codeを入力します。URLやcodeは公開せず、process終了後に再利用しません。iPhoneでは`My Actions`が既定で、必要な質問・承認・Recoveryだけを表示します。対応不要なら`Your company is working. No action needed.`と分かります。UIへ到達するだけならProvider設定は不要です。
+terminalのURLをiPhone Safariで開き、pairing codeを入力します。URLやcodeは公開せず、process終了後に再利用しません。iPhoneでは`My Actions`が既定で、必要な質問・承認・Recoveryだけを表示します。対応不要なら`Your company is working. No action needed.`と分かります。承認済み処理の実行中は小さなindicatorだけを表示し、failureはMy ActionsとTimelineから消えません。UIへ到達するだけならProvider設定は不要です。
 
 Mac／iPadでは`Company View`が既定です。AI社員、Maker、Reviewer、Revision、担当中の仕事とhandoffをread-onlyで確認できます。表示はOrganization／Interaction／evidenceのprojectionであり、画面からTask状態を推測変更しません。
 
@@ -137,9 +100,9 @@ make public-beta-smoke
 実Provider確認はPublic Beta公開者が別途行います。このrepository作業では実行しません。
 
 - temporary Vaultとtest用Provider credentialだけを使う
-- process環境へ`ANTHROPIC_API_KEY`だけを注入する。Provider model IDはWorkCairnのAutomatic policyが解決する
+- 一般利用ではMac native dialogからKeychainへ接続する。process環境はOperator testの明示overrideだけに使う
 - `.env`へ保存しない
-- Web UIでModel名を選ぶ必要はない。daemonは起動時設定を値を出さず検査し、未接続ならProviderを呼ぶ前にMy Actionsへ案内する
+- Web UIでModel名を選ぶ必要はない。daemonはKeychain／起動時overrideを値を出さず検査し、未接続ならProviderを呼ぶ前にMy Actionsへ案内する
 - read-only plan、request digest、Command ID、承認対象を確認する
 - Plan生成1回、通常Task1件、Review1回に上限を設け、usageをProvider側でも確認する
 - 終了後にcredentialを失効またはrotationし、terminal historyへ値が残っていないことを確認する

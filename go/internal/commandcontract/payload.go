@@ -38,6 +38,10 @@ func ValidatePayload(operation string, content json.RawMessage) error {
 	}
 	var target any
 	switch operation {
+	case "workspace.setup":
+		target = &struct {
+			CurrentTime time.Time `json:"current_time"`
+		}{}
 	case "task.execute":
 		target = &struct {
 			ProjectID         string    `json:"project_id"`
@@ -204,6 +208,7 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 		return ErrInvalidPayload
 	}
 	requiredStrings := map[string][]string{
+		"workspace.setup":                      {},
 		"task.execute":                         {"project_id", "project_name", "task_id"},
 		"review.execute":                       {"project_id", "project_name", "task_id", "reviewer_id"},
 		"revision.execute":                     {"project_id", "project_name", "source_task_id"},

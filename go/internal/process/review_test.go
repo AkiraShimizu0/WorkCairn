@@ -128,6 +128,69 @@ func TestExecuteReviewUsesGoRuntimeAndCommitsCanonicalArtifacts(t *testing.T) {
 	}
 }
 
+func TestExecuteReviewRecordsParserSubstageWithoutArtifacts(t *testing.T) {
+	root := writeReviewProcessVault(t)
+	completeReviewSourceTask(t, root)
+	var providerCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		providerCalls.Add(1)
+		response.Header().Set("content-type", "application/json")
+		_, _ = response.Write([]byte("{\"model\":\"claude-test\",\"content\":[{\"type\":\"text\",\"text\":\"# Review\\n\\nREVIEW_RESULT_JSON_START\\n```json\\n{\\\"verdict\\\":\\\"Approve\\\",\\\"issues\\\":[]}\\n```\\nREVIEW_RESULT_JSON_END\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}"))
+	}))
+	defer server.Close()
+
+	input := ExecuteReviewInput{ReviewPlanInput: reviewPlanInput(root), Approved: true, CommandID: "CMD-REVIEW-PARSER-001"}
+	result, err := ExecuteReview(context.Background(), input, ClaudeProcessConfig{
+		APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL,
+	}, server.Client())
+	if err == nil || providerCalls.Load() != 1 || result.Execution != nil || result.Artifact != nil || result.ProviderFailure != nil {
+		t.Fatalf("parser failure result=%#v err=%v calls=%d", result, err, providerCalls.Load())
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, input.ProjectName)
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, ledgerErr := ledger.Get(context.Background(), input.CommandID)
+	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil ||
+		record.Failure.Code != "REVIEW_RESULT_INVALID" || record.Failure.Stage != "review_result_parser" {
+		t.Fatalf("parser Ledger=%#v err=%v", record, ledgerErr)
+	}
+	project := filepath.Join(root, "プロジェクト", input.ProjectName)
+	if _, statErr := os.Stat(filepath.Join(project, "Reviews")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("parser failure created Review artifacts: %v", statErr)
+	}
+}
+
+func TestExecuteReviewRecordsRedactedProviderFailure(t *testing.T) {
+	root := writeReviewProcessVault(t)
+	completeReviewSourceTask(t, root)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("request-id", "req_review_safe")
+		response.WriteHeader(http.StatusTooManyRequests)
+		_, _ = response.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"must not be stored"}}`))
+	}))
+	defer server.Close()
+
+	input := ExecuteReviewInput{ReviewPlanInput: reviewPlanInput(root), Approved: true, CommandID: "CMD-REVIEW-PROVIDER-001"}
+	result, err := ExecuteReview(context.Background(), input, ClaudeProcessConfig{
+		APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL,
+	}, server.Client())
+	if err == nil || result.ProviderFailure == nil || result.ProviderFailure.Category != "rate_limited" ||
+		result.ProviderFailure.HTTPStatus != http.StatusTooManyRequests || result.ProviderFailure.ProviderType != "rate_limit_error" ||
+		result.ProviderFailure.RequestID != "req_review_safe" || result.Artifact != nil {
+		t.Fatalf("Provider failure result=%#v err=%v", result, err)
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, input.ProjectName)
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, ledgerErr := ledger.Get(context.Background(), input.CommandID)
+	if ledgerErr != nil || record.Failure == nil || record.Failure.Code != "PROVIDER_RATE_LIMITED" ||
+		record.Failure.Stage != "review_provider" || strings.Contains(string(record.Result), "must not be stored") {
+		t.Fatalf("Provider failure Ledger=%#v err=%v", record, ledgerErr)
+	}
+}
+
 func writeReviewProcessVault(t *testing.T) string {
 	t.Helper()
 	root := writePlanVault(t)

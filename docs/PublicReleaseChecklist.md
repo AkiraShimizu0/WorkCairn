@@ -34,6 +34,9 @@ cross-build成功だけでnative supportを宣言しません。
 - [ ] macOS／Linuxの4 target、3 binaryがCGOなしでcross-buildできる。
 - [ ] temporary Vault + Mock ProviderでTask execution、Deliverable、Auditが完了する。
 - [ ] mobile Interactionで依頼、clarification、Plan承認、Reviewed Workflow完了まで成功する。
+- [ ] 空のtemporary rootでFirst-run Wizardを開き、明示承認前は副作用ゼロ、承認後はStarter Organizationが既存writerで作成される。
+- [ ] 同一Session／Versionのpollingを複数回行ってもtext、select、focus、開いている詳細が保持される。
+- [ ] failure／partial failureがToastで消えず、My Actions、依頼一覧、Timelineからsanitized detailを再確認できる。
 - [ ] Workflow承認対象へAutonomy Contractが固定され、Proof of Work／CEO Attentionがcanonical evidenceから再構成される。
 - [ ] Request Changes、Revision、再Review、Command replayが成功する。
 - [ ] 承認なしのProvider／Vault effectが拒否される。
@@ -60,6 +63,10 @@ targetごとにclean output directoryを使います。
 - [ ] 空のtemporary Vaultでloopback daemonが起動する。
 - [ ] `/healthz`と`/readyz`が成功する。
 - [ ] credentialなしでUIとread-only inspectionへ到達できる。
+- [ ] GUI Wizardだけで選択済みrootのlayoutとStarter Organizationを準備できる。
+- [ ] `--vault`なしのmacOS first-runでnative pickerがiCloud Driveを推奨し、明示選択した空の専用folderだけを保存する。
+- [ ] daemon再起動時にfolder pickerを再表示せず、保存済みrootを再検証して過去Session／Timelineを表示する。
+- [ ] Mac native hidden-inputからClaudeをKeychainへ接続し、iPhone、HTTP payload、browser storage、Vault、logへsecretを出さない。
 - [ ] credentialが必要な操作は秘密情報を表示せず安全に拒否される。
 - [ ] SIGINT／SIGTERMでgraceful shutdownする。
 - [ ] install／first-run手順だけで暗黙のmachine固有pathを要求しない。
@@ -71,6 +78,9 @@ targetごとにclean output directoryを使います。
 - [ ] Tier 1 MacとiPhoneを同じtrusted Wi-Fiへ接続した。
 - [ ] `--mobile`がprivate addressとpairing codeを表示した。
 - [ ] iPhone Safariでpairing、reload、background復帰、完了確認を実施した。
+- [ ] iPhoneからAI Connection／Finder操作を開始できず、Macで行う案内だけが表示される。
+- [ ] 承認済みbackground実行は小さいindicatorだけとなり、clarification／approval／failure／Recoveryだけが前面に出る。
+- [ ] 390×844で一般向け「進め方」、Timeline、persistent error詳細が読め、内部IDは詳細へ退いている。
 - [ ] iPhoneでMy Actionsが既定となり、質問／承認以外では`No action needed`が明確に見える。
 - [ ] iPad／MacでCompany Viewが既定となり、Maker、Reviewer、Revision、担当、handoffを理解できる。
 - [ ] iPhoneのWorkflow承認で任せる範囲が短く理解でき、Company ViewのProof of Workが「何が実際に完了したか」を技術語なしで説明する。
@@ -85,6 +95,9 @@ targetごとにclean output directoryを使います。
 
 ### Filesystem／upgrade
 
+- [ ] iCloud Driveに新規WorkCairn専用directoryを作り、First-run後にObsidianから開けることを確認した。既存個人Vaultは変更していない。
+- [ ] [macOS First-run Acceptance](PublicBetaFirstRunAcceptance.md)を1回通し、再起動後のTimeline／persistent failureを確認した。
+- [ ] 同一iCloud Vaultへ複数daemonをwriterとして起動していない。
 - [ ] native filesystemでatomic replacement、file lock、CAS conflict、graceful shutdownを確認した。
 - [ ] 実Vaultのcopyでread-only inventoryとmigration planだけを実行した。
 - [ ] 実Vault本体は変更せず、backup／restore手順を別に確認した。

@@ -53,7 +53,6 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0004: Event DrivenをWorkspace OSの基本設計とする（当時の名称）](adr/ADR-0004-event-system.md)
 - [ADR-0005: Task lifecycleをGo TaskServiceの責務とする](adr/ADR-0005-task-lifecycle.md)
 - [ADR-0006: WorkerとRunnerをProvider非依存の境界で分離する](adr/ADR-0006-worker-runner-boundary.md)
-- [ADR-0036: Provider接続状態とRuntime routingを分離する](adr/ADR-0036-provider-connection-and-runtime-routing.md)
 - [ADR-0007: Workflow executionとPolicyをTask lifecycleから分離する](adr/ADR-0007-workflow-execution-policy.md)
 - [ADR-0008: Tasks.mdの5列表とmanaged metadataを同一ファイルで永続化する](adr/ADR-0008-vault-taskstore-metadata.md)
 - [ADR-0009: DeliverableをTask完了より先にcommitする](adr/ADR-0009-deliverable-commit-ordering.md)
@@ -83,6 +82,9 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0033: Public Beta前にrepositoryとdistributionをGo Onlyへ確定する](adr/ADR-0033-public-beta-go-only-repository.md)
 - [ADR-0034: WorkCairnを製品名としLiving Company Dashboardをread-only projectionとして提供する](adr/ADR-0034-workcairn-brand-and-living-company-dashboard.md)
 - [ADR-0035: Autonomy Contractを承認範囲に固定しProof of Workをcanonical evidenceから投影する](adr/ADR-0035-autonomy-contract-and-proof-of-work.md)
+- [ADR-0036: Provider接続状態とRuntime routingを分離する](adr/ADR-0036-provider-connection-and-runtime-routing.md)
+- [ADR-0037: First-run setupを明示CommandとしPublic Beta UIをread-only projectionに保つ](adr/ADR-0037-public-beta-setup-and-ui-projection.md)
+- [ADR-0038: macOS First-runをLocal OS Adapterへ閉じ込める](adr/ADR-0038-macos-first-run-and-local-os-integration.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -121,7 +123,8 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 | Go Vault Command Ledger Adapter | Project scopeまたはworkspace scopeのhidden machine metadataへclaimをatomic createし、terminal outcomeをCAS／atomic replacementで保存する |
 | Go Process／workcairn | Vault AdapterとRuntimeをprocess edgeでcompositionし、Task metadata migration、read-only execution／recovery plan、明示承認付きexecute／recoveryを提供する |
 | Go HTTP API／workcairn-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger／Organization／Task evidence inspection、graceful shutdownを提供し、workcairnと同じprocess／Serviceを利用する。既定はloopback、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可する。mobile Interaction commandだけadditiveなbounded acceptanceでclient接続から切り離せる |
-| Living Company Dashboard | daemon同一originからembed配信する薄いclient。iPhone既定のMy ActionsはInteraction Next Actionを質問／承認／Recoveryへ投影し、PC／iPad既定のCompany ViewはOrganization／Workflow／Task evidenceから社員、Maker、Reviewer、Revision、handoffを表示する。Task／Review／Revision規則を持たない |
+| Living Company Dashboard | daemon同一originからembed配信する薄いclient。iPhone既定のMy ActionsはInteraction Next Actionを質問／承認／Recoveryへ投影し、PC／iPad既定のCompany ViewはOrganization／Workflow／Task evidenceから社員、Maker、Reviewer、Revision、handoff、Timelineを表示する。同一Session／Versionのpollingでは操作中DOMを再生成せず、Task／Review／Revision規則を持たない |
+| First-run Workspace Setup | macOS native picker／Application Support path reference、Mac-only Keychain Adapter、redacted Workspace Statusと、明示承認・workspace Command Ledger・既存Employee writerを使うStarter Organization bootstrap。選択済み専用rootだけを扱い、path／secretをHTTPへ渡さず、既存Vault変更やCoreへの既定社員追加を行わない |
 | Go Workflow Run Service | dependency readinessを各Task後に再planし、決定的child Command IDで既存Task executionを順次調停する。Task状態やEventは変更しない |
 | Go Reviewed Workflow Run Service | 各Task後に既存Reviewを実行し、Request Changes時は既存Revisionで作成したTaskをtargeted readinessで実行・再Reviewしてから本流へ戻す |
 | Go Scheduler Service | 承認済みone-shot Commandをoffset付き時刻で選択し、Schedule CAS後に既存Process／Command Ledgerへ配送する。Task状態やProviderは直接扱わない |
@@ -186,6 +189,7 @@ ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環�
 - `go/internal/scheduler`: Storage／transport非依存のone-shot Schedule、state、Version／CAS、Dispatcher port
 - `go/internal/runner`: model値とRunner Adapterを解決するthread-safe Registry
 - `go/internal/adapter/claude`: Anthropic Messages APIを既存Runner契約へ変換するProvider Adapter
+- `go/internal/adapter/localos`: macOS folder picker、Application Support path reference、Keychain、Finder／browser openをRuntime edgeへ閉じ込めるOS Adapter。Core、Vault contract、Task／Eventを知らない
 - `go/internal/adapter/vault`: read-only Context／Organization Loader、Project／Task／Deliverable／Review／Revision intent／Schedule／Interaction Store、Audit Event subscriber
 - `go/internal/runtime`: Provider／Storage AdapterをServiceへ注入するprocess-neutral execution／Review／Revision composition
 - `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／reviewed Workflow／Schedule／Interaction Workflow／Recoveryのread-only planと明示承認付きexecute、canonical evidenceからのWork Report projection

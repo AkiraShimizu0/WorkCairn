@@ -62,6 +62,10 @@ func TestReviewBuilderIsDeterministicAndKeepsSectionOrder(t *testing.T) {
 		}
 		previous = position
 	}
+	if !strings.Contains(first.System, "Markdown code fenceや説明文を含めないでください") ||
+		!strings.Contains(first.System, "開始・終了マーカーはそれぞれ正確に1回だけ使用してください") {
+		t.Fatal("Review Prompt does not make the strict parser contract explicit")
+	}
 }
 
 func TestReviewBuilderHandlesOptionalContextDeterministically(t *testing.T) {

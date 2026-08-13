@@ -11,14 +11,41 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
+	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
-var ErrInteractionWorkflowPrecondition = errors.New("interaction Workflow precondition failed")
+var (
+	ErrInteractionWorkflowPrecondition     = errors.New("interaction Workflow precondition failed")
+	ErrInteractionWorkflowReviewerRequired = errors.New("interaction Workflow reviewer could not be resolved")
+)
+
+const interactionWorkflowReviewerRole = "QA Engineer"
+
+type InteractionWorkflowPlanStage string
+
+const (
+	InteractionWorkflowReviewedPlanStage InteractionWorkflowPlanStage = "interaction_workflow_reviewed_plan"
+	InteractionWorkflowAssignmentStage   InteractionWorkflowPlanStage = "interaction_workflow_task_assignment"
+	InteractionWorkflowReviewerStage     InteractionWorkflowPlanStage = "interaction_workflow_reviewer_assignment"
+	InteractionWorkflowAutonomyStage     InteractionWorkflowPlanStage = "interaction_workflow_autonomy"
+)
+
+type InteractionWorkflowPlanError struct {
+	Stage InteractionWorkflowPlanStage
+	Err   error
+}
+
+func (planError *InteractionWorkflowPlanError) Error() string {
+	return "Interaction Workflow plan failed at " + string(planError.Stage)
+}
+
+func (planError *InteractionWorkflowPlanError) Unwrap() error { return planError.Err }
 
 type InteractionWorkflowPlanInput struct {
 	VaultRoot       string
@@ -37,6 +64,7 @@ type InteractionWorkflowPlan struct {
 	ProjectName        string                   `json:"project_name"`
 	ReviewerID         string                   `json:"reviewer_id"`
 	ReviewerName       string                   `json:"reviewer_name"`
+	ReviewerRole       string                   `json:"reviewer_role"`
 	ReviewerModel      string                   `json:"reviewer_model"`
 	MaxTasks           int                      `json:"max_tasks"`
 	Autonomy           autonomy.Contract        `json:"autonomy_contract"`
@@ -63,7 +91,7 @@ type InteractionWorkflowResult struct {
 
 func PlanInteractionWorkflow(ctx context.Context, input InteractionWorkflowPlanInput) (InteractionWorkflowPlan, error) {
 	if ctx == nil || interaction.ValidateSessionID(input.SessionID) != nil || input.ExpectedVersion == 0 ||
-		strings.TrimSpace(input.ReviewerID) == "" || input.CurrentTime.IsZero() || input.MaxTasks <= 0 || input.MaxTasks > service.MaxWorkflowTasks {
+		input.CurrentTime.IsZero() || input.MaxTasks <= 0 || input.MaxTasks > service.MaxWorkflowTasks {
 		return InteractionWorkflowPlan{}, ErrInteractionWorkflowPrecondition
 	}
 	interactionService, err := newInteractionService(input.VaultRoot)
@@ -81,23 +109,54 @@ func PlanInteractionWorkflow(ctx context.Context, input InteractionWorkflowPlanI
 	if !ok {
 		return InteractionWorkflowPlan{}, ErrInteractionWorkflowPrecondition
 	}
+	step, err := planReviewedWorkflowStep(ctx, WorkflowPlanInput{
+		VaultRoot: input.VaultRoot, ProjectID: projectID, ProjectName: projectName, CurrentTime: input.CurrentTime,
+	})
+	if err != nil {
+		stage := InteractionWorkflowReviewedPlanStage
+		if errors.Is(err, vault.ErrAssigneeMissing) {
+			stage = InteractionWorkflowAssignmentStage
+		}
+		return InteractionWorkflowPlan{}, &InteractionWorkflowPlanError{Stage: stage, Err: err}
+	}
+	canonicalPlan, _, hasCanonicalPlan := record.CurrentPlan()
+	if !hasCanonicalPlan {
+		return InteractionWorkflowPlan{}, ErrInteractionWorkflowPrecondition
+	}
+	reviewerID, err := resolveInteractionWorkflowReviewer(ctx, input, projectName, step, canonicalPlan)
+	if err != nil {
+		stage := InteractionWorkflowReviewerStage
+		if errors.Is(err, vault.ErrAssigneeMissing) {
+			stage = InteractionWorkflowAssignmentStage
+		}
+		return InteractionWorkflowPlan{}, &InteractionWorkflowPlanError{Stage: stage, Err: err}
+	}
 	reviewed, err := PlanReviewedWorkflow(ctx, ReviewedWorkflowPlanInput{
 		WorkflowPlanInput: WorkflowPlanInput{
 			VaultRoot: input.VaultRoot, ProjectID: projectID, ProjectName: projectName, CurrentTime: input.CurrentTime,
 		},
-		ReviewerID: strings.TrimSpace(input.ReviewerID),
+		ReviewerID: reviewerID,
 	})
 	if err != nil {
-		return InteractionWorkflowPlan{}, err
+		stage := InteractionWorkflowReviewedPlanStage
+		if errors.Is(err, vault.ErrAssigneeMissing) {
+			stage = InteractionWorkflowAssignmentStage
+		}
+		return InteractionWorkflowPlan{}, &InteractionWorkflowPlanError{Stage: stage, Err: err}
 	}
 	contract, err := resolveAutonomyContract(ctx, input, reviewed)
 	if err != nil {
-		return InteractionWorkflowPlan{}, err
+		stage := InteractionWorkflowAutonomyStage
+		if errors.Is(err, vault.ErrAssigneeMissing) {
+			stage = InteractionWorkflowAssignmentStage
+		}
+		return InteractionWorkflowPlan{}, &InteractionWorkflowPlanError{Stage: stage, Err: err}
 	}
 	plan := InteractionWorkflowPlan{
 		SessionID: record.SessionID, SessionVersion: record.Version, ProjectID: projectID, ProjectName: projectName,
 		ReviewerID: reviewed.ReviewerID, ReviewerName: reviewed.ReviewerName, ReviewerModel: reviewed.ReviewerModel,
-		MaxTasks: input.MaxTasks, Autonomy: contract, Next: reviewed.Next, Executable: true, ApprovalRequired: true,
+		ReviewerRole: interactionWorkflowReviewerRole,
+		MaxTasks:     input.MaxTasks, Autonomy: contract, Next: reviewed.Next, Executable: true, ApprovalRequired: true,
 	}
 	plan.WorkflowPlanDigest, err = interactionWorkflowPlanDigest(plan)
 	if err != nil {
@@ -149,11 +208,11 @@ func ExecuteInteractionWorkflow(
 		return replayed, replayErr
 	}
 	currentPlan, err := PlanInteractionWorkflow(ctx, input.InteractionWorkflowPlanInput)
-	if err != nil || currentPlan.WorkflowPlanDigest != input.WorkflowPlanDigest {
-		if err == nil {
-			err = ErrInteractionWorkflowPrecondition
-		}
-		return InteractionWorkflowResult{}, finishDurableCommand(ctx, claim, InteractionWorkflowResult{}, err, "INTERACTION_WORKFLOW_FAILED", "interaction_workflow_preflight", false)
+	if err != nil || currentPlan.WorkflowPlanDigest != input.WorkflowPlanDigest || currentPlan.ReviewerID != input.ReviewerID {
+		return InteractionWorkflowResult{}, finishDurableCommand(
+			ctx, claim, InteractionWorkflowResult{}, ErrInteractionWorkflowPrecondition,
+			"INTERACTION_WORKFLOW_FAILED", "interaction_workflow_plan", false,
+		)
 	}
 	workflowCommandID, err := commandledger.DeriveChildCommandID(input.CommandID, "workflow.reviewed.execute:"+input.SessionID)
 	if err != nil {
@@ -164,7 +223,7 @@ func ExecuteInteractionWorkflow(
 			WorkflowPlanInput: WorkflowPlanInput{
 				VaultRoot: input.VaultRoot, ProjectID: currentPlan.ProjectID, ProjectName: currentPlan.ProjectName, CurrentTime: input.CurrentTime,
 			},
-			ReviewerID: input.ReviewerID,
+			ReviewerID: currentPlan.ReviewerID,
 		},
 		Approved: true, ApprovalReference: input.ApprovalReference, CommandID: workflowCommandID,
 		MaxTasks: input.MaxTasks, EventObservers: input.EventObservers,
@@ -215,13 +274,14 @@ func interactionWorkflowPlanDigest(plan InteractionWorkflowPlan) (string, error)
 		ProjectName    string                   `json:"project_name"`
 		ReviewerID     string                   `json:"reviewer_id"`
 		ReviewerName   string                   `json:"reviewer_name"`
+		ReviewerRole   string                   `json:"reviewer_role,omitempty"`
 		ReviewerModel  string                   `json:"reviewer_model"`
 		MaxTasks       int                      `json:"max_tasks"`
 		Autonomy       autonomy.Contract        `json:"autonomy_contract"`
 		Next           service.WorkflowStepPlan `json:"next"`
 	}{
 		plan.SessionID, plan.SessionVersion, plan.ProjectID, plan.ProjectName, plan.ReviewerID,
-		plan.ReviewerName, plan.ReviewerModel, plan.MaxTasks, plan.Autonomy, plan.Next,
+		plan.ReviewerName, plan.ReviewerRole, plan.ReviewerModel, plan.MaxTasks, plan.Autonomy, plan.Next,
 	})
 }
 
@@ -248,7 +308,7 @@ func interactionWorkflowEvidence(
 	}
 	evidence := interaction.WorkflowEvidence{
 		SchemaVersion: 1, CommandID: input.CommandID, WorkflowCommandID: workflowCommandID,
-		ProjectID: plan.ProjectID, ProjectName: plan.ProjectName, ReviewerID: input.ReviewerID,
+		ProjectID: plan.ProjectID, ProjectName: plan.ProjectName, ReviewerID: plan.ReviewerID,
 		MaxTasks: input.MaxTasks, Autonomy: pointerToAutonomy(plan.Autonomy), Status: status, ResultDigest: digest,
 		Tasks: make([]interaction.WorkflowTaskEvidence, 0, len(result.Tasks)),
 	}
@@ -275,6 +335,114 @@ func interactionWorkflowEvidence(
 	return evidence, nil
 }
 
+func resolveInteractionWorkflowReviewer(
+	ctx context.Context,
+	input InteractionWorkflowPlanInput,
+	projectName string,
+	step service.WorkflowStepPlan,
+	canonicalPlan ceoplan.Plan,
+) (string, error) {
+	if step.Completed || strings.TrimSpace(step.TaskID) == "" {
+		return "", ErrInteractionWorkflowReviewerRequired
+	}
+	store, err := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: input.VaultRoot, ProjectName: projectName})
+	if err != nil {
+		return "", err
+	}
+	tasks, err := store.InspectAll(ctx)
+	if err != nil {
+		return "", err
+	}
+	makerIDs, explicitReviewerID, err := interactionReviewerIntent(canonicalPlan)
+	if err != nil {
+		return "", err
+	}
+	nextTaskFound := false
+	actualAssignees := make(map[string]struct{}, len(tasks))
+	for _, current := range tasks {
+		if current.ID == step.TaskID {
+			nextTaskFound = true
+		}
+		if current.Status == task.StatusCompleted {
+			continue
+		}
+		if current.AssigneeID == nil || strings.TrimSpace(*current.AssigneeID) == "" {
+			return "", vault.ErrAssigneeMissing
+		}
+		actualAssignees[strings.TrimSpace(*current.AssigneeID)] = struct{}{}
+	}
+	if !nextTaskFound {
+		return "", ErrInteractionWorkflowPrecondition
+	}
+	for _, makerID := range makerIDs {
+		if _, exists := actualAssignees[makerID]; !exists {
+			return "", ErrInteractionWorkflowPrecondition
+		}
+	}
+	if explicitReviewerID != nil {
+		if _, exists := actualAssignees[*explicitReviewerID]; !exists {
+			return "", ErrInteractionWorkflowPrecondition
+		}
+	}
+	loader, err := vault.NewLoader(input.VaultRoot)
+	if err != nil {
+		return "", err
+	}
+	inventory, err := loader.LoadOrganizationInventory(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	var allowed []string
+	if input.Autonomy != nil {
+		if input.Autonomy.Validate() != nil || input.Autonomy.ExecutionLimit != input.MaxTasks {
+			return "", ErrInteractionWorkflowPrecondition
+		}
+		allowed = append([]string{}, input.Autonomy.AllowedEmployeeIDs...)
+	}
+	resolved, err := organization.ResolveReviewerAssignment(organization.ReviewerAssignmentRequest{
+		RequiredRole: interactionWorkflowReviewerRole, MakerEmployeeIDs: makerIDs,
+		AllowedEmployeeIDs: allowed, ProposedEmployeeID: explicitReviewerID,
+	}, inventory.Employees)
+	if err != nil {
+		return "", err
+	}
+	if resolved.Status != organization.AssignmentResolved || resolved.EmployeeID == nil {
+		return "", fmt.Errorf("%w: %s", ErrInteractionWorkflowReviewerRequired, resolved.Status)
+	}
+	return *resolved.EmployeeID, nil
+}
+
+func interactionReviewerIntent(plan ceoplan.Plan) ([]string, *string, error) {
+	makers := make([]string, 0, len(plan.ProposedTasks))
+	seenMakers := make(map[string]struct{}, len(plan.ProposedTasks))
+	var reviewerID *string
+	for _, proposed := range plan.ProposedTasks {
+		if strings.EqualFold(strings.TrimSpace(proposed.RequiredRole), interactionWorkflowReviewerRole) {
+			if proposed.AssigneeID == nil || strings.TrimSpace(*proposed.AssigneeID) == "" {
+				continue
+			}
+			candidate := strings.TrimSpace(*proposed.AssigneeID)
+			if reviewerID != nil && *reviewerID != candidate {
+				return nil, nil, ErrInteractionWorkflowReviewerRequired
+			}
+			reviewerID = &candidate
+			continue
+		}
+		if proposed.AssigneeID == nil || strings.TrimSpace(*proposed.AssigneeID) == "" {
+			return nil, nil, vault.ErrAssigneeMissing
+		}
+		makerID := strings.TrimSpace(*proposed.AssigneeID)
+		if _, exists := seenMakers[makerID]; !exists {
+			seenMakers[makerID] = struct{}{}
+			makers = append(makers, makerID)
+		}
+	}
+	if len(makers) == 0 {
+		return nil, nil, ErrInteractionWorkflowReviewerRequired
+	}
+	return makers, reviewerID, nil
+}
+
 func resolveAutonomyContract(ctx context.Context, input InteractionWorkflowPlanInput, reviewed ReviewedWorkflowPlan) (autonomy.Contract, error) {
 	store, err := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: input.VaultRoot, ProjectName: reviewed.ProjectName})
 	if err != nil {
@@ -290,7 +458,7 @@ func resolveAutonomyContract(ctx context.Context, input InteractionWorkflowPlanI
 			continue
 		}
 		if current.AssigneeID == nil || strings.TrimSpace(*current.AssigneeID) == "" {
-			return autonomy.Contract{}, ErrInteractionWorkflowPrecondition
+			return autonomy.Contract{}, vault.ErrAssigneeMissing
 		}
 		employeeIDs = append(employeeIDs, strings.TrimSpace(*current.AssigneeID))
 	}
