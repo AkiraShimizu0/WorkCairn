@@ -152,7 +152,14 @@ async function requestJSON(path, options = {}) {
   const payload = await response.json().catch(() => null);
   if (!response.ok || payload?.ok === false) {
     const code = payload?.error?.code || payload?.error || `HTTP_${response.status}`;
-    throw new APIError(String(code), response.status, payload?.error || payload);
+    // Synchronous commands (e.g. interaction.plan.generate) return their full
+    // typed result alongside the minimal error envelope on failure. Merge the
+    // Provider/parse diagnostics from that result into detail so showError()
+    // sees the same fields it already reads from polled async Command status.
+    const detail = payload?.error
+      ? { ...payload.error, provider_failure: commandProviderFailure(payload.result), parse_failure_reason: payload.result?.parse_failure_reason || null }
+      : payload;
+    throw new APIError(String(code), response.status, detail);
   }
   return payload && Object.hasOwn(payload, "result") ? payload.result : payload;
 }
@@ -226,6 +233,7 @@ function rememberError(error, title, commandID = state.activeCommandID) {
     stage: detail?.stage || "",
     command_id: detail?.command_id || commandID || "",
     request_id: detail?.provider_failure?.request_id || "",
+    parse_failure_reason: detail?.parse_failure_reason || "",
     recovery_required: Boolean(detail?.recovery_required),
     at: now(),
   };
@@ -233,7 +241,8 @@ function rememberError(error, title, commandID = state.activeCommandID) {
     const existing = JSON.parse(localStorage.getItem(errorStorageKey(sessionID)) || "null");
     if (existing && existing.session_version === snapshot.session_version && existing.title === snapshot.title &&
         existing.code === snapshot.code && existing.stage === snapshot.stage && existing.command_id === snapshot.command_id &&
-        existing.request_id === snapshot.request_id && existing.recovery_required === snapshot.recovery_required) {
+        existing.request_id === snapshot.request_id && existing.parse_failure_reason === snapshot.parse_failure_reason &&
+        existing.recovery_required === snapshot.recovery_required) {
       state.lastError = existing;
       return existing;
     }
@@ -271,6 +280,7 @@ async function copySanitizedError(error) {
     `Stage: ${error.stage || "—"}`,
     `Command ID: ${error.command_id || "—"}`,
     `Request ID: ${error.request_id || "—"}`,
+    `Parse reason: ${error.parse_failure_reason || "—"}`,
   ].join("\n");
   let copied = false;
   if (window.isSecureContext && navigator.clipboard?.writeText) {
@@ -406,6 +416,7 @@ function showError(error, title = "処理を完了できませんでした") {
   const reviewContractCopy = reviewContractFailures[code];
   const providerIssue = providerSetupRequired || providerGenerationFailed || Boolean(providerFailureCopy);
   const providerRequestID = detail?.provider_failure?.request_id;
+  const parseFailureReason = detail?.parse_failure_reason;
   const providerSettingsAction = providerSetupRequired || code === "PROVIDER_AUTHENTICATION_REQUIRED" || code === "PROVIDER_PERMISSION_DENIED";
   const pending = sessionStorage.getItem(STORAGE_PENDING);
   const errorRenderKey = `error:${JSON.stringify([remembered?.session_id || "", remembered?.session_version || 0, code, stage || "", remembered?.command_id || ""] )}`;
@@ -438,6 +449,7 @@ function showError(error, title = "処理を完了できませんでした") {
       node("strong", {}, code),
       stage ? node("div", {}, `stage: ${stage}`) : null,
       providerRequestID ? node("div", {}, `問い合わせID: ${providerRequestID}`) : null,
+      parseFailureReason ? node("div", {}, `parse reason: ${parseFailureReason}`) : null,
     ),
     node("div", { class: "button-row" },
       button(providerSettingsAction ? "AI Connectionsを開く" : (providerIssue ? "進め方の作成待ちへ戻る" : (pending ? "Command状態を再確認" : "状態を再確認")), "primary", () => providerSettingsAction ? openSettingsDialog() : (pending ? resumePendingCommand(pending) : refreshCurrent())),
@@ -719,6 +731,7 @@ function renderRememberedError(error) {
       approvalFacts([
         ["Error code", error.code], ["Stage", error.stage || "—"],
         ["Command ID", error.command_id || "未発行"], ["問い合わせID", error.request_id || "—"],
+        ["Parse reason", error.parse_failure_reason || "—"],
       ]),
     ),
     node("div", { class: "button-row" },
@@ -1182,6 +1195,7 @@ async function monitorAcceptedCommand(command) {
         recovery_required: record.state === "partial_failure",
 		command_id: command.command_id,
 		provider_failure: providerFailure,
+		parse_failure_reason: record.result?.parse_failure_reason || null,
       });
     }
     if (record.state !== "running") {

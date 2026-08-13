@@ -2,6 +2,7 @@ package ceoplan
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -150,6 +151,130 @@ func TestCEOPlanPromptIsDeterministicAndPreservesUnicodeJSON(t *testing.T) {
 	}
 	if want := `[{"department": "R&D <未来>", "id": "DEV-001", "role": "設計 \"Lead\""}]`; !strings.Contains(first.System, want) {
 		t.Fatalf("system does not preserve JSON: %s", first.System)
+	}
+}
+
+func TestCEOPlanPromptExampleIsValidAndOutputContractIsExplicit(t *testing.T) {
+	employees := []organization.Identity{{ID: "CONTENT-001", Department: "コンテンツ部", Role: "Content Writer"}}
+	built, err := BuildPrompt("依頼", employees)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(built.System, "JSONオブジェクトだけを返してください") ||
+		!strings.Contains(built.System, "code fence（```）、説明文を一切含めないでください") ||
+		!strings.Contains(built.System, "それ以外のfieldを一切追加しないでください") ||
+		!strings.Contains(built.System, "該当しない配列も省略せず、空配列[]として出力してください") {
+		t.Fatal("Prompt does not make the strict output contract explicit")
+	}
+	for _, heading := range []string{
+		"## 必須出力ルール（例外なし）", "## top-level fields", "## proposed_tasksの各要素",
+		"## assignment rules", "## dependency rules", "## 出力例",
+	} {
+		if !strings.Contains(built.System, heading) {
+			t.Fatalf("Prompt is missing section %q", heading)
+		}
+	}
+
+	exampleHeading := strings.Index(built.System, "## 出力例")
+	if exampleHeading < 0 {
+		t.Fatal("Prompt example section is missing")
+	}
+	relativeStart := strings.Index(built.System[exampleHeading:], "\n{")
+	if relativeStart < 0 {
+		t.Fatal("Prompt example JSON is missing")
+	}
+	example := strings.TrimSpace(built.System[exampleHeading+relativeStart:])
+
+	plan, err := ParseRunnerOutput(example, employees)
+	if err != nil {
+		t.Fatalf("Prompt example does not satisfy its own parser contract: %v", err)
+	}
+	if plan.ProjectName == "" || plan.Objective == "" || plan.Summary == "" || len(plan.ProposedTasks) != 1 {
+		t.Fatalf("Prompt example parsed unexpectedly: %#v", plan)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(example), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{
+		"project_name", "objective", "summary", "required_departments", "required_roles",
+		"assigned_existing_employees", "proposed_tasks", "risks", "ceo_questions",
+	} {
+		if _, exists := raw[key]; !exists {
+			t.Fatalf("Prompt example is missing top-level key %q", key)
+		}
+	}
+	for _, key := range []string{"assigned_existing_employees", "risks", "ceo_questions"} {
+		var list []any
+		if err := json.Unmarshal(raw[key], &list); err != nil || list == nil {
+			t.Fatalf("Prompt example key %q is not an explicit array: %s", key, raw[key])
+		}
+	}
+}
+
+func TestParseRunnerOutputClassifiesSanitizedParseFailureReasonWithoutRawText(t *testing.T) {
+	employees := []organization.Identity{{ID: "CONTENT-001", Department: "コンテンツ部", Role: "Content Writer"}}
+	secret := "PROVIDER_SECRET_MARKER_MUST_NOT_APPEAR_IN_REASON"
+	validCandidate := func(overrides ...func(map[string]any)) string {
+		candidate := map[string]any{
+			"project_name": "P", "objective": "O", "summary": "S",
+			"required_departments": []any{"D"}, "required_roles": []any{"Content Writer"},
+			"assigned_existing_employees": []any{},
+			"proposed_tasks": []any{map[string]any{
+				"title": "T", "required_role": "Content Writer", "assignee_id": nil,
+				"dependency_ids": []any{}, "rationale": "R",
+			}},
+			"risks": []any{}, "ceo_questions": []any{},
+		}
+		for _, override := range overrides {
+			override(candidate)
+		}
+		encoded, err := json.Marshal(candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(encoded)
+	}
+	tests := []struct {
+		name   string
+		output string
+		reason ParseFailureReason
+	}{
+		{"malformed JSON", "{" + secret, ParseFailureJSONDecodeFailed},
+		{"unknown field", validCandidate(func(c map[string]any) { c["extra_field"] = secret }), ParseFailureUnknownField},
+		{"trailing content", validCandidate() + secret, ParseFailureTrailingContent},
+		{"not an object", "null", ParseFailureObjectRequired},
+		{"missing required field", validCandidate(func(c map[string]any) { delete(c, "objective") }), ParseFailureMissingRequiredField},
+		{"invalid project name", validCandidate(func(c map[string]any) { c["project_name"] = "a/" + secret }), ParseFailureInvalidProjectName},
+		{"invalid task shape", validCandidate(func(c map[string]any) {
+			c["proposed_tasks"] = []any{map[string]any{"title": "T|" + secret, "required_role": "Content Writer", "assignee_id": nil, "dependency_ids": []any{}, "rationale": "R"}}
+		}), ParseFailureInvalidTaskShape},
+		{"invalid assignee", validCandidate(func(c map[string]any) { c["assigned_existing_employees"] = []any{"UNKNOWN-" + secret} }), ParseFailureInvalidAssignee},
+		{"invalid dependency", validCandidate(func(c map[string]any) {
+			c["proposed_tasks"] = []any{map[string]any{"title": "T", "required_role": "Content Writer", "assignee_id": nil, "dependency_ids": []any{"PROPOSED-999"}, "rationale": "R"}}
+		}), ParseFailureInvalidDependency},
+		{"dependency cycle", validCandidate(func(c map[string]any) {
+			c["proposed_tasks"] = []any{
+				map[string]any{"title": "T1", "required_role": "Content Writer", "assignee_id": nil, "dependency_ids": []any{"PROPOSED-002"}, "rationale": "R"},
+				map[string]any{"title": "T2", "required_role": "Content Writer", "assignee_id": nil, "dependency_ids": []any{"PROPOSED-001"}, "rationale": "R"},
+			}
+		}), ParseFailureDependencyCycle},
+	}
+	for _, current := range tests {
+		t.Run(current.name, func(t *testing.T) {
+			_, err := ParseRunnerOutput(current.output, employees)
+			var parseErr *ParseError
+			if !errors.As(err, &parseErr) {
+				t.Fatalf("error = %v, want *ParseError", err)
+			}
+			if parseErr.Reason != current.reason {
+				t.Fatalf("Reason = %q, want %q", parseErr.Reason, current.reason)
+			}
+			if strings.Contains(string(parseErr.Reason), secret) {
+				t.Fatalf("Reason leaked raw output content: %q", parseErr.Reason)
+			}
+		})
 	}
 }
 

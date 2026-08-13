@@ -230,6 +230,8 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"REVIEW_PROMPT_FAILED", "REVIEW_ROUTE_FAILED", "REVIEW_RESULT_INVALID", "reviewContractFailures",
 		"AIのレビュー結果を正しく解釈できませんでした。成果物は保持されています。",
 		"PROJECT_NAME_COLLISION", "同じ名前の仕事がすでにあります。新しい仕事として作成できませんでした。",
+		"parse_failure_reason", "Parse reason", "parseFailureReason",
+		"payload.result?.parse_failure_reason", "commandProviderFailure(payload.result)",
 		"interaction_plan_commit_cas", "同じ依頼の状態が先に更新されたため、この進め方は保存していません。",
 		"WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED", "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。",
 		"renderTimeline", "rememberError", "setBackgroundWorking", `requestJSON("/v1/workspace-status")`, "最初のAIチームを確認",
@@ -1367,6 +1369,94 @@ func TestMobileInteractionHTTPFlowSameRequestTwiceCreatesDistinctProjectsSafely(
 		if evidence.Deliverable == nil || len(evidence.Reviews) != 1 || evidence.Reviews[0].Decision.Verdict != "Approve" {
 			t.Fatalf("Project %q evidence = %#v", projectName, evidence)
 		}
+	}
+}
+
+// TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand
+// exercises the real daemon/process composition when the Runner's CEO Plan
+// response violates the typed Plan contract (malformed JSON, a realistic
+// Claude Sonnet 5 slip) instead of the Provider transport layer. It verifies
+// the outer interaction.plan.generate Command surfaces the same
+// INTERACTION_PLAN_FAILED/ceo_plan_parser classification and a sanitized
+// parse_failure_reason. Valid CEO Plan generation is already exercised end
+// to end by TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion.
+func TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand(t *testing.T) {
+	root := t.TempDir()
+	for _, directory := range []string{"社員", "プロジェクト"} {
+		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "社員", "山本 真帆.md"), []byte("---\nid: PLAN-001\ndepartment: 企画部\nrole: Product Manager\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	providerCalls := 0
+	providerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/messages" {
+			t.Fatalf("unexpected mock Provider request path=%s", request.URL.Path)
+		}
+		providerCalls++
+		// Realistic Claude Sonnet 5 contract slip: prose instead of the
+		// required bare JSON object.
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"model": "claude-mobile-test", "content": []map[string]string{{"type": "text", "text": "承知しました。計画を検討します。"}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer providerServer.Close()
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{
+		APIKey: "fake-mobile-key", BaseURL: providerServer.URL,
+	}, providerServer.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(executor, executor)
+	base := time.Date(2026, time.August, 10, 9, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	sessionID := "SESSION-MOBILE-MALFORMED-PLAN-001"
+
+	planRequest := map[string]any{
+		"version": InteractionContractVersion, "session_id": sessionID, "request": "りんごについて100文字程度で説明して",
+		"model": "Claude Sonnet 5", "current_time": base,
+	}
+	planResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-plans", planRequest)
+	var startPlan workspaceprocess.InteractionStartPlan
+	decodeHTTPResult(t, planResponse, &startPlan)
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-PLAN-START", "operation": "interaction.start", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "request": planRequest["request"], "request_digest": startPlan.Session.RequestDigest, "model": planRequest["model"], "current_time": base},
+	})
+
+	generateResponse := performCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-PLAN-GENERATE", "operation": "interaction.plan.generate", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "expected_version": 1, "current_time": base.Add(time.Minute)},
+	})
+	var envelope Response
+	if err := json.Unmarshal(generateResponse.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.OK || envelope.Error == nil || envelope.Error.Code != "INTERACTION_PLAN_FAILED" || envelope.Error.Stage != "ceo_plan_parser" {
+		t.Fatalf("plan generation response = %#v", envelope)
+	}
+	var syncResult workspaceprocess.InteractionPlanResult
+	if err := json.Unmarshal(envelope.Result, &syncResult); err != nil || syncResult.ParseFailureReason == "" {
+		t.Fatalf("synchronous response result = %#v, %v", syncResult, err)
+	}
+	if providerCalls != 1 {
+		t.Fatalf("providerCalls = %d, want 1", providerCalls)
+	}
+
+	statusResponse := httptest.NewRecorder()
+	handler.ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/v1/commands/CMD-MOBILE-MALFORMED-PLAN-GENERATE?scope=workspace", nil))
+	var record commandledger.Record
+	decodeHTTPResult(t, statusResponse, &record)
+	if record.State != commandledger.StateFailed || record.Failure == nil ||
+		record.Failure.Code != "INTERACTION_PLAN_FAILED" || record.Failure.Stage != "ceo_plan_parser" {
+		t.Fatalf("outer Command status = %#v", record)
+	}
+	var storedResult workspaceprocess.InteractionPlanResult
+	if err := json.Unmarshal(record.Result, &storedResult); err != nil || storedResult.ParseFailureReason == "" || storedResult.SessionCommitted {
+		t.Fatalf("stored parse failure reason = %#v, %v", storedResult, err)
 	}
 }
 

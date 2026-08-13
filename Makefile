@@ -29,6 +29,7 @@ public-beta-smoke:
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/httpapi -run '^TestMobileInteractionHTTPFlowRequestChangesRevisionReReviewToCompletion$$'
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/httpapi -run '^TestMobileInteractionHTTPFlowMalformedReviewResponseClassifiesOuterCommand$$'
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/httpapi -run '^TestMobileInteractionHTTPFlowSameRequestTwiceCreatesDistinctProjectsSafely$$'
+	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/httpapi -run '^TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand$$'
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/runtime -run '^TestRuntimeCompletesTemporaryVaultExecutionWithDeliverableAndAudit$$'
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/process -run '^TestReviewedWorkflowTemporaryVaultRequestChangesRevisionReReviewAndReplay$$'
 

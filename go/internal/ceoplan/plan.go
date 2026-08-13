@@ -20,6 +20,42 @@ var (
 	ErrInvalidPlan    = errors.New("invalid CEO plan")
 )
 
+// ParseFailureReason is a sanitized, non-identifying classification of why a
+// Runner's raw output failed the CEO Plan contract. It never carries raw
+// Provider text, so it can be retained for diagnostics after the raw output
+// itself is discarded. It classifies existing ParseRunnerOutput/
+// NormalizeCandidate validation branches; it does not add new validation.
+type ParseFailureReason string
+
+const (
+	ParseFailureJSONDecodeFailed     ParseFailureReason = "json_decode_failed"
+	ParseFailureUnknownField         ParseFailureReason = "unknown_field"
+	ParseFailureTrailingContent      ParseFailureReason = "trailing_content"
+	ParseFailureObjectRequired       ParseFailureReason = "object_required"
+	ParseFailureMissingRequiredField ParseFailureReason = "missing_required_field"
+	ParseFailureInvalidProjectName   ParseFailureReason = "invalid_project_name"
+	ParseFailureInvalidTaskShape     ParseFailureReason = "invalid_task_shape"
+	ParseFailureInvalidAssignee      ParseFailureReason = "invalid_assignee"
+	ParseFailureInvalidDependency    ParseFailureReason = "invalid_dependency"
+	ParseFailureDependencyCycle      ParseFailureReason = "dependency_cycle"
+)
+
+// ParseError pairs ErrInvalidOutput/ErrInvalidPlan with a sanitized
+// ParseFailureReason. The wrapped error keeps the existing human-readable
+// text for diagnostics; the Reason is the stable, machine-classifiable
+// field callers should persist.
+type ParseError struct {
+	Reason ParseFailureReason
+	err    error
+}
+
+func (parseErr *ParseError) Error() string { return parseErr.err.Error() }
+func (parseErr *ParseError) Unwrap() error { return parseErr.err }
+
+func newParseError(reason ParseFailureReason, err error) *ParseError {
+	return &ParseError{Reason: reason, err: err}
+}
+
 type ProposedTask struct {
 	ProposalID    string   `json:"proposal_id"`
 	Title         string   `json:"title"`
@@ -71,13 +107,17 @@ func ParseRunnerOutput(content string, employees []organization.Identity) (Plan,
 	decoder.DisallowUnknownFields()
 	var candidate candidatePlan
 	if err := decoder.Decode(&candidate); err != nil {
-		return Plan{}, fmt.Errorf("%w: JSON object", ErrInvalidOutput)
+		reason := ParseFailureJSONDecodeFailed
+		if strings.Contains(err.Error(), "unknown field") {
+			reason = ParseFailureUnknownField
+		}
+		return Plan{}, newParseError(reason, fmt.Errorf("%w: JSON object", ErrInvalidOutput))
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return Plan{}, fmt.Errorf("%w: trailing data", ErrInvalidOutput)
+		return Plan{}, newParseError(ParseFailureTrailingContent, fmt.Errorf("%w: trailing data", ErrInvalidOutput))
 	}
 	if first := bytes.TrimSpace([]byte(content)); len(first) == 0 || first[0] != '{' {
-		return Plan{}, fmt.Errorf("%w: object required", ErrInvalidOutput)
+		return Plan{}, newParseError(ParseFailureObjectRequired, fmt.Errorf("%w: object required", ErrInvalidOutput))
 	}
 	return NormalizeCandidate(candidate, employees)
 }
@@ -89,46 +129,46 @@ func NormalizeCandidate(candidate candidatePlan, employees []organization.Identi
 	}
 	projectName, err := requiredText(candidate.ProjectName, "project_name")
 	if err != nil || strings.ContainsAny(projectName, "/\\\r\n|") || projectName == "." || projectName == ".." {
-		return Plan{}, fmt.Errorf("%w: project_name", ErrInvalidPlan)
+		return Plan{}, newParseError(ParseFailureInvalidProjectName, fmt.Errorf("%w: project_name", ErrInvalidPlan))
 	}
 	objective, err := requiredText(candidate.Objective, "objective")
 	if err != nil {
-		return Plan{}, err
+		return Plan{}, newParseError(ParseFailureMissingRequiredField, err)
 	}
 	summary, err := requiredText(candidate.Summary, "summary")
 	if err != nil {
-		return Plan{}, err
+		return Plan{}, newParseError(ParseFailureMissingRequiredField, err)
 	}
 	departments, err := requiredStringList(candidate.RequiredDepartments, "required_departments")
 	if err != nil {
-		return Plan{}, err
+		return Plan{}, newParseError(ParseFailureMissingRequiredField, err)
 	}
 	requiredRoles, err := requiredStringList(candidate.RequiredRoles, "required_roles")
 	if err != nil {
-		return Plan{}, err
+		return Plan{}, newParseError(ParseFailureMissingRequiredField, err)
 	}
 	assigned, err := knownEmployeeIDs(candidate.AssignedExistingEmployees, employeesByID)
 	if err != nil {
-		return Plan{}, err
+		return Plan{}, newParseError(ParseFailureInvalidAssignee, err)
 	}
 	if len(candidate.ProposedTasks) == 0 {
-		return Plan{}, fmt.Errorf("%w: proposed_tasks", ErrInvalidPlan)
+		return Plan{}, newParseError(ParseFailureMissingRequiredField, fmt.Errorf("%w: proposed_tasks", ErrInvalidPlan))
 	}
 	tasks := make([]ProposedTask, 0, len(candidate.ProposedTasks))
 	for index, candidateTask := range candidate.ProposedTasks {
 		title, err := requiredText(candidateTask.Title, "task title")
 		if err != nil || strings.ContainsAny(title, "\r\n|") {
-			return Plan{}, fmt.Errorf("%w: task title", ErrInvalidPlan)
+			return Plan{}, newParseError(ParseFailureInvalidTaskShape, fmt.Errorf("%w: task title", ErrInvalidPlan))
 		}
 		rationale, err := requiredText(candidateTask.Rationale, "task rationale")
 		if err != nil {
-			return Plan{}, err
+			return Plan{}, newParseError(ParseFailureMissingRequiredField, err)
 		}
 		assignment, err := organization.ResolveTaskAssignment(organization.AssignmentRequest{
 			RequiredRole: candidateTask.RequiredRole, ProposedEmployeeID: candidateTask.AssigneeID,
 		}, employees)
 		if err != nil {
-			return Plan{}, fmt.Errorf("%w: task assignment: %v", ErrInvalidPlan, err)
+			return Plan{}, newParseError(ParseFailureInvalidAssignee, fmt.Errorf("%w: task assignment: %v", ErrInvalidPlan, err))
 		}
 		requiredRole := assignment.RequiredRole
 		assignee := cloneString(assignment.EmployeeID)
@@ -140,7 +180,7 @@ func NormalizeCandidate(candidate candidatePlan, employees []organization.Identi
 		}
 		dependencies, err := optionalStringList(candidateTask.DependencyIDs, "dependency_ids")
 		if err != nil {
-			return Plan{}, err
+			return Plan{}, newParseError(ParseFailureInvalidDependency, err)
 		}
 		tasks = append(tasks, ProposedTask{
 			ProposalID: fmt.Sprintf("PROPOSED-%03d", index+1), Title: title,
@@ -158,11 +198,11 @@ func NormalizeCandidate(candidate candidatePlan, employees []organization.Identi
 	}
 	risks, err := optionalStringList(candidate.Risks, "risks")
 	if err != nil {
-		return Plan{}, err
+		return Plan{}, newParseError(ParseFailureMissingRequiredField, err)
 	}
 	questions, err := optionalStringList(candidate.CEOQuestions, "ceo_questions")
 	if err != nil {
-		return Plan{}, err
+		return Plan{}, newParseError(ParseFailureMissingRequiredField, err)
 	}
 	return Plan{
 		ProjectName: projectName, Objective: objective, Summary: summary,
@@ -236,7 +276,7 @@ func validateDependencyGraph(tasks []ProposedTask) error {
 		seen := map[string]bool{}
 		for _, dependencyID := range dependencies {
 			if _, exists := graph[dependencyID]; !exists || dependencyID == id || seen[dependencyID] {
-				return fmt.Errorf("%w: dependency %s", ErrInvalidPlan, dependencyID)
+				return newParseError(ParseFailureInvalidDependency, fmt.Errorf("%w: dependency %s", ErrInvalidPlan, dependencyID))
 			}
 			seen[dependencyID] = true
 		}
@@ -245,7 +285,7 @@ func validateDependencyGraph(tasks []ProposedTask) error {
 	var visit func(string) error
 	visit = func(id string) error {
 		if states[id] == 1 {
-			return fmt.Errorf("%w: cyclic dependencies", ErrInvalidPlan)
+			return newParseError(ParseFailureDependencyCycle, fmt.Errorf("%w: cyclic dependencies", ErrInvalidPlan))
 		}
 		if states[id] == 2 {
 			return nil

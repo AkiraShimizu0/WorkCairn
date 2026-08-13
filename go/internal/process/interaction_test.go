@@ -351,7 +351,8 @@ func TestInteractionPlanRecordsSafeParserSubstageWithoutCommittingPlan(t *testin
 	}, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
 	var recorded *RecordedCommandError
 	if !errors.As(err, &recorded) || recorded.Code != "INTERACTION_PLAN_FAILED" || recorded.Stage != "ceo_plan_parser" ||
-		recorded.Partial || providerCalls != 1 || result.ProviderFailure != nil || result.SessionCommitted {
+		recorded.Partial || providerCalls != 1 || result.ProviderFailure != nil || result.SessionCommitted ||
+		result.ParseFailureReason != string(ceoplan.ParseFailureJSONDecodeFailed) {
 		t.Fatalf("parser failure = %#v, result=%#v, calls=%d, err=%v", recorded, result, providerCalls, err)
 	}
 	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
@@ -359,6 +360,10 @@ func TestInteractionPlanRecordsSafeParserSubstageWithoutCommittingPlan(t *testin
 	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil ||
 		record.Failure.Stage != "ceo_plan_parser" {
 		t.Fatalf("parser failure Ledger = %#v, %v", record, ledgerErr)
+	}
+	var storedResult InteractionPlanResult
+	if json.Unmarshal(record.Result, &storedResult) != nil || storedResult.ParseFailureReason != string(ceoplan.ParseFailureJSONDecodeFailed) {
+		t.Fatalf("stored parse failure reason = %#v", storedResult)
 	}
 	stored, inspectErr := InspectInteraction(context.Background(), root, start.SessionID)
 	if inspectErr != nil || stored.Version != 1 || stored.State != interaction.StatePlanGenerationApprovalRequired || len(stored.Turns) != 0 {

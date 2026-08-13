@@ -9,6 +9,7 @@ import (
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
@@ -47,6 +48,10 @@ type InteractionPlanResult struct {
 	SessionCommitted bool                  `json:"session_committed"`
 	Generation       service.CEOPlanResult `json:"generation"`
 	ProviderFailure  *ProviderFailure      `json:"provider_failure,omitempty"`
+	// ParseFailureReason is set only when generation failed at the
+	// ceo_plan_parser stage. It is a sanitized ceoplan.ParseFailureReason
+	// value, never raw Provider text.
+	ParseFailureReason string `json:"parse_failure_reason,omitempty"`
 }
 
 // ProviderFailure is redacted diagnostic evidence derived from a typed
@@ -186,7 +191,10 @@ func ExecuteInteractionPlanGeneration(
 		VaultRoot: input.VaultRoot, Request: request, Model: record.Model, Approved: true,
 	}, provider, httpClient)
 	if generationErr != nil {
-		result := InteractionPlanResult{Session: record, Generation: generation, ProviderFailure: providerFailure(generationErr)}
+		result := InteractionPlanResult{
+			Session: record, Generation: generation, ProviderFailure: providerFailure(generationErr),
+			ParseFailureReason: ceoPlanParseFailureReason(generationErr),
+		}
 		return finishInteractionPlan(ctx, claim, result, generationErr, interactionPlanGenerationStage(generationErr), false)
 	}
 	next, err := record.RecordPlan(generation.Plan, input.CurrentTime)
@@ -211,6 +219,18 @@ func interactionPlanGenerationStage(err error) string {
 		return string(planError.Stage)
 	}
 	return "interaction_plan_generation"
+}
+
+// ceoPlanParseFailureReason extracts the sanitized ceoplan.ParseFailureReason
+// from a CEO Plan generation failure, when the underlying cause was a
+// *ceoplan.ParseError (ceo_plan_parser stage). It returns "" for every other
+// failure kind (Provider, prompt build, runner).
+func ceoPlanParseFailureReason(err error) string {
+	var parseErr *ceoplan.ParseError
+	if !errors.As(err, &parseErr) {
+		return ""
+	}
+	return string(parseErr.Reason)
 }
 
 func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, result InteractionPlanResult, err error, stage string, partial bool) (InteractionPlanResult, error) {
