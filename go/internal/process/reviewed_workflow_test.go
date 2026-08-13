@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,6 +169,59 @@ func TestReviewedWorkflowNewApprovedCommandContinuesCommittedRevisionAfterLimit(
 	if err != nil || continued.Status != "completed" || len(continued.Tasks) != 2 ||
 		continued.Tasks[0].TaskID != "TASK-003" || !continued.Tasks[0].Targeted || continued.Tasks[1].TaskID != "TASK-002" || calls != len(outputs) {
 		t.Fatalf("continued run = %#v, %v calls=%d", continued, err, calls)
+	}
+}
+
+func TestReviewedWorkflowReviewProviderFailureClassifiesOuterCommandAndPreservesEvidence(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	calls := 0
+	client := httpDoerFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			encoded, _ := json.Marshal(map[string]any{
+				"model": "claude-test", "content": []map[string]string{{"type": "text", "text": "# TASK-001 deliverable\n\n本文"}},
+				"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+			})
+			return &http.Response{
+				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(string(encoded))),
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests, Header: http.Header{"Request-Id": []string{"req_review_safe"}},
+			Body: io.NopCloser(strings.NewReader(`{"type":"error","error":{"type":"rate_limit_error","message":"must not persist"}}`)),
+		}, nil
+	})
+	input := ExecuteReviewedWorkflowInput{
+		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
+			WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+			ReviewerID:        "QA-001",
+		},
+		Approved: true, ApprovalReference: "approval-review-provider-failure", CommandID: "CMD-REVIEWED-REVIEW-PROVIDER-FAILURE", MaxTasks: 10,
+	}
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}
+	result, err := ExecuteReviewedWorkflow(context.Background(), input, provider, client)
+	if err == nil || result.Status != "partial_failure" || len(result.Tasks) != 1 {
+		t.Fatalf("ExecuteReviewedWorkflow() = %#v, %v", result, err)
+	}
+	current := result.Tasks[0]
+	if current.TaskID != "TASK-001" || current.Review == nil || current.Review.ProviderFailure == nil ||
+		current.Review.ProviderFailure.Category != "rate_limited" || current.Review.ProviderFailure.RequestID != "req_review_safe" {
+		t.Fatalf("Review Provider failure = %#v", current.Review)
+	}
+	// The outer reviewed Workflow Command must classify the specific Provider
+	// failure it inherited from the Review child instead of staying at the
+	// generic REVIEWED_WORKFLOW_FAILED/review pair, which gives the CEO no
+	// actionable diagnostic on the real device.
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, getErr := ledger.Get(context.Background(), input.CommandID)
+	if getErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
+		record.Failure.Code != "PROVIDER_RATE_LIMITED" || record.Failure.Stage != "review" {
+		t.Fatalf("outer reviewed Workflow Ledger = %#v, %v", record, getErr)
 	}
 }
 

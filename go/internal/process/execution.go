@@ -102,7 +102,23 @@ func ExecuteTask(
 		return claim.replay.result, claim.replay.err
 	}
 	result, executionErr := executeClaimedTask(ctx, input, provider, httpClient, approvalSource)
+	result.ProviderFailure = executionProviderFailure(executionErr)
 	return result, finishExecutionCommand(ctx, claim, result, executionErr)
+}
+
+func executionProviderFailure(err error) *execution.ProviderFailure {
+	var failure *claude.Error
+	if !errors.As(err, &failure) {
+		return nil
+	}
+	category := failure.Category
+	if category == "" {
+		category = claude.FailureUnknown
+	}
+	return &execution.ProviderFailure{
+		Category: string(category), HTTPStatus: failure.StatusCode,
+		ProviderType: failure.ProviderType, RequestID: failure.RequestID,
+	}
 }
 
 type executionCommandReplay struct {

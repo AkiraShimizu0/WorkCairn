@@ -320,7 +320,8 @@ func TestInteractionProviderSuccessThenSessionCASConflictIsPartialFailure(t *tes
 		CurrentTime: at.Add(time.Minute), CommandID: "CMD-INTERACTION-PARTIAL-PLAN",
 	}, ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}, client, true)
 	var recorded *RecordedCommandError
-	if !errors.As(err, &recorded) || !recorded.Partial || result.SessionCommitted || result.Generation.Plan.ProjectName != fixture.ExpectedPlan.ProjectName {
+	if !errors.As(err, &recorded) || !recorded.Partial || recorded.Code != "INTERACTION_PLAN_FAILED" ||
+		recorded.Stage != "interaction_plan_commit_cas" || result.SessionCommitted || result.Generation.Plan.ProjectName != fixture.ExpectedPlan.ProjectName {
 		t.Fatalf("partial generation = %#v, %v", result, err)
 	}
 	stored, _ := InspectInteraction(context.Background(), root, start.SessionID)
@@ -330,7 +331,8 @@ func TestInteractionProviderSuccessThenSessionCASConflictIsPartialFailure(t *tes
 	}
 	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
 	record, getErr := ledger.Get(context.Background(), "CMD-INTERACTION-PARTIAL-PLAN")
-	if getErr != nil || record.State != commandledger.StatePartialFailure {
+	if getErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
+		record.Failure.Code != "INTERACTION_PLAN_FAILED" || record.Failure.Stage != "interaction_plan_commit_cas" {
 		t.Fatalf("Ledger = %#v, %v", record, getErr)
 	}
 }

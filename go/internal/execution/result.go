@@ -40,5 +40,15 @@ type Result struct {
 	Usage           worker.TokenUsage        `json:"usage"`
 	Duration        time.Duration            `json:"duration"`
 	FailureReason   string                   `json:"failure_reason,omitempty"`
+	ProviderFailure *ProviderFailure         `json:"provider_failure,omitempty"`
 	Held            bool                     `json:"held"`
+}
+
+// ProviderFailure is the redacted Provider diagnostic retained when Worker
+// execution reaches a Runner and fails before a Deliverable is committed.
+type ProviderFailure struct {
+	Category     string `json:"category"`
+	HTTPStatus   int    `json:"http_status,omitempty"`
+	ProviderType string `json:"provider_type,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
 }

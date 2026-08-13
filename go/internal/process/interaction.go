@@ -195,7 +195,14 @@ func ExecuteInteractionPlanGeneration(
 	}
 	commit, commitErr := interactionService.Update(ctx, next, record.Version)
 	result := InteractionPlanResult{Session: commit.Record, SessionCommitted: commit.Committed, Generation: generation}
-	return finishInteractionPlan(ctx, claim, result, commitErr, "interaction_plan_commit", commitErr != nil)
+	return finishInteractionPlan(ctx, claim, result, commitErr, interactionPlanCommitStage(commitErr), commitErr != nil)
+}
+
+func interactionPlanCommitStage(err error) string {
+	if errors.Is(err, interaction.ErrVersionConflict) {
+		return "interaction_plan_commit_cas"
+	}
+	return "interaction_plan_commit"
 }
 
 func interactionPlanGenerationStage(err error) string {

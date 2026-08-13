@@ -2,7 +2,9 @@ package process
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -153,6 +155,43 @@ func TestExecuteTaskComposesTemporaryVaultAndMockProvider(t *testing.T) {
 	conflict.ApprovalReference = "different-approved-request"
 	if _, err := ExecuteTask(context.Background(), conflict, provider, server.Client()); !errors.Is(err, commandledger.ErrRequestConflict) || providerCalls != 1 {
 		t.Fatalf("conflicting Command ID error = %v, providerCalls=%d", err, providerCalls)
+	}
+}
+
+func TestExecuteTaskRecordsRedactedProviderFailureBeforeDeliverable(t *testing.T) {
+	root := writePlanVault(t)
+	client := httpDoerFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     http.Header{"Request-Id": []string{"req_task_safe"}},
+			Body:       io.NopCloser(strings.NewReader(`{"type":"error","error":{"type":"rate_limit_error","message":"must not persist"}}`)),
+		}, nil
+	})
+	input := ExecuteTaskInput{
+		ExecutionPlanInput: planInput(root), Approved: true, ApprovalSource: "process-test",
+		ApprovalReference: "approval-provider-failure", ExecutionID: "EXEC-PROVIDER-FAILURE", CommandID: "CMD-PROVIDER-FAILURE",
+	}
+	result, err := ExecuteTask(context.Background(), input, ClaudeProcessConfig{
+		APIKey: "fake-api-key", ProviderModel: "claude-sonnet-5", BaseURL: "https://provider.invalid",
+	}, client)
+	if err == nil || result.ProviderFailure == nil || result.ProviderFailure.Category != "rate_limited" ||
+		result.ProviderFailure.HTTPStatus != http.StatusTooManyRequests || result.ProviderFailure.ProviderType != "rate_limit_error" ||
+		result.ProviderFailure.RequestID != "req_task_safe" || result.Deliverable != nil || result.FinalTaskStatus != task.StatusOnHold ||
+		!result.Held || result.FailureReason != "worker_execution_failed_runner_failed" {
+		t.Fatalf("Provider failure result = %#v, %v", result, err)
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, ledgerErr := ledger.Get(context.Background(), input.CommandID)
+	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil || record.Failure.Stage != "worker" ||
+		strings.Contains(string(record.Result), "must not persist") {
+		t.Fatalf("Provider failure Ledger = %#v, %v", record, ledgerErr)
+	}
+	var stored execution.Result
+	if json.Unmarshal(record.Result, &stored) != nil || stored.ProviderFailure == nil || stored.ProviderFailure.RequestID != "req_task_safe" {
+		t.Fatalf("stored Provider failure = %#v", stored.ProviderFailure)
 	}
 }
 

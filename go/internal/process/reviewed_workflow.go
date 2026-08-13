@@ -148,6 +148,7 @@ func ExecuteReviewedWorkflow(
 		return review.OrchestrationResult{
 			Status: executed.Status, Execution: executed.Execution, Artifact: executed.Artifact,
 			EventID: executed.EventID, EventPublished: executed.EventPublished,
+			ProviderFailure: reviewOrchestrationProviderFailure(executed.ProviderFailure),
 		}, reviewErr
 	})
 	reviser := reviewedWorkflowReviserFunc(func(runContext context.Context, sourceTaskID, childCommandID string) (revision.Result, error) {
@@ -169,7 +170,46 @@ func ExecuteReviewedWorkflow(
 	if errors.As(runErr, &typed) {
 		stage = typed.Stage
 	}
-	return result, finishDurableCommand(ctx, claim, result, runErr, "REVIEWED_WORKFLOW_FAILED", stage, len(result.Tasks) > 0)
+	code := "REVIEWED_WORKFLOW_FAILED"
+	if runErr != nil {
+		code = reviewedWorkflowFailureCode(result, stage)
+	}
+	return result, finishDurableCommand(ctx, claim, result, runErr, code, stage, len(result.Tasks) > 0)
+}
+
+// reviewOrchestrationProviderFailure carries the redacted Provider diagnostic
+// computed for a Review child Command into the reviewed Workflow result so it
+// is not silently dropped at the Service-layer OrchestrationResult boundary.
+func reviewOrchestrationProviderFailure(failure *ProviderFailure) *review.ProviderFailure {
+	if failure == nil {
+		return nil
+	}
+	return &review.ProviderFailure{
+		Category: failure.Category, HTTPStatus: failure.HTTPStatus,
+		ProviderType: failure.ProviderType, RequestID: failure.RequestID,
+	}
+}
+
+// reviewedWorkflowFailureCode classifies the outer Command failure using the
+// redacted Provider diagnostic of the Task or Review child that failed, when
+// available, instead of the generic REVIEWED_WORKFLOW_FAILED code. Structural
+// failures (assignment, parsing, revision, plan) keep the generic code.
+func reviewedWorkflowFailureCode(result service.ReviewedWorkflowRunResult, stage string) string {
+	if len(result.Tasks) == 0 {
+		return "REVIEWED_WORKFLOW_FAILED"
+	}
+	last := result.Tasks[len(result.Tasks)-1]
+	switch stage {
+	case "task_execute":
+		if last.Execution.ProviderFailure != nil {
+			return providerFailureCode(last.Execution.ProviderFailure.Category)
+		}
+	case "review":
+		if last.Review != nil && last.Review.ProviderFailure != nil {
+			return providerFailureCode(last.Review.ProviderFailure.Category)
+		}
+	}
+	return "REVIEWED_WORKFLOW_FAILED"
 }
 
 func planReviewedWorkflowStep(ctx context.Context, input WorkflowPlanInput) (service.WorkflowStepPlan, error) {

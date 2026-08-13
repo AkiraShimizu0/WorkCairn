@@ -198,6 +198,10 @@ h3 { margin-bottom: 7px; font-size: 18px; }
 
 .action-card.attention::before { background: var(--red); }
 .action-card.complete::before { background: #43866f; }
+.action-card.working::before { background: #2a946f; animation: working-line 1.8s ease-in-out infinite; }
+.working-label { gap: 5px; }
+
+@keyframes working-line { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
 
 .step-label {
   display: inline-flex;
@@ -490,6 +494,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 .setup-people { display: grid; gap: 7px; margin-top: 11px; }
 .setup-person { display: flex; justify-content: space-between; gap: 10px; padding: 9px 10px; border-radius: 11px; background: var(--paper); font-size: 11px; }
 .setup-actions { display: grid; gap: 9px; margin-top: 14px; }
+.copy-detail { width: 100%; min-height: 150px; resize: vertical; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); color: var(--ink); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 .busy-overlay { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 24px; background: rgba(244,241,232,.82); backdrop-filter: blur(8px); }
 .busy-card { width: min(100%, 320px); padding: 26px; border-radius: 22px; text-align: center; background: #fff; box-shadow: var(--shadow); }

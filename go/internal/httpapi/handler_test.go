@@ -25,6 +25,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/metrics"
 	"github.com/AkiraShimizu0/workcairn/go/internal/notification"
 	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
+	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
@@ -226,9 +227,15 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"PROVIDER_AUTHENTICATION_REQUIRED", "PROVIDER_BILLING_REQUIRED", "PROVIDER_PERMISSION_DENIED",
 		"PROVIDER_REQUEST_INVALID", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "provider_failure",
 		"PROVIDER_RESPONSE_INVALID", "ceo_plan_parser", "進め方は保存・適用されていません", "WORKFLOW_TASK_ASSIGNMENT_REQUIRED",
+		"interaction_plan_commit_cas", "同じ依頼の状態が先に更新されたため、この進め方は保存していません。",
 		"WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED", "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。",
 		"renderTimeline", "rememberError", "setBackgroundWorking", `requestJSON("/v1/workspace-status")`, "最初のAIチームを確認",
 		`requestJSON("/v1/local-setup/claude"`, `requestJSON("/v1/local-setup/reveal-workspace"`, "会社を始める",
+		"state.commandInFlight", "同じ処理を実行中です", "window.isSecureContext", `document.execCommand("copy")`, "showManualCopy",
+		"選択内容をコピー", "Error code:", "Stage:", "Command ID:", "Request ID:",
+		"renderInFlight", "storedPendingCommand", "進め方を考えています", "AI社員が仕事を進めています",
+		"QA担当が確認しています", "指摘内容を修正しています", "この画面を閉じても処理はMacで続きます。",
+		"commandProviderFailure", "task?.execution?.provider_failure",
 		"state.renderKey === key", "state.detailRenderKey === key", "state.timelineRenderKey === key",
 	} {
 		if !strings.Contains(asset.Body.String(), required) {
@@ -245,6 +252,54 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 	for _, forbidden := range []string{`name="model"`, `type="password"`, "利用モデル"} {
 		if strings.Contains(index.Body.String(), forbidden) {
 			t.Fatalf("mobile UI still asks for per-request model selection %q", forbidden)
+		}
+	}
+}
+
+func TestEmbeddedWebUIProjectsAcceptedCommandAsInFlightUntilTerminal(t *testing.T) {
+	content, err := webUI.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	storage := strings.Index(script, "sessionStorage.setItem(STORAGE_PENDING")
+	render := strings.Index(script, "renderInFlight(command);")
+	submit := strings.Index(script, `requestJSON("/v1/commands"`)
+	if storage < 0 || render < storage || submit < render {
+		t.Fatalf("accepted Command is not projected before submission: storage=%d render=%d submit=%d", storage, render, submit)
+	}
+	pendingProjection := strings.Index(script, "if (pendingForSession)")
+	nextActionSwitch := strings.Index(script, "switch (next.kind)")
+	if pendingProjection < 0 || nextActionSwitch < pendingProjection ||
+		!strings.Contains(script[pendingProjection:nextActionSwitch], "return renderInFlight(pendingCommand)") {
+		t.Fatal("polling can restore the submitted Next Action while its Command is pending")
+	}
+	if !strings.Contains(script, "pendingInForeground") || !strings.Contains(script, "Boolean(storedPendingCommand()) && company") {
+		t.Fatal("in-flight work is not reduced to the background indicator outside My Actions")
+	}
+	terminal := strings.Index(script, `if (record.state === "succeeded")`)
+	terminalEnd := strings.Index(script[terminal:], `if (record.state === "failed"`)
+	if terminal < 0 || terminalEnd < 0 || !strings.Contains(script[terminal:terminal+terminalEnd], "sessionStorage.removeItem(STORAGE_PENDING)") ||
+		!strings.Contains(script[terminal:terminal+terminalEnd], `state.renderKey = ""`) {
+		t.Fatal("successful terminal Command does not clear the in-flight projection before the next refresh")
+	}
+}
+
+func TestCommandProviderFailureProjectionFindsReviewedWorkflowTaskFailure(t *testing.T) {
+	content, err := webUI.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	start := strings.Index(script, "function commandProviderFailure(result)")
+	end := strings.Index(script[start:], "function storedPendingCommand()")
+	if start < 0 || end < 0 {
+		t.Fatal("Provider failure projection is missing")
+	}
+	projection := script[start : start+end]
+	for _, required := range []string{"result?.provider_failure", "result?.workflow?.tasks", "task?.execution?.provider_failure"} {
+		if !strings.Contains(projection, required) {
+			t.Fatalf("Provider failure projection does not inspect %q", required)
 		}
 	}
 }
@@ -896,6 +951,144 @@ func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(
 		report.Attention.CompanySteps != 4 || report.Attention.DelegatedSteps != 2 ||
 		report.Attention.ClarificationQuestions != 1 || report.Attention.ApprovalMoments != 5 || !report.Attention.NoActionNeeded {
 		t.Fatalf("Work Report = %#v", report)
+	}
+}
+
+// TestMobileInteractionHTTPFlowRequestChangesRevisionReReviewToCompletion
+// exercises the same real daemon/process composition as
+// TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion
+// but through the Request Changes -> Revision -> re-Review branch, which the
+// Approve-only smoke test never reaches even though it is a required step of
+// the Public Beta happy path.
+func TestMobileInteractionHTTPFlowRequestChangesRevisionReReviewToCompletion(t *testing.T) {
+	root := t.TempDir()
+	for _, directory := range []string{"社員", "プロジェクト"} {
+		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, content := range map[string]string{
+		"山本 真帆.md": "---\nid: PLAN-001\ndepartment: 企画部\nrole: Product Manager\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n",
+		"伊藤 健太.md": "---\nid: QA-001\ndepartment: 品質保証部\nrole: QA Engineer\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, "社員", name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	planOutput, _ := json.Marshal(map[string]any{
+		"project_name": "iPhone依頼2", "objective": "依頼から成果物を完成させる", "summary": "mobile revision E2E",
+		"required_departments": []string{"企画部"}, "required_roles": []string{"Product Manager"},
+		"assigned_existing_employees": []string{},
+		"proposed_tasks":              []map[string]any{{"title": "要件をまとめる", "required_role": "Product Manager", "assignee_id": nil, "dependency_ids": []string{}, "rationale": "依頼を形にするため"}},
+		"risks":                       []string{}, "ceo_questions": []string{},
+	})
+	reviewOutput := func(verdict string) string {
+		issues := `[]`
+		if verdict == "Request Changes" {
+			issues = `[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}]`
+		}
+		return "# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"" + verdict + "\",\"issues\":" + issues + "}\nREVIEW_RESULT_JSON_END"
+	}
+	providerOutputs := []string{
+		string(planOutput),
+		"# 初回の成果物\n\n要件の下書きです。",
+		reviewOutput("Request Changes"),
+		"# 修正済みの成果物\n\n指摘を反映した要件です。",
+		reviewOutput("Approve"),
+	}
+	providerCalls := 0
+	providerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/messages" || providerCalls >= len(providerOutputs) {
+			t.Fatalf("unexpected mock Provider request path=%s calls=%d", request.URL.Path, providerCalls)
+		}
+		output := providerOutputs[providerCalls]
+		providerCalls++
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"model": "claude-mobile-test", "content": []map[string]string{{"type": "text", "text": output}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer providerServer.Close()
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{
+		APIKey: "fake-mobile-key", BaseURL: providerServer.URL,
+	}, providerServer.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(executor, executor)
+	base := time.Date(2026, time.August, 10, 9, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	sessionID := "SESSION-MOBILE-REVISION-001"
+
+	planRequest := map[string]any{
+		"version": InteractionContractVersion, "session_id": sessionID, "request": "iPhone向けに仕事を完成させて",
+		"model": "Claude Sonnet 5", "current_time": base,
+	}
+	planResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-plans", planRequest)
+	var startPlan workspaceprocess.InteractionStartPlan
+	decodeHTTPResult(t, planResponse, &startPlan)
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-REV-START-001", "operation": "interaction.start", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "request": planRequest["request"], "request_digest": startPlan.Session.RequestDigest, "model": planRequest["model"], "current_time": base},
+	})
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-REV-PLAN-001", "operation": "interaction.plan.generate", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "expected_version": 1, "current_time": base.Add(time.Minute)},
+	})
+	next := inspectInteractionNextHTTP(t, handler, sessionID)
+	if next.Kind != interaction.NextApprovePlanApply || next.PlanDigest == "" {
+		t.Fatalf("plan apply next = %#v", next)
+	}
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-REV-APPLY-001", "operation": "interaction.plan.apply", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "expected_version": next.ExpectedVersion, "project_id": "PROJECT-MOBILE-REV-001", "plan_digest": next.PlanDigest, "current_time": base.Add(2 * time.Minute)},
+	})
+	next = inspectInteractionNextHTTP(t, handler, sessionID)
+	workflowTime := base.Add(3 * time.Minute)
+	workflowPlanResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-workflow-plans", map[string]any{
+		"version": InteractionContractVersion, "session_id": sessionID, "expected_version": next.ExpectedVersion,
+		"reviewer_id": "QA-001", "current_time": workflowTime, "max_tasks": 10,
+	})
+	var workflowPlan workspaceprocess.InteractionWorkflowPlan
+	decodeHTTPResult(t, workflowPlanResponse, &workflowPlan)
+	performAcceptedCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-REV-WORKFLOW-001", "operation": "interaction.workflow.execute", "approved": true,
+		"payload": map[string]any{
+			"session_id": sessionID, "expected_version": next.ExpectedVersion, "reviewer_id": "QA-001", "current_time": workflowTime,
+			"max_tasks": 10, "autonomy_contract": workflowPlan.Autonomy, "workflow_plan_digest": workflowPlan.WorkflowPlanDigest, "approval_reference": "mobile-e2e-revision-approval",
+		},
+	})
+	waitForCommandStateHTTP(t, handler, "CMD-MOBILE-REV-WORKFLOW-001", commandledger.StateSucceeded)
+
+	next = inspectInteractionNextHTTP(t, handler, sessionID)
+	if next.Kind != interaction.NextOptionalAction || providerCalls != len(providerOutputs) {
+		t.Fatalf("completed next = %#v providerCalls=%d", next, providerCalls)
+	}
+	for _, relative := range []string{
+		"プロジェクト/iPhone依頼2/Deliverables/TASK-001.md",
+		"プロジェクト/iPhone依頼2/Reviews/TASK-001.review.json",
+		"プロジェクト/iPhone依頼2/Deliverables/TASK-002.md",
+		"プロジェクト/iPhone依頼2/Reviews/TASK-002.review.json",
+		"プロジェクト/iPhone依頼2/Revisions/TASK-002.revision.md",
+	} {
+		if _, statErr := os.Stat(filepath.Join(root, filepath.FromSlash(relative))); statErr != nil {
+			t.Fatalf("missing mobile revision E2E evidence %s: %v", relative, statErr)
+		}
+	}
+	reportResponse := httptest.NewRecorder()
+	handler.ServeHTTP(reportResponse, httptest.NewRequest(http.MethodGet, "/v1/interactions/"+sessionID+"/work-report", nil))
+	var report workspaceprocess.WorkReport
+	decodeHTTPResult(t, reportResponse, &report)
+	if !report.Proof.FullyVerified || report.Proof.VerifiedTasks != 2 || len(report.Proof.Tasks) != 2 {
+		t.Fatalf("Work Report Proof = %#v", report.Proof)
+	}
+	original, revised := report.Proof.Tasks[0], report.Proof.Tasks[1]
+	if original.TaskID != "TASK-001" || original.Review.Verdict != review.VerdictRequestChanges || !original.Review.RequestChanges ||
+		!original.Revision.Occurred || original.Revision.RevisionTaskID != "TASK-002" {
+		t.Fatalf("original Task proof = %#v", original)
+	}
+	if revised.TaskID != "TASK-002" || revised.Review.Verdict != review.VerdictApprove {
+		t.Fatalf("revised Task proof = %#v", revised)
 	}
 }
 

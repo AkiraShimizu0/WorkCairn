@@ -54,12 +54,13 @@ const state = {
   workReportError: null,
   providerStatus: null,
   workspaceStatus: null,
-	localSetupAvailable: false,
+  localSetupAvailable: false,
   lastError: null,
   renderKey: "",
   detailRenderKey: "",
   timelineRenderKey: "",
   activeCommandID: "",
+  commandInFlight: false,
   busy: false,
 };
 
@@ -173,6 +174,42 @@ function setBackgroundWorking(active) {
   ui.backgroundStatus.setAttribute("aria-label", active ? "バックグラウンドで実行中" : "");
 }
 
+function inFlightCopy(operation) {
+  switch (operation) {
+  case "interaction.plan.generate":
+    return { label: "進め方を考えています", title: "企画担当が進め方を考えています", message: "質問または進め方ができるまで、Macで処理を続けます。" };
+  case "interaction.workflow.execute":
+  case "workflow.reviewed.execute":
+    return { label: "仕事を進めています", title: "AI社員が仕事を進めています", message: "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。" };
+  case "task.execute":
+    return { label: "作業しています", title: "担当AIが作業しています", message: "成果物を作成し、安全な順序で保存しています。" };
+  case "review.execute":
+    return { label: "レビュー中", title: "QA担当が確認しています", message: "Makerとは別のAIが成果物をレビューしています。" };
+  case "revision.execute":
+    return { label: "修正しています", title: "指摘内容を修正しています", message: "Reviewの指摘を反映し、再確認へ進めています。" };
+  case "interaction.action.wordpress.publish":
+  case "action.wordpress.publish":
+    return { label: "外部反映中", title: "外部サービスへ反映しています", message: "承認済みの内容だけを外部サービスへ反映しています。" };
+  default:
+    return { label: "処理中", title: "会社が仕事を進めています", message: "承認済みの処理をMacで安全に続けています。" };
+  }
+}
+
+function renderInFlight(command) {
+  const copy = inFlightCopy(command?.operation);
+  ui.activeCard.className = "action-card working";
+  ui.activeCard.replaceChildren(
+    node("span", { class: "step-label working-label" }, `● ${copy.label}`),
+    node("h2", {}, copy.title),
+    node("p", { class: "lead" }, copy.message),
+    node("p", { class: "supporting" }, "この画面を閉じても処理はMacで続きます。次に判断が必要になったらMy Actionsへ表示します。"),
+    node("details", { class: "technical-details" },
+      node("summary", {}, "技術的な詳細を見る"),
+      approvalFacts([["Command ID", command?.command_id || "確認中"]]),
+    ),
+  );
+}
+
 function errorStorageKey(sessionID = state.record?.session_id) {
   return sessionID ? `${STORAGE_ERROR_PREFIX}${sessionID}` : "";
 }
@@ -235,12 +272,71 @@ async function copySanitizedError(error) {
     `Command ID: ${error.command_id || "—"}`,
     `Request ID: ${error.request_id || "—"}`,
   ].join("\n");
-  try {
-    await navigator.clipboard.writeText(detail);
-    toast("エラー詳細をコピーしました。");
-  } catch {
-    toast("コピーできませんでした。詳細を長押ししてコピーしてください。");
+  let copied = false;
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(detail);
+      copied = true;
+    } catch {}
   }
+  if (!copied) copied = copyTextWithSelection(detail);
+  if (copied) {
+    toast("エラー詳細をコピーしました。");
+    return;
+  }
+  showManualCopy(detail);
+}
+
+function copyTextWithSelection(detail) {
+  const textarea = node("textarea", { readonly: true, "aria-label": "コピーするエラー詳細" }, detail);
+  textarea.value = detail;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.append(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  let copied = false;
+  try { copied = typeof document.execCommand === "function" && document.execCommand("copy"); } catch {}
+  textarea.remove();
+  return copied;
+}
+
+function showManualCopy(detail) {
+  const textarea = node("textarea", { class: "copy-detail", readonly: true, "aria-label": "コピーするエラー詳細" }, detail);
+  textarea.value = detail;
+  const retryCopy = () => {
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    let copied = false;
+    try { copied = typeof document.execCommand === "function" && document.execCommand("copy"); } catch {}
+    if (copied) {
+      toast("エラー詳細をコピーしました。");
+      closeActionDialog();
+      return;
+    }
+    toast("コピーできませんでした。詳細を長押ししてコピーしてください。");
+  };
+  ui.actionForm.onsubmit = null;
+  ui.actionForm.replaceChildren(
+    node("div", { class: "sheet-handle" }),
+    node("div", { class: "sheet-heading" },
+      node("div", {}, node("p", { class: "eyebrow" }, "ERROR DETAILS"), node("h2", {}, "詳細を選択してコピー")),
+      node("button", { class: "icon-button", type: "button", "aria-label": "閉じる", onclick: closeActionDialog }, "×"),
+    ),
+    node("p", { class: "supporting" }, "自動コピーを利用できませんでした。下の安全な診断情報を長押ししてコピーしてください。"),
+    textarea,
+    node("div", { class: "sheet-actions" },
+      button("選択内容をコピー", "primary", retryCopy),
+      button("閉じる", "quiet", closeActionDialog),
+    ),
+  );
+  if (!ui.actionDialog.open) ui.actionDialog.showModal();
+  textarea.focus();
+  textarea.select();
+  toast("コピーできませんでした。詳細を選択してコピーしてください。");
 }
 
 function setView(name, remember = true) {
@@ -252,6 +348,11 @@ function setView(name, remember = true) {
   ui.myActionsTab.setAttribute("aria-selected", String(!company));
   ui.companyTab.setAttribute("aria-selected", String(company));
   if (remember) localStorage.setItem(STORAGE_VIEW, company ? "company" : "actions");
+  setBackgroundWorking(Boolean(storedPendingCommand()) && company);
+  if (!company && state.record) {
+    state.renderKey = "";
+    renderNext(true);
+  }
   if (company) refreshCompanyView();
 }
 
@@ -272,6 +373,7 @@ function showError(error, title = "処理を完了できませんでした") {
   const stage = detail?.stage;
   const providerSetupRequired = code === "PROVIDER_CONFIGURATION_REQUIRED";
   const providerGenerationFailed = code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_generation";
+  const planCommitConflict = code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_commit_cas";
   const planResponseInvalid = code === "INTERACTION_PLAN_FAILED" && stage === "ceo_plan_parser";
   const workflowAssignmentRequired = code === "WORKFLOW_TASK_ASSIGNMENT_REQUIRED";
   const workflowReviewerRequired = code === "WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED";
@@ -302,6 +404,8 @@ function showError(error, title = "処理を完了できませんでした") {
         ? providerFailureCopy
       : planResponseInvalid
         ? "AIサービスから応答を受信しましたが、安全な進め方として確認できる形式ではありませんでした。進め方は保存・適用されていません。"
+      : planCommitConflict
+        ? "同じ依頼の状態が先に更新されたため、この進め方は保存していません。新しい状態を確認してください。"
       : workflowAssignmentRequired
         ? "担当AIを決められない仕事があるため、実行を開始していません。Organizationを確認してから、改めて実行内容を確認してください。"
       : workflowReviewerRequired
@@ -555,6 +659,16 @@ function renderSessions() {
 function renderNext(force = false) {
   const next = state.next;
   if (!next) return renderEmpty();
+  const pendingCommand = storedPendingCommand();
+  const pendingForSession = pendingCommand && (!pendingCommand.payload?.session_id || pendingCommand.payload.session_id === next.session_id);
+  const pendingInForeground = pendingForSession && !ui.myActionsView.hidden;
+  setBackgroundWorking(Boolean(pendingCommand) && !pendingInForeground);
+  if (pendingForSession) {
+    const key = `running:${pendingCommand.command_id}`;
+    if (!force && state.renderKey === key) return;
+    state.renderKey = key;
+    return renderInFlight(pendingCommand);
+  }
   const key = JSON.stringify([next.session_id, next.expected_version, next.kind, state.lastError?.code || "", state.lastError?.stage || ""]);
   if (!force && state.renderKey === key) return;
   state.renderKey = key;
@@ -963,6 +1077,11 @@ function approvalFacts(facts) {
 }
 
 async function executeNextCommand(next, payload, busyTitle, busyMessage, fixedCommandID = null) {
+  if (state.commandInFlight || sessionStorage.getItem(STORAGE_PENDING)) {
+    toast("同じ処理を実行中です。完了するまでお待ちください。");
+    return false;
+  }
+  state.commandInFlight = true;
   let accepted = false;
   try {
     const command = {
@@ -974,7 +1093,10 @@ async function executeNextCommand(next, payload, busyTitle, busyMessage, fixedCo
     };
     state.activeCommandID = command.command_id;
     sessionStorage.setItem(STORAGE_PENDING, JSON.stringify(command));
-    setBusy(true, busyTitle, busyMessage);
+    state.renderKey = "";
+    renderInFlight(command);
+    setBusy(false);
+    setBackgroundWorking(false);
     await requestJSON("/v1/commands", {
       method: "POST",
       headers: { Prefer: "respond-async" },
@@ -989,6 +1111,8 @@ async function executeNextCommand(next, payload, busyTitle, busyMessage, fixedCo
     if (!accepted && error.status !== 0) sessionStorage.removeItem(STORAGE_PENDING);
     showError(error);
     return false;
+  } finally {
+    state.commandInFlight = Boolean(sessionStorage.getItem(STORAGE_PENDING));
   }
 }
 
@@ -998,8 +1122,13 @@ function wait(milliseconds) {
 
 async function monitorAcceptedCommand(command) {
   setBusy(false);
-  setBackgroundWorking(true);
+  const viewingSession = localStorage.getItem(STORAGE_SESSION) === command.payload?.session_id && !ui.myActionsView.hidden;
+  setBackgroundWorking(!viewingSession);
   state.activeCommandID = command.command_id;
+  if (viewingSession) {
+    state.renderKey = "";
+    renderInFlight(command);
+  }
   renderCompany();
   let missing = 0;
   while (true) {
@@ -1016,12 +1145,16 @@ async function monitorAcceptedCommand(command) {
       sessionStorage.removeItem(STORAGE_PENDING);
       setBackgroundWorking(false);
       state.activeCommandID = "";
+      state.commandInFlight = false;
+      state.renderKey = "";
       return record;
     }
     if (record.state === "failed" || record.state === "partial_failure") {
       sessionStorage.removeItem(STORAGE_PENDING);
-	  setBackgroundWorking(false);
-	  const providerFailure = record.result?.provider_failure;
+      setBackgroundWorking(false);
+      state.commandInFlight = false;
+      state.renderKey = "";
+      const providerFailure = commandProviderFailure(record.result);
       throw new APIError(record.failure?.code || "COMMAND_FAILED", 422, {
         code: record.failure?.code || "COMMAND_FAILED",
         stage: record.failure?.stage,
@@ -1038,6 +1171,27 @@ async function monitorAcceptedCommand(command) {
   }
 }
 
+function commandProviderFailure(result) {
+  if (result?.provider_failure) return result.provider_failure;
+  for (const task of result?.workflow?.tasks || []) {
+    if (task?.execution?.provider_failure) return task.execution.provider_failure;
+    if (task?.review?.provider_failure) return task.review.provider_failure;
+  }
+  return null;
+}
+
+function storedPendingCommand() {
+  const serialized = sessionStorage.getItem(STORAGE_PENDING);
+  if (!serialized) return null;
+  try {
+    const command = JSON.parse(serialized);
+    if (command?.version !== COMMAND_VERSION || typeof command.command_id !== "string" || !command.command_id) return null;
+    return command;
+  } catch {
+    return null;
+  }
+}
+
 async function resumePendingCommand(serialized) {
   let command;
   try {
@@ -1050,6 +1204,7 @@ async function resumePendingCommand(serialized) {
     sessionStorage.removeItem(STORAGE_PENDING);
     return;
   }
+  state.commandInFlight = true;
   try {
     await monitorAcceptedCommand(command);
     await refreshCurrent();
@@ -1058,6 +1213,8 @@ async function resumePendingCommand(serialized) {
   } catch (error) {
     setBackgroundWorking(false);
     showError(error, "前回のCommand状態を確認できませんでした");
+  } finally {
+    state.commandInFlight = Boolean(sessionStorage.getItem(STORAGE_PENDING));
   }
 }
 

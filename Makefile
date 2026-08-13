@@ -26,6 +26,7 @@ go-test:
 
 public-beta-smoke:
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/httpapi -run '^TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion$$'
+	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/httpapi -run '^TestMobileInteractionHTTPFlowRequestChangesRevisionReReviewToCompletion$$'
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/runtime -run '^TestRuntimeCompletesTemporaryVaultExecutionWithDeliverableAndAudit$$'
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/process -run '^TestReviewedWorkflowTemporaryVaultRequestChangesRevisionReReviewAndReplay$$'
 
