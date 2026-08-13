@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 )
 
 const SchemaVersion = 1
@@ -44,6 +46,12 @@ func (state State) Terminal() bool { return state != StateRunning && state.Valid
 type Failure struct {
 	Code  string `json:"code"`
 	Stage string `json:"stage,omitempty"`
+	// Details is the additive, optional safe projection of the owning
+	// Command's failure.Envelope. Pre-migration records, and records for
+	// Commands not yet migrated to Envelope propagation, have no Details —
+	// callers must keep reading Code/Stage as the source of truth and
+	// treat Details as enrichment only.
+	Details *failure.Envelope `json:"details,omitempty"`
 }
 
 type Record struct {
@@ -95,6 +103,11 @@ func (record Record) Validate() error {
 		if len(record.Result) == 0 || !json.Valid(record.Result) || record.Failure == nil || !canonicalText(record.Failure.Code) ||
 			(record.Failure.Stage != "" && !canonicalText(record.Failure.Stage)) {
 			return ErrInvalidRecord
+		}
+		if details := record.Failure.Details; details != nil {
+			if details.Validate() != nil || details.Code != record.Failure.Code || details.Stage != record.Failure.Stage {
+				return ErrInvalidRecord
+			}
 		}
 	}
 	return nil

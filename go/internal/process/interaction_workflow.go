@@ -13,6 +13,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
@@ -259,8 +260,8 @@ func ExecuteInteractionWorkflow(
 		return result, finishDurableCommand(ctx, claim, result, combined, "INTERACTION_WORKFLOW_FAILED", "interaction_workflow_session_commit", true)
 	}
 	if workflowErr != nil {
-		code, stage, _ := workflowFailure(workflowResult, workflowErr)
-		return result, finishDurableCommand(ctx, claim, result, workflowErr, code, stage, true)
+		envelope := workflowFailure(workflowResult, workflowErr)
+		return result, finishDurableCommandWithEnvelope(ctx, claim, result, workflowErr, envelope, true)
 	}
 	return result, finishDurableCommand(ctx, claim, result, nil, "", "", false)
 }
@@ -328,8 +329,8 @@ func interactionWorkflowEvidence(
 		}
 	}
 	if workflowErr != nil {
-		code, stage, partial := workflowFailure(result, workflowErr)
-		evidence.Failure = &interaction.WorkflowFailure{Code: code, Stage: stage, Partial: partial}
+		envelope := workflowFailure(result, workflowErr)
+		evidence.Failure = &interaction.WorkflowFailure{Code: envelope.Code, Stage: envelope.Stage, Partial: envelope.Partial}
 	}
 	return evidence, nil
 }
@@ -457,24 +458,31 @@ func pointerToAutonomy(contract autonomy.Contract) *autonomy.Contract {
 	return &cloned
 }
 
-func workflowFailure(result service.ReviewedWorkflowRunResult, err error) (string, string, bool) {
-	code, stage := "REVIEWED_WORKFLOW_FAILED", "workflow_reviewed_execute"
+// workflowFailure forwards the Reviewed Workflow child Command's own
+// already-recorded classification unchanged. ExecuteReviewedWorkflow's own
+// outer finish call always wraps a failure in *RecordedCommandError
+// carrying the full Envelope now, so there is no separate re-derivation
+// path here -- only a generic fallback for the residual case where err
+// isn't that type at all (e.g. a precondition failure recorded before the
+// Reviewed Workflow child Command was even claimed).
+func workflowFailure(result service.ReviewedWorkflowRunResult, err error) *failure.Envelope {
+	envelope := failure.New("REVIEWED_WORKFLOW_FAILED", "workflow_reviewed_execute")
 	partial := result.Status == "partial_failure" || len(result.Tasks) > 0
 	var recorded *RecordedCommandError
 	if errors.As(err, &recorded) {
-		if strings.TrimSpace(recorded.Code) != "" {
-			code = recorded.Code
-		}
-		if strings.TrimSpace(recorded.Stage) != "" {
-			stage = recorded.Stage
+		if recorded.Envelope != nil {
+			envelope = *recorded.Envelope
+		} else {
+			if strings.TrimSpace(recorded.Code) != "" {
+				envelope.Code = recorded.Code
+			}
+			if strings.TrimSpace(recorded.Stage) != "" {
+				envelope.Stage = recorded.Stage
+			}
 		}
 		partial = recorded.Partial || partial
-	} else {
-		var runErr *service.ReviewedWorkflowRunError
-		if errors.As(err, &runErr) && strings.TrimSpace(runErr.Stage) != "" {
-			stage = runErr.Stage
-		}
-		code, stage = reviewedWorkflowFailureClassification(result, stage)
 	}
-	return code, stage, partial
+	envelope.Partial = partial
+	envelope.RecoveryRequired = partial
+	return &envelope
 }

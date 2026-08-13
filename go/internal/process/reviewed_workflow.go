@@ -12,6 +12,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
@@ -167,7 +168,7 @@ func ExecuteReviewedWorkflow(
 			EventID: executed.EventID, EventPublished: executed.EventPublished,
 			ProviderFailure: reviewOrchestrationProviderFailure(executed.ProviderFailure),
 			FailureCode:     executed.FailureCode, FailureStage: executed.FailureStage,
-			ParseFailureReason: executed.ParseFailureReason,
+			ParseFailureReason: executed.ParseFailureReason, Failure: executed.Failure,
 		}, reviewErr
 	})
 	reviser := reviewedWorkflowReviserFunc(func(runContext context.Context, sourceTaskID, childCommandID string) (revision.Result, error) {
@@ -189,11 +190,12 @@ func ExecuteReviewedWorkflow(
 	if errors.As(runErr, &typed) {
 		stage = typed.Stage
 	}
-	code := "REVIEWED_WORKFLOW_FAILED"
+	partial := len(result.Tasks) > 0
+	var envelope *failure.Envelope
 	if runErr != nil {
-		code, stage = reviewedWorkflowFailureClassification(result, stage)
+		envelope = reviewedWorkflowOuterEnvelope(result, stage, partial)
 	}
-	return result, finishDurableCommand(ctx, claim, result, runErr, code, stage, len(result.Tasks) > 0)
+	return result, finishDurableCommandWithEnvelope(ctx, claim, result, runErr, envelope, partial)
 }
 
 // reviewOrchestrationProviderFailure carries the redacted Provider diagnostic
@@ -209,40 +211,40 @@ func reviewOrchestrationProviderFailure(failure *ProviderFailure) *review.Provid
 	}
 }
 
-// reviewedWorkflowFailureClassification classifies the outer Command failure
-// using the Task or Review child that failed, instead of the generic
-// REVIEWED_WORKFLOW_FAILED/<coarse stage> pair. Priority: a redacted Provider
-// diagnostic (transport/auth/rate-limit/...) wins when present; otherwise the
-// child's own typed classification (e.g. REVIEW_RESULT_INVALID/
-// review_result_parser from a Review parser contract violation) is used, so
-// the outer Command mirrors exactly what the child Command Ledger already
-// recorded. Structural failures with neither (assignment, plan, revision,
-// command identity) keep the generic code and coarse stage.
-func reviewedWorkflowFailureClassification(result service.ReviewedWorkflowRunResult, stage string) (string, string) {
-	if len(result.Tasks) == 0 {
-		return "REVIEWED_WORKFLOW_FAILED", stage
-	}
-	last := result.Tasks[len(result.Tasks)-1]
-	switch stage {
-	case "task_execute":
-		if last.Execution.ProviderFailure != nil {
-			return providerFailureCode(last.Execution.ProviderFailure.Category), stage
-		}
-	case "review":
-		if last.Review != nil {
-			if last.Review.ProviderFailure != nil {
-				return providerFailureCode(last.Review.ProviderFailure.Category), stage
-			}
-			if last.Review.FailureCode != "" {
-				childStage := stage
-				if last.Review.FailureStage != "" {
-					childStage = last.Review.FailureStage
-				}
-				return last.Review.FailureCode, childStage
+// reviewedWorkflowOuterEnvelope forwards the last failed Task or Review
+// child's already-computed Envelope unchanged -- it selects which child
+// kind produced the failure (from the coarse stage the run itself already
+// determined) but never reclassifies, remaps, or re-derives Code/Stage/
+// Category/Provider/Parse from raw child fields the way the classifier
+// this replaces used to. A copy is returned (not the child's own pointer)
+// so overwriting Partial/RecoveryRequired for this outer Command's own
+// Ledger entry never mutates the child's own recorded Envelope embedded in
+// this same Result. Structural failures with no child Envelope (assignment,
+// plan, revision, command identity) get a minimal Envelope carrying only
+// the existing generic code and the coarse stage -- still no invention of
+// new classification, just the same fallback this Command already used.
+func reviewedWorkflowOuterEnvelope(result service.ReviewedWorkflowRunResult, stage string, partial bool) *failure.Envelope {
+	var child *failure.Envelope
+	if len(result.Tasks) > 0 {
+		last := result.Tasks[len(result.Tasks)-1]
+		switch stage {
+		case "task_execute":
+			child = last.Execution.Failure
+		case "review":
+			if last.Review != nil {
+				child = last.Review.Failure
 			}
 		}
 	}
-	return "REVIEWED_WORKFLOW_FAILED", stage
+	var envelope failure.Envelope
+	if child != nil {
+		envelope = *child
+	} else {
+		envelope = failure.New("REVIEWED_WORKFLOW_FAILED", stage)
+	}
+	envelope.Partial = partial
+	envelope.RecoveryRequired = partial
+	return &envelope
 }
 
 // taskMakerIDs is the single, shared definition of "who is a Maker right

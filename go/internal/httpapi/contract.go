@@ -12,6 +12,7 @@ import (
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 )
 
@@ -68,6 +69,12 @@ type CommandError struct {
 	Code             string `json:"code"`
 	Stage            string `json:"stage,omitempty"`
 	RecoveryRequired bool   `json:"recovery_required,omitempty"`
+	// Details is the additive, optional full failure.Envelope behind
+	// Code/Stage/RecoveryRequired, present whenever the failing Command
+	// has migrated to Envelope propagation. Clients keep reading
+	// Code/Stage/RecoveryRequired as the source of truth; Details is
+	// enrichment for a richer UI projection, not a replacement.
+	Details *failure.Envelope `json:"details,omitempty"`
 }
 
 type Response struct {

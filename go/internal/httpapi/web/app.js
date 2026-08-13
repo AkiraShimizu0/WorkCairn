@@ -157,7 +157,7 @@ async function requestJSON(path, options = {}) {
     // Provider/parse diagnostics from that result into detail so showError()
     // sees the same fields it already reads from polled async Command status.
     const detail = payload?.error
-      ? { ...payload.error, provider_failure: commandProviderFailure(payload.result), parse_failure_reason: payload.result?.parse_failure_reason || null }
+      ? { ...payload.error, ...errorDiagnostics(payload.error.details, payload.result) }
       : payload;
     throw new APIError(String(code), response.status, detail);
   }
@@ -235,6 +235,10 @@ function rememberError(error, title, commandID = state.activeCommandID) {
     request_id: detail?.provider_failure?.request_id || "",
     parse_failure_reason: detail?.parse_failure_reason || "",
     recovery_required: Boolean(detail?.recovery_required),
+    // details is the additive, optional single failure.Envelope. Kept
+    // alongside the flat fields above (still the legacy fallback source)
+    // for the same migration-period reason as errorDiagnostics().
+    details: detail?.details || null,
     at: now(),
   };
   try {
@@ -242,7 +246,8 @@ function rememberError(error, title, commandID = state.activeCommandID) {
     if (existing && existing.session_version === snapshot.session_version && existing.title === snapshot.title &&
         existing.code === snapshot.code && existing.stage === snapshot.stage && existing.command_id === snapshot.command_id &&
         existing.request_id === snapshot.request_id && existing.parse_failure_reason === snapshot.parse_failure_reason &&
-        existing.recovery_required === snapshot.recovery_required) {
+        existing.recovery_required === snapshot.recovery_required &&
+        JSON.stringify(existing.details) === JSON.stringify(snapshot.details)) {
       state.lastError = existing;
       return existing;
     }
@@ -1195,14 +1200,12 @@ async function monitorAcceptedCommand(command) {
       setBackgroundWorking(false);
       state.commandInFlight = false;
       state.renderKey = "";
-      const providerFailure = commandProviderFailure(record.result);
       throw new APIError(record.failure?.code || "COMMAND_FAILED", 422, {
         code: record.failure?.code || "COMMAND_FAILED",
         stage: record.failure?.stage,
         recovery_required: record.state === "partial_failure",
 		command_id: command.command_id,
-		provider_failure: providerFailure,
-		parse_failure_reason: record.result?.parse_failure_reason || null,
+		...errorDiagnostics(record.failure?.details, record.result),
       });
     }
     if (record.state !== "running") {
@@ -1213,6 +1216,12 @@ async function monitorAcceptedCommand(command) {
   }
 }
 
+// commandProviderFailure is the pre-Envelope legacy fallback: it tries
+// several Result shapes to find a Provider diagnostic. Kept only for
+// Commands not yet migrated to failure.Envelope propagation (Revision, CEO
+// Plan, External Action) and for pre-migration Ledger records that never
+// have a `details` field. Do not extend this function -- extend the
+// server-side Envelope instead.
 function commandProviderFailure(result) {
   if (result?.provider_failure) return result.provider_failure;
   for (const task of result?.workflow?.tasks || []) {
@@ -1220,6 +1229,20 @@ function commandProviderFailure(result) {
     if (task?.review?.provider_failure) return task.review.provider_failure;
   }
   return null;
+}
+
+// errorDiagnostics prefers the single failure.Envelope (`details`) a
+// migrated Command now carries, and falls back to the legacy multi-shape
+// reconstruction (commandProviderFailure + top-level parse_failure_reason)
+// only when `details` is absent -- pre-migration Ledger records, or
+// Commands not yet migrated this round. showError()/rememberError() keep
+// reading provider_failure/parse_failure_reason unchanged either way.
+function errorDiagnostics(details, result) {
+  return {
+    details: details || null,
+    provider_failure: details?.provider || commandProviderFailure(result),
+    parse_failure_reason: details?.parse?.reason || result?.parse_failure_reason || null,
+  };
 }
 
 function storedPendingCommand() {

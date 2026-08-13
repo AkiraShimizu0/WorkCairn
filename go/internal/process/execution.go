@@ -13,6 +13,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/policy"
 	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
@@ -103,7 +104,50 @@ func ExecuteTask(
 	}
 	result, executionErr := executeClaimedTask(ctx, input, provider, httpClient, approvalSource)
 	result.ProviderFailure = executionProviderFailure(executionErr)
+	// Failure is populated only when a durable Command claim exists (a
+	// CommandID was supplied) -- with no CommandID, finishExecutionCommand
+	// never touches the Ledger at all, and ExecuteTask must keep returning
+	// a fully zero execution.Result{} on a structural preflight failure,
+	// exactly as it did before Envelope propagation.
+	if executionErr != nil && claim.ledger != nil {
+		result.Failure = executionFailureEnvelope(executionErr, result.ProviderFailure, result)
+	}
 	return result, finishExecutionCommand(ctx, claim, result, executionErr)
+}
+
+// executionFailureEnvelope is the single source of typed Task execution
+// failure classification, computed once per failed ExecuteTask call. Every
+// composing caller (Reviewed Workflow) forwards this value unchanged
+// instead of reclassifying it.
+func executionFailureEnvelope(executionErr error, providerFailure *execution.ProviderFailure, result execution.Result) *failure.Envelope {
+	var envelope failure.Envelope
+	var typed *execution.ExecutionError
+	partial := false
+	switch {
+	case errors.As(executionErr, &typed):
+		envelope = failure.New(string(typed.Kind), string(typed.Stage))
+		partial = typed.Result.Status == execution.StatusPartialFailure
+	case errors.Is(executionErr, ErrExecutionPreflightFailed):
+		envelope = failure.New("PREFLIGHT_FAILED", "preflight")
+	default:
+		envelope = failure.New("EXECUTION_FAILED", "process")
+		partial = result.Status == execution.StatusCompleted
+	}
+	if providerFailure != nil {
+		envelope.Category = providerFailure.Category
+		envelope.Provider = &failure.ProviderDiagnostic{
+			Category: providerFailure.Category, HTTPStatus: providerFailure.HTTPStatus,
+			ProviderType: providerFailure.ProviderType, RequestID: providerFailure.RequestID,
+		}
+	}
+	envelope.Partial = partial
+	envelope.RecoveryRequired = partial
+	if result.Deliverable != nil || result.FinalTaskStatus != "" {
+		envelope.Evidence = &failure.CommittedEvidence{
+			Deliverable: result.Deliverable != nil, TaskState: result.FinalTaskStatus != "",
+		}
+	}
+	return &envelope
 }
 
 func executionProviderFailure(err error) *execution.ProviderFailure {
@@ -218,27 +262,22 @@ func finishExecutionCommand(ctx context.Context, claim executionCommandClaim, re
 		return errors.Join(executionErr, &CommandLedgerCommitError{Err: err})
 	}
 	state := commandledger.StateSucceeded
-	var failure *commandledger.Failure
+	var ledgerFailure *commandledger.Failure
 	if executionErr != nil {
 		state = commandledger.StateFailed
-		failure = &commandledger.Failure{Code: "EXECUTION_FAILED", Stage: "process"}
-		var typed *execution.ExecutionError
-		if errors.As(executionErr, &typed) {
-			failure.Code = string(typed.Kind)
-			failure.Stage = string(typed.Stage)
-			if typed.Result.Status == execution.StatusPartialFailure {
-				state = commandledger.StatePartialFailure
-			}
-		} else if errors.Is(executionErr, ErrExecutionPreflightFailed) {
-			failure.Code = "PREFLIGHT_FAILED"
-			failure.Stage = "preflight"
-		} else if result.Status == execution.StatusCompleted {
+		if result.Failure != nil && result.Failure.Partial {
 			state = commandledger.StatePartialFailure
+		}
+		ledgerFailure = &commandledger.Failure{Stage: "process", Details: result.Failure}
+		if result.Failure != nil {
+			ledgerFailure.Code, ledgerFailure.Stage = result.Failure.Code, result.Failure.Stage
+		} else {
+			ledgerFailure.Code = "EXECUTION_FAILED"
 		}
 	}
 	finishContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if _, err := claim.ledger.Finish(finishContext, claim.running, state, encoded, failure); err != nil {
+	if _, err := claim.ledger.Finish(finishContext, claim.running, state, encoded, ledgerFailure); err != nil {
 		return errors.Join(executionErr, &CommandLedgerCommitError{Err: err})
 	}
 	return executionErr

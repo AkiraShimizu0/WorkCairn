@@ -19,6 +19,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/metrics"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
@@ -193,6 +194,10 @@ func TestExecuteReviewRecordsRedactedProviderFailure(t *testing.T) {
 		result.ProviderFailure.RequestID != "req_review_safe" || result.Artifact != nil {
 		t.Fatalf("Provider failure result=%#v err=%v", result, err)
 	}
+	if result.Failure == nil || result.Failure.Code != "PROVIDER_RATE_LIMITED" || result.Failure.Stage != "review_provider" ||
+		result.Failure.Provider == nil || result.Failure.Provider.RequestID != "req_review_safe" || result.Failure.Category != "rate_limited" {
+		t.Fatalf("Envelope = %#v", result.Failure)
+	}
 	ledger, ledgerErr := vault.NewCommandLedgerStore(root, input.ProjectName)
 	if ledgerErr != nil {
 		t.Fatal(ledgerErr)
@@ -201,6 +206,121 @@ func TestExecuteReviewRecordsRedactedProviderFailure(t *testing.T) {
 	if ledgerErr != nil || record.Failure == nil || record.Failure.Code != "PROVIDER_RATE_LIMITED" ||
 		record.Failure.Stage != "review_provider" || strings.Contains(string(record.Result), "must not be stored") {
 		t.Fatalf("Provider failure Ledger=%#v err=%v", record, ledgerErr)
+	}
+	if record.Failure.Details == nil || record.Failure.Details.Code != record.Failure.Code || record.Failure.Details.Stage != record.Failure.Stage {
+		t.Fatalf("Ledger Details = %#v", record.Failure.Details)
+	}
+}
+
+// TestReviewFailureEnvelopeClassifiesEveryCase locks the single
+// classification point every composing caller now forwards unchanged,
+// including the two Provider categories (refusal, structured-output-
+// invalid) that the pre-Envelope providerFailureCode helper mismapped to
+// the Interaction-specific INTERACTION_PLAN_FAILED default.
+func TestReviewFailureEnvelopeClassifiesEveryCase(t *testing.T) {
+	committedArtifact := &review.Record{CanonicalCommitted: true}
+	tests := []struct {
+		name         string
+		err          error
+		provider     *ProviderFailure
+		artifact     *review.Record
+		wantCode     string
+		wantStage    string
+		wantCategory string
+		wantPartial  bool
+	}{
+		{"preflight", ErrReviewPreflightFailed, nil, nil, "REVIEW_PREFLIGHT_FAILED", "preflight", "", false},
+		{"save failed", review.ErrSaveFailed, nil, nil, "REVIEW_SAVE_FAILED", "review_artifact_save", "", false},
+		{"provider refusal", errors.New("x"), &ProviderFailure{Category: "provider_refusal"}, nil, "PROVIDER_REFUSED", "review_provider", "provider_refusal", false},
+		{"provider structured output invalid", errors.New("x"), &ProviderFailure{Category: "structured_output_invalid"}, nil, "PROVIDER_RESPONSE_INVALID", "review_provider", "structured_output_invalid", false},
+		{"provider rate limited with committed artifact", errors.New("x"), &ProviderFailure{Category: "rate_limited"}, committedArtifact, "PROVIDER_RATE_LIMITED", "review_provider", "rate_limited", true},
+		{"generic non-worker error", errors.New("x"), nil, nil, "REVIEW_EXECUTION_FAILED", "process", "", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			envelope := reviewFailureEnvelope(test.err, test.provider, test.artifact)
+			if envelope.Code != test.wantCode || envelope.Stage != test.wantStage || envelope.Category != test.wantCategory ||
+				envelope.Partial != test.wantPartial || envelope.RecoveryRequired != test.wantPartial {
+				t.Fatalf("reviewFailureEnvelope() = %#v, want code=%s stage=%s category=%s partial=%t",
+					envelope, test.wantCode, test.wantStage, test.wantCategory, test.wantPartial)
+			}
+			if test.wantPartial && (envelope.Evidence == nil || !envelope.Evidence.ReviewCanonical) {
+				t.Fatalf("partial Envelope missing committed evidence: %#v", envelope.Evidence)
+			}
+		})
+	}
+}
+
+// TestReviewFailureEnvelopeCarriesParseDiagnosticForInvalidReviewResult
+// covers the structural (non-Provider) parse failure path: the Envelope
+// must carry the sanitized review.ParseFailureReason as a Parse
+// diagnostic, domain-tagged "review".
+func TestReviewFailureEnvelopeCarriesParseDiagnosticForInvalidReviewResult(t *testing.T) {
+	_, parseErr := review.ParseTypedDecision("not json")
+	workerErr := &service.WorkerExecutionError{Kind: service.WorkerErrorInvalidReviewResult, Err: parseErr}
+	envelope := reviewFailureEnvelope(workerErr, nil, nil)
+	if envelope.Code != "REVIEW_RESULT_INVALID" || envelope.Stage != "review_result_parser" ||
+		envelope.Parse == nil || envelope.Parse.Domain != "review" || envelope.Parse.Reason == "" {
+		t.Fatalf("reviewFailureEnvelope() = %#v", envelope)
+	}
+}
+
+// TestExecuteReviewReplaysPreMigrationLedgerRecordWithoutEnvelope proves
+// backward compatibility: a Ledger record committed before this Phase (a
+// Failure with no "details" key at all) still replays correctly. The
+// reconstructed RecordedCommandError carries the same Code/Stage/Partial
+// it always did, with Envelope left nil rather than guessed.
+func TestExecuteReviewReplaysPreMigrationLedgerRecordWithoutEnvelope(t *testing.T) {
+	root := writeReviewProcessVault(t)
+	completeReviewSourceTask(t, root)
+	store, err := vault.NewCommandLedgerStore(root, "ToDoアプリ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := ExecuteReviewInput{
+		ReviewPlanInput: ReviewPlanInput{
+			VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", TaskID: "TASK-001", ReviewerID: "QA-001",
+			CurrentTime: time.Date(2026, time.August, 6, 17, 0, 0, 0, time.FixedZone("JST", 9*60*60)),
+		},
+		Approved: true, CommandID: "CMD-REVIEW-LEGACY-001",
+	}
+	digest, err := commandledger.RequestDigest(struct {
+		ProjectID     string    `json:"project_id"`
+		ProjectName   string    `json:"project_name"`
+		TaskID        string    `json:"task_id"`
+		ReviewerID    string    `json:"reviewer_id"`
+		ReviewVersion string    `json:"review_version,omitempty"`
+		CurrentTime   time.Time `json:"current_time"`
+		ProviderModel string    `json:"provider_model,omitempty"`
+		MaxTokens     int       `json:"max_tokens,omitempty"`
+	}{
+		ProjectID: input.ProjectID, ProjectName: input.ProjectName, TaskID: input.TaskID,
+		ReviewerID: input.ReviewerID, CurrentTime: input.CurrentTime, ProviderModel: "claude-test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, err := commandledger.NewRunning(input.CommandID, "review.execute", input.ProjectName, input.TaskID, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(context.Background(), running); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-migration shape: no "details" key at all on Failure.
+	legacy, err := running.Finish(commandledger.StateFailed, json.RawMessage(`{"status":"failed"}`),
+		&commandledger.Failure{Code: "REVIEW_EXECUTION_FAILED", Stage: "review_service"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(context.Background(), legacy, running.Version); err != nil {
+		t.Fatal(err)
+	}
+	_, replayErr := ExecuteReview(context.Background(), input, ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test"}, nil)
+	var recorded *RecordedCommandError
+	if !errors.As(replayErr, &recorded) || recorded.Code != "REVIEW_EXECUTION_FAILED" || recorded.Stage != "review_service" ||
+		recorded.Partial || recorded.Envelope != nil {
+		t.Fatalf("replay of pre-migration record = %#v, %v", recorded, replayErr)
 	}
 }
 

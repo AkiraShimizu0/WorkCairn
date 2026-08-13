@@ -14,6 +14,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
@@ -82,6 +83,12 @@ type ReviewExecutionResult struct {
 	// ParseFailureReason is set only when FailureCode is REVIEW_RESULT_INVALID.
 	// It is a sanitized review.ParseFailureReason value, never raw Provider text.
 	ParseFailureReason string `json:"parse_failure_reason,omitempty"`
+	// Failure is the single typed classification this Command determines
+	// exactly once (see reviewFailureEnvelope), forwarded unchanged by
+	// every composing caller. ProviderFailure/FailureCode/FailureStage/
+	// ParseFailureReason above are a migration-period read-model
+	// projection derived from this Envelope, not independently computed.
+	Failure *failure.Envelope `json:"failure,omitempty"`
 }
 
 func PlanReview(ctx context.Context, input ReviewPlanInput) (ReviewPlan, error) {
@@ -175,7 +182,8 @@ func ExecuteReview(ctx context.Context, input ExecuteReviewInput, provider Claud
 	result, reviewErr := executeClaimedReview(ctx, input, provider, httpClient)
 	result.ProviderFailure = providerFailure(reviewErr)
 	if reviewErr != nil {
-		result.FailureCode, result.FailureStage = reviewFailureCodeAndStage(reviewErr, result.ProviderFailure)
+		result.Failure = reviewFailureEnvelope(reviewErr, result.ProviderFailure, result.Artifact)
+		result.FailureCode, result.FailureStage = result.Failure.Code, result.Failure.Stage
 		result.ParseFailureReason = reviewParseFailureReason(reviewErr)
 	}
 	return result, finishReviewCommand(ctx, claim, result, reviewErr)
@@ -185,6 +193,12 @@ type RecordedCommandError struct {
 	Code    string
 	Stage   string
 	Partial bool
+	// Envelope is the additive, optional full failure.Envelope behind
+	// Code/Stage/Partial, present whenever the recording Command has
+	// migrated to Envelope propagation. Callers that only need Code/Stage
+	// keep working unchanged; callers that want the full detail read
+	// Envelope when non-nil.
+	Envelope *failure.Envelope
 }
 
 func (recorded *RecordedCommandError) Error() string {
@@ -253,7 +267,10 @@ func claimReviewCommand(ctx context.Context, input ExecuteReviewInput, provider 
 		if begin.Record.Failure == nil {
 			return reviewCommandClaim{}, commandledger.ErrInvalidRecord
 		}
-		replay.err = &RecordedCommandError{Code: begin.Record.Failure.Code, Stage: begin.Record.Failure.Stage, Partial: begin.Record.State == commandledger.StatePartialFailure}
+		replay.err = &RecordedCommandError{
+			Code: begin.Record.Failure.Code, Stage: begin.Record.Failure.Stage,
+			Partial: begin.Record.State == commandledger.StatePartialFailure, Envelope: begin.Record.Failure.Details,
+		}
 	}
 	return reviewCommandClaim{replay: replay}, nil
 }
@@ -267,61 +284,73 @@ func finishReviewCommand(ctx context.Context, claim reviewCommandClaim, result R
 		return errors.Join(reviewErr, &CommandLedgerCommitError{Err: err})
 	}
 	state := commandledger.StateSucceeded
-	var failure *commandledger.Failure
+	var ledgerFailure *commandledger.Failure
 	if reviewErr != nil {
 		state = commandledger.StateFailed
-		failure = &commandledger.Failure{Code: result.FailureCode, Stage: result.FailureStage}
+		ledgerFailure = &commandledger.Failure{Code: result.FailureCode, Stage: result.FailureStage, Details: result.Failure}
 		if result.Artifact != nil && result.Artifact.CanonicalCommitted {
 			state = commandledger.StatePartialFailure
 		}
 	}
 	finishContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if _, err := claim.ledger.Finish(finishContext, claim.running, state, encoded, failure); err != nil {
+	if _, err := claim.ledger.Finish(finishContext, claim.running, state, encoded, ledgerFailure); err != nil {
 		return errors.Join(reviewErr, &CommandLedgerCommitError{Err: err})
 	}
 	return reviewErr
 }
 
-// reviewFailureCodeAndStage is the single source of typed Review failure
-// classification. It is computed once per failed ExecuteReview call and
-// carried on ReviewExecutionResult so both this Command's own Ledger entry
-// and any composing caller (Reviewed Workflow) use the same classification
-// instead of a generic code.
-func reviewFailureCodeAndStage(reviewErr error, provider *ProviderFailure) (string, string) {
-	if errors.Is(reviewErr, ErrReviewPreflightFailed) {
-		return "REVIEW_PREFLIGHT_FAILED", "preflight"
-	}
-	if errors.Is(reviewErr, review.ErrSaveFailed) {
-		return "REVIEW_SAVE_FAILED", "review_artifact_save"
-	}
-	return reviewFailureClassification(reviewErr, provider)
-}
-
-func reviewFailureClassification(reviewErr error, provider *ProviderFailure) (string, string) {
-	if provider != nil {
-		return providerFailureCode(provider.Category), "review_provider"
-	}
-	var workerErr *service.WorkerExecutionError
-	if !errors.As(reviewErr, &workerErr) {
-		return "REVIEW_EXECUTION_FAILED", "process"
-	}
-	switch workerErr.Kind {
-	case service.WorkerErrorPromptBuildFailed, service.WorkerErrorInvalidPrompt:
-		return "REVIEW_PROMPT_FAILED", "review_prompt"
-	case service.WorkerErrorUnknownModel, service.WorkerErrorRunnerNotRegistered:
-		return "REVIEW_ROUTE_FAILED", "review_route"
-	case service.WorkerErrorInvalidRunnerResult:
-		return "PROVIDER_RESPONSE_INVALID", "review_provider_response"
-	case service.WorkerErrorInvalidReviewResult:
-		return "REVIEW_RESULT_INVALID", "review_result_parser"
-	case service.WorkerErrorTimeout:
-		return "PROVIDER_UNAVAILABLE", "review_provider"
-	case service.WorkerErrorCanceled:
-		return "REVIEW_EXECUTION_CANCELED", "review_provider"
+// reviewFailureEnvelope is the single source of typed Review failure
+// classification, computed once per failed ExecuteReview call. Every
+// composing caller (Reviewed Workflow, Interaction Workflow) forwards this
+// value unchanged instead of reclassifying it.
+func reviewFailureEnvelope(reviewErr error, provider *ProviderFailure, artifact *review.Record) *failure.Envelope {
+	partial := artifact != nil && artifact.CanonicalCommitted
+	var envelope failure.Envelope
+	switch {
+	case errors.Is(reviewErr, ErrReviewPreflightFailed):
+		envelope = failure.New("REVIEW_PREFLIGHT_FAILED", "preflight")
+	case errors.Is(reviewErr, review.ErrSaveFailed):
+		envelope = failure.New("REVIEW_SAVE_FAILED", "review_artifact_save")
+	case provider != nil:
+		envelope = failure.New(failure.ClassifyProviderCategory(provider.Category), "review_provider")
+		envelope.Category = provider.Category
+		envelope.Provider = &failure.ProviderDiagnostic{
+			Category: provider.Category, HTTPStatus: provider.HTTPStatus,
+			ProviderType: provider.ProviderType, RequestID: provider.RequestID,
+		}
 	default:
-		return "REVIEW_EXECUTION_FAILED", "review_service"
+		var workerErr *service.WorkerExecutionError
+		if !errors.As(reviewErr, &workerErr) {
+			envelope = failure.New("REVIEW_EXECUTION_FAILED", "process")
+			break
+		}
+		switch workerErr.Kind {
+		case service.WorkerErrorPromptBuildFailed, service.WorkerErrorInvalidPrompt:
+			envelope = failure.New("REVIEW_PROMPT_FAILED", "review_prompt")
+		case service.WorkerErrorUnknownModel, service.WorkerErrorRunnerNotRegistered:
+			envelope = failure.New("REVIEW_ROUTE_FAILED", "review_route")
+		case service.WorkerErrorInvalidRunnerResult:
+			envelope = failure.New("PROVIDER_RESPONSE_INVALID", "review_provider_response")
+		case service.WorkerErrorInvalidReviewResult:
+			envelope = failure.New("REVIEW_RESULT_INVALID", "review_result_parser")
+			if reason := reviewParseFailureReason(reviewErr); reason != "" {
+				envelope.Parse = &failure.ParseDiagnostic{Domain: "review", Reason: reason}
+			}
+		case service.WorkerErrorTimeout:
+			envelope = failure.New("PROVIDER_UNAVAILABLE", "review_provider")
+		case service.WorkerErrorCanceled:
+			envelope = failure.New("REVIEW_EXECUTION_CANCELED", "review_provider")
+		default:
+			envelope = failure.New("REVIEW_EXECUTION_FAILED", "review_service")
+		}
 	}
+	envelope.Partial = partial
+	envelope.RecoveryRequired = partial
+	if partial {
+		envelope.Evidence = &failure.CommittedEvidence{ReviewCanonical: true}
+	}
+	return &envelope
 }
 
 // reviewParseFailureReason extracts the sanitized review.ParseFailureReason

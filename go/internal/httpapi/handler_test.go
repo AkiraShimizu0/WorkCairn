@@ -232,7 +232,8 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"AIのレビュー結果を正しく解釈できませんでした。成果物は保持されています。",
 		"PROJECT_NAME_COLLISION", "同じ名前の仕事がすでにあります。新しい仕事として作成できませんでした。",
 		"parse_failure_reason", "Parse reason", "parseFailureReason",
-		"payload.result?.parse_failure_reason", "commandProviderFailure(payload.result)",
+		"errorDiagnostics(payload.error.details, payload.result)", "errorDiagnostics(record.failure?.details, record.result)",
+		"details?.parse?.reason || result?.parse_failure_reason || null",
 		"interaction_plan_commit_cas", "同じ依頼の状態が先に更新されたため、この進め方は保存していません。",
 		"WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED", "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。",
 		"renderTimeline", "rememberError", "setBackgroundWorking", `requestJSON("/v1/workspace-status")`, "最初のAIチームを確認",
@@ -1208,6 +1209,15 @@ func TestMobileInteractionHTTPFlowMalformedReviewResponseClassifiesOuterCommand(
 	if record.State != commandledger.StatePartialFailure || record.Failure == nil ||
 		record.Failure.Code != "REVIEW_RESULT_INVALID" || record.Failure.Stage != "review_result_parser" {
 		t.Fatalf("outer Command status = %#v", record)
+	}
+	// The HTTP-exposed Ledger status must carry the same Envelope the
+	// Review child determined once -- proving this system-level failure
+	// reaches the HTTP boundary unchanged, not just the Ledger record's
+	// flat Code/Stage.
+	if record.Failure.Details == nil || record.Failure.Details.Code != "REVIEW_RESULT_INVALID" ||
+		record.Failure.Details.Stage != "review_result_parser" || record.Failure.Details.Parse == nil ||
+		record.Failure.Details.Parse.Domain != "review" || record.Failure.Details.Parse.Reason == "" {
+		t.Fatalf("outer Command status Details = %#v", record.Failure.Details)
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "プロジェクト", "iPhone依頼3", "Deliverables", "TASK-001.md")); statErr != nil {
 		t.Fatalf("Deliverable was not preserved after Review parser failure: %v", statErr)

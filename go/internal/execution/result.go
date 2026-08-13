@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/deliverable"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/policy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
@@ -42,6 +43,12 @@ type Result struct {
 	FailureReason   string                   `json:"failure_reason,omitempty"`
 	ProviderFailure *ProviderFailure         `json:"provider_failure,omitempty"`
 	Held            bool                     `json:"held"`
+	// Failure is the single typed classification this Command determines
+	// exactly once, forwarded unchanged by every composing caller
+	// (Reviewed Workflow). ProviderFailure above is kept as a
+	// migration-period read-model projection of this same Envelope, not
+	// independently computed.
+	Failure *failure.Envelope `json:"failure,omitempty"`
 }
 
 // ProviderFailure is the redacted Provider diagnostic retained when Worker

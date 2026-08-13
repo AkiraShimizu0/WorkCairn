@@ -9,6 +9,7 @@ import (
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 )
 
@@ -95,16 +96,55 @@ func replayDurableCommand[T any](claim durableCommandClaim) (T, bool, error) {
 	}
 	return result, true, &RecordedCommandError{
 		Code: claim.replay.Failure.Code, Stage: claim.replay.Failure.Stage,
-		Partial: claim.replay.State == commandledger.StatePartialFailure,
+		Partial:  claim.replay.State == commandledger.StatePartialFailure,
+		Envelope: claim.replay.Failure.Details,
 	}
 }
 
+// finishDurableCommand is the pre-Envelope entry point, kept unchanged for
+// every Command not yet migrated to failure.Envelope propagation. Its
+// behavior and signature are exactly what they were before that migration
+// started.
 func finishDurableCommand(
 	ctx context.Context,
 	claim durableCommandClaim,
 	result any,
 	commandErr error,
 	failureCode, failureStage string,
+	partial bool,
+) error {
+	var ledgerFailure *commandledger.Failure
+	if commandErr != nil {
+		ledgerFailure = &commandledger.Failure{Code: failureCode, Stage: failureStage}
+	}
+	return finishDurableCommandRecord(ctx, claim, result, commandErr, ledgerFailure, partial)
+}
+
+// finishDurableCommandWithEnvelope is the Envelope-carrying sibling used by
+// Commands migrated to failure.Envelope propagation. The caller passes the
+// already-classified Envelope computed once at its own boundary (or
+// forwarded verbatim from a child) — this function never reclassifies it.
+func finishDurableCommandWithEnvelope(
+	ctx context.Context,
+	claim durableCommandClaim,
+	result any,
+	commandErr error,
+	envelope *failure.Envelope,
+	partial bool,
+) error {
+	var ledgerFailure *commandledger.Failure
+	if envelope != nil {
+		ledgerFailure = &commandledger.Failure{Code: envelope.Code, Stage: envelope.Stage, Details: envelope}
+	}
+	return finishDurableCommandRecord(ctx, claim, result, commandErr, ledgerFailure, partial)
+}
+
+func finishDurableCommandRecord(
+	ctx context.Context,
+	claim durableCommandClaim,
+	result any,
+	commandErr error,
+	ledgerFailure *commandledger.Failure,
 	partial bool,
 ) error {
 	if claim.ledger == nil {
@@ -115,21 +155,21 @@ func finishDurableCommand(
 		return errors.Join(commandErr, &CommandLedgerCommitError{Err: err})
 	}
 	state := commandledger.StateSucceeded
-	var failure *commandledger.Failure
 	if commandErr != nil {
 		state = commandledger.StateFailed
 		if partial {
 			state = commandledger.StatePartialFailure
 		}
-		failure = &commandledger.Failure{Code: failureCode, Stage: failureStage}
 	}
 	finishContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if _, err := claim.ledger.Finish(finishContext, claim.running, state, encoded, failure); err != nil {
+	if _, err := claim.ledger.Finish(finishContext, claim.running, state, encoded, ledgerFailure); err != nil {
 		return errors.Join(commandErr, &CommandLedgerCommitError{Err: err})
 	}
-	if commandErr != nil && failure != nil {
-		return errors.Join(commandErr, &RecordedCommandError{Code: failure.Code, Stage: failure.Stage, Partial: partial})
+	if commandErr != nil && ledgerFailure != nil {
+		return errors.Join(commandErr, &RecordedCommandError{
+			Code: ledgerFailure.Code, Stage: ledgerFailure.Stage, Partial: partial, Envelope: ledgerFailure.Details,
+		})
 	}
 	return commandErr
 }

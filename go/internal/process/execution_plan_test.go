@@ -16,6 +16,7 @@ import (
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
 	"github.com/AkiraShimizu0/workcairn/go/internal/recovery"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
@@ -180,6 +181,11 @@ func TestExecuteTaskRecordsRedactedProviderFailureBeforeDeliverable(t *testing.T
 		!result.Held || result.FailureReason != "worker_execution_failed_runner_failed" {
 		t.Fatalf("Provider failure result = %#v, %v", result, err)
 	}
+	if result.Failure == nil || result.Failure.Stage != "worker" || result.Failure.Provider == nil ||
+		result.Failure.Provider.Category != "rate_limited" || result.Failure.Provider.HTTPStatus != http.StatusTooManyRequests ||
+		result.Failure.Provider.RequestID != "req_task_safe" || result.Failure.Category != "rate_limited" {
+		t.Fatalf("Envelope = %#v", result.Failure)
+	}
 	ledger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
 	if ledgerErr != nil {
 		t.Fatal(ledgerErr)
@@ -189,9 +195,58 @@ func TestExecuteTaskRecordsRedactedProviderFailureBeforeDeliverable(t *testing.T
 		strings.Contains(string(record.Result), "must not persist") {
 		t.Fatalf("Provider failure Ledger = %#v, %v", record, ledgerErr)
 	}
+	if record.Failure.Details == nil || record.Failure.Details.Code != record.Failure.Code || record.Failure.Details.Stage != record.Failure.Stage ||
+		record.Failure.Details.Provider == nil || record.Failure.Details.Provider.RequestID != "req_task_safe" {
+		t.Fatalf("Ledger Details = %#v", record.Failure.Details)
+	}
 	var stored execution.Result
 	if json.Unmarshal(record.Result, &stored) != nil || stored.ProviderFailure == nil || stored.ProviderFailure.RequestID != "req_task_safe" {
 		t.Fatalf("stored Provider failure = %#v", stored.ProviderFailure)
+	}
+}
+
+// TestExecuteTaskEnvelopeRecordsCommittedDeliverableOnEventPublicationPartialFailure
+// covers the "Deliverable committed then partial failure" case from the
+// FailureEnvelope Phase 2 test plan: the Provider succeeds, the Deliverable
+// and Task Complete both commit, but a downstream Event observer fails --
+// this must surface as a typed Envelope whose Evidence proves the
+// Deliverable really did commit, never a guess.
+func TestExecuteTaskEnvelopeRecordsCommittedDeliverableOnEventPublicationPartialFailure(t *testing.T) {
+	root := writePlanVault(t)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("content-type", "application/json")
+		_, _ = response.Write([]byte(`{"model":"claude-sonnet-5","content":[{"type":"text","text":"# 完成した仕様書\n\n本文"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+	failingObserver := event.Observer{
+		Types: []event.Type{event.TaskCompleted},
+		Handler: func(context.Context, event.Event) error {
+			return errors.New("must not be persisted: observer failure detail")
+		},
+	}
+	input := ExecuteTaskInput{
+		ExecutionPlanInput: planInput(root), Approved: true, ApprovalSource: "process-test",
+		ApprovalReference: "approval-event-partial", ExecutionID: "EXEC-EVENT-PARTIAL", CommandID: "CMD-EVENT-PARTIAL",
+		EventObservers: []event.Observer{failingObserver},
+	}
+	result, err := ExecuteTask(context.Background(), input, ClaudeProcessConfig{
+		APIKey: "fake-api-key", ProviderModel: "claude-sonnet-5", BaseURL: server.URL,
+	}, server.Client())
+	if err == nil || result.Deliverable == nil || result.FinalTaskStatus != task.StatusCompleted {
+		t.Fatalf("event publication partial failure result = %#v, %v", result, err)
+	}
+	if result.Failure == nil || !result.Failure.Partial || !result.Failure.RecoveryRequired ||
+		result.Failure.Evidence == nil || !result.Failure.Evidence.Deliverable || !result.Failure.Evidence.TaskState {
+		t.Fatalf("Envelope did not record committed evidence = %#v", result.Failure)
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, ledgerErr := ledger.Get(context.Background(), input.CommandID)
+	if ledgerErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
+		record.Failure.Details == nil || record.Failure.Details.Evidence == nil || !record.Failure.Details.Evidence.Deliverable {
+		t.Fatalf("outer Ledger = %#v, %v", record, ledgerErr)
 	}
 }
 

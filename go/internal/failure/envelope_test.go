@@ -1,0 +1,135 @@
+package failure
+
+import (
+	"encoding/json"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestEnvelopeValidateRequiresCodeAndStage(t *testing.T) {
+	valid := New("REVIEW_RESULT_INVALID", "review_result_parser")
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid Envelope rejected: %v", err)
+	}
+	for _, mutate := range []func(*Envelope){
+		func(envelope *Envelope) { envelope.SchemaVersion = 0 },
+		func(envelope *Envelope) { envelope.Code = "" },
+		func(envelope *Envelope) { envelope.Stage = "" },
+		func(envelope *Envelope) { envelope.Code = " REVIEW_RESULT_INVALID" },
+		func(envelope *Envelope) { envelope.Substage = "\n" },
+		func(envelope *Envelope) { envelope.Category = "\r" },
+		func(envelope *Envelope) { envelope.ChildCommandID = " " },
+	} {
+		invalid := valid
+		mutate(&invalid)
+		if invalid.Validate() == nil {
+			t.Fatalf("invalid Envelope accepted: %#v", invalid)
+		}
+	}
+}
+
+func TestEnvelopeValidateRejectsUnsafeSubStructures(t *testing.T) {
+	base := New("PROVIDER_RATE_LIMITED", "review_provider")
+	withBadProvider := base
+	withBadProvider.Provider = &ProviderDiagnostic{Category: ""}
+	if withBadProvider.Validate() == nil {
+		t.Fatal("Provider with empty Category accepted")
+	}
+	withBadParse := base
+	withBadParse.Parse = &ParseDiagnostic{Domain: "review", Reason: ""}
+	if withBadParse.Validate() == nil {
+		t.Fatal("Parse with empty Reason accepted")
+	}
+}
+
+func TestErrorUnwrapPreservesCause(t *testing.T) {
+	cause := errors.New("underlying typed cause")
+	wrapped := &Error{Envelope: New("REVIEW_EXECUTION_FAILED", "process"), Cause: cause}
+	if !errors.Is(wrapped, cause) {
+		t.Fatal("errors.Is did not see through Unwrap() to Cause")
+	}
+	var target *Error
+	if !errors.As(wrapped, &target) || target != wrapped {
+		t.Fatal("errors.As did not recover the *Error")
+	}
+}
+
+// TestErrorNeverLeaksCauseText proves Error() is built only from Envelope
+// fields, never from Cause -- planting a secret marker in Cause's text must
+// never appear in Error()'s output.
+func TestErrorNeverLeaksCauseText(t *testing.T) {
+	secret := "PROVIDER_SECRET_MARKER_MUST_NOT_APPEAR_IN_ERROR_TEXT"
+	cause := errors.New("raw provider response: " + secret)
+	wrapped := &Error{Envelope: New("PROVIDER_RESPONSE_INVALID", "review_provider_response"), Cause: cause}
+	if strings.Contains(wrapped.Error(), secret) {
+		t.Fatalf("Error() leaked secret from Cause: %q", wrapped.Error())
+	}
+	withSubstage := &Error{Envelope: New("REVIEW_RESULT_INVALID", "review_result_parser"), Cause: cause}
+	withSubstage.Envelope.Substage = "unknown_field"
+	if strings.Contains(withSubstage.Error(), secret) {
+		t.Fatalf("Error() with Substage leaked secret from Cause: %q", withSubstage.Error())
+	}
+	if !strings.Contains(withSubstage.Error(), "unknown_field") {
+		t.Fatalf("Error() did not include Substage: %q", withSubstage.Error())
+	}
+}
+
+func TestClassifyProviderCategoryCoversAllCategoriesWithNeutralDefault(t *testing.T) {
+	tests := map[string]string{
+		"authentication_required":   "PROVIDER_AUTHENTICATION_REQUIRED",
+		"billing_required":          "PROVIDER_BILLING_REQUIRED",
+		"permission_denied":         "PROVIDER_PERMISSION_DENIED",
+		"invalid_provider_request":  "PROVIDER_REQUEST_INVALID",
+		"rate_limited":              "PROVIDER_RATE_LIMITED",
+		"provider_unavailable":      "PROVIDER_UNAVAILABLE",
+		"provider_transport":        "PROVIDER_UNAVAILABLE",
+		"invalid_provider_response": "PROVIDER_RESPONSE_INVALID",
+		"structured_output_invalid": "PROVIDER_RESPONSE_INVALID",
+		"provider_refusal":          "PROVIDER_REFUSED",
+		"totally_unknown_category":  "PROVIDER_FAILURE",
+	}
+	for category, want := range tests {
+		if got := ClassifyProviderCategory(category); got != want {
+			t.Errorf("ClassifyProviderCategory(%q) = %q, want %q", category, got, want)
+		}
+	}
+}
+
+// TestEnvelopeJSONRoundTripsWithoutOptionalFields confirms an old, minimal
+// {code, stage} shape (matching what a pre-migration Ledger Failure would
+// look like if it ever carried an Envelope at all) still decodes cleanly,
+// and a fully-populated Envelope round-trips byte for byte.
+func TestEnvelopeJSONRoundTripsWithoutOptionalFields(t *testing.T) {
+	minimal := []byte(`{"schema_version":1,"code":"REVIEW_SAVE_FAILED","stage":"review_artifact_save","partial":false,"recovery_required":false}`)
+	var decoded Envelope
+	if err := json.Unmarshal(minimal, &decoded); err != nil {
+		t.Fatalf("decode minimal Envelope: %v", err)
+	}
+	if decoded.Provider != nil || decoded.Parse != nil || decoded.Evidence != nil || decoded.Substage != "" || decoded.Category != "" {
+		t.Fatalf("minimal Envelope decoded with unexpected optional fields: %#v", decoded)
+	}
+	if err := decoded.Validate(); err != nil {
+		t.Fatalf("minimal Envelope failed Validate(): %v", err)
+	}
+
+	full := Envelope{
+		SchemaVersion: SchemaVersion, Code: "PROVIDER_RATE_LIMITED", Stage: "review_provider", Substage: "retry_after",
+		Category: "rate_limited", Partial: true, RecoveryRequired: true, ChildCommandID: "CHILD-abc123",
+		Provider: &ProviderDiagnostic{Category: "rate_limited", HTTPStatus: 429, ProviderType: "rate_limit_error", RequestID: "req_1"},
+		Parse:    &ParseDiagnostic{Domain: "review", Reason: "invalid_verdict"},
+		Evidence: &CommittedEvidence{ReviewCanonical: true},
+	}
+	encoded, err := json.Marshal(full)
+	if err != nil {
+		t.Fatalf("encode full Envelope: %v", err)
+	}
+	var roundTripped Envelope
+	if err := json.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("decode full Envelope: %v", err)
+	}
+	if !reflect.DeepEqual(roundTripped, full) {
+		t.Fatalf("round trip mismatch: got %#v, want %#v", roundTripped, full)
+	}
+}

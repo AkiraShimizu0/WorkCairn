@@ -651,7 +651,7 @@ func mapCommandError(err error) (int, *CommandError) {
 	case errors.Is(err, commandledger.ErrInvalidRecord):
 		return http.StatusInternalServerError, &CommandError{Code: "COMMAND_LEDGER_INVALID", Stage: "command_claim", RecoveryRequired: true}
 	case errors.As(err, &recorded):
-		return http.StatusUnprocessableEntity, &CommandError{Code: recorded.Code, Stage: recorded.Stage, RecoveryRequired: recorded.Partial}
+		return http.StatusUnprocessableEntity, &CommandError{Code: recorded.Code, Stage: recorded.Stage, RecoveryRequired: recorded.Partial, Details: recorded.Envelope}
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout, &CommandError{Code: "COMMAND_TIMEOUT", RecoveryRequired: true}
 	case errors.Is(err, context.Canceled):

@@ -86,6 +86,8 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0037: First-run setupを明示CommandとしPublic Beta UIをread-only projectionに保つ](adr/ADR-0037-public-beta-setup-and-ui-projection.md)
 - [ADR-0038: macOS First-runをLocal OS Adapterへ閉じ込める](adr/ADR-0038-macos-first-run-and-local-os-integration.md)
 - [ADR-0039: CEO PlanをLLM Intent + Go Normalizerで構築する](adr/ADR-0039-ceo-plan-intent-normalization.md)
+- [ADR-0040: Reviewer RequirementをGo単一箇所で解決しReviewをTyped Decisionへ移行する](adr/ADR-0040-reviewer-requirement-and-typed-review-decision.md)
+- [ADR-0041: Typed FailureEnvelopeをchild→outer→Ledger→HTTP→UIへそのまま伝播する](adr/ADR-0041-typed-failure-envelope-propagation.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -184,6 +186,7 @@ ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環�
 - `go/internal/revision`: Storage非依存のRevision intent、Store port、部分状態Result
 - `go/internal/recovery`: Storage非依存のSnapshot／finding、version付きRecovery plan、typed result
 - `go/internal/commandledger`: Storage非依存のCommand identity、request digest、running／terminal outcome、Store port
+- `go/internal/failure`: Provider／Domain非依存のtyped FailureEnvelope。最初にfailureを確定できるdurable Process boundaryだけが生成し、outer Command／Command Ledger／HTTP／UIはそれを再分類せず転送する
 - `go/internal/commandcontract`: HTTP／Schedulerが共有する副作用commandのstrict typed payload契約
 - `go/internal/autonomy`: 承認するWorkflowの自律範囲をcanonicalize／検証するProvider／Storage非依存のtyped contract
 - `go/internal/interaction`: request／clarification／plan／Workflow approvalのclosed state、append-only turn、結果summary／digest、CAS contract

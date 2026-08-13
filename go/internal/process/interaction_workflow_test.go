@@ -16,6 +16,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 )
@@ -364,6 +365,94 @@ func TestInteractionWorkflowFailureRecordsAttentionWithoutRollback(t *testing.T)
 		ReviewerID: "QA-001", CurrentTime: at.Add(time.Minute), MaxTasks: 10,
 	}); !errors.Is(planErr, ErrInteractionWorkflowPrecondition) {
 		t.Fatalf("attention Session continuation error = %v", planErr)
+	}
+}
+
+// TestInteractionWorkflowForwardsReviewChildEnvelopeUnchangedThroughEveryLedger
+// is the system-level FailureEnvelope propagation proof for the Review
+// vertical slice: a Provider failure recorded on the Review child's own
+// Ledger entry must reach the Reviewed Workflow's own outer Ledger entry
+// and the Interaction Workflow's own outer Ledger entry with the exact
+// same Code/Stage/Category/Provider diagnostic -- no re-classification, no
+// re-derivation, at any of the three boundaries.
+func TestInteractionWorkflowForwardsReviewChildEnvelopeUnchangedThroughEveryLedger(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	ready := writeReadyInteractionSession(t, root, "SESSION-WORKFLOW-ENVELOPE", at.Add(-time.Hour))
+	planInput := InteractionWorkflowPlanInput{
+		VaultRoot: root, SessionID: ready.SessionID, ExpectedVersion: ready.Version,
+		ReviewerID: "QA-001", CurrentTime: at, MaxTasks: 10,
+	}
+	plan, planErr := PlanInteractionWorkflow(context.Background(), planInput)
+	if planErr != nil {
+		t.Fatal(planErr)
+	}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			encoded, _ := json.Marshal(map[string]any{
+				"model": "claude-test", "content": []map[string]string{{"type": "text", "text": "# TASK-001 deliverable\n\n本文"}},
+				"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+			})
+			_, _ = response.Write(encoded)
+			return
+		}
+		response.Header().Set("Request-Id", "req_envelope_identity")
+		response.WriteHeader(http.StatusTooManyRequests)
+		_, _ = response.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"must not persist"}}`))
+	}))
+	defer server.Close()
+	result, err := ExecuteInteractionWorkflow(context.Background(), ExecuteInteractionWorkflowInput{
+		InteractionWorkflowPlanInput: planInput, WorkflowPlanDigest: plan.WorkflowPlanDigest,
+		CommandID: "CMD-INTERACTION-WORKFLOW-ENVELOPE",
+	}, ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL}, server.Client(), true)
+	if err == nil || len(result.Workflow.Tasks) != 1 {
+		t.Fatalf("ExecuteInteractionWorkflow() = %#v, %v", result, err)
+	}
+	reviewCommandID := result.Workflow.Tasks[0].ReviewCommandID
+	if reviewCommandID == "" {
+		t.Fatal("Review child Command ID missing from Workflow evidence")
+	}
+
+	projectLedger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	reviewRecord, reviewErr := projectLedger.Get(context.Background(), reviewCommandID)
+	if reviewErr != nil || reviewRecord.Failure == nil || reviewRecord.Failure.Details == nil {
+		t.Fatalf("Review child Ledger = %#v, %v", reviewRecord, reviewErr)
+	}
+	reviewedWorkflowRecord, reviewedErr := projectLedger.Get(context.Background(), result.WorkflowCommandID)
+	if reviewedErr != nil || reviewedWorkflowRecord.Failure == nil || reviewedWorkflowRecord.Failure.Details == nil {
+		t.Fatalf("Reviewed Workflow outer Ledger = %#v, %v", reviewedWorkflowRecord, reviewedErr)
+	}
+	workspaceLedger, workspaceErr := vault.NewWorkspaceCommandLedgerStore(root)
+	if workspaceErr != nil {
+		t.Fatal(workspaceErr)
+	}
+	interactionRecord, interactionErr := workspaceLedger.Get(context.Background(), "CMD-INTERACTION-WORKFLOW-ENVELOPE")
+	if interactionErr != nil || interactionRecord.Failure == nil || interactionRecord.Failure.Details == nil {
+		t.Fatalf("Interaction Workflow outer Ledger = %#v, %v", interactionRecord, interactionErr)
+	}
+
+	// Code/Stage/Category/Provider are the classification itself -- these
+	// must be byte-identical at all three boundaries. Partial/
+	// RecoveryRequired are legitimately per-Ledger-entry (each Command's
+	// own commit status), so they are checked separately, not for equality.
+	child, outerReviewed, outerInteraction := reviewRecord.Failure.Details, reviewedWorkflowRecord.Failure.Details, interactionRecord.Failure.Details
+	for _, pair := range []struct {
+		name string
+		got  *failure.Envelope
+	}{{"Reviewed Workflow", outerReviewed}, {"Interaction Workflow", outerInteraction}} {
+		if pair.got.Code != child.Code || pair.got.Stage != child.Stage || pair.got.Category != child.Category ||
+			!reflect.DeepEqual(pair.got.Provider, child.Provider) || !reflect.DeepEqual(pair.got.Parse, child.Parse) {
+			t.Fatalf("%s Envelope diverged from Review child: got=%#v child=%#v", pair.name, pair.got, child)
+		}
+	}
+	if child.Code != "PROVIDER_RATE_LIMITED" || child.Stage != "review_provider" || child.Provider == nil ||
+		child.Provider.RequestID != "req_envelope_identity" {
+		t.Fatalf("Review child Envelope = %#v", child)
 	}
 }
 

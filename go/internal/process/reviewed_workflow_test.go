@@ -280,8 +280,13 @@ func TestReviewedWorkflowReviewProviderFailureClassifiesOuterCommandAndPreserves
 	}
 	record, getErr := ledger.Get(context.Background(), input.CommandID)
 	if getErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
-		record.Failure.Code != "PROVIDER_RATE_LIMITED" || record.Failure.Stage != "review" {
+		record.Failure.Code != "PROVIDER_RATE_LIMITED" || record.Failure.Stage != "review_provider" {
 		t.Fatalf("outer reviewed Workflow Ledger = %#v, %v", record, getErr)
+	}
+	if record.Failure.Details == nil || record.Failure.Details.Code != "PROVIDER_RATE_LIMITED" ||
+		record.Failure.Details.Stage != "review_provider" || record.Failure.Details.Provider == nil ||
+		record.Failure.Details.Provider.Category != "rate_limited" || record.Failure.Details.Provider.RequestID != "req_review_safe" {
+		t.Fatalf("outer reviewed Workflow Ledger Details = %#v", record.Failure.Details)
 	}
 }
 

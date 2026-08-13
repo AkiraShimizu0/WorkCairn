@@ -12,6 +12,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 )
@@ -272,25 +273,18 @@ func providerFailure(err error) *ProviderFailure {
 	}
 }
 
+// providerFailureCode keeps Interaction Plan's own historical default
+// ("INTERACTION_PLAN_FAILED" for an unrecognized category) for its
+// existing callers, but delegates the actual category taxonomy to the
+// shared, Command-neutral failure.ClassifyProviderCategory so Review and
+// Reviewed Workflow (which use that function directly) never see this
+// Interaction-specific default leak into their own classification.
 func providerFailureCode(category string) string {
-	switch claude.FailureCategory(category) {
-	case claude.FailureAuthentication:
-		return "PROVIDER_AUTHENTICATION_REQUIRED"
-	case claude.FailureBilling:
-		return "PROVIDER_BILLING_REQUIRED"
-	case claude.FailurePermission:
-		return "PROVIDER_PERMISSION_DENIED"
-	case claude.FailureInvalidRequest:
-		return "PROVIDER_REQUEST_INVALID"
-	case claude.FailureRateLimited:
-		return "PROVIDER_RATE_LIMITED"
-	case claude.FailureUnavailable, claude.FailureTransport:
-		return "PROVIDER_UNAVAILABLE"
-	case claude.FailureResponse:
-		return "PROVIDER_RESPONSE_INVALID"
-	default:
+	code := failure.ClassifyProviderCategory(category)
+	if code == "PROVIDER_FAILURE" {
 		return "INTERACTION_PLAN_FAILED"
 	}
+	return code
 }
 
 type InteractionAnswerInput struct {
