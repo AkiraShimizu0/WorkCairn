@@ -6,6 +6,18 @@ WorkCairnは「自分専用のAI会社を持つ」local-first製品です。自�
 
 Conceptは`Your AI company that manages itself.`、中心思想は「会社は見える。仕事も見える。でも管理しなくていい。」です。現在の製品RuntimeはGo Only、Public Beta候補は`v1.0.0-beta.1`です。正本の運用入口は`workcairn`と`workcairn-daemon`のLocal Web UI、中核のビジネスルールはGo Domain／Service、運用データはVault Adapterが管理します。
 
+Public Betaの一般利用者が通る経路は、ADR-0042により次の1本です。
+
+```text
+First Run → Interaction Start → CEO Intent → Go Canonical Plan → Plan Approval
+→ Project / Task commit → Reviewed Workflow Approval
+→ Task Execution → Deliverable → Typed Review
+→ Request ChangesならRevision / Re-review → Completion
+→ Timeline / Proof of Work
+```
+
+一般daemonは`workspace.setup`とこのInteractionを進める5 operationだけをside-effect allow-listへ持ちます。direct Task／Review／Revision、plain／direct Reviewed Workflow、writer、Scheduler、External Actionはoperator CLI／内部Processとして維持しますが、一般Web UI／daemonから実行できません。
+
 macOSの初回起動では、利用者がnative pickerでWorkCairn専用directoryを明示選択します。iCloud Driveを推奨しますが、既存Vaultを探索・変更しません。選択済みrootはRuntime edgeのApplication Support configから再起動時にcomposeし、Starter Organizationは既存Organization writer、Claude credentialはMac native inputとKeychain Adapterを通します。iPhoneはpath／secretを送らず、redactedなsetup状態とNext Actionだけを表示します。
 
 この文書は「現在どう動くか」を説明します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、個別判断の理由は[ADR](adr/)、詳細なpackage構造は[Architecture.md](Architecture.md)、安全な導入は[PublicBetaQuickstart.md](PublicBetaQuickstart.md)と[OperatorGuide.md](OperatorGuide.md)、HTTP運用は[HTTPAPI.md](HTTPAPI.md)、今後の順序は[ROADMAP.md](ROADMAP.md)を正とします。
@@ -24,32 +36,23 @@ flowchart LR
     Validate --> ApproveApply{"適用を承認"}
     ApproveApply --> Project["Project / Task作成"]
     Project --> Plan["実行plan"]
-    Plan --> ApproveTask{"実行を承認"}
+    Plan --> ApproveTask{"Reviewed Workflowを承認"}
     ApproveTask --> Execute["Task execution"]
     Execute --> Deliverable["Deliverable"]
-    Deliverable --> ActionPlan["External Action plan"]
-    ActionPlan --> ActionApproval{"外部公開を承認"}
-    ActionApproval --> ExternalAction["WordPress Action"]
-    ExternalAction --> Observe
-    Deliverable --> ReviewPlan["Review plan"]
-    ReviewPlan --> ApproveReview{"Reviewを承認"}
-    ApproveReview --> Review["Review"]
+    Deliverable --> Reviewer["Reviewer解決"]
+    Reviewer --> Review["Typed Review"]
     Review -->|approve| Done["完了"]
-    Review -->|request changes| RevisionPlan["Revision plan"]
-    RevisionPlan --> ApproveRevision{"Revisionを承認"}
-    ApproveRevision --> Revision["Revision intent / Task"]
-    Revision --> Plan
+    Review -->|request changes| Revision["Revision intent / Task"]
+    Revision --> Execute
     Execute -. partial failure .-> Recovery["Recovery inspect / plan"]
     Recovery --> RecoveryApproval{"Recoveryを承認"}
     RecoveryApproval --> Execute
-    SchedulePlan["one-shot Schedule plan"] --> ScheduleApproval{"将来実行を承認"}
-    ScheduleApproval --> Scheduler["Kernel-managed Scheduler"]
-    Scheduler --> ScheduledCommand["既存Command経路"]
-    ScheduledCommand --> Execute
     Execute --> Observe["Redacted Notification / Metrics"]
     Review --> Observe
     Revision --> Observe
 ```
+
+one-shot Scheduler、Notification／Metrics inspection、WordPress External Actionは実装済みoperator capabilityですが、この一般利用フローには含めません。Public Beta UIはそれらのCommandを発行せず、一般daemonのallow-listも拒否します。
 
 1. CEO依頼は、構造化Employee inventoryとProvider-neutralなPromptからtyped planへ変換します。
 2. Provider出力は未知field、未知社員、不正な依存、循環依存をGoで拒否します。生成と適用は分離され、LLM出力を直接Vaultへ書きません。
@@ -84,7 +87,7 @@ iPhone browser
 - `My Actions`: iPhone既定。次の質問、承認、Recoveryだけを最優先表示する
 - `Company View`: PC／iPad既定。AI社員を人型で示し、担当、Maker、Reviewer、Revision、blocked／completedとhandoffを表示する
 
-いずれもInteraction Next Action、Organization inventory、Workflow／Task evidenceを表示するだけで、Task遷移やReview判断をJavaScriptへ複製しません。対応不要なら`Your company is working. No action needed.`を明示し、承認済みCommandの実行中は小さなbackground indicatorへ退きます。clarification、approval、failure、partial failure、Recovery、connection lossだけを前面へ出します。一般画面ではPlanを「進め方」として自然文で表示し、内部IDやdigestは詳細へ分離します。Session turn、Workflow／Action summary、canonical evidenceからTimelineを投影し、failureはsanitized detail付きでMy Actions、依頼一覧、Timelineから再確認できます。Prompt、Provider生response、API key、Vault pathは表示しません。External ActionはWorkflow完了後に利用者が明示的に選んだ場合だけ、別のsource／Action digest承認へ進みます。
+いずれもInteraction Next Action、Organization inventory、Workflow／Task evidenceを表示するだけで、Task遷移やReview判断をJavaScriptへ複製しません。対応不要なら`Your company is working. No action needed.`を明示し、承認済みCommandの実行中は小さなbackground indicatorへ退きます。clarification、approval、failure、partial failure、Recovery、connection lossだけを前面へ出します。一般画面ではPlanを「進め方」として自然文で表示し、内部IDやdigestは詳細へ分離します。Session turn、Workflow summary、canonical evidenceからTimelineを投影し、failureはsanitized detail付きでMy Actions、依頼一覧、Timelineから再確認できます。Prompt、Provider生response、API key、Vault pathは表示しません。External ActionはBeta後のoperator capabilityとして残し、Public Beta UIには表示しません。
 
 同一Session、Version、Next Actionをpollするだけではaction form、Timeline、詳細DOMを再生成しません。入力中text、select、focus、開いている詳細はclient memoryに保ち、Sessionが本当に次Version／stageへ進んだ場合だけ古いUIを閉じます。未送信draftをVaultやbrowser storageへ永続化しません。
 

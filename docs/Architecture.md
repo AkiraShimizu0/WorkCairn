@@ -13,12 +13,12 @@ flowchart TD
     Plan -. questions / answers .-> Interaction
     Plan --> Apply["Go CEO Plan Apply"]
     Apply --> Workflow["Go managed Project / Task"]
-    Workflow --> Run["Go workcairn"]
-    API["workcairn-daemon / Command API v1"] --> Run
+    Workflow --> Run["Go workcairn operator path"]
+    API["workcairn-daemon / Public Beta allow-list"] --> Interaction
     Mobile["iPhone / Local Web UI"] --> API
-    API --> Scheduler["Kernel-managed one-shot Scheduler"]
-    Scheduler --> Run
-    API -. inspect .-> Observe["Notification Inbox / Metrics"]
+    CLI["workcairn operator CLI"] --> Run
+    Scheduler["Operator one-shot Scheduler"] --> Run
+    API -. operator inspect .-> Observe["Notification Inbox / Metrics"]
     Run --> WorkflowRun["Reviewed Workflow Run Service"]
     Interaction --> WorkflowRun
     WorkflowRun --> Execution
@@ -29,8 +29,7 @@ flowchart TD
     Kernel --> Execution["ExecutionService"]
     Execution --> GoWorker["Go WorkerService / Claude Adapter"]
     Execution --> Task["TaskService / Deliverable / Audit"]
-    Task --> Action["Approved External Action"]
-    Interaction --> Action
+    Task --> Action["Operator External Action"]
     Action --> WordPress["WordPress Adapter"]
     Task --> Observe
     Review --> Observe
@@ -88,9 +87,16 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0039: CEO PlanをLLM Intent + Go Normalizerで構築する](adr/ADR-0039-ceo-plan-intent-normalization.md)
 - [ADR-0040: Reviewer RequirementをGo単一箇所で解決しReviewをTyped Decisionへ移行する](adr/ADR-0040-reviewer-requirement-and-typed-review-decision.md)
 - [ADR-0041: Typed FailureEnvelopeをchild→outer→Ledger→HTTP→UIへそのまま伝播する](adr/ADR-0041-typed-failure-envelope-propagation.md)
+- [ADR-0042: Public Betaの一般daemonをInteraction Reviewed Workflow経路へ限定する](adr/ADR-0042-public-beta-product-path.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
+
+### Public Beta exposure boundary
+
+一般利用者の正式経路は`First Run → Interaction → CEO Intent → Go Canonical Plan → Plan Approval → Project／Task commit → Reviewed Workflow Approval → Task／Deliverable → Typed Review → Revision／再Review → Completion → Timeline／Proof of Work`です。`workcairn-daemon`の`POST /v1/commands`はADR-0042により`workspace.setup`と5つの`interaction.*` operationだけをexact allow-listし、それ以外をExecutor前にdefault denyします。
+
+direct Task／Review／Revision、plain／direct Reviewed Workflow、CEO apply、Project／Task／Organization writer、Scheduler、External Actionは既存CLI／内部Process／Recovery用に維持しますが、一般daemonのside-effect surfaceとLocal Web UIからは到達不能です。JSON Contract v1、Command Ledger、Vault canonical evidenceは変更しません。
 
 | コンポーネント | 責務 |
 |---|---|

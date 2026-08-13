@@ -106,6 +106,8 @@ temporary／iCloud Drive専用Vault、First-run Wizard、初回Operator確認は
 
 UIはこのフローを実装せず、Go Interaction Sessionの`Next Action`を表示する薄いclientです。Task状態とTask lifecycle EventはTaskServiceだけが変更します。
 
+Public Betaの一般daemonは、この経路に必要な`workspace.setup`、`interaction.start`、`interaction.plan.generate`、`interaction.answer`、`interaction.plan.apply`、`interaction.workflow.execute`だけを実行できます。direct Task／Review／Revision、plain Workflow、writer、Scheduler、External Actionはoperator CLI／内部Processとして維持しますが、一般Web UIからは実行できません。
+
 ## 安全に任せられる理由
 
 - 変更前に内容を確認でき、重要な副作用は明示承認まで開始しない
@@ -136,8 +138,8 @@ make release-package RELEASE_GOOS=darwin RELEASE_GOARCH=arm64 \
 
 ## 正式な製品surface
 
-- `workcairn`: plan、approval、execute、inspect、recoveryのCLI
-- `workcairn-daemon`: HTTP Command APIとmobile-first Local Web UI
+- `workcairn-daemon`: Public Beta一般利用者のInteraction Reviewed Workflowとmobile-first Local Web UI
+- `workcairn`: plan、approval、execute、inspect、recoveryを明示的に扱うoperator CLI
 - `workcairn-core`: JSON Contract v1の外部process boundary
 
 ## Documentation
@@ -158,7 +160,7 @@ make release-package RELEASE_GOOS=darwin RELEASE_GOARCH=arm64 \
 
 - remote authentication、TLS、internet公開、Push通知は未実装
 - durable queue、自動resume、Event replay、automatic reconciliationは未実装
-- Schedulerはone-shot、External Actionは単一WordPress post publishだけ
+- Schedulerと単一WordPress External Actionはoperator capabilityとして残るが、Public Beta一般UIでは非表示
 - WindowsはVault writer非対応
 
 ## License

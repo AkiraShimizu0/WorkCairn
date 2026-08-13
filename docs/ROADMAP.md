@@ -35,6 +35,17 @@ Obsidian Vaultを利用した社員、組織、Project、Task、Deliverable、Re
 
 Go Onlyの詳細なcapability判定は[GoOnlyReleaseGate.md](GoOnlyReleaseGate.md)を参照してください。
 
+## Completed — Public Beta Product Path Consolidation
+
+ADR-0042に基づき、一般利用者の正式経路を`First Run → Interaction → Intent／Canonical Plan → Approval → Reviewed Workflow → Completion → Timeline／Proof of Work`へ一本化しました。
+
+- 一般daemonのside-effect operationを`workspace.setup`、`interaction.start`、`interaction.plan.generate`、`interaction.answer`、`interaction.plan.apply`、`interaction.workflow.execute`へexact allow-list
+- direct Task／Review／Revision、plain Workflow、direct Reviewed Workflow、writer、Scheduler、External Actionを一般HTTP／UIからdefault deny
+- CLI、Recovery、内部Process、Command Ledger、canonical evidenceは維持
+- WordPress、Scheduler、Notification／Metrics、advanced Autonomy／Shadow ModeはBeta後surfaceとして通常UIから非表示
+
+次のPublic Beta品質Phaseはactual daemon、embedded JavaScript、DOM、polling、reloadを通すBrowser E2Eです。Playwright等の導入は本Phaseに含めません。
+
 ## Completed — v1.0 Candidate Stabilization
 
 このフェーズでは新機能より、既存保証の固定、ドキュメント、配布境界、回帰検知を優先します。

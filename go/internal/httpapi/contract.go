@@ -48,6 +48,25 @@ var (
 	ErrUnsupportedCommand = errors.New("unsupported HTTP command")
 )
 
+// publicBetaCommandOperations is the complete side-effect surface exposed by
+// the general workcairn-daemon. Internal Process composition, the operator CLI,
+// Scheduler, and Recovery keep their existing capabilities; only the public
+// HTTP product edge is narrowed here. Unknown and operator-only operations are
+// denied before they can reach an Executor.
+var publicBetaCommandOperations = map[string]struct{}{
+	"workspace.setup":              {},
+	"interaction.start":            {},
+	"interaction.plan.generate":    {},
+	"interaction.answer":           {},
+	"interaction.plan.apply":       {},
+	"interaction.workflow.execute": {},
+}
+
+func publicBetaCommandAllowed(operation string) bool {
+	_, allowed := publicBetaCommandOperations[operation]
+	return allowed
+}
+
 type Command struct {
 	Version   string          `json:"version"`
 	CommandID string          `json:"command_id"`

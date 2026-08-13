@@ -80,6 +80,8 @@ terminalのURLをiPhone Safariで開き、pairing codeを入力します。URL�
 
 Mac／iPadでは`Company View`が既定です。AI社員、Maker、Reviewer、Revision、担当中の仕事とhandoffをread-onlyで確認できます。表示はOrganization／Interaction／evidenceのprojectionであり、画面からTask状態を推測変更しません。
 
+一般UIの正式経路は`First Run → 自然言語依頼 → 質問回答 → 進め方承認 → Reviewed Workflow承認 → Task／Deliverable → Typed Review → 必要ならRevision／再Review → 完了 → Timeline／Proof of Work`の1本です。direct Task／Review／Revision、plain Workflow、Scheduler、WordPress等のoperator機能は通常画面に表示されません。
+
 ## Mock Provider Operator Checklist
 
 source checkoutで次を実行します。
@@ -93,6 +95,7 @@ make public-beta-smoke
 - temporary Vaultから通常Taskを実行し、DeliverableとAuditをcommit
 - Request Changes、Revision Task、再Review、Accept、Command replay
 - mobile HTTP Interactionで依頼、質問、回答、Plan承認、Workflow完了
+- 一般daemonがInteraction経路以外の副作用Commandをdefault denyすること
 - Provider呼出しがMock HTTP serverだけへ向くこと
 
 ## 実Providerを使う前の確認

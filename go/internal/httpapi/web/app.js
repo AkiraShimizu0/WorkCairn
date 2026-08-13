@@ -186,17 +186,7 @@ function inFlightCopy(operation) {
   case "interaction.plan.generate":
     return { label: "進め方を考えています", title: "企画担当が進め方を考えています", message: "質問または進め方ができるまで、Macで処理を続けます。" };
   case "interaction.workflow.execute":
-  case "workflow.reviewed.execute":
     return { label: "仕事を進めています", title: "AI社員が仕事を進めています", message: "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。" };
-  case "task.execute":
-    return { label: "作業しています", title: "担当AIが作業しています", message: "成果物を作成し、安全な順序で保存しています。" };
-  case "review.execute":
-    return { label: "レビュー中", title: "QA担当が確認しています", message: "Makerとは別のAIが成果物をレビューしています。" };
-  case "revision.execute":
-    return { label: "修正しています", title: "指摘内容を修正しています", message: "Reviewの指摘を反映し、再確認へ進めています。" };
-  case "interaction.action.wordpress.publish":
-  case "action.wordpress.publish":
-    return { label: "外部反映中", title: "外部サービスへ反映しています", message: "承認済みの内容だけを外部サービスへ反映しています。" };
   default:
     return { label: "処理中", title: "会社が仕事を進めています", message: "承認済みの処理をMacで安全に続けています。" };
   }
@@ -844,8 +834,7 @@ function roleLabel(role) {
 }
 
 function planStepCopy(task, index) {
-  const action = task.required_role === "QA Engineer" ? "内容を確認します" : task.title;
-  return `${index + 1}. ${roleLabel(task.required_role)}が${action}`;
+  return `${index + 1}. ${roleLabel(task.required_role)}が${task.title}`;
 }
 
 function renderPlanApproval(next) {
@@ -853,7 +842,6 @@ function renderPlanApproval(next) {
   if (!current) return showError(new Error("Plan evidence is missing"));
   const identifier = localStorage.getItem(`workcairn.project.${state.record.session_id}`) || projectID();
   localStorage.setItem(`workcairn.project.${state.record.session_id}`, identifier);
-  const projectInput = node("input", { id: "project-id", value: identifier, required: true, autocomplete: "off", spellcheck: "false" });
   const tasks = node("ol", { class: "public-plan" }, ...current.plan.proposed_tasks.map((task, index) => node("li", {}, planStepCopy(task, index).replace(/^\d+\. /, ""))));
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, "進め方の確認"),
@@ -864,18 +852,14 @@ function renderPlanApproval(next) {
       tasks,
       node("details", { class: "technical-details" },
         node("summary", {}, "技術的な詳細を見る"),
-        node("label", { for: "project-id" }, "Project ID"), projectInput,
-        approvalFacts([["Plan digest", shortDigest(current.digest)], ["Task数", String(current.plan.proposed_tasks.length)]]),
+        approvalFacts([["Project ID", identifier], ["Plan digest", shortDigest(current.digest)], ["Task数", String(current.plan.proposed_tasks.length)]]),
       ),
     ),
     node("div", { class: "button-row" },
       button("この進め方で始める", "primary", () => {
-        const value = projectInput.value.trim();
-        if (!value) return toast("Project IDを入力してください。");
-        localStorage.setItem(`workcairn.project.${state.record.session_id}`, value);
         executeNextCommand(next, {
           session_id: next.session_id, expected_version: next.expected_version,
-          project_id: value, plan_digest: current.digest, current_time: now(),
+          project_id: identifier, plan_digest: current.digest, current_time: now(),
         }, "Projectを作成しています", "ProjectとTaskを安全な順序で保存しています。");
       }),
       button("承認しない", "quiet", () => toast("Workspaceは変更されていません。")),
@@ -964,10 +948,10 @@ function renderCompletion(next) {
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, "仕事が完了しました"),
     node("h2", {}, "すべての仕事とReviewが完了しています"),
-    node("p", { class: "lead" }, "成果物はWorkspaceに保存されています。必要な場合だけ、別の承認で外部公開できます。"),
+    node("p", { class: "lead" }, "成果物はWorkspaceに保存されています。TimelineとProof of Workから、担当・Review・Revisionの記録を確認できます。"),
     node("div", { class: "button-row" },
       button("完了を確認", "primary", () => toast("この依頼は完了しています。")),
-      button("WordPressへ公開", "", () => openActionSheet(next)),
+      button("新しい仕事を依頼", "", openRequestDialog),
     ),
   );
 }
@@ -1021,66 +1005,6 @@ async function inspectCommands(references) {
     });
   } catch (error) {
     showError(error, "Command状態を取得できませんでした");
-  }
-}
-
-function openActionSheet(next) {
-  const tasks = next.eligible_task_ids || [];
-  const taskSelect = node("select", { id: "action-task", name: "task_id", required: true }, ...tasks.map((task) => node("option", { value: task }, task)));
-  const target = node("input", { id: "action-target", name: "target_id", placeholder: "例：site-main", required: true });
-  ui.actionForm.replaceChildren(
-    node("div", { class: "sheet-handle" }),
-    node("div", { class: "sheet-heading" },
-      node("div", {}, node("p", { class: "eyebrow" }, "EXTERNAL ACTION"), node("h2", {}, "WordPressへ公開")),
-      node("button", { class: "icon-button", type: "button", "aria-label": "閉じる", onclick: closeActionDialog }, "×"),
-    ),
-    node("p", { class: "supporting" }, "公開は別の外部副作用です。対象成果物と公開先を確認した後、もう一度明示承認します。"),
-    node("label", { for: "action-task" }, "公開するTask"), taskSelect,
-    node("label", { for: "action-target" }, "公開先ID"), target,
-    node("div", { class: "sheet-actions" },
-      button("キャンセル", "quiet", closeActionDialog),
-      button("公開内容を確認", "primary", null, "submit"),
-    ),
-  );
-  ui.actionForm.onsubmit = async (event) => {
-    event.preventDefault();
-    const taskID = taskSelect.value;
-    const targetID = target.value.trim();
-    if (!taskID || !targetID) return toast("Taskと公開先IDを入力してください。");
-    closeActionDialog();
-    await prepareActionApproval(next, taskID, targetID);
-  };
-  ui.actionDialog.showModal();
-}
-
-async function prepareActionApproval(next, taskID, targetID) {
-  const currentTime = now();
-  try {
-    const outerCommandID = commandID();
-    setBusy(true, "公開内容を確認しています", "成果物digestと公開対象をread-onlyで検証しています。");
-    const plan = await requestJSON("/v1/interaction-action-plans", {
-      method: "POST",
-      body: JSON.stringify({ version: INTERACTION_VERSION, session_id: next.session_id, expected_version: next.expected_version, task_id: taskID, target_id: targetID, current_time: currentTime, command_id: outerCommandID }),
-    });
-    setBusy(false);
-    showApprovalSheet({
-      title: "外部公開を承認しますか？",
-      description: "承認後、成果物をWordPressへ新規公開します。公開後の自動削除やrollbackは行いません。",
-      danger: true,
-      facts: [
-        ["Project", plan.project_name], ["Task", plan.task_id], ["公開先", plan.target_id],
-        ["成果物 digest", plan.source_sha256], ["Action digest", plan.action_plan_digest],
-      ],
-      approveLabel: "承認して公開",
-      approveKind: "danger",
-      onApprove: () => executeNextCommand(next, {
-        session_id: next.session_id, expected_version: next.expected_version,
-        task_id: taskID, target_id: targetID, current_time: currentTime,
-        action_plan_digest: plan.action_plan_digest,
-      }, "WordPressへ公開しています", "外部公開とimmutable evidenceの保存を行っています。", outerCommandID),
-    });
-  } catch (error) {
-    showError(error, "公開内容を確認できませんでした");
   }
 }
 

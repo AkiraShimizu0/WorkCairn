@@ -564,6 +564,10 @@ func (handler *Handler) execute(response http.ResponseWriter, request *http.Requ
 		writeCommandResponse(response, http.StatusForbidden, Response{Version: ContractVersion, CommandID: command.CommandID, OK: false, Error: &CommandError{Code: "APPROVAL_REQUIRED"}})
 		return
 	}
+	if !publicBetaCommandAllowed(command.Operation) {
+		writeCommandResponse(response, http.StatusForbidden, Response{Version: ContractVersion, CommandID: command.CommandID, OK: false, Error: &CommandError{Code: "OPERATION_NOT_AVAILABLE"}})
+		return
+	}
 	if prefersAsync(request.Header.Get("Prefer")) {
 		if !supportsAsyncOperation(command.Operation) {
 			writeCommandResponse(response, http.StatusBadRequest, Response{Version: ContractVersion, CommandID: command.CommandID, OK: false, Error: &CommandError{Code: "ASYNC_OPERATION_UNSUPPORTED"}})
@@ -602,7 +606,7 @@ func (handler *Handler) execute(response http.ResponseWriter, request *http.Requ
 }
 
 func supportsAsyncOperation(operation string) bool {
-	return strings.HasPrefix(operation, "interaction.") || operation == "workspace.setup"
+	return publicBetaCommandAllowed(operation)
 }
 
 func (handler *Handler) inspect(response http.ResponseWriter, request *http.Request) {

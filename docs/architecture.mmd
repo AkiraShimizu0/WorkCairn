@@ -4,12 +4,12 @@ flowchart TD
     CEOPlan -. questions / answers .-> Interaction
     CEOPlan --> CEOApply["Go CEO Plan Apply"]
     CEOApply --> Managed["Go managed Project / Task"]
-    Managed --> Run["Go workcairn"]
-    API["workcairn-daemon / Command API v1"] --> Run
+    Managed --> Run["Go workcairn operator path"]
+    API["workcairn-daemon / Public Beta allow-list"] --> Interaction
     Mobile["iPhone / Local Web UI"] --> API
-    API --> Scheduler["Kernel-managed one-shot Scheduler"]
-    Scheduler --> Run
-    API -. inspect .-> Observe["Redacted Notification / Metrics"]
+    CLI["workcairn operator CLI"] --> Run
+    Scheduler["Operator one-shot Scheduler"] --> Run
+    API -. operator inspect .-> Observe["Redacted Notification / Metrics"]
     Run --> WorkflowRun["Reviewed Workflow Run Service"]
     Interaction --> WorkflowRun
     WorkflowRun --> Execution
@@ -20,8 +20,7 @@ flowchart TD
     Kernel --> Execution["ExecutionService"]
     Execution --> GoWorker["Go WorkerService / Claude Adapter"]
     Execution --> Task["TaskService / Deliverable / Audit"]
-    Task --> Action["Approved External Action"]
-    Interaction --> Action
+    Task --> Action["Operator External Action"]
     Action --> WordPress["WordPress Adapter"]
     Task --> Observe
     Review --> Observe

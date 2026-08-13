@@ -154,6 +154,70 @@ func TestHandlerRequiresVersionedApprovedCommandIDBeforeExecution(t *testing.T) 
 	}
 }
 
+func TestPublicBetaCommandAllowListExecutesOnlyFormalProductPath(t *testing.T) {
+	allowed := []string{
+		"workspace.setup",
+		"interaction.start",
+		"interaction.plan.generate",
+		"interaction.answer",
+		"interaction.plan.apply",
+		"interaction.workflow.execute",
+	}
+	backend := &fakeCommandBackend{result: map[string]string{"status": "ok"}}
+	handler, err := NewHandler(backend, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, operation := range allowed {
+		body, _ := json.Marshal(map[string]any{
+			"version": ContractVersion, "command_id": fmt.Sprintf("CMD-PUBLIC-BETA-%03d", index+1),
+			"operation": operation, "approved": true, "payload": map[string]any{},
+		})
+		request := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("allowed operation %q = %d %s", operation, response.Code, response.Body.String())
+		}
+	}
+	if backend.calls != len(allowed) {
+		t.Fatalf("allowed operations reached executor %d times, want %d", backend.calls, len(allowed))
+	}
+}
+
+func TestPublicBetaCommandAllowListDefaultDeniesOperatorOnlyOperations(t *testing.T) {
+	denied := []string{
+		"task.execute", "review.execute", "revision.execute", "workflow.execute", "workflow.reviewed.execute",
+		"ceo_plan.apply", "project.bootstrap", "task.create", "project.dependencies.create",
+		"organization.employee_hire", "organization.employee_rename", "organization.employee_id_repair", "organization.sync",
+		"schedule.create", "action.wordpress.publish", "interaction.action.wordpress.publish", "unknown.operation",
+	}
+	backend := &fakeCommandBackend{result: map[string]string{"status": "must not run"}}
+	handler, err := NewHandler(backend, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, operation := range denied {
+		body, _ := json.Marshal(map[string]any{
+			"version": ContractVersion, "command_id": fmt.Sprintf("CMD-OPERATOR-ONLY-%03d", index+1),
+			"operation": operation, "approved": true, "payload": map[string]any{},
+		})
+		request := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		var envelope Response
+		_ = json.Unmarshal(response.Body.Bytes(), &envelope)
+		if response.Code != http.StatusForbidden || envelope.Error == nil || envelope.Error.Code != "OPERATION_NOT_AVAILABLE" {
+			t.Fatalf("denied operation %q = %d %#v", operation, response.Code, envelope)
+		}
+	}
+	if backend.calls != 0 {
+		t.Fatalf("operator-only command reached public executor: %d", backend.calls)
+	}
+}
+
 func TestServerRejectsNonLoopbackExposure(t *testing.T) {
 	backend := &fakeCommandBackend{}
 	handler, err := NewHandler(backend, backend)
@@ -208,7 +272,12 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 	}
 	asset := httptest.NewRecorder()
 	handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
-	for _, forbidden := range []string{"TaskStarted", "TaskCompleted", "request_changes →", "ANTHROPIC_API_KEY", "innerHTML", "crypto.randomUUID", "Math.random"} {
+	for _, forbidden := range []string{
+		"TaskStarted", "TaskCompleted", "request_changes →", "ANTHROPIC_API_KEY", "innerHTML", "crypto.randomUUID", "Math.random",
+		`case "task.execute"`, `case "review.execute"`, `case "revision.execute"`, `case "workflow.execute"`,
+		`case "workflow.reviewed.execute"`, `interaction.action.wordpress.publish`, `action.wordpress.publish`,
+		`/v1/interaction-action-plans`, `id: "project-id"`, `for: "project-id"`,
+	} {
 		if strings.Contains(asset.Body.String(), forbidden) {
 			t.Fatalf("mobile UI contains forbidden rule or secret surface %q", forbidden)
 		}
@@ -241,7 +310,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"state.commandInFlight", "同じ処理を実行中です", "window.isSecureContext", `document.execCommand("copy")`, "showManualCopy",
 		"選択内容をコピー", "Error code:", "Stage:", "Command ID:", "Request ID:",
 		"renderInFlight", "storedPendingCommand", "進め方を考えています", "AI社員が仕事を進めています",
-		"QA担当が確認しています", "指摘内容を修正しています", "この画面を閉じても処理はMacで続きます。",
+		"この画面を閉じても処理はMacで続きます。",
 		"commandProviderFailure", "task?.execution?.provider_failure",
 		"state.renderKey === key", "state.detailRenderKey === key", "state.timelineRenderKey === key",
 	} {
@@ -520,7 +589,7 @@ func TestAsyncInteractionCommandSurvivesRequestCancellationAndUsesLedgerLocation
 }
 
 func TestAsyncInteractionCommandRejectsInvalidUnsupportedAndExcessWorkBeforeExecution(t *testing.T) {
-	if !supportsAsyncOperation("interaction.answer") || !supportsAsyncOperation("workspace.setup") || supportsAsyncOperation("task.execute") {
+	if !supportsAsyncOperation("interaction.answer") || !supportsAsyncOperation("workspace.setup") || supportsAsyncOperation("task.execute") || supportsAsyncOperation("interaction.action.wordpress.publish") {
 		t.Fatal("async operation allow-list changed")
 	}
 	invalid := &fakeAsyncBackend{validateErr: ErrInvalidCommand, started: make(chan struct{}), release: make(chan struct{}), completed: make(chan error, 1)}
@@ -543,7 +612,7 @@ func TestAsyncInteractionCommandRejectsInvalidUnsupportedAndExcessWorkBeforeExec
 	unsupported.Header.Set("Prefer", "respond-async")
 	unsupportedResponse := httptest.NewRecorder()
 	handler.ServeHTTP(unsupportedResponse, unsupported)
-	if unsupportedResponse.Code != http.StatusBadRequest || !strings.Contains(unsupportedResponse.Body.String(), "ASYNC_OPERATION_UNSUPPORTED") {
+	if unsupportedResponse.Code != http.StatusForbidden || !strings.Contains(unsupportedResponse.Body.String(), "OPERATION_NOT_AVAILABLE") {
 		t.Fatalf("unsupported async = %d %s", unsupportedResponse.Code, unsupportedResponse.Body.String())
 	}
 
@@ -1498,7 +1567,7 @@ func TestInteractionActionPlanHTTPRequiresProspectiveCommandIdentity(t *testing.
 func TestHandlerMapsRunningCommandToRecoveryBoundary(t *testing.T) {
 	backend := &fakeCommandBackend{err: commandledger.ErrInProgress}
 	handler, _ := NewHandler(backend, backend)
-	request := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewBufferString(`{"version":"workspace-command.v1","command_id":"CMD-001","operation":"task.execute","approved":true,"payload":{}}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/commands", bytes.NewBufferString(`{"version":"workspace-command.v1","command_id":"CMD-001","operation":"interaction.answer","approved":true,"payload":{}}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -1509,7 +1578,7 @@ func TestHandlerMapsRunningCommandToRecoveryBoundary(t *testing.T) {
 	}
 }
 
-func TestProcessExecutorHTTPProjectCommandReplayConflictAndInspect(t *testing.T) {
+func TestOperatorProcessExecutorProjectCommandReplayConflictAndPublicInspect(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "プロジェクト"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1518,25 +1587,24 @@ func TestProcessExecutorHTTPProjectCommandReplayConflictAndInspect(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, _ := NewHandler(executor, executor)
 	command := map[string]any{
 		"version": ContractVersion, "command_id": "CMD-HTTP-PROJECT-001", "operation": "project.bootstrap", "approved": true,
 		"payload": map[string]any{"project_id": "PROJECT-001", "project_name": "HTTP案件", "description": "HTTP経由", "current_time": "2026-08-08T12:00:00+09:00"},
 	}
-	first := performCommand(t, handler, command)
-	if first.Code != http.StatusOK {
-		t.Fatalf("first response = %d %s", first.Code, first.Body.String())
+	first, firstErr := executeProcessCommand(t, executor, command)
+	if firstErr != nil {
+		t.Fatalf("first operator execution = %#v, %v", first, firstErr)
 	}
 	beforeReplay := snapshotHTTPVault(t, root)
-	second := performCommand(t, handler, command)
-	if second.Code != http.StatusOK || second.Body.String() != first.Body.String() || !reflect.DeepEqual(beforeReplay, snapshotHTTPVault(t, root)) {
-		t.Fatalf("replay response = %d %s", second.Code, second.Body.String())
+	second, secondErr := executeProcessCommand(t, executor, command)
+	if secondErr != nil || !reflect.DeepEqual(second, first) || !reflect.DeepEqual(beforeReplay, snapshotHTTPVault(t, root)) {
+		t.Fatalf("operator replay = %#v, %v", second, secondErr)
 	}
 	command["payload"].(map[string]any)["description"] = "different"
-	conflict := performCommand(t, handler, command)
-	if conflict.Code != http.StatusConflict {
-		t.Fatalf("conflict response = %d %s", conflict.Code, conflict.Body.String())
+	if _, conflictErr := executeProcessCommand(t, executor, command); !errors.Is(conflictErr, commandledger.ErrRequestConflict) {
+		t.Fatalf("operator conflict = %v", conflictErr)
 	}
+	handler, _ := NewHandler(executor, executor)
 	statusRequest := httptest.NewRequest(http.MethodGet, "/v1/commands/CMD-HTTP-PROJECT-001?scope=workspace", nil)
 	statusResponse := httptest.NewRecorder()
 	handler.ServeHTTP(statusResponse, statusRequest)
@@ -1571,7 +1639,7 @@ func TestProcessExecutorRecognizesReviewedWorkflowV1Command(t *testing.T) {
 	}
 }
 
-func TestScheduledHTTPCommandDispatchesThroughExistingWriterOnce(t *testing.T) {
+func TestOperatorScheduledCommandDispatchesThroughExistingWriterOnce(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "プロジェクト"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1580,13 +1648,12 @@ func TestScheduledHTTPCommandDispatchesThroughExistingWriterOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, _ := NewHandler(executor, executor)
 	bootstrap := map[string]any{
 		"version": ContractVersion, "command_id": "CMD-SCHEDULE-PROJECT-001", "operation": "project.bootstrap", "approved": true,
 		"payload": map[string]any{"project_id": "PROJECT-001", "project_name": "自動化案件", "description": "schedule test", "current_time": "2026-08-09T12:00:00+09:00"},
 	}
-	if response := performCommand(t, handler, bootstrap); response.Code != http.StatusOK {
-		t.Fatalf("bootstrap = %d %s", response.Code, response.Body.String())
+	if _, err := executeProcessCommand(t, executor, bootstrap); err != nil {
+		t.Fatalf("operator bootstrap = %v", err)
 	}
 	schedule := map[string]any{
 		"version": ContractVersion, "command_id": "CMD-CREATE-SCHEDULE-001", "operation": "schedule.create", "approved": true,
@@ -1598,9 +1665,11 @@ func TestScheduledHTTPCommandDispatchesThroughExistingWriterOnce(t *testing.T) {
 			},
 		},
 	}
-	if response := performCommand(t, handler, schedule); response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"state":"pending"`)) {
-		t.Fatalf("schedule create = %d %s", response.Code, response.Body.String())
+	createdSchedule, err := executeProcessCommand(t, executor, schedule)
+	if err != nil || createdSchedule.(scheduler.Record).State != scheduler.StatePending {
+		t.Fatalf("operator schedule create = %#v, %v", createdSchedule, err)
 	}
+	handler, _ := NewHandler(executor, executor)
 	for _, path := range []string{"/v1/schedules", "/v1/schedules/SCHEDULE-001"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		response := httptest.NewRecorder()
@@ -1630,7 +1699,7 @@ func TestScheduledHTTPCommandDispatchesThroughExistingWriterOnce(t *testing.T) {
 	}
 }
 
-func TestProcessExecutorExposesRedactedNotificationsAndMetricsWithoutReplayDuplication(t *testing.T) {
+func TestOperatorProcessExecutorKeepsNotificationsAndMetricsWithoutPublicWriteSurface(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "プロジェクト"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1639,23 +1708,23 @@ func TestProcessExecutorExposesRedactedNotificationsAndMetricsWithoutReplayDupli
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, _ := NewHandler(executor, executor)
 	bootstrap := map[string]any{
 		"version": ContractVersion, "command_id": "CMD-OBS-PROJECT-001", "operation": "project.bootstrap", "approved": true,
 		"payload": map[string]any{"project_id": "PROJECT-001", "project_name": "観測案件", "current_time": "2026-08-09T12:00:00+09:00"},
 	}
-	if response := performSingleCommand(t, handler, bootstrap); response.Code != http.StatusOK {
-		t.Fatalf("bootstrap = %d %s", response.Code, response.Body.String())
+	if _, err := executeProcessCommand(t, executor, bootstrap); err != nil {
+		t.Fatalf("operator bootstrap = %v", err)
 	}
 	create := map[string]any{
 		"version": ContractVersion, "command_id": "CMD-OBS-TASK-001", "operation": "task.create", "approved": true,
 		"payload": map[string]any{"project_name": "観測案件", "title": "secret task title", "assignee_id": nil, "current_time": "2026-08-09T12:01:00+09:00"},
 	}
-	first := performSingleCommand(t, handler, create)
-	if first.Code != http.StatusOK {
-		t.Fatalf("task create = %d %s", first.Code, first.Body.String())
+	first, firstErr := executeProcessCommand(t, executor, create)
+	if firstErr != nil {
+		t.Fatalf("operator task create = %#v, %v", first, firstErr)
 	}
 
+	handler, _ := NewHandler(executor, executor)
 	metricsResponse := httptest.NewRecorder()
 	handler.ServeHTTP(metricsResponse, httptest.NewRequest(http.MethodGet, "/v1/metrics", nil))
 	var snapshot metrics.Snapshot
@@ -1682,9 +1751,9 @@ func TestProcessExecutorExposesRedactedNotificationsAndMetricsWithoutReplayDupli
 		t.Fatalf("notification detail = %d %s", detailResponse.Code, detailResponse.Body.String())
 	}
 
-	replay := performSingleCommand(t, handler, create)
-	if replay.Code != http.StatusOK || replay.Body.String() != first.Body.String() {
-		t.Fatalf("replay = %d %s", replay.Code, replay.Body.String())
+	replay, replayErr := executeProcessCommand(t, executor, create)
+	if replayErr != nil || !reflect.DeepEqual(replay, first) {
+		t.Fatalf("operator replay = %#v, %v", replay, replayErr)
 	}
 	if got := executor.InspectMetrics(); got.Total != 1 {
 		t.Fatalf("replay metrics = %#v", got)
@@ -1695,7 +1764,7 @@ func TestProcessExecutorExposesRedactedNotificationsAndMetricsWithoutReplayDupli
 	}
 }
 
-func TestHTTPWordPressActionUsesTypedCommandLedgerAndObserverPath(t *testing.T) {
+func TestOperatorWordPressActionUsesTypedCommandLedgerAndObserverPath(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "プロジェクト", "記事案件")
 	if err := os.MkdirAll(filepath.Join(project, "Deliverables"), 0o755); err != nil {
@@ -1718,18 +1787,18 @@ func TestHTTPWordPressActionUsesTypedCommandLedgerAndObserverPath(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, _ := NewHandler(executor, executor)
 	command := map[string]any{
 		"version": ContractVersion, "command_id": "CMD-ACTION-HTTP-001", "operation": "action.wordpress.publish", "approved": true,
 		"payload": map[string]any{"project_id": "PROJECT-001", "project_name": "記事案件", "task_id": "TASK-001", "target_id": "site-main", "source_sha256": action.SourceDigest([]byte(deliverableContent)), "current_time": "2026-08-09T12:00:00Z"},
 	}
-	first := performSingleCommand(t, handler, command)
-	if first.Code != http.StatusOK || !bytes.Contains(first.Body.Bytes(), []byte(`"status":"published"`)) || providerCalls != 1 {
-		t.Fatalf("Action command = %d %s calls=%d", first.Code, first.Body.String(), providerCalls)
+	first, firstErr := executeProcessCommand(t, executor, command)
+	firstJSON, _ := json.Marshal(first)
+	if firstErr != nil || !bytes.Contains(firstJSON, []byte(`"status":"published"`)) || providerCalls != 1 {
+		t.Fatalf("operator Action command = %#v, %v calls=%d", first, firstErr, providerCalls)
 	}
-	replay := performSingleCommand(t, handler, command)
-	if replay.Code != http.StatusOK || replay.Body.String() != first.Body.String() || providerCalls != 1 {
-		t.Fatalf("Action replay = %d %s calls=%d", replay.Code, replay.Body.String(), providerCalls)
+	replay, replayErr := executeProcessCommand(t, executor, command)
+	if replayErr != nil || !reflect.DeepEqual(replay, first) || providerCalls != 1 {
+		t.Fatalf("operator Action replay = %#v, %v calls=%d", replay, replayErr, providerCalls)
 	}
 	if snapshot := executor.InspectMetrics(); snapshot.ByEventType[event.ActionCompleted] != 1 {
 		t.Fatalf("Action metrics = %#v", snapshot)
@@ -1750,7 +1819,7 @@ func TestServerGracefulShutdownWaitsForRunningCommand(t *testing.T) {
 	}
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- server.Serve(listener) }()
-	body := `{"version":"workspace-command.v1","command_id":"CMD-LONG-001","operation":"task.execute","approved":true,"payload":{}}`
+	body := `{"version":"workspace-command.v1","command_id":"CMD-LONG-001","operation":"interaction.answer","approved":true,"payload":{}}`
 	requestDone := make(chan error, 1)
 	go func() {
 		request, _ := http.NewRequest(http.MethodPost, "http://"+listener.Addr().String()+"/v1/commands", bytes.NewBufferString(body))
@@ -1793,6 +1862,18 @@ func performCommand(t *testing.T, handler http.Handler, command map[string]any) 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func executeProcessCommand(t *testing.T, executor *ProcessExecutor, command map[string]any) (any, error) {
+	t.Helper()
+	payload, err := json.Marshal(command["payload"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return executor.Execute(context.Background(), Command{
+		Version: command["version"].(string), CommandID: command["command_id"].(string),
+		Operation: command["operation"].(string), Approved: command["approved"].(bool), Payload: payload,
+	})
 }
 
 // typedReviewOutput builds the mock Provider's raw Review response: the
