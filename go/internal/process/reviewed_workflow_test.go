@@ -243,8 +243,10 @@ func TestReviewedWorkflowReviewResultInvalidClassifiesOuterCommandWithoutProvide
 			// A well-formed Runner response whose marked JSON is wrapped in a
 			// Markdown code fence, violating the "JSON only between markers"
 			// rule -- a real Claude Sonnet 5 contract slip, not a Provider or
-			// transport failure.
-			text = "# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n```json\n{\"verdict\":\"Approve\",\"issues\":[]}\n```\nREVIEW_RESULT_JSON_END"
+			// transport failure. Structured Outputs only guarantees the outer
+			// envelope is well-formed JSON; it does not stop this slip inside
+			// the wrapped string.
+			text = wrapStructuredReviewOutput("# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n```json\n{\"verdict\":\"Approve\",\"issues\":[]}\n```\nREVIEW_RESULT_JSON_END")
 		}
 		encoded, _ := json.Marshal(map[string]any{
 			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": text}},
@@ -318,5 +320,6 @@ func reviewProviderOutput(verdict review.Verdict) string {
 	if verdict == review.VerdictRequestChanges {
 		issues = `[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}]`
 	}
-	return "# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"" + string(verdict) + "\",\"issues\":" + issues + "}\nREVIEW_RESULT_JSON_END"
+	text := "# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"" + string(verdict) + "\",\"issues\":" + issues + "}\nREVIEW_RESULT_JSON_END"
+	return wrapStructuredReviewOutput(text)
 }

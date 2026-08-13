@@ -240,6 +240,139 @@ func TestRunnerSendsSonnetFiveCompatibleMinimalPayload(t *testing.T) {
 	}
 }
 
+func TestRunnerSendsStructuredOutputConfigWhenRequested(t *testing.T) {
+	schema := map[string]any{
+		"type":                 "object",
+		"properties":           map[string]any{"project_name": map[string]any{"type": "string"}},
+		"required":             []string{"project_name"},
+		"additionalProperties": false,
+	}
+	var received messageRequest
+	runner := configuredRunner(t, doerFunc(func(request *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		return jsonResponse(http.StatusOK, `{"model":"claude-sonnet-5","content":[{"type":"text","text":"{\"project_name\":\"P\"}"}],"usage":{"input_tokens":1,"output_tokens":1}}`, "req-so"), nil
+	}))
+
+	requestWithSchema := validRunRequest()
+	requestWithSchema.StructuredOutput = &worker.StructuredOutputContract{Schema: schema}
+	result, err := runner.Run(context.Background(), requestWithSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSchema, err := json.Marshal(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotSchema, err := json.Marshal(received.OutputConfig.Format.Schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received.OutputConfig == nil || received.OutputConfig.Format.Type != "json_schema" || string(gotSchema) != string(wantSchema) {
+		t.Fatalf("output_config = %#v", received.OutputConfig)
+	}
+	// No ContentField: the schema's own JSON is the Content verbatim, exactly
+	// like a non-Structured-Output response.
+	if result.Content != `{"project_name":"P"}` {
+		t.Fatalf("Content = %q", result.Content)
+	}
+
+	// A request without StructuredOutput must not send output_config at all
+	// (verified against the same server, reusing TestRunnerSendsSonnetFiveCompatibleMinimalPayload's payload-key check would be redundant).
+	received = messageRequest{}
+	if _, err := runner.Run(context.Background(), validRunRequest()); err != nil {
+		t.Fatal(err)
+	}
+	if received.OutputConfig != nil {
+		t.Fatalf("output_config leaked onto a request without StructuredOutput: %#v", received.OutputConfig)
+	}
+}
+
+func TestRunnerUnwrapsStructuredOutputContentField(t *testing.T) {
+	runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		envelope := `{"response":"# Review\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Approve\",\"issues\":[]}\nREVIEW_RESULT_JSON_END"}`
+		body := `{"model":"claude-sonnet-5","content":[{"type":"text","text":` + jsonQuote(t, envelope) + `}],"usage":{"input_tokens":1,"output_tokens":1}}`
+		return jsonResponse(http.StatusOK, body, "req-unwrap"), nil
+	}))
+	request := validRunRequest()
+	request.StructuredOutput = &worker.StructuredOutputContract{
+		Schema:       map[string]any{"type": "object"},
+		ContentField: "response",
+	}
+	result, err := runner.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# Review\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Approve\",\"issues\":[]}\nREVIEW_RESULT_JSON_END"
+	if result.Content != want {
+		t.Fatalf("unwrapped Content = %q, want %q", result.Content, want)
+	}
+}
+
+func TestRunnerRejectsStructuredOutputContractViolations(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{"not JSON", `{"model":"claude-sonnet-5","content":[{"type":"text","text":"not json"}],"usage":{}}`},
+		{"missing declared field", `{"model":"claude-sonnet-5","content":[{"type":"text","text":"{\"other\":\"x\"}"}],"usage":{}}`},
+		{"extra field beyond envelope", `{"model":"claude-sonnet-5","content":[{"type":"text","text":"{\"response\":\"x\",\"extra\":\"y\"}"}],"usage":{}}`},
+		{"empty declared field", `{"model":"claude-sonnet-5","content":[{"type":"text","text":"{\"response\":\"\"}"}],"usage":{}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+				return jsonResponse(http.StatusOK, test.body, "req-so-invalid"), nil
+			}))
+			request := validRunRequest()
+			request.StructuredOutput = &worker.StructuredOutputContract{Schema: map[string]any{"type": "object"}, ContentField: "response"}
+			_, err := runner.Run(context.Background(), request)
+			var failure *Error
+			if !errors.As(err, &failure) || failure.Category != FailureStructuredOutputInvalid {
+				t.Fatalf("err = %v, failure = %#v", err, failure)
+			}
+		})
+	}
+}
+
+func TestRunnerRejectsEmptyStructuredOutputSchemaWithoutCallingTransport(t *testing.T) {
+	calls := 0
+	runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return nil, nil
+	}))
+	request := validRunRequest()
+	request.StructuredOutput = &worker.StructuredOutputContract{}
+	if _, err := runner.Run(context.Background(), request); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("transport calls = %d", calls)
+	}
+}
+
+func TestRunnerClassifiesRefusalStopReasonWithoutContent(t *testing.T) {
+	runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK,
+			`{"model":"claude-sonnet-5","content":[],"stop_reason":"refusal","stop_details":{"category":"cyber"},"usage":{"input_tokens":1,"output_tokens":0}}`,
+			"req-refusal"), nil
+	}))
+	_, err := runner.Run(context.Background(), validRunRequest())
+	var failure *Error
+	if !errors.As(err, &failure) || failure.Category != FailureRefusal || failure.ProviderType != "cyber" {
+		t.Fatalf("err = %v, failure = %#v", err, failure)
+	}
+}
+
+func jsonQuote(t *testing.T, value string) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
 func TestRunnerRejectsMalformedOrNonTextResponse(t *testing.T) {
 	for _, test := range []struct {
 		name string

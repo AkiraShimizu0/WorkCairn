@@ -832,7 +832,7 @@ func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(
 		planOutput([]string{"対象はiPhoneを優先しますか？"}),
 		planOutput([]string{}),
 		"# 完成した成果物\n\niPhone向けの要件です。",
-		"# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Approve\",\"issues\":[]}\nREVIEW_RESULT_JSON_END",
+		wrapStructuredReviewOutput("# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Approve\",\"issues\":[]}\nREVIEW_RESULT_JSON_END"),
 	}
 	providerCalls := 0
 	providerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -992,7 +992,7 @@ func TestMobileInteractionHTTPFlowRequestChangesRevisionReReviewToCompletion(t *
 		if verdict == "Request Changes" {
 			issues = `[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}]`
 		}
-		return "# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"" + verdict + "\",\"issues\":" + issues + "}\nREVIEW_RESULT_JSON_END"
+		return wrapStructuredReviewOutput("# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"" + verdict + "\",\"issues\":" + issues + "}\nREVIEW_RESULT_JSON_END")
 	}
 	providerOutputs := []string{
 		string(planOutput),
@@ -1133,7 +1133,9 @@ func TestMobileInteractionHTTPFlowMalformedReviewResponseClassifiesOuterCommand(
 		"# 成果物\n\n要件の下書きです。",
 		// Realistic Claude Sonnet 5 contract slip: valid verdict/issues JSON,
 		// but wrapped in a Markdown code fence the Review Prompt forbids.
-		"# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n```json\n{\"verdict\":\"Approve\",\"issues\":[]}\n```\nREVIEW_RESULT_JSON_END",
+		// Structured Outputs only guarantees the outer envelope is
+		// well-formed JSON; it does not stop this slip inside the string.
+		wrapStructuredReviewOutput("# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n```json\n{\"verdict\":\"Approve\",\"issues\":[]}\n```\nREVIEW_RESULT_JSON_END"),
 	}
 	providerCalls := 0
 	providerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -1248,7 +1250,7 @@ func TestMobileInteractionHTTPFlowSameRequestTwiceCreatesDistinctProjectsSafely(
 		"proposed_tasks":              []map[string]any{{"title": "要件をまとめる", "required_role": "Product Manager", "assignee_id": nil, "dependency_ids": []string{}, "rationale": "依頼を形にするため"}},
 		"risks":                       []string{}, "ceo_questions": []string{},
 	})
-	approveReview := "# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Approve\",\"issues\":[]}\nREVIEW_RESULT_JSON_END"
+	approveReview := wrapStructuredReviewOutput("# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Approve\",\"issues\":[]}\nREVIEW_RESULT_JSON_END")
 	providerOutputs := []string{
 		string(planOutput), "# 成果物（1回目）\n\n最初の依頼の成果物です。", approveReview,
 		string(planOutput), "# 成果物（2回目）\n\n2回目の依頼の成果物です。", approveReview,
@@ -1786,6 +1788,20 @@ func performCommand(t *testing.T, handler http.Handler, command map[string]any) 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+// wrapStructuredReviewOutput mirrors the Anthropic Structured Output
+// envelope the mock Provider server must return for Review requests now
+// that ReviewService requests output_config.format. The inner content is
+// unchanged: human Markdown plus the REVIEW_RESULT_JSON_START/END-marked
+// decision block that review.ParseOutput still parses after the Claude
+// Adapter unwraps this envelope.
+func wrapStructuredReviewOutput(content string) string {
+	encoded, err := json.Marshal(map[string]string{review.StructuredOutputContentField: content})
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }
 
 func performJSONRequest(t *testing.T, handler http.Handler, method, path string, payload any) *httptest.ResponseRecorder {

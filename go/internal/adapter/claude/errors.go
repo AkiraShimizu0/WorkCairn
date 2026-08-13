@@ -25,6 +25,14 @@ const (
 	FailureTransport      FailureCategory = "provider_transport"
 	FailureResponse       FailureCategory = "invalid_provider_response"
 	FailureUnknown        FailureCategory = "provider_failure"
+	// FailureRefusal classifies a safety-classifier decline (HTTP 200,
+	// stop_reason "refusal"). It is distinct from FailureResponse because it
+	// reflects a Provider policy decision, not a malformed response.
+	FailureRefusal FailureCategory = "provider_refusal"
+	// FailureStructuredOutputInvalid classifies a response that did not
+	// honor the Structured Output contract this Runner requested (e.g. the
+	// declared ContentField was missing from the returned JSON envelope).
+	FailureStructuredOutputInvalid FailureCategory = "structured_output_invalid"
 )
 
 // Error retains machine-readable Adapter failure details without exposing the

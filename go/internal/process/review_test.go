@@ -64,11 +64,12 @@ func TestExecuteReviewUsesGoRuntimeAndCommitsCanonicalArtifacts(t *testing.T) {
 			t.Error("unexpected Review Provider request")
 		}
 		response.Header().Set("content-type", "application/json")
-		_, _ = response.Write([]byte(`{
-            "model":"claude-sonnet-5",
-            "content":[{"type":"text","text":"## レビュー\n\n要件の説明を追加してください。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"要件の説明が不足しています。\",\"suggested_action\":\"要件の根拠を追記してください。\"}]}\nREVIEW_RESULT_JSON_END"}],
-            "usage":{"input_tokens":12,"output_tokens":8}
-        }`))
+		reviewText := "## レビュー\n\n要件の説明を追加してください。\n\nREVIEW_RESULT_JSON_START\n{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"要件の説明が不足しています。\",\"suggested_action\":\"要件の根拠を追記してください。\"}]}\nREVIEW_RESULT_JSON_END"
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"model":   "claude-sonnet-5",
+			"content": []map[string]string{{"type": "text", "text": wrapStructuredReviewOutput(reviewText)}},
+			"usage":   map[string]int{"input_tokens": 12, "output_tokens": 8},
+		})
 	}))
 	defer server.Close()
 	metricSubscriber := metrics.NewSubscriber()
@@ -136,7 +137,12 @@ func TestExecuteReviewRecordsParserSubstageWithoutArtifacts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		providerCalls.Add(1)
 		response.Header().Set("content-type", "application/json")
-		_, _ = response.Write([]byte("{\"model\":\"claude-test\",\"content\":[{\"type\":\"text\",\"text\":\"# Review\\n\\nREVIEW_RESULT_JSON_START\\n```json\\n{\\\"verdict\\\":\\\"Approve\\\",\\\"issues\\\":[]}\\n```\\nREVIEW_RESULT_JSON_END\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}"))
+		reviewText := "# Review\n\nREVIEW_RESULT_JSON_START\n```json\n{\"verdict\":\"Approve\",\"issues\":[]}\n```\nREVIEW_RESULT_JSON_END"
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"model":   "claude-test",
+			"content": []map[string]string{{"type": "text", "text": wrapStructuredReviewOutput(reviewText)}},
+			"usage":   map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
 	}))
 	defer server.Close()
 
@@ -229,4 +235,18 @@ func reviewPlanInput(root string) ReviewPlanInput {
 
 func containsReviewReason(reasons []string, expected string) bool {
 	return strings.Contains(strings.Join(reasons, "\n"), expected)
+}
+
+// wrapStructuredReviewOutput mirrors the Anthropic Structured Output
+// envelope the mock Provider server must return for Review requests now
+// that ReviewService requests output_config.format. The inner content is
+// unchanged: human Markdown plus the REVIEW_RESULT_JSON_START/END-marked
+// decision block that review.ParseOutput still parses after the Claude
+// Adapter unwraps this envelope.
+func wrapStructuredReviewOutput(content string) string {
+	encoded, err := json.Marshal(map[string]string{review.StructuredOutputContentField: content})
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }

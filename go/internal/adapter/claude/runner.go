@@ -115,11 +115,23 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 		return worker.RunResult{}, &Error{Kind: ErrInvalidRequest}
 	}
 
+	var structuredOutput *outputConfig
+	if request.StructuredOutput != nil {
+		if len(request.StructuredOutput.Schema) == 0 {
+			return worker.RunResult{}, &Error{Kind: ErrInvalidRequest}
+		}
+		structuredOutput = &outputConfig{Format: jsonOutputFormat{
+			Type:   "json_schema",
+			Schema: request.StructuredOutput.Schema,
+		}}
+	}
+
 	payload, err := json.Marshal(messageRequest{
-		Model:     claude.providerModel,
-		MaxTokens: claude.maxTokens,
-		System:    request.SystemPrompt,
-		Messages:  []message{{Role: "user", Content: request.UserPrompt}},
+		Model:        claude.providerModel,
+		MaxTokens:    claude.maxTokens,
+		System:       request.SystemPrompt,
+		Messages:     []message{{Role: "user", Content: request.UserPrompt}},
+		OutputConfig: structuredOutput,
 	})
 	if err != nil {
 		return worker.RunResult{}, &Error{Kind: ErrInvalidRequest, Err: err}
@@ -167,9 +179,22 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 	if err := decoder.Decode(&providerResponse); err != nil {
 		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureResponse, Err: err}
 	}
+	if providerResponse.StopReason == "refusal" {
+		return worker.RunResult{}, &Error{
+			Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureRefusal,
+			ProviderType: safeDiagnosticToken(providerResponse.StopDetails.Category, 64),
+		}
+	}
 	content := providerResponse.markdown()
 	if content == "" || strings.TrimSpace(providerResponse.Model) == "" {
 		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureResponse}
+	}
+	if request.StructuredOutput != nil && request.StructuredOutput.ContentField != "" {
+		unwrapped, err := unwrapStructuredOutputField(content, request.StructuredOutput.ContentField)
+		if err != nil {
+			return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureStructuredOutputInvalid, Err: err}
+		}
+		content = unwrapped
 	}
 
 	result := worker.RunResult{
@@ -187,6 +212,31 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureResponse, Err: err}
 	}
 	return result, nil
+}
+
+// unwrapStructuredOutputField decodes a Structured Output response envelope
+// (guaranteed by the Provider to be a JSON object matching the schema this
+// Adapter requested) and returns the single named string field's value. It
+// rejects any shape other than exactly the one declared field, so a
+// Provider response that violates the contract it agreed to is never
+// treated as success.
+func unwrapStructuredOutputField(content, field string) (string, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &envelope); err != nil {
+		return "", fmt.Errorf("structured output envelope is not a JSON object: %w", err)
+	}
+	if len(envelope) != 1 {
+		return "", fmt.Errorf("structured output envelope has %d fields, want exactly 1", len(envelope))
+	}
+	raw, exists := envelope[field]
+	if !exists {
+		return "", fmt.Errorf("structured output envelope is missing field %q", field)
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("structured output field %q is not a non-empty string", field)
+	}
+	return value, nil
 }
 
 func readProviderFailure(body io.Reader) (string, string) {
@@ -251,10 +301,11 @@ func classifyProviderFailure(status int, providerType string) FailureCategory {
 }
 
 type messageRequest struct {
-	Model     string    `json:"model"`
-	MaxTokens int       `json:"max_tokens"`
-	System    string    `json:"system"`
-	Messages  []message `json:"messages"`
+	Model        string        `json:"model"`
+	MaxTokens    int           `json:"max_tokens"`
+	System       string        `json:"system"`
+	Messages     []message     `json:"messages"`
+	OutputConfig *outputConfig `json:"output_config,omitempty"`
 }
 
 type message struct {
@@ -262,10 +313,29 @@ type message struct {
 	Content string `json:"content"`
 }
 
+// outputConfig and jsonOutputFormat are the Anthropic-specific wire shapes
+// for Structured Outputs (output_config.format, type "json_schema"). They
+// are private to this Adapter; the Provider-neutral Runner input only
+// carries a JSON Schema (worker.StructuredOutputContract).
+type outputConfig struct {
+	Format jsonOutputFormat `json:"format"`
+}
+
+type jsonOutputFormat struct {
+	Type   string         `json:"type"`
+	Schema map[string]any `json:"schema"`
+}
+
 type messageResponse struct {
-	Model   string         `json:"model"`
-	Content []contentBlock `json:"content"`
-	Usage   usage          `json:"usage"`
+	Model       string         `json:"model"`
+	Content     []contentBlock `json:"content"`
+	Usage       usage          `json:"usage"`
+	StopReason  string         `json:"stop_reason"`
+	StopDetails refusalDetails `json:"stop_details"`
+}
+
+type refusalDetails struct {
+	Category string `json:"category"`
 }
 
 type contentBlock struct {

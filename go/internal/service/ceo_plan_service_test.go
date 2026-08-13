@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
 	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
@@ -37,6 +39,10 @@ func TestCEOPlanServiceUsesProviderNeutralRunnerAndTypedParser(t *testing.T) {
 	})
 	if err != nil || result.Plan.ProjectName != "P" || result.Plan.ProposedTasks[0].AssigneeID == nil || *result.Plan.ProposedTasks[0].AssigneeID != "PLAN-001" || fake.request.UserPrompt != "計画する" || fake.request.Metadata["operation"] != "ceo_plan_generation" {
 		t.Fatalf("result=%#v request=%#v err=%v", result, fake.request, err)
+	}
+	if fake.request.StructuredOutput == nil || fake.request.StructuredOutput.ContentField != "" ||
+		!reflect.DeepEqual(fake.request.StructuredOutput.Schema, ceoplan.OutputJSONSchema()) {
+		t.Fatalf("Runner request did not carry the CEO Plan Structured Output contract: %#v", fake.request.StructuredOutput)
 	}
 }
 

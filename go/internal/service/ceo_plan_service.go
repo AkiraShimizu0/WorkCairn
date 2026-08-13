@@ -73,7 +73,8 @@ func (service *CEOPlanService) Generate(ctx context.Context, input CEOPlanInput)
 	}
 	result, err := service.runner.Run(ctx, worker.RunRequest{
 		Model: input.Model, SystemPrompt: prompt.System, UserPrompt: prompt.User,
-		Metadata: map[string]string{"operation": "ceo_plan_generation"},
+		Metadata:         map[string]string{"operation": "ceo_plan_generation"},
+		StructuredOutput: &worker.StructuredOutputContract{Schema: ceoplan.OutputJSONSchema()},
 	})
 	if err != nil {
 		return CEOPlanResult{}, &CEOPlanError{Stage: CEOPlanRunnerStage, Err: err}

@@ -75,6 +75,11 @@ func TestReviewServiceUsesConcreteBuilderAndRunnerRegistry(t *testing.T) {
 	if fake.request.SystemPrompt != fixture.Expected.System || fake.request.UserPrompt != fixture.Expected.User {
 		t.Fatalf("Runner prompt did not match golden fixture")
 	}
+	if fake.request.StructuredOutput == nil ||
+		fake.request.StructuredOutput.ContentField != review.StructuredOutputContentField ||
+		!reflect.DeepEqual(fake.request.StructuredOutput.Schema, review.OutputJSONSchema()) {
+		t.Fatalf("Runner request did not carry the Review Structured Output contract: %#v", fake.request.StructuredOutput)
+	}
 	if result.Decision.Verdict != review.VerdictApprove || result.HumanMarkdown != "## レビュー\n\n問題ありません。" {
 		t.Fatalf("result = %#v", result)
 	}

@@ -13,6 +13,30 @@ type RunRequest struct {
 	SystemPrompt string            `json:"system_prompt"`
 	UserPrompt   string            `json:"user_prompt"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+	// StructuredOutput is an optional, Provider-neutral request for the
+	// Runner to constrain its raw output to a JSON Schema, as a second line
+	// of defense alongside Prompt instructions and the caller's own strict
+	// parser. It is standard JSON Schema data owned by the calling Domain
+	// package (e.g. ceoplan, review) and is opaque to this package and to
+	// callers that do not support it; a Runner that cannot honor it may
+	// ignore it and rely on Prompt instructions alone.
+	StructuredOutput *StructuredOutputContract `json:"structured_output,omitempty"`
+}
+
+// StructuredOutputContract carries a Provider-neutral JSON Schema for a
+// Runner to translate into its own structured-output mechanism, if it has
+// one. It never contains Provider-specific request shapes.
+type StructuredOutputContract struct {
+	// Schema is the JSON Schema describing the Runner's constrained output.
+	Schema map[string]any
+	// ContentField, when non-empty, names the single top-level string
+	// property in Schema whose value a Runner should return as RunResult
+	// Content verbatim (used when the caller's existing contract is a
+	// free-form string, e.g. Markdown with embedded markers, that cannot
+	// itself be expressed as the schema). Leave empty when Schema's own
+	// JSON output *is* the desired Content, e.g. a Runner-neutral object
+	// contract like the CEO Plan.
+	ContentField string
 }
 
 // TokenUsage allows providers that do not expose usage to leave each value

@@ -68,6 +68,10 @@ func (service *ReviewService) Execute(ctx context.Context, input review.PromptIn
 		SystemPrompt: prompt.System,
 		UserPrompt:   prompt.User,
 		Metadata:     cloneMetadata(input.Metadata),
+		StructuredOutput: &worker.StructuredOutputContract{
+			Schema:       review.OutputJSONSchema(),
+			ContentField: review.StructuredOutputContentField,
+		},
 	})
 	if err != nil {
 		if contextErr := classifyContextError(ctx, err); contextErr != nil {
