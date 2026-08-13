@@ -62,8 +62,11 @@ func TestReviewBuilderIsDeterministicAndKeepsSectionOrder(t *testing.T) {
 		}
 		previous = position
 	}
-	if !strings.Contains(first.System, "Markdown code fenceや説明文を含めないでください") ||
-		!strings.Contains(first.System, "開始・終了マーカーはそれぞれ正確に1回だけ使用してください") {
+	if !strings.Contains(first.System, "Markdown code fence（```）、コメント、余分な空行やテキストを一切含めないでください") ||
+		!strings.Contains(first.System, "開始マーカー REVIEW_RESULT_JSON_START を正確に1回だけ出力してください") ||
+		!strings.Contains(first.System, "終了マーカー REVIEW_RESULT_JSON_END を正確に1回だけ出力してください") ||
+		!strings.Contains(first.System, "JSONのtop-level fieldはverdictとissuesの2つだけにしてください") ||
+		!strings.Contains(first.System, `"Approve" または "Request Changes"`) {
 		t.Fatal("Review Prompt does not make the strict parser contract explicit")
 	}
 }

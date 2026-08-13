@@ -514,7 +514,7 @@ func workflowFailure(result service.ReviewedWorkflowRunResult, err error) (strin
 		if errors.As(err, &runErr) && strings.TrimSpace(runErr.Stage) != "" {
 			stage = runErr.Stage
 		}
-		code = reviewedWorkflowFailureCode(result, stage)
+		code, stage = reviewedWorkflowFailureClassification(result, stage)
 	}
 	return code, stage, partial
 }

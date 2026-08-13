@@ -149,6 +149,8 @@ func ExecuteReviewedWorkflow(
 			Status: executed.Status, Execution: executed.Execution, Artifact: executed.Artifact,
 			EventID: executed.EventID, EventPublished: executed.EventPublished,
 			ProviderFailure: reviewOrchestrationProviderFailure(executed.ProviderFailure),
+			FailureCode:     executed.FailureCode, FailureStage: executed.FailureStage,
+			ParseFailureReason: executed.ParseFailureReason,
 		}, reviewErr
 	})
 	reviser := reviewedWorkflowReviserFunc(func(runContext context.Context, sourceTaskID, childCommandID string) (revision.Result, error) {
@@ -172,7 +174,7 @@ func ExecuteReviewedWorkflow(
 	}
 	code := "REVIEWED_WORKFLOW_FAILED"
 	if runErr != nil {
-		code = reviewedWorkflowFailureCode(result, stage)
+		code, stage = reviewedWorkflowFailureClassification(result, stage)
 	}
 	return result, finishDurableCommand(ctx, claim, result, runErr, code, stage, len(result.Tasks) > 0)
 }
@@ -190,26 +192,40 @@ func reviewOrchestrationProviderFailure(failure *ProviderFailure) *review.Provid
 	}
 }
 
-// reviewedWorkflowFailureCode classifies the outer Command failure using the
-// redacted Provider diagnostic of the Task or Review child that failed, when
-// available, instead of the generic REVIEWED_WORKFLOW_FAILED code. Structural
-// failures (assignment, parsing, revision, plan) keep the generic code.
-func reviewedWorkflowFailureCode(result service.ReviewedWorkflowRunResult, stage string) string {
+// reviewedWorkflowFailureClassification classifies the outer Command failure
+// using the Task or Review child that failed, instead of the generic
+// REVIEWED_WORKFLOW_FAILED/<coarse stage> pair. Priority: a redacted Provider
+// diagnostic (transport/auth/rate-limit/...) wins when present; otherwise the
+// child's own typed classification (e.g. REVIEW_RESULT_INVALID/
+// review_result_parser from a Review parser contract violation) is used, so
+// the outer Command mirrors exactly what the child Command Ledger already
+// recorded. Structural failures with neither (assignment, plan, revision,
+// command identity) keep the generic code and coarse stage.
+func reviewedWorkflowFailureClassification(result service.ReviewedWorkflowRunResult, stage string) (string, string) {
 	if len(result.Tasks) == 0 {
-		return "REVIEWED_WORKFLOW_FAILED"
+		return "REVIEWED_WORKFLOW_FAILED", stage
 	}
 	last := result.Tasks[len(result.Tasks)-1]
 	switch stage {
 	case "task_execute":
 		if last.Execution.ProviderFailure != nil {
-			return providerFailureCode(last.Execution.ProviderFailure.Category)
+			return providerFailureCode(last.Execution.ProviderFailure.Category), stage
 		}
 	case "review":
-		if last.Review != nil && last.Review.ProviderFailure != nil {
-			return providerFailureCode(last.Review.ProviderFailure.Category)
+		if last.Review != nil {
+			if last.Review.ProviderFailure != nil {
+				return providerFailureCode(last.Review.ProviderFailure.Category), stage
+			}
+			if last.Review.FailureCode != "" {
+				childStage := stage
+				if last.Review.FailureStage != "" {
+					childStage = last.Review.FailureStage
+				}
+				return last.Review.FailureCode, childStage
+			}
 		}
 	}
-	return "REVIEWED_WORKFLOW_FAILED"
+	return "REVIEWED_WORKFLOW_FAILED", stage
 }
 
 func planReviewedWorkflowStep(ctx context.Context, input WorkflowPlanInput) (service.WorkflowStepPlan, error) {

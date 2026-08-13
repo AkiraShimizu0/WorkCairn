@@ -73,6 +73,15 @@ type ReviewExecutionResult struct {
 	EventID         string                  `json:"event_id,omitempty"`
 	EventPublished  bool                    `json:"event_published"`
 	ProviderFailure *ProviderFailure        `json:"provider_failure,omitempty"`
+	// FailureCode/FailureStage are the typed classification recorded on this
+	// Command's own Ledger entry (see reviewFailureCodeAndStage). Carrying
+	// them on the result lets composing callers (Reviewed Workflow) recover
+	// the specific classification instead of falling back to a generic code.
+	FailureCode  string `json:"failure_code,omitempty"`
+	FailureStage string `json:"failure_stage,omitempty"`
+	// ParseFailureReason is set only when FailureCode is REVIEW_RESULT_INVALID.
+	// It is a sanitized review.ParseFailureReason value, never raw Provider text.
+	ParseFailureReason string `json:"parse_failure_reason,omitempty"`
 }
 
 func PlanReview(ctx context.Context, input ReviewPlanInput) (ReviewPlan, error) {
@@ -165,6 +174,10 @@ func ExecuteReview(ctx context.Context, input ExecuteReviewInput, provider Claud
 	}
 	result, reviewErr := executeClaimedReview(ctx, input, provider, httpClient)
 	result.ProviderFailure = providerFailure(reviewErr)
+	if reviewErr != nil {
+		result.FailureCode, result.FailureStage = reviewFailureCodeAndStage(reviewErr, result.ProviderFailure)
+		result.ParseFailureReason = reviewParseFailureReason(reviewErr)
+	}
 	return result, finishReviewCommand(ctx, claim, result, reviewErr)
 }
 
@@ -257,15 +270,7 @@ func finishReviewCommand(ctx context.Context, claim reviewCommandClaim, result R
 	var failure *commandledger.Failure
 	if reviewErr != nil {
 		state = commandledger.StateFailed
-		code, stage := reviewFailureClassification(reviewErr, result.ProviderFailure)
-		failure = &commandledger.Failure{Code: code, Stage: stage}
-		if errors.Is(reviewErr, ErrReviewPreflightFailed) {
-			failure.Code = "REVIEW_PREFLIGHT_FAILED"
-			failure.Stage = "preflight"
-		} else if errors.Is(reviewErr, review.ErrSaveFailed) {
-			failure.Code = "REVIEW_SAVE_FAILED"
-			failure.Stage = "review_artifact_save"
-		}
+		failure = &commandledger.Failure{Code: result.FailureCode, Stage: result.FailureStage}
 		if result.Artifact != nil && result.Artifact.CanonicalCommitted {
 			state = commandledger.StatePartialFailure
 		}
@@ -276,6 +281,21 @@ func finishReviewCommand(ctx context.Context, claim reviewCommandClaim, result R
 		return errors.Join(reviewErr, &CommandLedgerCommitError{Err: err})
 	}
 	return reviewErr
+}
+
+// reviewFailureCodeAndStage is the single source of typed Review failure
+// classification. It is computed once per failed ExecuteReview call and
+// carried on ReviewExecutionResult so both this Command's own Ledger entry
+// and any composing caller (Reviewed Workflow) use the same classification
+// instead of a generic code.
+func reviewFailureCodeAndStage(reviewErr error, provider *ProviderFailure) (string, string) {
+	if errors.Is(reviewErr, ErrReviewPreflightFailed) {
+		return "REVIEW_PREFLIGHT_FAILED", "preflight"
+	}
+	if errors.Is(reviewErr, review.ErrSaveFailed) {
+		return "REVIEW_SAVE_FAILED", "review_artifact_save"
+	}
+	return reviewFailureClassification(reviewErr, provider)
 }
 
 func reviewFailureClassification(reviewErr error, provider *ProviderFailure) (string, string) {
@@ -302,6 +322,17 @@ func reviewFailureClassification(reviewErr error, provider *ProviderFailure) (st
 	default:
 		return "REVIEW_EXECUTION_FAILED", "review_service"
 	}
+}
+
+// reviewParseFailureReason extracts the sanitized review.ParseFailureReason
+// from a Review failure, when the underlying cause was a *review.ParseError.
+// It returns "" for every other failure kind (Provider, prompt, route, ...).
+func reviewParseFailureReason(reviewErr error) string {
+	var parseErr *review.ParseError
+	if !errors.As(reviewErr, &parseErr) {
+		return ""
+	}
+	return string(parseErr.Reason)
 }
 
 func executeClaimedReview(ctx context.Context, input ExecuteReviewInput, provider ClaudeProcessConfig, httpClient claude.HTTPDoer) (ReviewExecutionResult, error) {

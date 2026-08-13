@@ -3,6 +3,7 @@ package review
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -62,5 +63,48 @@ func TestParseOutputRejectsInvalidContract(t *testing.T) {
 		if _, _, err := ParseOutput(output); !errors.Is(err, ErrInvalidResult) {
 			t.Errorf("case %d error = %v, want ErrInvalidResult", index, err)
 		}
+	}
+}
+
+func TestParseOutputClassifiesSanitizedParseFailureReasonWithoutRawText(t *testing.T) {
+	secret := "PROVIDER_SECRET_MARKER_MUST_NOT_APPEAR_IN_REASON"
+	tests := []struct {
+		name   string
+		output string
+		reason ParseFailureReason
+	}{
+		{"empty output", "", ParseFailureHumanMarkdownMissing},
+		{"no markers", "human only " + secret, ParseFailureMarkerMissing},
+		{"missing end marker", "human" + ResultJSONStart + `{"verdict":"Approve","issues":[]}` + " " + secret, ParseFailureMarkerMissing},
+		{"duplicate start marker", "human" + ResultJSONStart + ResultJSONStart + `{"verdict":"Approve","issues":[]}` + ResultJSONEnd, ParseFailureMarkerDuplicate},
+		{"duplicate end marker", "human" + ResultJSONStart + `{"verdict":"Approve","issues":[]}` + ResultJSONEnd + ResultJSONEnd, ParseFailureMarkerDuplicate},
+		{"markers out of order", "human" + ResultJSONEnd + `{"verdict":"Approve","issues":[]}` + ResultJSONStart, ParseFailureMarkerMissing},
+		{"code fence wrapped JSON", "human" + ResultJSONStart + "```json\n" + secret + `{"verdict":"Approve","issues":[]}` + "\n```" + ResultJSONEnd, ParseFailureJSONDecodeFailed},
+		{"malformed JSON", "human" + ResultJSONStart + "{" + secret + ResultJSONEnd, ParseFailureJSONDecodeFailed},
+		{"trailing content after JSON", "human" + ResultJSONStart + `{"verdict":"Approve","issues":[]} ` + secret + ResultJSONEnd, ParseFailureTrailingContent},
+		{"missing verdict field", "human" + ResultJSONStart + `{"issues":[],"note":"` + secret + `"}` + ResultJSONEnd, ParseFailureMissingRequiredField},
+		{"missing issues field", "human" + ResultJSONStart + `{"verdict":"Approve","note":"` + secret + `"}` + ResultJSONEnd, ParseFailureMissingRequiredField},
+		{"invalid verdict value", "human" + ResultJSONStart + `{"verdict":"` + secret + `","issues":[]}` + ResultJSONEnd, ParseFailureInvalidVerdict},
+		{"issues not an array", "human" + ResultJSONStart + `{"verdict":"Approve","issues":"` + secret + `"}` + ResultJSONEnd, ParseFailureInvalidIssuesShape},
+		{"invalid issue category", "human" + ResultJSONStart + `{"verdict":"Request Changes","issues":[{"category":"` + secret + `","severity":"high","description":"x","suggested_action":"y"}]}` + ResultJSONEnd, ParseFailureInvalidIssuesShape},
+		{"empty issues on Request Changes", "human" + ResultJSONStart + `{"verdict":"Request Changes","issues":[]}` + ResultJSONEnd, ParseFailureInvalidIssuesShape},
+	}
+	for _, current := range tests {
+		t.Run(current.name, func(t *testing.T) {
+			_, _, err := ParseOutput(current.output)
+			var parseErr *ParseError
+			if !errors.As(err, &parseErr) {
+				t.Fatalf("error = %v, want *ParseError", err)
+			}
+			if parseErr.Reason != current.reason {
+				t.Fatalf("Reason = %q, want %q", parseErr.Reason, current.reason)
+			}
+			if !errors.Is(err, ErrInvalidResult) {
+				t.Fatalf("error = %v, want wrapped ErrInvalidResult", err)
+			}
+			if strings.Contains(string(parseErr.Reason), secret) {
+				t.Fatalf("Reason leaked raw output content: %q", parseErr.Reason)
+			}
+		})
 	}
 }

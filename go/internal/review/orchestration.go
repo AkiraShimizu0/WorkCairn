@@ -18,6 +18,15 @@ type OrchestrationResult struct {
 	EventID         string           `json:"event_id,omitempty"`
 	EventPublished  bool             `json:"event_published"`
 	ProviderFailure *ProviderFailure `json:"provider_failure,omitempty"`
+	// FailureCode/FailureStage are the same typed classification recorded on
+	// the Review child Command (e.g. REVIEW_RESULT_INVALID/review_result_parser)
+	// for non-Provider failures, so callers composing this Review into a larger
+	// Workflow result do not have to re-derive it or fall back to a generic code.
+	FailureCode  string `json:"failure_code,omitempty"`
+	FailureStage string `json:"failure_stage,omitempty"`
+	// ParseFailureReason is set only when FailureCode is REVIEW_RESULT_INVALID.
+	// It is a sanitized ParseFailureReason value, never raw Provider text.
+	ParseFailureReason string `json:"parse_failure_reason,omitempty"`
 }
 
 // ProviderFailure is the redacted Provider diagnostic retained when a Review

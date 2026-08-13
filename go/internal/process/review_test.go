@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -143,7 +144,9 @@ func TestExecuteReviewRecordsParserSubstageWithoutArtifacts(t *testing.T) {
 	result, err := ExecuteReview(context.Background(), input, ClaudeProcessConfig{
 		APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL,
 	}, server.Client())
-	if err == nil || providerCalls.Load() != 1 || result.Execution != nil || result.Artifact != nil || result.ProviderFailure != nil {
+	if err == nil || providerCalls.Load() != 1 || result.Execution != nil || result.Artifact != nil || result.ProviderFailure != nil ||
+		result.FailureCode != "REVIEW_RESULT_INVALID" || result.FailureStage != "review_result_parser" ||
+		result.ParseFailureReason != string(review.ParseFailureJSONDecodeFailed) {
 		t.Fatalf("parser failure result=%#v err=%v calls=%d", result, err, providerCalls.Load())
 	}
 	ledger, ledgerErr := vault.NewCommandLedgerStore(root, input.ProjectName)
@@ -154,6 +157,10 @@ func TestExecuteReviewRecordsParserSubstageWithoutArtifacts(t *testing.T) {
 	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil ||
 		record.Failure.Code != "REVIEW_RESULT_INVALID" || record.Failure.Stage != "review_result_parser" {
 		t.Fatalf("parser Ledger=%#v err=%v", record, ledgerErr)
+	}
+	var storedResult ReviewExecutionResult
+	if json.Unmarshal(record.Result, &storedResult) != nil || storedResult.ParseFailureReason != string(review.ParseFailureJSONDecodeFailed) {
+		t.Fatalf("stored parse failure reason = %#v", storedResult)
 	}
 	project := filepath.Join(root, "プロジェクト", input.ProjectName)
 	if _, statErr := os.Stat(filepath.Join(project, "Reviews")); !errors.Is(statErr, os.ErrNotExist) {

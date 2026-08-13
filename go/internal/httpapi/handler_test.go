@@ -227,6 +227,8 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"PROVIDER_AUTHENTICATION_REQUIRED", "PROVIDER_BILLING_REQUIRED", "PROVIDER_PERMISSION_DENIED",
 		"PROVIDER_REQUEST_INVALID", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "provider_failure",
 		"PROVIDER_RESPONSE_INVALID", "ceo_plan_parser", "進め方は保存・適用されていません", "WORKFLOW_TASK_ASSIGNMENT_REQUIRED",
+		"REVIEW_PROMPT_FAILED", "REVIEW_ROUTE_FAILED", "REVIEW_RESULT_INVALID", "reviewContractFailures",
+		"AIのレビュー結果を正しく解釈できませんでした。成果物は保持されています。",
 		"interaction_plan_commit_cas", "同じ依頼の状態が先に更新されたため、この進め方は保存していません。",
 		"WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED", "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。",
 		"renderTimeline", "rememberError", "setBackgroundWorking", `requestJSON("/v1/workspace-status")`, "最初のAIチームを確認",
@@ -1089,6 +1091,127 @@ func TestMobileInteractionHTTPFlowRequestChangesRevisionReReviewToCompletion(t *
 	}
 	if revised.TaskID != "TASK-002" || revised.Review.Verdict != review.VerdictApprove {
 		t.Fatalf("revised Task proof = %#v", revised)
+	}
+}
+
+// TestMobileInteractionHTTPFlowMalformedReviewResponseClassifiesOuterCommand
+// exercises the real daemon/process composition when the Runner's Review
+// response violates the typed Review contract (marked JSON wrapped in a
+// Markdown code fence, a realistic Claude Sonnet 5 slip) instead of failing
+// at the Provider transport layer. It verifies the outer
+// interaction.workflow.execute Command surfaces the same typed
+// REVIEW_RESULT_INVALID/review_result_parser classification the Review child
+// Command records, instead of the generic REVIEWED_WORKFLOW_FAILED/review
+// pair, and that the Deliverable is preserved.
+func TestMobileInteractionHTTPFlowMalformedReviewResponseClassifiesOuterCommand(t *testing.T) {
+	root := t.TempDir()
+	for _, directory := range []string{"社員", "プロジェクト"} {
+		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, content := range map[string]string{
+		"山本 真帆.md": "---\nid: PLAN-001\ndepartment: 企画部\nrole: Product Manager\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n",
+		"伊藤 健太.md": "---\nid: QA-001\ndepartment: 品質保証部\nrole: QA Engineer\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, "社員", name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	planOutput, _ := json.Marshal(map[string]any{
+		"project_name": "iPhone依頼3", "objective": "依頼から成果物を完成させる", "summary": "mobile malformed review E2E",
+		"required_departments": []string{"企画部"}, "required_roles": []string{"Product Manager"},
+		"assigned_existing_employees": []string{},
+		"proposed_tasks":              []map[string]any{{"title": "要件をまとめる", "required_role": "Product Manager", "assignee_id": nil, "dependency_ids": []string{}, "rationale": "依頼を形にするため"}},
+		"risks":                       []string{}, "ceo_questions": []string{},
+	})
+	providerOutputs := []string{
+		string(planOutput),
+		"# 成果物\n\n要件の下書きです。",
+		// Realistic Claude Sonnet 5 contract slip: valid verdict/issues JSON,
+		// but wrapped in a Markdown code fence the Review Prompt forbids.
+		"# Review\n\n確認結果です。\n\nREVIEW_RESULT_JSON_START\n```json\n{\"verdict\":\"Approve\",\"issues\":[]}\n```\nREVIEW_RESULT_JSON_END",
+	}
+	providerCalls := 0
+	providerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/messages" || providerCalls >= len(providerOutputs) {
+			t.Fatalf("unexpected mock Provider request path=%s calls=%d", request.URL.Path, providerCalls)
+		}
+		output := providerOutputs[providerCalls]
+		providerCalls++
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"model": "claude-mobile-test", "content": []map[string]string{{"type": "text", "text": output}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer providerServer.Close()
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{
+		APIKey: "fake-mobile-key", BaseURL: providerServer.URL,
+	}, providerServer.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewHandler(executor, executor)
+	base := time.Date(2026, time.August, 10, 9, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	sessionID := "SESSION-MOBILE-MALFORMED-REVIEW-001"
+
+	planRequest := map[string]any{
+		"version": InteractionContractVersion, "session_id": sessionID, "request": "iPhone向けに仕事を完成させて",
+		"model": "Claude Sonnet 5", "current_time": base,
+	}
+	planResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-plans", planRequest)
+	var startPlan workspaceprocess.InteractionStartPlan
+	decodeHTTPResult(t, planResponse, &startPlan)
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-START-001", "operation": "interaction.start", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "request": planRequest["request"], "request_digest": startPlan.Session.RequestDigest, "model": planRequest["model"], "current_time": base},
+	})
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-PLAN-001", "operation": "interaction.plan.generate", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "expected_version": 1, "current_time": base.Add(time.Minute)},
+	})
+	next := inspectInteractionNextHTTP(t, handler, sessionID)
+	if next.Kind != interaction.NextApprovePlanApply || next.PlanDigest == "" {
+		t.Fatalf("plan apply next = %#v", next)
+	}
+	performSuccessfulCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-APPLY-001", "operation": "interaction.plan.apply", "approved": true,
+		"payload": map[string]any{"session_id": sessionID, "expected_version": next.ExpectedVersion, "project_id": "PROJECT-MOBILE-MALFORMED-001", "plan_digest": next.PlanDigest, "current_time": base.Add(2 * time.Minute)},
+	})
+	next = inspectInteractionNextHTTP(t, handler, sessionID)
+	workflowTime := base.Add(3 * time.Minute)
+	workflowPlanResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-workflow-plans", map[string]any{
+		"version": InteractionContractVersion, "session_id": sessionID, "expected_version": next.ExpectedVersion,
+		"reviewer_id": "QA-001", "current_time": workflowTime, "max_tasks": 10,
+	})
+	var workflowPlan workspaceprocess.InteractionWorkflowPlan
+	decodeHTTPResult(t, workflowPlanResponse, &workflowPlan)
+	performAcceptedCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-WORKFLOW-001", "operation": "interaction.workflow.execute", "approved": true,
+		"payload": map[string]any{
+			"session_id": sessionID, "expected_version": next.ExpectedVersion, "reviewer_id": "QA-001", "current_time": workflowTime,
+			"max_tasks": 10, "autonomy_contract": workflowPlan.Autonomy, "workflow_plan_digest": workflowPlan.WorkflowPlanDigest, "approval_reference": "mobile-e2e-malformed-review",
+		},
+	})
+	waitForCommandStateHTTP(t, handler, "CMD-MOBILE-MALFORMED-WORKFLOW-001", commandledger.StatePartialFailure)
+
+	if providerCalls != len(providerOutputs) {
+		t.Fatalf("providerCalls = %d, want %d", providerCalls, len(providerOutputs))
+	}
+	statusResponse := httptest.NewRecorder()
+	handler.ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/v1/commands/CMD-MOBILE-MALFORMED-WORKFLOW-001?scope=workspace", nil))
+	var record commandledger.Record
+	decodeHTTPResult(t, statusResponse, &record)
+	if record.State != commandledger.StatePartialFailure || record.Failure == nil ||
+		record.Failure.Code != "REVIEW_RESULT_INVALID" || record.Failure.Stage != "review_result_parser" {
+		t.Fatalf("outer Command status = %#v", record)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "プロジェクト", "iPhone依頼3", "Deliverables", "TASK-001.md")); statErr != nil {
+		t.Fatalf("Deliverable was not preserved after Review parser failure: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "プロジェクト", "iPhone依頼3", "Reviews", "TASK-001.review.json")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("canonical Review artifact should not exist after parser failure: %v", statErr)
 	}
 }
 

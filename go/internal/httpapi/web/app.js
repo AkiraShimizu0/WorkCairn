@@ -387,6 +387,18 @@ function showError(error, title = "処理を完了できませんでした") {
     PROVIDER_RESPONSE_INVALID: "Claudeから正常に読み取れる応答を受け取れませんでした。自動retryせず、問い合わせIDを確認してください。",
   };
   const providerFailureCopy = providerFailures[code];
+  // Non-Provider Review contract failures: the Runner responded, but its
+  // structured Review result did not satisfy the typed Review contract
+  // (missing/duplicate markers, invalid verdict, invalid issues shape, ...),
+  // or the Prompt/route could not be built at all. These are deliberately
+  // kept out of providerFailures so they never trigger the "open AI
+  // Connections" action -- there is no connection problem to fix.
+  const reviewContractFailures = {
+    REVIEW_PROMPT_FAILED: "レビュー用の指示を組み立てられませんでした。成果物は保持されています。",
+    REVIEW_ROUTE_FAILED: "レビュー担当のAIモデルを解決できませんでした。成果物は保持されています。",
+    REVIEW_RESULT_INVALID: "AIのレビュー結果を正しく解釈できませんでした。成果物は保持されています。",
+  };
+  const reviewContractCopy = reviewContractFailures[code];
   const providerIssue = providerSetupRequired || providerGenerationFailed || Boolean(providerFailureCopy);
   const providerRequestID = detail?.provider_failure?.request_id;
   const providerSettingsAction = providerSetupRequired || code === "PROVIDER_AUTHENTICATION_REQUIRED" || code === "PROVIDER_PERMISSION_DENIED";
@@ -402,6 +414,8 @@ function showError(error, title = "処理を完了できませんでした") {
       ? "AIサービスの接続設定が不足しています。Providerへ依頼は送信されていません。MacのAI Connectionsから接続してください。"
       : providerFailureCopy
         ? providerFailureCopy
+      : reviewContractCopy
+        ? reviewContractCopy
       : planResponseInvalid
         ? "AIサービスから応答を受信しましたが、安全な進め方として確認できる形式ではありませんでした。進め方は保存・適用されていません。"
       : planCommitConflict
