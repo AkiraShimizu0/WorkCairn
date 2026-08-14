@@ -64,6 +64,7 @@ type fakeLocalSetup struct {
 	connectCalls int
 	revealCalls  int
 	onConnect    func()
+	connectErr   error
 }
 
 func (setup *fakeLocalSetup) ConnectClaude(context.Context) error {
@@ -71,7 +72,19 @@ func (setup *fakeLocalSetup) ConnectClaude(context.Context) error {
 	if setup.onConnect != nil {
 		setup.onConnect()
 	}
-	return nil
+	return setup.connectErr
+}
+
+type fakeCredentialSetupError struct {
+	substage       string
+	classification string
+	raw            string
+}
+
+func (setupErr *fakeCredentialSetupError) Error() string              { return setupErr.raw }
+func (setupErr *fakeCredentialSetupError) CredentialSubstage() string { return setupErr.substage }
+func (setupErr *fakeCredentialSetupError) CredentialClassification() string {
+	return setupErr.classification
 }
 
 func (setup *fakeLocalSetup) RevealWorkspace(context.Context) error {
@@ -313,6 +326,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"この画面を閉じても処理はMacで続きます。",
 		"commandProviderFailure", "task?.execution?.provider_failure",
 		"restoreDurableFailure", "record.failure.details", "前回のCommandを完了できませんでした",
+		"providerSetupError", "Claude APIキーをMacのKeychainへ保存できませんでした", "Keychainへ保存",
 		"state.renderKey === key", "state.detailRenderKey === key", "state.timelineRenderKey === key",
 	} {
 		if !strings.Contains(asset.Body.String(), required) {
@@ -532,6 +546,41 @@ func TestMacLocalSetupConnectsProviderWithoutAcceptingASecretOrLANMutation(t *te
 	handler.ServeHTTP(remoteResponse, remote)
 	if remoteResponse.Code != http.StatusForbidden || setup.revealCalls != 0 || strings.Contains(remoteResponse.Body.String(), root) {
 		t.Fatalf("remote setup = %d %s calls=%d", remoteResponse.Code, remoteResponse.Body.String(), setup.revealCalls)
+	}
+}
+
+func TestMacLocalSetupReturnsOnlyTypedKeychainDiagnostic(t *testing.T) {
+	root := t.TempDir()
+	executor, err := NewProcessExecutor(root, workspaceprocess.ClaudeProcessConfig{}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := "secret-must-not-appear"
+	setup := &fakeLocalSetup{connectErr: fmt.Errorf("outer: %w", &fakeCredentialSetupError{
+		substage: "keychain_read_after_write", classification: "keychain_permission_denied", raw: secret + " raw stderr",
+	})}
+	handler, _ := NewHandler(executor, executor)
+	if err := handler.EnableLocalSetup(setup, "192.168.1.20"); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/local-setup/claude", strings.NewReader(`{}`))
+	request.RemoteAddr = "127.0.0.1:54321"
+	request.Host = "127.0.0.1:8787"
+	request.Header.Set("Origin", "http://127.0.0.1:8787")
+	request.Header.Set(localIntentHeader, localIntentValue)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	body := response.Body.String()
+	for _, expected := range []string{
+		`"code":"PROVIDER_CONNECTION_SETUP_FAILED"`, `"stage":"provider_connection_setup"`,
+		`"substage":"keychain_read_after_write"`, `"category":"keychain_permission_denied"`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("typed diagnostic missing %s: %s", expected, body)
+		}
+	}
+	if response.Code != http.StatusUnprocessableEntity || strings.Contains(body, secret) || strings.Contains(body, setup.connectErr.Error()) {
+		t.Fatalf("unsafe setup response = %d %s", response.Code, body)
 	}
 }
 

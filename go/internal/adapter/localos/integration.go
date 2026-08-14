@@ -20,6 +20,42 @@ const workspaceConfigVersion = "workcairn-local-workspace.v1"
 
 type CommandRunner interface {
 	Run(ctx context.Context, name string, args []string, stdin string) (string, error)
+	// RunSecretPrompt starts a command on a pseudo-terminal and answers its
+	// interactive secret prompt without placing the secret in argv. The
+	// implementation must never return the secret in an error or diagnostic.
+	RunSecretPrompt(ctx context.Context, name string, args []string, secret string) error
+}
+
+type CredentialFailure string
+
+const (
+	CredentialNotFound         CredentialFailure = "keychain_not_found"
+	CredentialPermissionDenied CredentialFailure = "keychain_permission_denied"
+	CredentialCommandFailed    CredentialFailure = "keychain_command_failed"
+	CredentialOutputInvalid    CredentialFailure = "keychain_output_invalid"
+)
+
+const (
+	CredentialWrite          = "keychain_write"
+	CredentialRead           = "keychain_read"
+	CredentialReadAfterWrite = "keychain_read_after_write"
+)
+
+// CredentialError is a secret-free diagnostic crossing the Local OS Adapter
+// boundary. It intentionally carries no command output or credential data.
+type CredentialError struct {
+	Substage       string
+	Classification CredentialFailure
+}
+
+func (credentialErr *CredentialError) Error() string {
+	return fmt.Sprintf("Claude credential %s failed: %s", credentialErr.Substage, credentialErr.Classification)
+}
+
+func (credentialErr *CredentialError) CredentialSubstage() string { return credentialErr.Substage }
+
+func (credentialErr *CredentialError) CredentialClassification() string {
+	return string(credentialErr.Classification)
 }
 
 type WorkspaceLocationStore struct {

@@ -3,15 +3,19 @@
 package localos
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	urlpkg "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/creack/pty"
 )
 
 const (
@@ -23,11 +27,72 @@ type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, name string, args []string, stdin string) (string, error) {
 	command := exec.CommandContext(ctx, name, args...)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
 	if stdin != "" {
 		command.Stdin = strings.NewReader(stdin)
 	}
 	output, err := command.Output()
-	return string(output), err
+	if err != nil {
+		return "", newCommandExecutionError(err, stderr.String(), "")
+	}
+	return string(output), nil
+}
+
+// RunSecretPrompt uses a pseudo-terminal because security(1)'s password
+// prompt is interactive and does not accept a daemon pipe as a non-interactive
+// password source. The secret is written only to the PTY and is never argv,
+// stdout, stderr, a returned error, or persistent evidence.
+func (execRunner) RunSecretPrompt(ctx context.Context, name string, args []string, secret string) error {
+	command := exec.CommandContext(ctx, name, args...)
+	terminal, err := pty.Start(command)
+	if err != nil {
+		return newCommandExecutionError(err, "", secret)
+	}
+	defer terminal.Close()
+
+	output := make(chan []byte, 1)
+	go func() {
+		content, _ := io.ReadAll(io.LimitReader(terminal, 16<<10))
+		output <- content
+	}()
+	if _, err := io.WriteString(terminal, secret+"\n"); err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return newCommandExecutionError(err, "", secret)
+	}
+	waitErr := command.Wait()
+	transcript := <-output
+	if waitErr != nil {
+		return newCommandExecutionError(waitErr, string(transcript), secret)
+	}
+	return nil
+}
+
+type commandExecutionError struct {
+	exitCode   int
+	diagnostic string
+}
+
+func (commandErr *commandExecutionError) Error() string { return "local OS command failed" }
+
+func newCommandExecutionError(err error, diagnostic, secret string) error {
+	if secret != "" {
+		diagnostic = strings.ReplaceAll(diagnostic, secret, "<redacted>")
+	}
+	// A bounded diagnostic is retained only in-process for closed
+	// classification below. Error() never returns it.
+	if len(diagnostic) > 4096 {
+		diagnostic = diagnostic[:4096]
+	}
+	exitCode := -1
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		exitCode = exitErr.ExitCode()
+	} else if status, ok := err.(interface{ ExitStatus() int }); ok {
+		exitCode = status.ExitStatus()
+	}
+	return &commandExecutionError{exitCode: exitCode, diagnostic: diagnostic}
 }
 
 type DarwinWorkspaceSelector struct {
@@ -74,13 +139,17 @@ func NewClaudeCredentialStore() ClaudeCredentialStore {
 }
 
 func (store *DarwinClaudeCredentialStore) Load(ctx context.Context) (string, error) {
+	return store.load(ctx, CredentialRead)
+}
+
+func (store *DarwinClaudeCredentialStore) load(ctx context.Context, substage string) (string, error) {
 	output, err := store.runner.Run(ctx, "/usr/bin/security", []string{"find-generic-password", "-a", claudeKeychainAccount, "-s", claudeKeychainService, "-w"}, "")
 	if err != nil {
-		return "", ErrNotConfigured
+		return "", classifyCredentialError(substage, err)
 	}
 	credential := strings.TrimSpace(output)
 	if credential == "" {
-		return "", ErrNotConfigured
+		return "", &CredentialError{Substage: substage, Classification: CredentialOutputInvalid}
 	}
 	return credential, nil
 }
@@ -100,11 +169,30 @@ end try`
 	if credential == "" {
 		return "", ErrCanceled
 	}
-	_, err = store.runner.Run(ctx, "/usr/bin/security", []string{"add-generic-password", "-U", "-a", claudeKeychainAccount, "-s", claudeKeychainService, "-w"}, credential+"\n")
-	if err != nil {
-		return "", fmt.Errorf("store Claude credential: %w", err)
+	if err := store.runner.RunSecretPrompt(ctx, "/usr/bin/security", []string{"add-generic-password", "-U", "-a", claudeKeychainAccount, "-s", claudeKeychainService, "-w"}, credential); err != nil {
+		return "", classifyCredentialError(CredentialWrite, err)
 	}
-	return credential, nil
+	// A zero exit status alone is not a commit point. Read the exact same
+	// service/account immediately and return only the non-empty stored value.
+	// No value comparison, logging, fingerprinting, or persistence occurs.
+	return store.load(ctx, CredentialReadAfterWrite)
+}
+
+func classifyCredentialError(substage string, err error) error {
+	classification := CredentialCommandFailed
+	var commandErr *commandExecutionError
+	if errors.As(err, &commandErr) {
+		diagnostic := strings.ToLower(commandErr.diagnostic)
+		switch {
+		case strings.Contains(diagnostic, "could not be found"), strings.Contains(diagnostic, "item not found"), strings.Contains(diagnostic, "errsecitemnotfound"):
+			classification = CredentialNotFound
+		case strings.Contains(diagnostic, "user interaction is not allowed"), strings.Contains(diagnostic, "interaction not allowed"),
+			strings.Contains(diagnostic, "permission denied"), strings.Contains(diagnostic, "not permitted"),
+			strings.Contains(diagnostic, "authorization was denied"), strings.Contains(diagnostic, "errsecauthfailed"):
+			classification = CredentialPermissionDenied
+		}
+	}
+	return &CredentialError{Substage: substage, Classification: classification}
 }
 
 type DarwinWorkspaceViewer struct {

@@ -53,6 +53,7 @@ const state = {
   workReport: null,
   workReportError: null,
   providerStatus: null,
+  providerSetupError: null,
   workspaceStatus: null,
   localSetupAvailable: false,
   lastError: null,
@@ -534,6 +535,7 @@ async function connectClaudeOnMac() {
 	setBusy(true, "MacでClaudeへ接続しています", "Macに表示される安全な入力画面を確認してください。secretはbrowserへ送信しません。");
 	try {
 		state.providerStatus = await requestJSON("/v1/local-setup/claude", { method: "POST", body: "{}" });
+		state.providerSetupError = null;
 		setBusy(false);
 		renderProviderSettings();
 		if (state.workspaceStatus?.organization_ready) {
@@ -542,8 +544,15 @@ async function connectClaudeOnMac() {
 		} else if (ui.setupDialog.open) renderSetupWizard();
 		toast("Claudeへ接続しました。RoutingはAutomaticです。");
 	} catch (error) {
+		state.providerSetupError = {
+			code: error.detail?.code || error.message || "PROVIDER_CONNECTION_SETUP_FAILED",
+			stage: error.detail?.stage || "provider_connection_setup",
+			substage: error.detail?.details?.substage || "",
+			category: error.detail?.details?.category || "",
+		};
 		setBusy(false);
-		toast(error.status === 403 ? "AI ConnectionはMac本体の画面から設定してください。" : "Claude接続は完了していません。Macの入力画面を確認してください。");
+		renderProviderSettings();
+		toast(error.status === 403 ? "AI ConnectionはMac本体の画面から設定してください。" : "Claude APIキーをMacのKeychainへ保存できませんでした。");
 	}
 }
 
@@ -587,6 +596,19 @@ function renderProviderSettings() {
 	  !state.providerStatus?.configured && state.localSetupAvailable ? button("MacでClaudeを接続", "primary", connectClaudeOnMac) : null,
 	  !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "connection-safety" }, "MacのWorkCairn画面でAI Connectionsを開いて接続してください。") : null,
     ),
+	providerSetupFailureNode(),
+  );
+}
+
+function providerSetupFailureNode() {
+  if (!state.providerSetupError) return null;
+  return node("section", { class: "error-box" },
+	node("strong", {}, "Claude APIキーをMacのKeychainへ保存できませんでした"),
+	node("p", {}, "自動retryや別の保存先へのfallbackは行っていません。MacのKeychain設定を確認してください。"),
+	node("details", {}, node("summary", {}, "技術的な詳細を見る"), approvalFacts([
+	  ["Error code", state.providerSetupError.code], ["Stage", state.providerSetupError.stage],
+	  ["Substage", state.providerSetupError.substage || "—"], ["Category", state.providerSetupError.category || "—"],
+	])),
   );
 }
 
@@ -1488,6 +1510,7 @@ function renderSetupWizard() {
 	  !state.providerStatus?.configured && state.localSetupAvailable ? button("MacでClaudeを接続", "quiet", connectClaudeOnMac) : null,
 	  !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "warning" }, "AI ConnectionはMac本体のWorkCairn画面から設定してください。") : null,
     ),
+	providerSetupFailureNode(),
     node("div", { class: "setup-actions" },
 	  !workspace.organization_ready ? button("最初のAIチームを確認", "primary", () => { ui.setupDialog.close(); showApprovalSheet({
 		title: "最小のAIチームを作成しますか？",

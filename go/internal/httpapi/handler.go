@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 	"github.com/AkiraShimizu0/workcairn/go/internal/metrics"
 	"github.com/AkiraShimizu0/workcairn/go/internal/notification"
@@ -200,11 +201,29 @@ func (handler *Handler) connectClaude(response http.ResponseWriter, request *htt
 		return
 	}
 	if err := handler.localSetup.ConnectClaude(request.Context()); err != nil {
-		writeCommandResponse(response, http.StatusUnprocessableEntity, Response{Version: ProviderStatusVersion, OK: false, Error: &CommandError{Code: "PROVIDER_CONNECTION_SETUP_FAILED"}})
+		writeCommandResponse(response, http.StatusUnprocessableEntity, Response{Version: ProviderStatusVersion, OK: false, Error: providerConnectionError(err)})
 		return
 	}
 	encoded, _ := json.Marshal(handler.providerStatusInspector.InspectProviderStatus())
 	writeCommandResponse(response, http.StatusOK, Response{Version: ProviderStatusVersion, OK: true, Result: encoded})
+}
+
+type credentialSetupDiagnostic interface {
+	CredentialSubstage() string
+	CredentialClassification() string
+}
+
+func providerConnectionError(err error) *CommandError {
+	commandErr := &CommandError{Code: "PROVIDER_CONNECTION_SETUP_FAILED", Stage: "provider_connection_setup"}
+	var diagnostic credentialSetupDiagnostic
+	if !errors.As(err, &diagnostic) {
+		return commandErr
+	}
+	envelope := failure.New(commandErr.Code, commandErr.Stage)
+	envelope.Substage = diagnostic.CredentialSubstage()
+	envelope.Category = diagnostic.CredentialClassification()
+	commandErr.Details = &envelope
+	return commandErr
 }
 
 func (handler *Handler) revealWorkspace(response http.ResponseWriter, request *http.Request) {

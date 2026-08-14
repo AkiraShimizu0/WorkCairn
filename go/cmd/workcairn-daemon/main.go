@@ -67,13 +67,8 @@ func run() error {
 			return err
 		}
 	}
-	credential := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
 	credentialStore := localos.NewClaudeCredentialStore()
-	if credential == "" {
-		if stored, loadErr := credentialStore.Load(context.Background()); loadErr == nil {
-			credential = stored
-		}
-	}
+	credential := resolveClaudeCredential(context.Background(), os.Getenv("ANTHROPIC_API_KEY"), credentialStore)
 	executor, err := httpapi.NewProcessExecutorWithActionConfig(vaultRoot, workspaceprocess.ClaudeProcessConfig{
 		APIKey: credential, BaseURL: os.Getenv("WORKCAIRN_CLAUDE_BASE_URL"),
 	}, workspaceprocess.WordPressProcessConfig{
@@ -186,6 +181,17 @@ func run() error {
 		return nil
 	}
 	return err
+}
+
+func resolveClaudeCredential(ctx context.Context, environmentOverride string, store localos.ClaudeCredentialStore) string {
+	if credential := strings.TrimSpace(environmentOverride); credential != "" {
+		return credential
+	}
+	credential, err := store.Load(ctx)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(credential)
 }
 
 func resolveWorkspaceRoot(ctx context.Context) (string, error) {
