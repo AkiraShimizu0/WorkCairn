@@ -256,11 +256,12 @@ func TestReviewFailureEnvelopeClassifiesEveryCase(t *testing.T) {
 // must carry the sanitized review.ParseFailureReason as a Parse
 // diagnostic, domain-tagged "review".
 func TestReviewFailureEnvelopeCarriesParseDiagnosticForInvalidReviewResult(t *testing.T) {
-	_, parseErr := review.ParseTypedDecision("not json")
+	_, parseErr := review.ParseTypedDecision(`{"verdict":"Request Changes","issues":[{"category":"unsupported","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`)
 	workerErr := &service.WorkerExecutionError{Kind: service.WorkerErrorInvalidReviewResult, Err: parseErr}
 	envelope := reviewFailureEnvelope(workerErr, nil, nil)
 	if envelope.Code != "REVIEW_RESULT_INVALID" || envelope.Stage != "review_result_parser" ||
-		envelope.Parse == nil || envelope.Parse.Domain != "review" || envelope.Parse.Reason == "" {
+		envelope.Parse == nil || envelope.Parse.Domain != "review" ||
+		envelope.Parse.Reason != string(review.ParseFailureInvalidIssueCategory) {
 		t.Fatalf("reviewFailureEnvelope() = %#v", envelope)
 	}
 }

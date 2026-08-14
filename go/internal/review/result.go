@@ -26,7 +26,14 @@ const (
 	ParseFailureObjectRequired       ParseFailureReason = "object_required"
 	ParseFailureMissingRequiredField ParseFailureReason = "missing_required_field"
 	ParseFailureInvalidVerdict       ParseFailureReason = "invalid_verdict"
+	// ParseFailureInvalidIssuesShape is retained so pre-migration Ledger
+	// evidence remains meaningful. New parse failures use the narrower
+	// reasons below and never rewrite an existing record.
 	ParseFailureInvalidIssuesShape   ParseFailureReason = "invalid_issues_shape"
+	ParseFailureInvalidIssueCategory ParseFailureReason = "invalid_issue_category"
+	ParseFailureInvalidIssueSeverity ParseFailureReason = "invalid_issue_severity"
+	ParseFailureIssueTextRequired    ParseFailureReason = "issue_text_required"
+	ParseFailureIssuesRequired       ParseFailureReason = "request_changes_issues_required"
 )
 
 // ParseError pairs ErrInvalidResult with a sanitized ParseFailureReason. The
@@ -140,7 +147,8 @@ func parseDecision(content []byte, requireSummary bool) (Decision, error) {
 	if decoder.More() {
 		return Decision{}, newParseError(ParseFailureTrailingContent, fmt.Errorf("%w: trailing content after JSON object", ErrInvalidResult))
 	}
-	if candidate.Verdict != VerdictApprove && candidate.Verdict != VerdictRequestChanges {
+	verdict, validVerdict := canonicalVerdict(string(candidate.Verdict))
+	if !validVerdict {
 		return Decision{}, newParseError(ParseFailureInvalidVerdict, fmt.Errorf("%w: unsupported verdict", ErrInvalidResult))
 	}
 	if candidate.Issues == nil {
@@ -151,27 +159,50 @@ func parseDecision(content []byte, requireSummary bool) (Decision, error) {
 		return Decision{}, newParseError(ParseFailureMissingRequiredField, fmt.Errorf("%w: summary", ErrInvalidResult))
 	}
 	issues := candidate.Issues
-	decision := Decision{Verdict: candidate.Verdict, Issues: issues, Summary: summary}
+	decision := Decision{Verdict: verdict, Issues: issues, Summary: summary}
 	for index := range issues {
 		issue := &issues[index]
-		if !allowed(issue.Category, "date", "format", "requirements", "context", "todo", "other") {
-			return Decision{}, newParseError(ParseFailureInvalidIssuesShape, fmt.Errorf("%w: issues[%d].category is invalid", ErrInvalidResult, index+1))
+		category, validCategory := canonicalChoice(issue.Category, "date", "format", "requirements", "context", "todo", "other")
+		if !validCategory {
+			return Decision{}, newParseError(ParseFailureInvalidIssueCategory, fmt.Errorf("%w: issues[%d].category is invalid", ErrInvalidResult, index+1))
 		}
-		if !allowed(issue.Severity, "high", "medium", "low") {
-			return Decision{}, newParseError(ParseFailureInvalidIssuesShape, fmt.Errorf("%w: issues[%d].severity is invalid", ErrInvalidResult, index+1))
+		severity, validSeverity := canonicalChoice(issue.Severity, "high", "medium", "low")
+		if !validSeverity {
+			return Decision{}, newParseError(ParseFailureInvalidIssueSeverity, fmt.Errorf("%w: issues[%d].severity is invalid", ErrInvalidResult, index+1))
 		}
+		issue.Category = category
+		issue.Severity = severity
 		issue.Description = strings.TrimSpace(issue.Description)
 		issue.SuggestedAction = strings.TrimSpace(issue.SuggestedAction)
 		if issue.Description == "" || issue.SuggestedAction == "" {
-			return Decision{}, newParseError(ParseFailureInvalidIssuesShape, fmt.Errorf("%w: issues[%d] text is required", ErrInvalidResult, index+1))
+			return Decision{}, newParseError(ParseFailureIssueTextRequired, fmt.Errorf("%w: issues[%d] text is required", ErrInvalidResult, index+1))
 		}
 	}
 	if err := decision.Validate(); err != nil {
 		// Only the Request-Changes-with-no-issues rule can still fail here;
 		// verdict and per-issue shape were already validated above.
-		return Decision{}, newParseError(ParseFailureInvalidIssuesShape, err)
+		return Decision{}, newParseError(ParseFailureIssuesRequired, err)
 	}
 	return decision, nil
+}
+
+// canonicalVerdict accepts only the two closed Review verdicts. Anthropic's
+// Structured Outputs documentation explicitly permits enum/const values to
+// differ in capitalization, so the Provider boundary deterministically maps
+// that documented variation back to the exact canonical Go value. It does
+// not accept aliases, translations, or otherwise malformed values.
+func canonicalVerdict(value string) (Verdict, bool) {
+	choice, ok := canonicalChoice(value, string(VerdictApprove), string(VerdictRequestChanges))
+	return Verdict(choice), ok
+}
+
+func canonicalChoice(value string, choices ...string) (string, bool) {
+	for _, choice := range choices {
+		if strings.EqualFold(value, choice) {
+			return choice, true
+		}
+	}
+	return "", false
 }
 
 func allowed(value string, choices ...string) bool {

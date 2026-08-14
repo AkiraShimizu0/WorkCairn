@@ -292,9 +292,10 @@ func TestReviewedWorkflowReviewProviderFailureClassifiesOuterCommandAndPreserves
 
 // TestReviewedWorkflowReviewResultInvalidClassifiesOuterCommandWithoutProviderFailure
 // covers the non-Provider Review failure class: the Runner responded, but
-// the Typed Decision failed the strict parser contract. No ProviderFailure
-// exists on the Review child in this case, so the outer Command must fall
-// back to the child's own typed classification
+// the Typed Decision carried an unsupported issue category. No
+// ProviderFailure exists on the Review child in this case, so the outer
+// Command must forward the child's own typed classification and sanitized
+// parse diagnostic
 // (REVIEW_RESULT_INVALID/review_result_parser) instead of the generic
 // REVIEWED_WORKFLOW_FAILED/review pair.
 func TestReviewedWorkflowReviewResultInvalidClassifiesOuterCommandWithoutProviderFailure(t *testing.T) {
@@ -305,14 +306,7 @@ func TestReviewedWorkflowReviewResultInvalidClassifiesOuterCommandWithoutProvide
 		calls++
 		text := "# TASK-001 deliverable\n\n本文"
 		if calls == 2 {
-			// A well-formed Runner response whose otherwise-valid Typed
-			// Decision JSON is wrapped in a Markdown code fence, violating
-			// the "response is exactly one JSON object" rule -- a real
-			// Claude Sonnet 5 contract slip, not a Provider or transport
-			// failure. Structured Outputs guarantees the field set is
-			// well-formed JSON; it does not stop this slip from prefixing
-			// that JSON with fence text.
-			text = "```json\n" + reviewProviderOutput(review.VerdictApprove) + "\n```"
+			text = `{"verdict":"Request Changes","issues":[{"category":"unsupported","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`
 		}
 		encoded, _ := json.Marshal(map[string]any{
 			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": text}},
@@ -338,7 +332,7 @@ func TestReviewedWorkflowReviewResultInvalidClassifiesOuterCommandWithoutProvide
 	current := result.Tasks[0]
 	if current.TaskID != "TASK-001" || current.Review == nil || current.Review.ProviderFailure != nil ||
 		current.Review.FailureCode != "REVIEW_RESULT_INVALID" || current.Review.FailureStage != "review_result_parser" ||
-		current.Review.ParseFailureReason != string(review.ParseFailureObjectRequired) {
+		current.Review.ParseFailureReason != string(review.ParseFailureInvalidIssueCategory) {
 		t.Fatalf("Review parser failure = %#v", current.Review)
 	}
 	ledger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
@@ -349,6 +343,11 @@ func TestReviewedWorkflowReviewResultInvalidClassifiesOuterCommandWithoutProvide
 	if getErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
 		record.Failure.Code != "REVIEW_RESULT_INVALID" || record.Failure.Stage != "review_result_parser" {
 		t.Fatalf("outer reviewed Workflow Ledger = %#v, %v", record, getErr)
+	}
+	if record.Failure.Details == nil || record.Failure.Details.Parse == nil ||
+		record.Failure.Details.Parse.Domain != "review" ||
+		record.Failure.Details.Parse.Reason != string(review.ParseFailureInvalidIssueCategory) {
+		t.Fatalf("outer reviewed Workflow parse diagnostic = %#v", record.Failure.Details)
 	}
 }
 

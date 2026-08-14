@@ -2,6 +2,8 @@ package review
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -12,36 +14,70 @@ import (
 // field.
 func TestTypedDecisionJSONSchemaShape(t *testing.T) {
 	schema := TypedDecisionJSONSchema()
-	if schema["type"] != "object" || schema["additionalProperties"] != false {
+	variants, ok := schema["anyOf"].([]any)
+	if !ok || len(variants) != 2 || len(schema) != 1 {
 		t.Fatalf("top-level schema shape = %#v", schema)
 	}
-	properties, ok := schema["properties"].(map[string]any)
-	if !ok || len(properties) != 3 {
-		t.Fatalf("properties = %#v, want exactly three fields", schema["properties"])
-	}
-	for _, field := range []string{"verdict", "issues", "summary"} {
-		if _, exists := properties[field]; !exists {
-			t.Fatalf("schema does not declare %q", field)
+	for index, rawVariant := range variants {
+		variant, ok := rawVariant.(map[string]any)
+		if !ok || variant["type"] != "object" || variant["additionalProperties"] != false {
+			t.Fatalf("variant %d = %#v", index, rawVariant)
 		}
-	}
-	required, ok := schema["required"].([]string)
-	if !ok || len(required) != 3 {
-		t.Fatalf("required = %#v, want exactly three fields", schema["required"])
-	}
-	for _, field := range []string{"verdict", "issues", "summary"} {
-		found := false
-		for _, name := range required {
-			if name == field {
-				found = true
+		properties, ok := variant["properties"].(map[string]any)
+		if !ok || len(properties) != 3 {
+			t.Fatalf("variant %d properties = %#v", index, variant["properties"])
+		}
+		for _, field := range []string{"verdict", "issues", "summary"} {
+			if _, exists := properties[field]; !exists {
+				t.Fatalf("variant %d does not declare %q", index, field)
 			}
 		}
-		if !found {
-			t.Fatalf("required = %#v, missing %q", required, field)
+		required, ok := variant["required"].([]string)
+		if !ok || !sameStrings(required, []string{"verdict", "issues", "summary"}) {
+			t.Fatalf("variant %d required = %#v", index, variant["required"])
+		}
+		verdict := properties["verdict"].(map[string]any)
+		issues := properties["issues"].(map[string]any)
+		summary := properties["summary"].(map[string]any)
+		if summary["pattern"] != `\S` || issues["type"] != "array" {
+			t.Fatalf("variant %d summary/issues = %#v / %#v", index, summary, issues)
+		}
+		issue := issues["items"].(map[string]any)
+		issueProperties := issue["properties"].(map[string]any)
+		if issue["additionalProperties"] != false ||
+			!sameStrings(issue["required"].([]string), []string{"category", "severity", "description", "suggested_action"}) ||
+			issueProperties["description"].(map[string]any)["pattern"] != `\S` ||
+			issueProperties["suggested_action"].(map[string]any)["pattern"] != `\S` {
+			t.Fatalf("variant %d issue schema = %#v", index, issue)
+		}
+		switch verdict["const"] {
+		case string(VerdictApprove):
+			if _, exists := issues["minItems"]; exists {
+				t.Fatalf("Approve issues unexpectedly constrained: %#v", issues)
+			}
+		case string(VerdictRequestChanges):
+			if issues["minItems"] != 1 {
+				t.Fatalf("Request Changes minItems = %#v", issues["minItems"])
+			}
+		default:
+			t.Fatalf("variant %d verdict = %#v", index, verdict)
 		}
 	}
 	if _, err := json.Marshal(schema); err != nil {
 		t.Fatalf("schema does not marshal to JSON: %v", err)
 	}
+}
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range got {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
 }
 
 // TestParseTypedDecisionAcceptsStructuredOutputContent proves
@@ -54,5 +90,51 @@ func TestParseTypedDecisionAcceptsStructuredOutputContent(t *testing.T) {
 	decision, err := ParseTypedDecision(content)
 	if err != nil || decision.Verdict != VerdictApprove || decision.Summary != "問題ありません。" {
 		t.Fatalf("ParseTypedDecision() = %#v, %v", decision, err)
+	}
+}
+
+// TestBrowserProviderReviewFixturesMatchTypedDecisionContract treats the
+// fixed Anthropic-compatible browser fixture as Provider-boundary input. It
+// does not generate fixture content from the Go parser or schema.
+func TestBrowserProviderReviewFixturesMatchTypedDecisionContract(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("..", "..", "..", "fixtures", "provider", "browser_acceptance_v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Scenarios map[string][]struct {
+			Name string `json:"name"`
+			Body struct {
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"body"`
+		} `json:"scenarios"`
+	}
+	if err := json.Unmarshal(content, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]Verdict{
+		"review_request_changes": VerdictRequestChanges,
+		"re_review_approve":      VerdictApprove,
+	}
+	seen := map[string]bool{}
+	for _, response := range fixture.Scenarios["happy_path"] {
+		verdict, reviewFixture := want[response.Name]
+		if !reviewFixture {
+			continue
+		}
+		if len(response.Body.Content) != 1 || response.Body.Content[0].Type != "text" {
+			t.Fatalf("fixture %q content = %#v", response.Name, response.Body.Content)
+		}
+		decision, err := ParseTypedDecision(response.Body.Content[0].Text)
+		if err != nil || decision.Verdict != verdict {
+			t.Fatalf("fixture %q = %#v, %v", response.Name, decision, err)
+		}
+		seen[response.Name] = true
+	}
+	if len(seen) != len(want) {
+		t.Fatalf("review fixtures seen = %#v, want %#v", seen, want)
 	}
 }

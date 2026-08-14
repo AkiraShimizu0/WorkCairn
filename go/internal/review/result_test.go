@@ -41,6 +41,51 @@ func TestParseTypedDecisionAcceptsApproveWithEmptyIssues(t *testing.T) {
 	}
 }
 
+func TestParseTypedDecisionAcceptsRequestChangesWithValidIssue(t *testing.T) {
+	decision, err := ParseTypedDecision(`{"verdict":"Request Changes","issues":[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}],"summary":"修正が必要です。"}`)
+	if err != nil || decision.Verdict != VerdictRequestChanges || len(decision.Issues) != 1 {
+		t.Fatalf("decision = %#v, error = %v", decision, err)
+	}
+}
+
+func TestParseTypedDecisionCanonicalizesOnlyDocumentedEnumCasingVariation(t *testing.T) {
+	decision, err := ParseTypedDecision(`{"verdict":"Request changes","issues":[{"category":"Requirements","severity":"Medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}],"summary":"修正が必要です。"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Verdict != VerdictRequestChanges || decision.Issues[0].Category != "requirements" || decision.Issues[0].Severity != "medium" {
+		t.Fatalf("canonical decision = %#v", decision)
+	}
+	if _, err := ParseTypedDecision(`{"verdict":"Changes Requested","issues":[],"summary":"x"}`); !errors.Is(err, ErrInvalidResult) {
+		t.Fatalf("alias error = %v, want ErrInvalidResult", err)
+	}
+}
+
+func TestDecisionValidateMatchesCanonicalContract(t *testing.T) {
+	validIssue := Issue{
+		Category: "requirements", Severity: "medium",
+		Description: "要件が不足しています。", SuggestedAction: "要件を追記してください。",
+	}
+	for _, decision := range []Decision{
+		{Verdict: VerdictApprove, Issues: []Issue{}},
+		{Verdict: VerdictRequestChanges, Issues: []Issue{validIssue}},
+	} {
+		if err := decision.Validate(); err != nil {
+			t.Fatalf("Decision.Validate(%#v) = %v", decision, err)
+		}
+	}
+	for _, decision := range []Decision{
+		{Verdict: VerdictApprove, Issues: nil},
+		{Verdict: VerdictRequestChanges, Issues: []Issue{}},
+		{Verdict: VerdictRequestChanges, Issues: []Issue{{Category: "Requirements", Severity: "medium", Description: "x", SuggestedAction: "y"}}},
+		{Verdict: VerdictRequestChanges, Issues: []Issue{{Category: "requirements", Severity: "medium", Description: " ", SuggestedAction: "y"}}},
+	} {
+		if err := decision.Validate(); !errors.Is(err, ErrInvalidResult) {
+			t.Fatalf("Decision.Validate(%#v) = %v, want ErrInvalidResult", decision, err)
+		}
+	}
+}
+
 func TestParseTypedDecisionRejectsInvalidContract(t *testing.T) {
 	tests := []string{
 		"",
@@ -48,11 +93,15 @@ func TestParseTypedDecisionRejectsInvalidContract(t *testing.T) {
 		`{invalid}`,
 		`{"verdict":"Reject","issues":[],"summary":"x"}`,
 		`{"verdict":"Approve","summary":"x"}`,
+		`{"verdict":"Approve","issues":null,"summary":"x"}`,
+		`{"verdict":"Approve","issues":{},"summary":"x"}`,
 		`{"verdict":"Approve","issues":[],"summary":""}`,
 		`{"verdict":"Request Changes","issues":[],"summary":"x"}`,
 		`{"verdict":"Request Changes","issues":[{"category":"bad","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`,
 		`{"verdict":"Request Changes","issues":[{"category":"date","severity":"urgent","description":"x","suggested_action":"y"}],"summary":"x"}`,
 		`{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","description":" ","suggested_action":"y"}],"summary":"x"}`,
+		`{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","suggested_action":"y"}],"summary":"x"}`,
+		`{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","description":"x","suggested_action":"y","extra":true}],"summary":"x"}`,
 		`{"verdict":"Approve","issues":[],"summary":"x","extra":true}`,
 	}
 	for index, output := range tests {
@@ -79,8 +128,14 @@ func TestParseTypedDecisionClassifiesSanitizedParseFailureReasonWithoutRawText(t
 		{"missing summary field", `{"verdict":"Approve","issues":[]}`, ParseFailureMissingRequiredField},
 		{"invalid verdict value", `{"verdict":"` + secret + `","issues":[],"summary":"x"}`, ParseFailureInvalidVerdict},
 		{"issues not an array", `{"verdict":"Approve","issues":"` + secret + `","summary":"x"}`, ParseFailureJSONDecodeFailed},
-		{"invalid issue category", `{"verdict":"Request Changes","issues":[{"category":"` + secret + `","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`, ParseFailureInvalidIssuesShape},
-		{"empty issues on Request Changes", `{"verdict":"Request Changes","issues":[],"summary":"x"}`, ParseFailureInvalidIssuesShape},
+		{"issues null", `{"verdict":"Approve","issues":null,"summary":"x"}`, ParseFailureMissingRequiredField},
+		{"issues object", `{"verdict":"Approve","issues":{},"summary":"x"}`, ParseFailureJSONDecodeFailed},
+		{"issue unknown field", `{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","description":"x","suggested_action":"y","extra":"` + secret + `"}],"summary":"x"}`, ParseFailureUnknownField},
+		{"invalid issue category", `{"verdict":"Request Changes","issues":[{"category":"` + secret + `","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`, ParseFailureInvalidIssueCategory},
+		{"invalid issue severity", `{"verdict":"Request Changes","issues":[{"category":"date","severity":"` + secret + `","description":"x","suggested_action":"y"}],"summary":"x"}`, ParseFailureInvalidIssueSeverity},
+		{"missing issue description", `{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","suggested_action":"y"}],"summary":"x"}`, ParseFailureIssueTextRequired},
+		{"empty issue text", `{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","description":" ","suggested_action":"y"}],"summary":"x"}`, ParseFailureIssueTextRequired},
+		{"empty issues on Request Changes", `{"verdict":"Request Changes","issues":[],"summary":"x"}`, ParseFailureIssuesRequired},
 	}
 	for _, current := range tests {
 		t.Run(current.name, func(t *testing.T) {
