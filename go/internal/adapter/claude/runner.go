@@ -189,6 +189,7 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 			ProviderType: safeDiagnosticToken(providerResponse.StopDetails.Category, 64),
 		}
 	}
+	var structuredPresence map[string]bool
 	content := providerResponse.markdown()
 	if request.StructuredOutput != nil {
 		content, err = providerResponse.structuredJSON()
@@ -198,6 +199,7 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 				Category: FailureStructuredOutputInvalid, Err: err,
 			}
 		}
+		structuredPresence = structuredOutputFieldPresence(request.StructuredOutput.Schema, content)
 	}
 	if content == "" || strings.TrimSpace(providerResponse.Model) == "" {
 		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureResponse}
@@ -218,8 +220,9 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 			InputTokens:  providerResponse.Usage.InputTokens,
 			OutputTokens: providerResponse.Usage.OutputTokens,
 		},
-		Duration: duration,
-		Metadata: cloneMetadata(request.Metadata),
+		Duration:                 duration,
+		Metadata:                 cloneMetadata(request.Metadata),
+		StructuredOutputPresence: structuredPresence,
 	}
 	if err := result.Validate(); err != nil {
 		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureResponse, Err: err}
@@ -395,6 +398,69 @@ func (response messageResponse) structuredJSON() (string, error) {
 		return "", errors.New("structured output response must contain exactly one JSON text block")
 	}
 	return content, nil
+}
+
+// structuredOutputFieldPresence reports, for a Structured Output request's
+// own schema and the raw JSON object text extracted from the Provider's
+// response, whether each of the schema's own declared top-level property
+// names is present in that response object. It never inspects a key's
+// value — only existence — so it can never carry Provider content,
+// credentials, or user-authored text. It is Provider- and Domain-neutral:
+// it derives which keys to check entirely from the schema the calling
+// Domain package already supplied, never from a hardcoded field name.
+// Returns nil when the schema's declared shape or the response content
+// cannot be read as a JSON object, since a presence diagnostic with no
+// declared keys to check would be misleading rather than merely absent.
+func structuredOutputFieldPresence(schema map[string]any, content string) map[string]bool {
+	declared := declaredTopLevelKeys(schema)
+	if len(declared) == 0 {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &fields); err != nil || fields == nil {
+		return nil
+	}
+	presence := make(map[string]bool, len(declared))
+	for key := range declared {
+		_, exists := fields[key]
+		presence[key] = exists
+	}
+	return presence
+}
+
+// declaredTopLevelKeys reads a JSON Schema's own declared top-level
+// property names, without evaluating the schema as a general validator.
+// It recognizes exactly the two shapes this Adapter's callers currently
+// use: a plain object schema ("properties" at the top level, e.g. CEO
+// Intent), and a top-level "anyOf" of object schemas each with their own
+// "properties" (e.g. Review's Approve/Request Changes variants), in which
+// case it returns the union across every variant. Any other top-level
+// shape (a bare "type": "object" with no declared properties, for
+// example) returns nil rather than a guess.
+func declaredTopLevelKeys(schema map[string]any) map[string]bool {
+	keys := map[string]bool{}
+	collectProperties := func(candidate map[string]any) {
+		properties, ok := candidate["properties"].(map[string]any)
+		if !ok {
+			return
+		}
+		for key := range properties {
+			keys[key] = true
+		}
+	}
+	if variants, ok := schema["anyOf"].([]any); ok {
+		for _, rawVariant := range variants {
+			if variant, ok := rawVariant.(map[string]any); ok {
+				collectProperties(variant)
+			}
+		}
+	} else {
+		collectProperties(schema)
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys
 }
 
 func cloneMetadata(metadata map[string]string) map[string]string {

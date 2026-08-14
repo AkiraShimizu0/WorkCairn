@@ -89,6 +89,15 @@ func (service *ReviewService) Execute(ctx context.Context, input review.PromptIn
 
 	decision, err := review.ParseTypedDecision(runResult.Content)
 	if err != nil {
+		// Attach the Adapter's already-captured, Provider-neutral key
+		// presence diagnostic (see worker.RunResult.StructuredOutputPresence)
+		// to the typed parse failure here, at the one place that holds
+		// both the Runner result and the parse error together. review
+		// itself never observes Provider response shape.
+		var parseErr *review.ParseError
+		if errors.As(err, &parseErr) {
+			parseErr.Presence = runResult.StructuredOutputPresence
+		}
 		return review.ExecutionResult{}, newWorkerError(WorkerErrorInvalidReviewResult, err)
 	}
 	return review.ExecutionResult{

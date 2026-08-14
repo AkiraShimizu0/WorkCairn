@@ -50,6 +50,29 @@ func TestEnvelopeValidateRejectsUnsafeSubStructures(t *testing.T) {
 	if withBadParseField.Validate() == nil {
 		t.Fatal("Parse with unsafe Field accepted")
 	}
+	withBadPresenceKey := base
+	withBadPresenceKey.Parse = &ParseDiagnostic{
+		Domain: "review", Reason: "missing_required_field", Field: "summary",
+		StructuredOutputPresence: map[string]bool{"verdict": true, "summary\n": false},
+	}
+	if withBadPresenceKey.Validate() == nil {
+		t.Fatal("Parse with an unsafe StructuredOutputPresence key accepted")
+	}
+}
+
+// TestEnvelopeValidateAcceptsStructuredOutputPresenceValuesRegardlessOfBool
+// confirms Validate() never rejects an Envelope on the basis of what a
+// presence value actually is -- true and false are both legitimate,
+// well-formed diagnostics; only the map's keys are checked for safety.
+func TestEnvelopeValidateAcceptsStructuredOutputPresenceValuesRegardlessOfBool(t *testing.T) {
+	envelope := New("REVIEW_RESULT_INVALID", "review_result_parser")
+	envelope.Parse = &ParseDiagnostic{
+		Domain: "review", Reason: "missing_required_field", Field: "summary",
+		StructuredOutputPresence: map[string]bool{"verdict": true, "issues": true, "summary": false},
+	}
+	if err := envelope.Validate(); err != nil {
+		t.Fatalf("Envelope with a well-formed StructuredOutputPresence rejected: %v", err)
+	}
 }
 
 func TestErrorUnwrapPreservesCause(t *testing.T) {
@@ -126,7 +149,10 @@ func TestEnvelopeJSONRoundTripsWithoutOptionalFields(t *testing.T) {
 		SchemaVersion: SchemaVersion, Code: "PROVIDER_RATE_LIMITED", Stage: "review_provider", Substage: "retry_after",
 		Category: "rate_limited", Partial: true, RecoveryRequired: true, ChildCommandID: "CHILD-abc123",
 		Provider: &ProviderDiagnostic{Category: "rate_limited", HTTPStatus: 429, ProviderType: "rate_limit_error", RequestID: "req_1"},
-		Parse:    &ParseDiagnostic{Domain: "ceo_plan_intent", Reason: "missing_required_field", Field: "steps.required_role"},
+		Parse: &ParseDiagnostic{
+			Domain: "ceo_plan_intent", Reason: "missing_required_field", Field: "steps.required_role",
+			StructuredOutputPresence: map[string]bool{"project_name": true, "objective": true, "summary": false},
+		},
 		Evidence: &CommittedEvidence{ReviewCanonical: true},
 	}
 	encoded, err := json.Marshal(full)
@@ -139,5 +165,26 @@ func TestEnvelopeJSONRoundTripsWithoutOptionalFields(t *testing.T) {
 	}
 	if !reflect.DeepEqual(roundTripped, full) {
 		t.Fatalf("round trip mismatch: got %#v, want %#v", roundTripped, full)
+	}
+}
+
+// TestEnvelopeParseDiagnosticDecodesWithoutStructuredOutputPresence proves
+// backward compatibility with the immediately-preceding round: a Ledger
+// record whose Parse diagnostic carries Domain/Reason/Field but predates
+// StructuredOutputPresence (no such key in the stored JSON at all) still
+// decodes cleanly with StructuredOutputPresence left nil, and still
+// validates.
+func TestEnvelopeParseDiagnosticDecodesWithoutStructuredOutputPresence(t *testing.T) {
+	legacy := []byte(`{"schema_version":1,"code":"REVIEW_RESULT_INVALID","stage":"review_result_parser","partial":false,"recovery_required":false,` +
+		`"parse":{"domain":"review","reason":"missing_required_field","field":"summary"}}`)
+	var decoded Envelope
+	if err := json.Unmarshal(legacy, &decoded); err != nil {
+		t.Fatalf("decode legacy Envelope: %v", err)
+	}
+	if decoded.Parse == nil || decoded.Parse.Field != "summary" || decoded.Parse.StructuredOutputPresence != nil {
+		t.Fatalf("legacy Envelope decoded = %#v", decoded.Parse)
+	}
+	if err := decoded.Validate(); err != nil {
+		t.Fatalf("legacy Envelope failed Validate(): %v", err)
 	}
 }

@@ -278,7 +278,19 @@ function clearCurrentError() {
   state.lastError = null;
 }
 
+// structuredFieldsSummary renders a Structured Output key presence
+// diagnostic (failure.Envelope.Parse.StructuredOutputPresence — booleans
+// only, never a field's value) as a short "key: present/missing" list.
+// Returns "" when there is nothing to show.
+function structuredFieldsSummary(presence) {
+  if (!presence || typeof presence !== "object") return "";
+  const keys = Object.keys(presence).sort();
+  if (keys.length === 0) return "";
+  return keys.map((key) => `${key}: ${presence[key] ? "present" : "missing"}`).join(", ");
+}
+
 async function copySanitizedError(error) {
+  const structuredFields = structuredFieldsSummary(error.details?.parse?.structured_output_presence);
   const detail = [
     `Error code: ${error.code || "UNKNOWN_ERROR"}`,
     `Stage: ${error.stage || "—"}`,
@@ -289,6 +301,7 @@ async function copySanitizedError(error) {
     `Request ID: ${error.request_id || "—"}`,
     `Parse reason: ${error.parse_failure_reason || "—"}`,
     `Parse field: ${error.parse_failure_field || "—"}`,
+    ...(structuredFields ? [`Structured fields: ${structuredFields}`] : []),
   ].join("\n");
   let copied = false;
   if (window.isSecureContext && navigator.clipboard?.writeText) {
@@ -779,6 +792,7 @@ function renderNext(force = false) {
 }
 
 function renderRememberedError(error) {
+  const structuredFields = structuredFieldsSummary(error.details?.parse?.structured_output_presence);
   ui.activeCard.className = "action-card attention";
   ui.activeCard.replaceChildren(
     node("span", { class: "step-label" }, error.recovery_required ? "Recoveryが必要です" : "確認が必要です"),
@@ -793,6 +807,7 @@ function renderRememberedError(error) {
         ["Command ID", error.command_id || "未発行"], ["問い合わせID", error.request_id || "—"],
         ["Parse reason", error.parse_failure_reason || "—"],
         ["Parse field", error.parse_failure_field || "—"],
+        ...(structuredFields ? [["Structured fields", structuredFields]] : []),
       ]),
     ),
     node("div", { class: "button-row" },

@@ -1,0 +1,105 @@
+{
+  "model": "claude-sonnet-5",
+  "max_tokens": 3000,
+  "system": "System Prompt",
+  "messages": [
+    {
+      "role": "user",
+      "content": "User Prompt"
+    }
+  ],
+  "output_config": {
+    "format": {
+      "type": "json_schema",
+      "schema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "type": "string",
+                "const": "Approve"
+              },
+              "issues": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "type": "string",
+                      "enum": ["date", "format", "requirements", "context", "todo", "other"]
+                    },
+                    "severity": {
+                      "type": "string",
+                      "enum": ["high", "medium", "low"]
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "Why this is an issue, grounded only in the reviewed deliverable and its context. Must contain a non-whitespace character."
+                    },
+                    "suggested_action": {
+                      "type": "string",
+                      "description": "A concrete fix. Must contain a non-whitespace character."
+                    }
+                  },
+                  "required": ["category", "severity", "description", "suggested_action"],
+                  "additionalProperties": false
+                },
+                "description": "Empty array when there is nothing to flag. Required non-empty when verdict is \"Request Changes\"."
+              },
+              "summary": {
+                "type": "string",
+                "description": "A short qualitative summary of the review decision. Must contain a non-whitespace character."
+              }
+            },
+            "required": ["verdict", "issues", "summary"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "type": "string",
+                "const": "Request Changes"
+              },
+              "issues": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "type": "string",
+                      "enum": ["date", "format", "requirements", "context", "todo", "other"]
+                    },
+                    "severity": {
+                      "type": "string",
+                      "enum": ["high", "medium", "low"]
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "Why this is an issue, grounded only in the reviewed deliverable and its context. Must contain a non-whitespace character."
+                    },
+                    "suggested_action": {
+                      "type": "string",
+                      "description": "A concrete fix. Must contain a non-whitespace character."
+                    }
+                  },
+                  "required": ["category", "severity", "description", "suggested_action"],
+                  "additionalProperties": false
+                },
+                "minItems": 1,
+                "description": "Empty array when there is nothing to flag. Required non-empty when verdict is \"Request Changes\"."
+              },
+              "summary": {
+                "type": "string",
+                "description": "A short qualitative summary of the review decision. Must contain a non-whitespace character."
+              }
+            },
+            "required": ["verdict", "issues", "summary"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  }
+}

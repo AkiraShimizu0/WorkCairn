@@ -333,6 +333,217 @@ func TestRunnerSerializesCEOIntentRequestFixture(t *testing.T) {
 	}
 }
 
+// TestRunnerSerializesReviewTypedDecisionRequestFixture pins the exact
+// output_config.format bytes this Adapter sends Anthropic for Review
+// execution against a fixed fixture file, the same way
+// TestRunnerSerializesCEOIntentRequestFixture pins CEO Intent's. It exists
+// to make an accidental future regression in TypedDecisionJSONSchema (e.g.
+// summary dropped from one anyOf branch's required list, or moved outside
+// each branch's own properties) fail a byte-level assertion instead of
+// only the schema package's own shape test.
+func TestRunnerSerializesReviewTypedDecisionRequestFixture(t *testing.T) {
+	var received []byte
+	runner := configuredRunner(t, doerFunc(func(request *http.Request) (*http.Response, error) {
+		var err error
+		received, err = io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decision := `{"verdict":"Approve","issues":[],"summary":"S"}`
+		body := `{"model":"claude-sonnet-5","content":[{"type":"text","text":` + jsonQuote(t, decision) + `}],"usage":{"input_tokens":1,"output_tokens":1}}`
+		return jsonResponse(http.StatusOK, body, "req-review-typed-decision"), nil
+	}))
+
+	request := validRunRequest()
+	request.StructuredOutput = &worker.StructuredOutputContract{Schema: review.TypedDecisionJSONSchema()}
+	if _, err := runner.Run(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+
+	fixturePath := filepath.Join("..", "..", "..", "..", "fixtures", "provider", "claude_review_typed_decision_request_v1.json")
+	want, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotJSON, wantJSON any
+	if err := json.Unmarshal(received, &gotJSON); err != nil {
+		t.Fatalf("serialized request is not JSON: %v", err)
+	}
+	if err := json.Unmarshal(want, &wantJSON); err != nil {
+		t.Fatalf("request fixture is not JSON: %v", err)
+	}
+	if !reflect.DeepEqual(gotJSON, wantJSON) {
+		t.Fatalf("serialized Review request does not match fixed Provider fixture\ngot:  %s\nwant: %s", received, want)
+	}
+
+	// Both anyOf branches must independently require summary — the
+	// concrete regression this fixture guards against.
+	schema, ok := wantJSON.(map[string]any)["output_config"].(map[string]any)["format"].(map[string]any)["schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("fixture schema shape = %#v", wantJSON)
+	}
+	variants, ok := schema["anyOf"].([]any)
+	if !ok || len(variants) != 2 {
+		t.Fatalf("fixture anyOf = %#v", schema["anyOf"])
+	}
+	for index, rawVariant := range variants {
+		variant := rawVariant.(map[string]any)
+		required, ok := variant["required"].([]any)
+		if !ok {
+			t.Fatalf("variant %d required = %#v", index, variant["required"])
+		}
+		found := false
+		for _, field := range required {
+			if field == "summary" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("variant %d does not require summary: %#v", index, required)
+		}
+	}
+}
+
+// TestRunnerReviewStructuredOutputContentSurvivesExtractionUnchanged proves,
+// at the Adapter boundary rather than by code reading, that
+// messageResponse.structuredJSON() neither loses nor alters the
+// Provider's raw JSON text: Runner.Result.Content must be byte-identical
+// to the Provider's own text block, both when it carries "summary" and
+// when it does not. The Runner is Domain-neutral and has no opinion about
+// which top-level keys a Review Typed Decision requires — a response
+// missing "summary" is still a structurally valid Structured Output (one
+// JSON text block) and must succeed at this layer; only the Domain parser
+// (review.ParseTypedDecision) may reject it. This is the concrete test
+// evidence for whether an Adapter decode/re-marshal step could ever drop
+// "summary": InspectStructuredFieldPresence on the raw mock response text
+// and on the Runner's extracted Content must agree in both cases.
+func TestRunnerReviewStructuredOutputContentSurvivesExtractionUnchanged(t *testing.T) {
+	tests := []struct {
+		name         string
+		decision     string
+		wantPresence map[string]bool
+	}{
+		{"summary present", `{"verdict":"Approve","issues":[],"summary":"S"}`, map[string]bool{"verdict": true, "issues": true, "summary": true}},
+		{"summary key absent", `{"verdict":"Approve","issues":[]}`, map[string]bool{"verdict": true, "issues": true, "summary": false}},
+		{"summary present but empty string", `{"verdict":"Approve","issues":[],"summary":""}`, map[string]bool{"verdict": true, "issues": true, "summary": true}},
+	}
+	for _, current := range tests {
+		t.Run(current.name, func(t *testing.T) {
+			runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+				body := `{"model":"claude-sonnet-5","content":[{"type":"text","text":` + jsonQuote(t, current.decision) + `}],"usage":{"input_tokens":1,"output_tokens":1}}`
+				return jsonResponse(http.StatusOK, body, "req-review-content-passthrough"), nil
+			}))
+			request := validRunRequest()
+			request.StructuredOutput = &worker.StructuredOutputContract{Schema: review.TypedDecisionJSONSchema()}
+			result, err := runner.Run(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Runner must not reject a structurally valid Structured Output response regardless of which Review keys it carries: %v", err)
+			}
+			if result.Content != current.decision {
+				t.Fatalf("Content = %q, want byte-identical to Provider text %q", result.Content, current.decision)
+			}
+			if !reflect.DeepEqual(result.StructuredOutputPresence, current.wantPresence) {
+				t.Fatalf("StructuredOutputPresence = %#v, want %#v", result.StructuredOutputPresence, current.wantPresence)
+			}
+		})
+	}
+}
+
+// TestRunnerReviewStructuredOutputMissingSummaryFailsOnlyAtDomainParser
+// completes the same boundary proof end-to-end: a Provider response
+// missing "summary" must fail exactly once, inside
+// review.ParseTypedDecision, as missing_required_field/summary — never
+// earlier, at the Runner/Adapter layer. The Runner still captures and
+// returns the presence diagnostic even though it does not itself reject
+// the response, since Case A/B disambiguation depends on presence having
+// been observed before the Domain parser ever runs.
+func TestRunnerReviewStructuredOutputMissingSummaryFailsOnlyAtDomainParser(t *testing.T) {
+	runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		decision := `{"verdict":"Approve","issues":[]}`
+		body := `{"model":"claude-sonnet-5","content":[{"type":"text","text":` + jsonQuote(t, decision) + `}],"usage":{"input_tokens":1,"output_tokens":1}}`
+		return jsonResponse(http.StatusOK, body, "req-review-missing-summary"), nil
+	}))
+	request := validRunRequest()
+	request.StructuredOutput = &worker.StructuredOutputContract{Schema: review.TypedDecisionJSONSchema()}
+	result, err := runner.Run(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Runner (Domain-neutral) must succeed: %v", err)
+	}
+	if result.StructuredOutputPresence["summary"] {
+		t.Fatalf("StructuredOutputPresence = %#v, want summary=false", result.StructuredOutputPresence)
+	}
+	_, parseErr := review.ParseTypedDecision(result.Content)
+	var typedErr *review.ParseError
+	if !errors.As(parseErr, &typedErr) || typedErr.Reason != review.ParseFailureMissingRequiredField || typedErr.Field != "summary" {
+		t.Fatalf("review.ParseTypedDecision(%q) = %v, want missing_required_field/summary", result.Content, parseErr)
+	}
+}
+
+// TestStructuredOutputFieldPresenceReportsSchemaDeclaredKeysOnly locks the
+// Adapter-owned, Provider-neutral presence computation itself: it derives
+// which top-level keys to check entirely from the schema's own declared
+// "properties" (including the union across a top-level "anyOf"), never
+// from a hardcoded Domain field name.
+func TestStructuredOutputFieldPresenceReportsSchemaDeclaredKeysOnly(t *testing.T) {
+	schema := review.TypedDecisionJSONSchema()
+	tests := []struct {
+		name    string
+		content string
+		want    map[string]bool
+	}{
+		{"summary present", `{"verdict":"Approve","issues":[],"summary":"S"}`, map[string]bool{"verdict": true, "issues": true, "summary": true}},
+		{"summary key absent", `{"verdict":"Approve","issues":[]}`, map[string]bool{"verdict": true, "issues": true, "summary": false}},
+		{"summary present but empty string", `{"verdict":"Approve","issues":[],"summary":""}`, map[string]bool{"verdict": true, "issues": true, "summary": true}},
+		{"summary present but null", `{"verdict":"Approve","issues":[],"summary":null}`, map[string]bool{"verdict": true, "issues": true, "summary": true}},
+		{"all absent", `{}`, map[string]bool{"verdict": false, "issues": false, "summary": false}},
+	}
+	for _, current := range tests {
+		t.Run(current.name, func(t *testing.T) {
+			presence := structuredOutputFieldPresence(schema, current.content)
+			if !reflect.DeepEqual(presence, current.want) {
+				t.Fatalf("presence = %#v, want %#v", presence, current.want)
+			}
+		})
+	}
+}
+
+// TestStructuredOutputFieldPresenceNeverGuessesOnMalformedContent proves
+// the diagnostic returns nil (no diagnosis) rather than a guessed value
+// when the content is not itself a JSON object.
+func TestStructuredOutputFieldPresenceNeverGuessesOnMalformedContent(t *testing.T) {
+	schema := review.TypedDecisionJSONSchema()
+	for _, content := range []string{"", "not json", "[]", `"a string"`, "null", `{"verdict":`} {
+		if presence := structuredOutputFieldPresence(schema, content); presence != nil {
+			t.Fatalf("content %q: presence = %#v, want nil", content, presence)
+		}
+	}
+}
+
+// TestStructuredOutputFieldPresenceReturnsNilForUndeclaredSchemaShape
+// covers a schema with no declared top-level "properties" at all (e.g. the
+// free-form ContentField schema TestRunnerUnwrapsStructuredOutputContentField
+// uses) — there is nothing to check presence against, so the diagnostic is
+// nil rather than an empty, misleadingly "complete" map.
+func TestStructuredOutputFieldPresenceReturnsNilForUndeclaredSchemaShape(t *testing.T) {
+	if presence := structuredOutputFieldPresence(map[string]any{"type": "object"}, `{"a":1}`); presence != nil {
+		t.Fatalf("presence = %#v, want nil for a schema with no declared properties", presence)
+	}
+}
+
+// TestStructuredOutputFieldPresenceIsGenericAcrossDomainSchemas
+// demonstrates, without wiring any new propagation for CEO Intent this
+// round, that the mechanism is genuinely schema-driven rather than
+// Review-specific: it derives the same correct presence map from CEO
+// Intent's plain-object (non-anyOf) schema with zero Review-specific code.
+func TestStructuredOutputFieldPresenceIsGenericAcrossDomainSchemas(t *testing.T) {
+	schema := ceoplan.IntentJSONSchema()
+	content := `{"project_name":"P","objective":"O","steps":[],"ceo_questions":[]}`
+	want := map[string]bool{"project_name": true, "objective": true, "summary": false, "steps": true, "ceo_questions": true}
+	if presence := structuredOutputFieldPresence(schema, content); !reflect.DeepEqual(presence, want) {
+		t.Fatalf("presence = %#v, want %#v", presence, want)
+	}
+}
+
 func TestRunnerSendsReviewStructuredOutputAndExtractsOneJSONTextBlock(t *testing.T) {
 	fixtures := loadStructuredOutputExtractionFixtures(t)
 	var payload map[string]json.RawMessage

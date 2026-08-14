@@ -47,7 +47,15 @@ type ParseError struct {
 	// Reason is ParseFailureMissingRequiredField (mirrors
 	// ceoplan.IntentParseError.Field).
 	Field string
-	err   error
+	// Presence is the optional Provider-neutral top-level key presence
+	// diagnostic the Adapter captured at Provider response receipt time
+	// (see worker.RunResult.StructuredOutputPresence), attached here by
+	// the calling Service after ParseTypedDecision returns — never
+	// computed by this package itself, and never a field value. Nil when
+	// the caller had none available (e.g. a pre-migration replay path, or
+	// a Runner that does not populate the diagnostic).
+	Presence map[string]bool
+	err      error
 }
 
 func (parseErr *ParseError) Error() string { return parseErr.err.Error() }

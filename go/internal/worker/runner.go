@@ -54,6 +54,17 @@ type RunResult struct {
 	Usage    TokenUsage        `json:"usage"`
 	Duration time.Duration     `json:"duration"`
 	Metadata map[string]string `json:"metadata,omitempty"`
+	// StructuredOutputPresence is set only when the request carried a
+	// StructuredOutput contract and the Runner could extract a JSON
+	// object from the Provider's response. Keys are exactly the schema's
+	// own declared top-level property names (Provider-neutral: the Runner
+	// derives them from the Schema the calling Domain package already
+	// supplied, never hardcodes a Domain's field names); values report
+	// only whether that key existed in the Provider's response object,
+	// never the key's value, length, or content. Nil when the Runner
+	// could not determine a schema's declared top-level shape, or when
+	// StructuredOutput was not requested.
+	StructuredOutputPresence map[string]bool `json:"structured_output_presence,omitempty"`
 }
 
 func (result RunResult) Validate() error {

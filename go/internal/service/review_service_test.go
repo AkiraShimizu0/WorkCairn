@@ -22,9 +22,10 @@ type reviewServiceFixture struct {
 }
 
 type capturingReviewRunner struct {
-	request worker.RunRequest
-	content string
-	err     error
+	request  worker.RunRequest
+	content  string
+	err      error
+	presence map[string]bool
 }
 
 func (*capturingReviewRunner) Name() string { return "ClaudeRunner" }
@@ -36,12 +37,13 @@ func (fake *capturingReviewRunner) Run(_ context.Context, request worker.RunRequ
 	}
 	inputTokens, outputTokens := 12, 8
 	return worker.RunResult{
-		Content:  fake.content,
-		Runner:   fake.Name(),
-		Model:    request.Model,
-		Usage:    worker.TokenUsage{InputTokens: &inputTokens, OutputTokens: &outputTokens},
-		Duration: 10 * time.Millisecond,
-		Metadata: request.Metadata,
+		Content:                  fake.content,
+		Runner:                   fake.Name(),
+		Model:                    request.Model,
+		Usage:                    worker.TokenUsage{InputTokens: &inputTokens, OutputTokens: &outputTokens},
+		Duration:                 10 * time.Millisecond,
+		Metadata:                 request.Metadata,
+		StructuredOutputPresence: fake.presence,
 	}, nil
 }
 
@@ -115,6 +117,66 @@ func TestReviewServiceMapsBuilderAndStructuredResultFailures(t *testing.T) {
 	}
 	result, executeErr = parseService.Execute(context.Background(), fixture.Input)
 	assertReviewWorkerErrorKind(t, result, executeErr, WorkerErrorInvalidReviewResult)
+}
+
+// TestReviewServiceAttachesRunnerPresenceOnlyToParseFailures proves the one
+// wiring point this package owns: ReviewService.Execute is where the
+// Runner's already-captured worker.RunResult.StructuredOutputPresence
+// diagnostic and the *review.ParseError it caused meet, since
+// review.ParseTypedDecision itself never observes Provider response
+// shape. Presence must be attached exactly when ParseTypedDecision fails,
+// and must be exactly what the Runner returned — never recomputed here.
+func TestReviewServiceAttachesRunnerPresenceOnlyToParseFailures(t *testing.T) {
+	fixture := loadReviewServiceFixture(t)
+	registry := runner.NewRegistry()
+	presence := map[string]bool{"verdict": true, "issues": true, "summary": false}
+	fake := &capturingReviewRunner{content: `{"verdict":"Approve","issues":[]}`, presence: presence}
+	if err := registry.Register(fake); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.MapModel(fixture.Input.Reviewer.Model, fake.Name()); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewReviewService(prompt.NewBuilder(), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, executeErr := service.Execute(context.Background(), fixture.Input)
+	var executionError *WorkerExecutionError
+	if !errors.As(executeErr, &executionError) || executionError.Kind != WorkerErrorInvalidReviewResult {
+		t.Fatalf("error = %v, want WorkerExecutionError %s", executeErr, WorkerErrorInvalidReviewResult)
+	}
+	var parseErr *review.ParseError
+	if !errors.As(executeErr, &parseErr) || parseErr.Reason != review.ParseFailureMissingRequiredField ||
+		parseErr.Field != "summary" || !reflect.DeepEqual(parseErr.Presence, presence) {
+		t.Fatalf("ParseError = %#v, want Presence = %#v", parseErr, presence)
+	}
+}
+
+// TestReviewServiceLeavesPresenceNilWhenRunnerDoesNotSupplyIt proves the
+// success-path Decision itself never carries a presence diagnostic (only
+// the failure path does) and that a Runner returning no presence (e.g. a
+// pre-migration fake, or a non-Structured-Output Runner) leaves the parse
+// error's Presence nil rather than a guessed value.
+func TestReviewServiceLeavesPresenceNilWhenRunnerDoesNotSupplyIt(t *testing.T) {
+	fixture := loadReviewServiceFixture(t)
+	registry := runner.NewRegistry()
+	fake := &capturingReviewRunner{content: `{"verdict":"Approve","issues":[]}`}
+	if err := registry.Register(fake); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.MapModel(fixture.Input.Reviewer.Model, fake.Name()); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewReviewService(prompt.NewBuilder(), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, executeErr := service.Execute(context.Background(), fixture.Input)
+	var parseErr *review.ParseError
+	if !errors.As(executeErr, &parseErr) || parseErr.Presence != nil {
+		t.Fatalf("ParseError.Presence = %#v, want nil", parseErr.Presence)
+	}
 }
 
 func assertReviewWorkerErrorKind(t *testing.T, _ review.ExecutionResult, err error, want WorkerErrorKind) {

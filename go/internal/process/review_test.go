@@ -270,15 +270,38 @@ func TestReviewFailureEnvelopeCarriesParseDiagnosticForInvalidReviewResult(t *te
 // the missing_required_field branch specifically: the Envelope's Parse
 // diagnostic must carry the sanitized review.ParseError.Field (never a
 // field value) alongside Reason, so an operator can tell which of the
-// Review Typed Decision's required fields the Runner omitted.
+// Review Typed Decision's required fields the Runner omitted. It must
+// also forward the ParseError's own StructuredOutputPresence diagnostic
+// (whatever the Runner captured) unchanged — reviewFailureEnvelope never
+// recomputes it.
 func TestReviewFailureEnvelopeCarriesParseFieldForMissingRequiredField(t *testing.T) {
 	_, parseErr := review.ParseTypedDecision(`{"verdict":"Approve","issues":[]}`)
+	presence := map[string]bool{"verdict": true, "issues": true, "summary": false}
+	parseErr.(*review.ParseError).Presence = presence
 	workerErr := &service.WorkerExecutionError{Kind: service.WorkerErrorInvalidReviewResult, Err: parseErr}
 	envelope := reviewFailureEnvelope(workerErr, nil, nil)
 	if envelope.Code != "REVIEW_RESULT_INVALID" || envelope.Stage != "review_result_parser" ||
 		envelope.Parse == nil || envelope.Parse.Domain != "review" ||
-		envelope.Parse.Reason != string(review.ParseFailureMissingRequiredField) || envelope.Parse.Field != "summary" {
+		envelope.Parse.Reason != string(review.ParseFailureMissingRequiredField) || envelope.Parse.Field != "summary" ||
+		!reflect.DeepEqual(envelope.Parse.StructuredOutputPresence, presence) {
 		t.Fatalf("reviewFailureEnvelope() = %#v", envelope)
+	}
+}
+
+// TestReviewFailureEnvelopeOmitsPresenceForNonMissingFieldReasons proves
+// the presence diagnostic is scoped to missing_required_field only: even
+// when a ParseError of a different Reason happens to carry a non-nil
+// Presence, the Envelope must not surface it, since every other Reason
+// (invalid enum value, blank text, ...) already has a more specific cause
+// that presence data cannot add to.
+func TestReviewFailureEnvelopeOmitsPresenceForNonMissingFieldReasons(t *testing.T) {
+	_, parseErr := review.ParseTypedDecision(`{"verdict":"Request Changes","issues":[{"category":"unsupported","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`)
+	parseErr.(*review.ParseError).Presence = map[string]bool{"verdict": true, "issues": true, "summary": true}
+	workerErr := &service.WorkerExecutionError{Kind: service.WorkerErrorInvalidReviewResult, Err: parseErr}
+	envelope := reviewFailureEnvelope(workerErr, nil, nil)
+	if envelope.Parse == nil || envelope.Parse.Reason != string(review.ParseFailureInvalidIssueCategory) ||
+		envelope.Parse.StructuredOutputPresence != nil {
+		t.Fatalf("reviewFailureEnvelope() = %#v, want StructuredOutputPresence nil for a non-missing_required_field Reason", envelope)
 	}
 }
 

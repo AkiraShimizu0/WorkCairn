@@ -80,6 +80,17 @@ type ParseDiagnostic struct {
 	// "ceo_questions" or "steps.required_role". It never contains a field
 	// value, array index, raw Provider output, or user-authored text.
 	Field string `json:"field,omitempty"`
+	// StructuredOutputPresence is an optional, Provider-neutral diagnostic
+	// captured by the Adapter at Provider response receipt time (see
+	// worker.RunResult.StructuredOutputPresence): for each of a Structured
+	// Output schema's own declared top-level property names, whether that
+	// key existed in the Provider's response object. Keys are contract
+	// field names owned by the Domain package (never derived from
+	// Provider content); values are presence booleans only — never a
+	// field's value, length, or content. Every owning Command decides for
+	// itself when attaching this diagnostic is meaningful; it is not set
+	// for every parse failure.
+	StructuredOutputPresence map[string]bool `json:"structured_output_presence,omitempty"`
 }
 
 // CommittedEvidence records only what is certainly committed. Every field
@@ -122,9 +133,16 @@ func (envelope Envelope) Validate() error {
 			return ErrInvalidEnvelope
 		}
 	}
-	if envelope.Parse != nil && (!canonicalText(envelope.Parse.Domain) || !canonicalText(envelope.Parse.Reason) ||
-		(envelope.Parse.Field != "" && !canonicalText(envelope.Parse.Field))) {
-		return ErrInvalidEnvelope
+	if envelope.Parse != nil {
+		if !canonicalText(envelope.Parse.Domain) || !canonicalText(envelope.Parse.Reason) ||
+			(envelope.Parse.Field != "" && !canonicalText(envelope.Parse.Field)) {
+			return ErrInvalidEnvelope
+		}
+		for key := range envelope.Parse.StructuredOutputPresence {
+			if !canonicalText(key) {
+				return ErrInvalidEnvelope
+			}
+		}
 	}
 	return nil
 }

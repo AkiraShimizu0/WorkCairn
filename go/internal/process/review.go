@@ -342,6 +342,16 @@ func reviewFailureEnvelope(reviewErr error, provider *ProviderFailure, artifact 
 			envelope = failure.New("REVIEW_RESULT_INVALID", "review_result_parser")
 			if reason := reviewParseFailureReason(reviewErr); reason != "" {
 				envelope.Parse = &failure.ParseDiagnostic{Domain: "review", Reason: reason, Field: reviewParseFailureField(reviewErr)}
+				// The Adapter's key presence diagnostic is attached only for
+				// missing_required_field: that is the one Reason where it
+				// answers a genuine open question (did the Provider's own
+				// response ever carry this key, or was it lost afterward) —
+				// every other Reason already has a more specific cause
+				// (invalid enum value, blank text, ...) that presence data
+				// cannot add to.
+				if reason == string(review.ParseFailureMissingRequiredField) {
+					envelope.Parse.StructuredOutputPresence = reviewParseFailurePresence(reviewErr)
+				}
 			}
 		case service.WorkerErrorTimeout:
 			envelope = failure.New("PROVIDER_UNAVAILABLE", "review_provider")
@@ -381,6 +391,18 @@ func reviewParseFailureField(reviewErr error) string {
 		return ""
 	}
 	return parseErr.Field
+}
+
+// reviewParseFailurePresence extracts the Adapter-captured, Provider-neutral
+// StructuredOutputPresence diagnostic a *review.ParseError carries, when
+// one is available. It returns nil for every other failure kind and for
+// replayed/legacy failures whose ParseError never had one attached.
+func reviewParseFailurePresence(reviewErr error) map[string]bool {
+	var parseErr *review.ParseError
+	if !errors.As(reviewErr, &parseErr) {
+		return nil
+	}
+	return parseErr.Presence
 }
 
 func executeClaimedReview(ctx context.Context, input ExecuteReviewInput, provider ClaudeProcessConfig, httpClient claude.HTTPDoer) (ReviewExecutionResult, error) {

@@ -331,6 +331,8 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"providerSetupError", "Claude APIキーをMacのKeychainへ保存できませんでした", "Keychainへ保存",
 		"new AbortController()", "keychain_setup_timeout", "Claudeの接続設定を完了できませんでした",
 		"state.renderKey === key", "state.detailRenderKey === key", "state.timelineRenderKey === key",
+		"structuredFieldsSummary", "structured_output_presence", "Structured fields",
+		"error.details?.parse?.structured_output_presence",
 	} {
 		if !strings.Contains(asset.Body.String(), required) {
 			t.Fatalf("mobile UI is missing command continuity boundary %q", required)

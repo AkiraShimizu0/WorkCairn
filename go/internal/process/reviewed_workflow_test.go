@@ -411,6 +411,18 @@ func TestReviewedWorkflowReviewResultInvalidMissingFieldPropagatesParseField(t *
 		record.Failure.Details.Parse.Field != "summary" {
 		t.Fatalf("outer reviewed Workflow parse diagnostic = %#v", record.Failure.Details)
 	}
+	// The Adapter's own key presence diagnostic, captured from the real
+	// mock Anthropic response text (case B of the disambiguation this
+	// diagnostic exists for is a code-path question, not something this
+	// mock can simulate — but this proves case A's shape end-to-end: the
+	// Provider's response really did omit "summary", and that fact
+	// survives unchanged through Review -> outer Reviewed Workflow ->
+	// Command Ledger).
+	wantPresence := map[string]bool{"verdict": true, "issues": true, "summary": false}
+	if !reflect.DeepEqual(record.Failure.Details.Parse.StructuredOutputPresence, wantPresence) {
+		t.Fatalf("outer reviewed Workflow structured output presence = %#v, want %#v",
+			record.Failure.Details.Parse.StructuredOutputPresence, wantPresence)
+	}
 }
 
 func writeReviewedWorkflowVault(t *testing.T) string {
