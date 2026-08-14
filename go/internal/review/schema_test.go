@@ -39,16 +39,26 @@ func TestTypedDecisionJSONSchemaShape(t *testing.T) {
 		verdict := properties["verdict"].(map[string]any)
 		issues := properties["issues"].(map[string]any)
 		summary := properties["summary"].(map[string]any)
-		if summary["pattern"] != `\S` || issues["type"] != "array" {
+		if summary["type"] != "string" || issues["type"] != "array" {
 			t.Fatalf("variant %d summary/issues = %#v / %#v", index, summary, issues)
+		}
+		if _, exists := summary["pattern"]; exists {
+			t.Fatalf("variant %d summary contains Provider-unsupported semantic pattern: %#v", index, summary)
 		}
 		issue := issues["items"].(map[string]any)
 		issueProperties := issue["properties"].(map[string]any)
 		if issue["additionalProperties"] != false ||
-			!sameStrings(issue["required"].([]string), []string{"category", "severity", "description", "suggested_action"}) ||
-			issueProperties["description"].(map[string]any)["pattern"] != `\S` ||
-			issueProperties["suggested_action"].(map[string]any)["pattern"] != `\S` {
+			!sameStrings(issue["required"].([]string), []string{"category", "severity", "description", "suggested_action"}) {
 			t.Fatalf("variant %d issue schema = %#v", index, issue)
+		}
+		for _, field := range []string{"description", "suggested_action"} {
+			fieldSchema := issueProperties[field].(map[string]any)
+			if fieldSchema["type"] != "string" {
+				t.Fatalf("variant %d issue field %s schema = %#v", index, field, fieldSchema)
+			}
+			if _, exists := fieldSchema["pattern"]; exists {
+				t.Fatalf("variant %d issue field %s contains Provider-unsupported semantic pattern: %#v", index, field, fieldSchema)
+			}
 		}
 		switch verdict["const"] {
 		case string(VerdictApprove):

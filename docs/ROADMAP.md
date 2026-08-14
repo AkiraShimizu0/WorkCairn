@@ -350,7 +350,7 @@ Public Beta公開前に残る人間／実環境確認：
 - temporary Vaultとtest credentialによる最小Provider smoke
 - iCloud Drive上のWorkCairn専用VaultをFinderで選択し、Obsidianで開くfirst-run実機smoke（既存個人Vaultは変更しない、writerは1 daemon）
 - [完了] native folder picker、Application Supportの再起動参照、Mac native hidden-input＋Keychainによりterminal不要のmacOS First-runを実装。trusted LANへpath／secret値を受けるendpointは追加しない
-- [完了] macOS Keychain保存を不定な`security`対話PTYから、anonymous socketとbounded helperを使うSecurity.framework native Adapterへ置換。write後read-back、existing update、restart read、timeout時kill/reapを固定
+- [完了] ADR-0044でmacOS Keychain保存を不定な`security`対話PTYから、anonymous socketとbounded helperを使うSecurity.framework native Adapterへ置換。write後read-back、existing update、restart read、timeout時kill/reapを固定
 - [完了] ADR-0045でProvider request timeoutをRuntime compositionへ一本化し、Public Beta defaultをboundedな5分へ変更。CEO Intent、Task、Review、Revision Task／再Reviewは同じclient policyを使い、operator override、typed timeout、no retryを維持
 - Provider streamingはprogress観測、partial stream failure、cancellation、durable diagnosticsを設計する後続候補とし、Public Beta timeout安定化では導入しない
 - ADR-0036の`workcairn-auto`を起点に、複数Provider導入時だけEmployee Role／Task capability／接続済みRuntime／quality・cost・latency policyからtyped Routeを解決する拡張（暗黙fallbackなし）

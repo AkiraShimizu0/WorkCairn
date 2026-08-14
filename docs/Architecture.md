@@ -90,6 +90,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0042: Public Betaの一般daemonをInteraction Reviewed Workflow経路へ限定する](adr/ADR-0042-public-beta-product-path.md)
 - [ADR-0043: actual daemonとChromium／WebKitによるPublic Beta Browser Acceptance Gate](adr/ADR-0043-public-beta-browser-acceptance-gate.md)
 - [ADR-0044: macOS Keychain永続化をnative helperへ移す](adr/ADR-0044-native-macos-keychain-persistence.md)
+- [ADR-0045: bounded Provider request timeoutをRuntime compositionで一本化する](adr/ADR-0045-bounded-provider-request-timeout-policy.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -195,6 +196,7 @@ ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環�
 - `go/internal/taskstore`: TaskStoreのin-memory Adapter
 - `go/internal/worker`: AI社員実行のContext、Prompt、Runner要求・結果のDomain契約
 - `go/internal/deliverable`: Storage非依存のimmutable Deliverable契約とStore port
+- `go/internal/deliverablestore`: Deliverable record向けStorage Adapter
 - `go/internal/prompt`: Provider／Vault非依存の通常Task PromptBuilder
 - `go/internal/review`: Provider／Vault非依存のReview Context、Prompt port、構造化Review結果
 - `go/internal/revision`: Storage非依存のRevision intent、Store port、部分状態Result
@@ -205,6 +207,9 @@ ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環�
 - `go/internal/autonomy`: 承認するWorkflowの自律範囲をcanonicalize／検証するProvider／Storage非依存のtyped contract
 - `go/internal/interaction`: request／clarification／plan／Workflow approvalのclosed state、append-only turn、結果summary／digest、CAS contract
 - `go/internal/scheduler`: Storage／transport非依存のone-shot Schedule、state、Version／CAS、Dispatcher port
+- `go/internal/notification`: Task／Review／Revision／Action EventからのredactedなpayloadなしImmutable projection契約
+- `go/internal/metrics`: Event typeごとの件数だけを持つbounded process-local Metrics subscriber
+- `go/internal/action`: Provider／Storage非依存の外部publication（WordPress等）typed intent／evidence契約
 - `go/internal/runner`: model値とRunner Adapterを解決するthread-safe Registry
 - `go/internal/adapter/claude`: Anthropic Messages APIを既存Runner契約へ変換するProvider Adapter
 - `go/internal/adapter/localos`: macOS folder picker、Application Support path reference、Finder／browser openと、bounded helperからSecurity.frameworkを直接呼ぶKeychain persistenceをRuntime edgeへ閉じ込めるOS Adapter。credentialはanonymous socketだけを通り、Core、Vault contract、Task／EventはmacOS APIやsecretを知らない

@@ -41,10 +41,9 @@ Reviewerには、本文だけを根拠に作成者不明と判断せず、確認
 
 ## 構造化結果
 
-Runnerは人間向けMarkdownの後へ、次のマーカーでJSONを出力します。
+ADR-0040に従い、Runnerはマーカーや人間向けMarkdownを含まない、flatなJSONオブジェクトだけを出力します（Anthropic Structured Outputsの制約に合わせ、`pattern`／`minLength`等の非対応キーワードは使わず、非空文字列の検証はGo側の`ParseTypedDecision`が行います）。
 
 ```text
-REVIEW_RESULT_JSON_START
 {
   "verdict": "Approve または Request Changes",
   "issues": [
@@ -54,18 +53,20 @@ REVIEW_RESULT_JSON_START
       "description": "指摘内容",
       "suggested_action": "修正案"
     }
-  ]
+  ],
+  "summary": "判定理由の短い要約"
 }
-REVIEW_RESULT_JSON_END
 ```
 
-保存前にJSONを抽出・検証します。
+保存前にJSONを検証します。
 
 - verdictは`Approve`または`Request Changes`のみ
 - Request Changesではissuesが1件以上必要
 - categoryとseverityは許可値のみ
-- 不正JSONはレビュー保存前に拒否
-- 人間向けMarkdownからJSONマーカー部分を除去
+- summaryは空文字列不可
+- 不正JSON・未知fieldはレビュー保存前に拒否
+
+人間向けMarkdown（`Reviews/TASK-XXX.review.md`）はLLMが書きません。GoがcanonicalなDecision（verdict／issues／summary）から決定的に生成します。
 
 ## 保存先とバージョン
 
