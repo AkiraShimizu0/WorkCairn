@@ -133,14 +133,81 @@ function stateLabel(value) {
     plan_approval_required: "進め方の承認待ち",
     ready_to_execute: "実行承認待ち",
     workflow_attention_required: "確認が必要",
-    completed: "仕事完了",
-    action_completed: "公開完了",
-    action_attention_required: "公開確認が必要",
+    completed: "完了",
+    action_completed: "完了",
+    action_attention_required: "確認が必要",
     waiting: "待機中",
     standby: "必要時に参加",
     blocked: "確認が必要",
   };
   return labels[value] || value || "確認中";
+}
+
+function sameCalendarDay(left, right) {
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
+}
+
+function sessionDateGroupLabel(value) {
+  const date = new Date(value);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (sameCalendarDay(date, today)) return "今日";
+  if (sameCalendarDay(date, yesterday)) return "昨日";
+  return date.toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" });
+}
+
+function sessionTimeLabel(value) {
+  return new Date(value).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+}
+
+function sessionStatusLabel(record) {
+  let hasError = false;
+  try { hasError = Boolean(JSON.parse(localStorage.getItem(errorStorageKey(record.session_id)) || "null")); } catch {}
+  if (hasError) return "確認待ち";
+  const state = record.state;
+  if (state === "completed" || state === "action_completed") return "完了";
+  if (["workflow_attention_required", "action_attention_required", "blocked"].includes(state)) return "確認待ち";
+  if (["clarification_required", "plan_approval_required", "ready_to_execute", "plan_generation_approval_required"].includes(state)) return "確認待ち";
+  return "作業中";
+}
+
+function timelineStageLabel(stage) {
+  const labels = {
+    依頼: "依頼",
+    clarification: "確認",
+    plan: "進め方",
+    approval: "承認",
+    execution: "作業",
+    review: "レビュー",
+    revision: "修正",
+    completion: "完了",
+    failure: "停止",
+  };
+  return labels[stage] || stage || "";
+}
+
+function groupSessionsByDate(sessions) {
+  const groups = [];
+  const indexByLabel = new Map();
+  for (const record of sessions) {
+    const label = sessionDateGroupLabel(record.created_at);
+    if (!indexByLabel.has(label)) {
+      indexByLabel.set(label, groups.length);
+      groups.push({ label, items: [] });
+    }
+    groups[indexByLabel.get(label)].items.push(record);
+  }
+  return groups;
+}
+
+function technicalDetails(summary, facts) {
+  return node("details", { class: "technical-details" },
+    node("summary", {}, summary),
+    approvalFacts(facts),
+  );
 }
 
 function shortDigest(value) {
@@ -208,9 +275,9 @@ function renderInFlight(command) {
   const copy = inFlightCopy(command?.operation);
   ui.activeCard.className = "action-card working";
   ui.activeCard.replaceChildren(
-    node("span", { class: "step-label working-label" }, `● ${copy.label}`),
+    node("p", { class: "action-label working-label" }, copy.label),
     node("h2", {}, copy.title),
-    node("p", { class: "lead" }, copy.message),
+    node("p", { class: "action-body" }, copy.message),
     node("p", { class: "supporting" }, "この画面を閉じても処理はMacで続きます。次に判断が必要になったら依頼詳細へ表示します。"),
     node("details", { class: "technical-details" },
       node("summary", {}, "技術的な詳細を見る"),
@@ -528,10 +595,11 @@ function showError(error, title = "処理を完了できませんでした") {
   if (state.renderKey === errorRenderKey) return;
   state.renderKey = errorRenderKey;
   ui.activeCard.className = "action-card attention";
+  const structuredFields = structuredFieldsSummary(detail?.details?.parse?.structured_output_presence);
   ui.activeCard.replaceChildren(
-    node("span", { class: "step-label" }, "確認が必要です"),
+    node("p", { class: "action-label" }, "確認が必要です"),
     node("h2", {}, title),
-    node("p", { class: "lead" }, providerSetupRequired
+    node("p", { class: "action-body" }, providerSetupRequired
       ? "AIサービスの接続設定が不足しています。Providerへ依頼は送信されていません。MacのAI Connectionsから接続してください。"
       : providerFailureCopy
         ? providerFailureCopy
@@ -550,13 +618,18 @@ function showError(error, title = "処理を完了できませんでした") {
       : providerGenerationFailed
         ? "AIサービスで進め方を生成できませんでした。自動retryや別サービスへの切替は行っていません。接続状態を確認してください。"
       : "成立済みの記録を推測で変更せず、現在の状態を確認してください。"),
-    node("div", { class: "error-box" },
-      node("strong", {}, code),
-      stage ? node("div", {}, `stage: ${stage}`) : null,
-      detail?.details?.substage ? node("div", {}, `substage: ${detail.details.substage}`) : null,
-      providerRequestID ? node("div", {}, `問い合わせID: ${providerRequestID}`) : null,
-      parseFailureReason ? node("div", {}, `parse reason: ${parseFailureReason}`) : null,
-    ),
+    technicalDetails("技術的な詳細を見る", [
+      ["Error code", code],
+      ["Stage", stage || "—"],
+      ["Substage", detail?.details?.substage || "—"],
+      ["Category", detail?.category || detail?.details?.category || "—"],
+      ["HTTP status", detail?.details?.provider?.http_status || detail?.http_status || "—"],
+      ["Command ID", remembered?.command_id || detail?.command_id || "未発行"],
+      ["問い合わせID", providerRequestID || detail?.provider_failure?.request_id || "—"],
+      ["Parse reason", parseFailureReason || detail?.parse_failure_reason || "—"],
+      ["Parse field", detail?.parse_failure_field || "—"],
+      ...(structuredFields ? [["Structured fields", structuredFields]] : []),
+    ]),
     node("div", { class: "button-row" },
       button(providerSettingsAction ? "AI Connectionsを開く" : (providerIssue ? "進め方の作成待ちへ戻る" : (pending ? "Command状態を再確認" : "状態を再確認")), "primary", () => providerSettingsAction ? openSettingsDialog() : (pending ? resumePendingCommand(pending) : refreshCurrent())),
       button("依頼一覧へ", "quiet", () => { selectSession(null); showRequestList(); }),
@@ -821,11 +894,9 @@ async function refreshCurrent(silent = false) {
 
 function renderEmpty() {
   if (isRequestDetailVisible()) {
-    ui.activeCard.className = "action-card complete";
+    ui.activeCard.className = "action-card";
     ui.activeCard.replaceChildren(
-      node("span", { class: "step-label" }, "準備できています"),
-      node("h2", {}, "会社に新しい仕事を依頼してください"),
-      node("p", { class: "lead" }, "依頼した後はAI社員が計画・実行・レビューを進め、必要な質問と承認だけをここに表示します。"),
+      node("p", { class: "action-body" }, "依頼した後はAI社員が計画・実行・レビューを進め、必要な質問と承認だけをここに表示します。"),
       node("div", { class: "button-row" }, button("仕事を依頼する", "primary", openRequestDialog)),
     );
     renderTimeline();
@@ -838,24 +909,23 @@ function renderSessions() {
     return;
   }
   const activeID = state.record?.session_id;
-  ui.sessionList.replaceChildren(...state.sessions.map((record) => {
-    let hasError = false;
-    try { hasError = Boolean(JSON.parse(localStorage.getItem(errorStorageKey(record.session_id)) || "null")); } catch {}
-    return node("button", {
-      class: `session-item${activeID === record.session_id ? " active" : ""}`,
-      type: "button",
-      onclick: () => {
-        selectSession(record.session_id);
-        showRequestDetail(record.session_id);
+  const groups = groupSessionsByDate(state.sessions);
+  ui.sessionList.replaceChildren(...groups.flatMap((group) => [
+    node("section", { class: "session-date-group" },
+      node("h2", { class: "session-date-label" }, group.label),
+      ...group.items.map((record) => node("button", {
+        class: `session-item${activeID === record.session_id ? " active" : ""}`,
+        type: "button",
+        onclick: () => {
+          selectSession(record.session_id);
+          showRequestDetail(record.session_id);
+        },
       },
-    },
-      node("span", {},
-        node("strong", {}, record.request),
-        node("small", {}, new Date(record.created_at).toLocaleString("ja-JP")),
-      ),
-      node("span", { class: `state-chip${hasError ? " error" : ""}` }, hasError ? "確認が必要" : stateLabel(record.state)),
-    );
-  }));
+      node("span", { class: "session-title" }, record.request),
+      node("span", { class: "session-meta" }, `${sessionStatusLabel(record)} · ${sessionTimeLabel(record.created_at)}`),
+      )),
+    ),
+  ]));
 }
 
 function renderNext(force = false) {
@@ -893,21 +963,18 @@ function renderRememberedError(error) {
   const structuredFields = structuredFieldsSummary(error.details?.parse?.structured_output_presence);
   ui.activeCard.className = "action-card attention";
   ui.activeCard.replaceChildren(
-    node("span", { class: "step-label" }, error.recovery_required ? "Recoveryが必要です" : "確認が必要です"),
+    node("p", { class: "action-label" }, error.recovery_required ? "Recoveryが必要です" : "確認が必要です"),
     node("h2", {}, error.title || "処理を完了できませんでした"),
-    node("p", { class: "lead" }, "エラーは消さずに保存しています。成立済みの仕事は保持し、自動retryや推測修復は行っていません。"),
-    node("details", { class: "artifact-detail" },
-      node("summary", {}, "詳細を見る"),
-      approvalFacts([
-        ["Error code", error.code], ["Stage", error.stage || "—"],
-        ["Substage", error.substage || "—"], ["Category", error.category || "—"],
-        ["HTTP status", error.http_status || "—"],
-        ["Command ID", error.command_id || "未発行"], ["問い合わせID", error.request_id || "—"],
-        ["Parse reason", error.parse_failure_reason || "—"],
-        ["Parse field", error.parse_failure_field || "—"],
-        ...(structuredFields ? [["Structured fields", structuredFields]] : []),
-      ]),
-    ),
+    node("p", { class: "action-body" }, "エラーは消さずに保存しています。成立済みの仕事は保持し、自動retryや推測修復は行っていません。"),
+    technicalDetails("技術的な詳細を見る", [
+      ["Error code", error.code], ["Stage", error.stage || "—"],
+      ["Substage", error.substage || "—"], ["Category", error.category || "—"],
+      ["HTTP status", error.http_status || "—"],
+      ["Command ID", error.command_id || "未発行"], ["問い合わせID", error.request_id || "—"],
+      ["Parse reason", error.parse_failure_reason || "—"],
+      ["Parse field", error.parse_failure_field || "—"],
+      ...(structuredFields ? [["Structured fields", structuredFields]] : []),
+    ]),
     node("div", { class: "button-row" },
       button(error.command_id ? "Command状態を確認" : "状態を再確認", "primary", () => error.command_id
         ? inspectCommands([{ scope: "workspace", command_id: error.command_id }])
@@ -950,17 +1017,11 @@ function renderPlanGeneration(next) {
   if (!state.providerStatus?.configured) return renderProviderSetup();
   const hasAnswers = state.record.turns.some((turn) => turn.kind === "clarification_answered");
   ui.activeCard.replaceChildren(
-    node("span", { class: "step-label" }, hasAnswers ? "回答を反映" : "最初の確認"),
+    node("p", { class: "action-label" }, hasAnswers ? "回答を反映" : "進め方"),
     node("h2", {}, hasAnswers ? "回答をもとに進め方を作り直します" : "仕事の進め方を作成します"),
-    node("p", { class: "lead" }, "AIはまだ会社データを変更しません。依頼内容を整理し、必要な質問と進め方を作成します。"),
-    approvalFacts([
-      ["依頼", state.record.request],
-      ["AIサービス", "WorkCairnが接続設定から選択"],
-    ]),
-    node("details", { class: "technical-details" },
-      node("summary", {}, "Technical details"),
-      approvalFacts([["Session", state.record.session_id]]),
-    ),
+    node("p", { class: "action-body" }, state.record.request),
+    node("p", { class: "supporting" }, "AIはまだ会社データを変更しません。依頼内容を整理し、必要な質問と進め方を作成します。"),
+    technicalDetails("Technical details", [["Session", state.record.session_id]]),
     node("div", { class: "button-row" },
       button("進め方の作成を承認", "primary", () => executeNextCommand(next, {
         session_id: next.session_id,
@@ -981,9 +1042,9 @@ function renderProviderSetup() {
   if (!reasons.length) reasons.push("接続状態を取得できませんでした");
   ui.activeCard.className = "action-card attention";
   ui.activeCard.replaceChildren(
-    node("span", { class: "step-label" }, "Mac側の設定が必要です"),
+    node("p", { class: "action-label" }, "Mac側の設定が必要です"),
     node("h2", {}, "AIサービスへ接続してください"),
-    node("p", { class: "lead" }, "この依頼は保存済みです。設定が整うまでAIサービスへ送信せず、進め方の作成を開始しません。"),
+    node("p", { class: "action-body" }, "この依頼は保存済みです。設定が整うまでAIサービスへ送信せず、進め方の作成を開始しません。"),
     node("ul", { class: "trust-list" }, ...reasons.map((reason) => node("li", {}, reason))),
     node("p", { class: "supporting" }, "MacのAI ConnectionsからClaudeを接続してください。iPhoneからsecretは送らず、別Providerへの自動fallbackも行いません。"),
     node("div", { class: "button-row" },
@@ -1000,7 +1061,7 @@ function renderQuestions(next) {
   const form = node("form", { class: "question-list", dataset: { clarificationKey } });
   for (const [index, question] of next.questions.entries()) {
     form.append(node("label", { class: "question-card" },
-      node("p", {}, question),
+      node("p", { class: "question-text" }, question),
       node("textarea", { name: `answer-${index}`, rows: "3", required: true, placeholder: "回答を入力" }),
     ));
   }
@@ -1016,9 +1077,8 @@ function renderQuestions(next) {
     executeNextCommand(next, { session_id: next.session_id, expected_version: next.expected_version, answers, current_time: now() }, "回答を保存しています", "保存後に次の進め方の作成確認へ進みます。");
   });
   ui.activeCard.replaceChildren(
-    node("span", { class: "step-label" }, `${next.questions.length}件の質問`),
+    node("p", { class: "action-label" }, "確認"),
     node("h2", {}, "確認したいことがあります"),
-    node("p", { class: "lead" }, "仕事を始める前に必要なことだけ回答してください。"),
     form,
   );
 }
@@ -1047,17 +1107,16 @@ function renderPlanApproval(next) {
   localStorage.setItem(`workcairn.project.${state.record.session_id}`, identifier);
   const tasks = node("ol", { class: "public-plan" }, ...current.plan.proposed_tasks.map((task, index) => node("li", {}, planStepCopy(task, index).replace(/^\d+\. /, ""))));
   ui.activeCard.replaceChildren(
-    node("span", { class: "step-label" }, "進め方の確認"),
+    node("p", { class: "action-label" }, "進め方"),
     node("h2", {}, current.plan.project_name),
-    node("p", { class: "lead" }, current.plan.summary),
-    node("div", { class: "approval-box" },
-      node("strong", {}, "このように進めます"),
+    node("p", { class: "action-body" }, current.plan.summary),
+    node("div", { class: "plan-steps" },
+      node("p", { class: "plan-steps-label" }, "このように進めます"),
       tasks,
-      node("details", { class: "technical-details" },
-        node("summary", {}, "技術的な詳細を見る"),
-        approvalFacts([["Project ID", identifier], ["Plan digest", shortDigest(current.digest)], ["Task数", String(current.plan.proposed_tasks.length)]]),
-      ),
     ),
+    technicalDetails("技術的な詳細を見る", [
+      ["Project ID", identifier], ["Plan digest", shortDigest(current.digest)], ["Task数", String(current.plan.proposed_tasks.length)],
+    ]),
     node("div", { class: "button-row" },
       button("この進め方で始める", "primary", () => {
         executeNextCommand(next, {
@@ -1080,9 +1139,9 @@ async function renderWorkflowApproval(next) {
   const currentForm = ui.activeCard.querySelector("form.stack-form[data-workflow-form-key]");
   if (currentForm?.dataset.workflowFormKey === workflowFormKey) return;
   ui.activeCard.replaceChildren(
-    node("span", { class: "step-label" }, "実行準備"),
+    node("p", { class: "action-label" }, "実行"),
     node("h2", {}, "担当AIに仕事を開始させます"),
-    node("p", { class: "lead" }, "担当AIが順番に仕事を実行し、Reviewerの指摘があれば修正と再確認まで進めます。"),
+    node("p", { class: "action-body" }, "担当AIが順番に仕事を実行し、Reviewerの指摘があれば修正と再確認まで進めます。"),
   );
   const form = node("form", { class: "stack-form", dataset: { workflowFormKey } });
   const maxTasks = node("input", { id: "max-tasks", name: "max_tasks", type: "number", min: "1", max: "100", value: "20", inputmode: "numeric", required: true });
@@ -1149,9 +1208,9 @@ async function prepareWorkflowApproval(next, maxTasks) {
 function renderCompletion(next) {
   ui.activeCard.className = "action-card complete";
   ui.activeCard.replaceChildren(
-    node("span", { class: "step-label" }, "仕事が完了しました"),
+    node("p", { class: "action-label" }, "完了"),
     node("h2", {}, "すべての仕事とReviewが完了しています"),
-    node("p", { class: "lead" }, "成果物はWorkspaceに保存されています。TimelineとProof of Workから、担当・Review・Revisionの記録を確認できます。"),
+    node("p", { class: "action-body" }, "成果物はWorkspaceに保存されています。"),
     node("div", { class: "button-row" },
       button("完了を確認", "primary", () => toast("この依頼は完了しています。")),
       button("新しい仕事を依頼", "", openRequestDialog),
@@ -1163,9 +1222,9 @@ function renderDone() {
   const action = [...state.record.turns].reverse().find((turn) => turn.action)?.action;
   ui.activeCard.className = "action-card complete";
   ui.activeCard.replaceChildren(
-    node("span", { class: "step-label" }, "完了"),
+    node("p", { class: "action-label" }, "完了"),
     node("h2", {}, "依頼した仕事が完了しました"),
-    node("p", { class: "lead" }, action?.publication?.url ? "成果物の外部公開まで完了しています。" : "成果物はWorkspaceに保存されています。"),
+    node("p", { class: "action-body" }, action?.publication?.url ? "成果物の外部公開まで完了しています。" : "成果物はWorkspaceに保存されています。"),
     action?.publication?.url ? node("a", { class: "button primary", href: action.publication.url, target: "_blank", rel: "noreferrer" }, "公開先を開く") : null,
     node("div", { class: "button-row" }, button("新しい仕事を依頼", "", openRequestDialog)),
   );
@@ -1173,14 +1232,15 @@ function renderDone() {
 
 function renderAttention(next, title) {
   ui.activeCard.className = "action-card attention";
-  const references = (next.commands || []).map((reference) =>
-    node("div", {}, node("dt", {}, reference.scope === "workspace" ? "Workspace command" : "Project command"), node("dd", { class: "digest" }, reference.command_id)),
-  );
+  const commandFacts = (next.commands || []).map((reference) => [
+    reference.scope === "workspace" ? "Workspace command" : "Project command",
+    reference.command_id,
+  ]);
   ui.activeCard.replaceChildren(
-    node("span", { class: "step-label" }, "自動継続を停止しました"),
+    node("p", { class: "action-label" }, "停止"),
     node("h2", {}, title),
-    node("p", { class: "lead" }, "成立済みの成果物や記録は保持されています。自動retryやrollbackをせず、CommandとRecovery evidenceを確認してください。"),
-    node("div", { class: "approval-box" }, node("dl", {}, ...references)),
+    node("p", { class: "action-body" }, "成立済みの成果物や記録は保持されています。自動retryやrollbackをせず、CommandとRecovery evidenceを確認してください。"),
+    commandFacts.length ? technicalDetails("Command references", commandFacts) : null,
     node("div", { class: "button-row" },
       button("Command状態を確認", "primary", () => inspectCommands(next.commands || [])),
       button("Sessionを再確認", "quiet", () => refreshCurrent()),
@@ -1520,13 +1580,16 @@ function timelineEntries() {
   return entries;
 }
 
-function timelineNode(entry) {
+function timelineNode(entry, index, entries) {
+  const stageLabel = timelineStageLabel(entry.stage);
+  const previousStage = index > 0 ? entries[index - 1].stage : null;
+  const showDivider = stageLabel && entry.stage !== previousStage;
   return node("article", { class: `timeline-entry${entry.attention ? " attention" : ""}` },
-    node("span", { class: "timeline-dot", "aria-hidden": "true" }),
+    showDivider ? node("div", { class: "timeline-divider" }, node("span", {}, stageLabel)) : null,
     node("div", { class: "timeline-copy" },
-      entry.stage ? node("span", { class: "timeline-stage" }, entry.stage) : null,
-      node("strong", {}, entry.title), node("p", {}, entry.description),
-      entry.at ? node("small", {}, new Date(entry.at).toLocaleString("ja-JP")) : null,
+      node("p", { class: "timeline-text" }, entry.description || entry.title),
+      entry.description && entry.title !== entry.description ? node("p", { class: "timeline-subtext" }, entry.title) : null,
+      entry.at ? node("time", { class: "timeline-time" }, sessionTimeLabel(entry.at)) : null,
       entry.detail ? node("details", { class: "timeline-technical" }, node("summary", {}, "Technical details"), node("code", {}, entry.detail)) : null,
     ),
   );
@@ -1537,7 +1600,7 @@ function renderTimeline() {
   const key = JSON.stringify(entries);
   if (state.timelineRenderKey === key) return;
   state.timelineRenderKey = key;
-  ui.timeline.replaceChildren(...(entries.length ? entries.map(timelineNode) : [node("p", { class: "empty" }, "依頼すると、会社の動きがここに残ります。")]));
+  ui.timeline.replaceChildren(...(entries.length ? entries.map((entry, index) => timelineNode(entry, index, entries)) : [node("p", { class: "empty" }, "依頼すると、会社の動きがここに残ります。")]));
 }
 
 function renderDetails() {
@@ -1665,9 +1728,7 @@ function renderRequestSummary() {
     return;
   }
   ui.requestSummary.replaceChildren(
-    node("strong", {}, record.request),
-    node("small", {}, new Date(record.created_at).toLocaleString("ja-JP")),
-    node("p", {}, `現在の状態: ${stateLabel(record.state)}`),
+    node("h1", { class: "doc-title" }, record.request),
   );
 }
 

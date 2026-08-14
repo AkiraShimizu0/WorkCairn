@@ -59,31 +59,26 @@
         <div class="workspace-layout">
           <aside id="requests-pane" class="requests-pane">
             <section id="request-list-view" class="request-pane-view">
-              <div class="pane-heading">
-                <div>
-                  <p class="eyebrow">REQUESTS</p>
-                  <h1>依頼</h1>
+              <header class="list-header">
+                <h1 class="pane-title">依頼</h1>
+                <div class="list-actions">
+                  <button id="new-request-button" class="text-link" type="button">＋ 新しい依頼</button>
+                  <button id="refresh-button" class="text-link" type="button">更新</button>
                 </div>
-                <button id="new-request-button" class="button compact" type="button">＋ 新しい依頼</button>
-              </div>
-              <div class="pane-toolbar">
-                <button id="refresh-button" class="text-button" type="button">更新</button>
-              </div>
+              </header>
               <div id="session-list" class="session-list"></div>
             </section>
 
-            <section id="request-detail-view" class="request-pane-view" hidden>
-              <div class="pane-heading detail-heading">
-                <button id="back-to-list-button" class="text-button back-button" type="button">← 依頼一覧へ戻る</button>
+            <section id="request-detail-view" class="request-pane-view request-document" hidden>
+              <header class="detail-header">
+                <button id="back-to-list-button" class="text-link back-button" type="button">← 依頼一覧へ戻る</button>
                 <div id="request-summary" class="request-summary" aria-live="polite"></div>
-              </div>
+              </header>
 
               <section id="active-card" class="action-card" aria-live="polite"></section>
 
-              <section class="history-section" aria-labelledby="timeline-heading">
-                <div class="section-heading">
-                  <div><p class="eyebrow">WORKFLOW</p><h2 id="timeline-heading">この依頼の歩み</h2></div>
-                </div>
+              <section class="timeline-section" aria-labelledby="timeline-heading">
+                <h2 id="timeline-heading" class="visually-hidden">この依頼の歩み</h2>
                 <div id="activity-timeline" class="activity-timeline"></div>
               </section>
 
@@ -92,17 +87,17 @@
                 <div id="details-content" class="detail-content"></div>
               </details>
 
-              <section class="history-section request-insights" aria-label="仕事の証明と任せている範囲">
-                <details class="insight-panel" open>
-                  <summary><span class="eyebrow">PROOF OF WORK</span> 実際に完了したこと</summary>
+              <section class="request-insights" aria-label="仕事の証明と任せている範囲">
+                <details class="insight-panel">
+                  <summary><span class="visually-hidden">PROOF OF WORK</span>実際に完了したこと</summary>
                   <div id="proof-of-work"></div>
                 </details>
                 <details class="insight-panel">
-                  <summary><span class="eyebrow">AUTONOMY CONTRACT</span> 任せている範囲</summary>
+                  <summary><span class="visually-hidden">AUTONOMY CONTRACT</span>任せている範囲</summary>
                   <div id="autonomy-summary"></div>
                 </details>
                 <details class="insight-panel">
-                  <summary><span class="eyebrow">CEO ATTENTION</span> 任せて進んだ仕事</summary>
+                  <summary><span class="visually-hidden">CEO ATTENTION</span>任せて進んだ仕事</summary>
                   <div id="attention-grid" class="attention-grid"></div>
                 </details>
               </section>
