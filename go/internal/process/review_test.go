@@ -17,6 +17,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/metrics"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
@@ -277,13 +278,16 @@ func TestReviewFailureEnvelopeCarriesParseDiagnosticForInvalidReviewResult(t *te
 func TestReviewFailureEnvelopeCarriesParseFieldForMissingRequiredField(t *testing.T) {
 	_, parseErr := review.ParseTypedDecision(`{"verdict":"Approve","issues":[]}`)
 	presence := map[string]bool{"verdict": true, "issues": true, "summary": false}
+	fieldShape := map[string]failure.StructuredOutputFieldShape{"summary": {Present: false}}
 	parseErr.(*review.ParseError).Presence = presence
+	parseErr.(*review.ParseError).FieldShape = fieldShape
 	workerErr := &service.WorkerExecutionError{Kind: service.WorkerErrorInvalidReviewResult, Err: parseErr}
 	envelope := reviewFailureEnvelope(workerErr, nil, nil)
 	if envelope.Code != "REVIEW_RESULT_INVALID" || envelope.Stage != "review_result_parser" ||
 		envelope.Parse == nil || envelope.Parse.Domain != "review" ||
 		envelope.Parse.Reason != string(review.ParseFailureMissingRequiredField) || envelope.Parse.Field != "summary" ||
-		!reflect.DeepEqual(envelope.Parse.StructuredOutputPresence, presence) {
+		!reflect.DeepEqual(envelope.Parse.StructuredOutputPresence, presence) ||
+		!reflect.DeepEqual(envelope.Parse.StructuredOutputFieldShape, fieldShape) {
 		t.Fatalf("reviewFailureEnvelope() = %#v", envelope)
 	}
 }

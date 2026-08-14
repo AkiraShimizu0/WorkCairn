@@ -91,6 +91,25 @@ type ParseDiagnostic struct {
 	// itself when attaching this diagnostic is meaningful; it is not set
 	// for every parse failure.
 	StructuredOutputPresence map[string]bool `json:"structured_output_presence,omitempty"`
+	// StructuredOutputFieldShape is an optional, content-blind diagnostic
+	// for a Structured Output schema field whose value shape may explain a
+	// missing_required_field parse failure when key presence alone cannot
+	// (e.g. summary key present but empty, null, or non-string). Keys are
+	// contract field names; values report only presence, JSON type class,
+	// and whether a string value is non-blank after TrimSpace — never a
+	// field's value, length, hash, or raw JSON.
+	StructuredOutputFieldShape map[string]StructuredOutputFieldShape `json:"structured_output_field_shape,omitempty"`
+}
+
+// StructuredOutputFieldShape is a content-blind diagnostic for one
+// Structured Output schema field observed in the Provider's raw JSON
+// object before Domain semantic validation runs.
+type StructuredOutputFieldShape struct {
+	Present  bool   `json:"present"`
+	JSONType string `json:"json_type,omitempty"`
+	// NonBlank is set only when JSONType is "string": true when
+	// strings.TrimSpace of the decoded string is non-empty.
+	NonBlank *bool `json:"non_blank,omitempty"`
 }
 
 // CommittedEvidence records only what is certainly committed. Every field
@@ -140,6 +159,17 @@ func (envelope Envelope) Validate() error {
 		}
 		for key := range envelope.Parse.StructuredOutputPresence {
 			if !canonicalText(key) {
+				return ErrInvalidEnvelope
+			}
+		}
+		for key, shape := range envelope.Parse.StructuredOutputFieldShape {
+			if !canonicalText(key) {
+				return ErrInvalidEnvelope
+			}
+			if shape.JSONType != "" && shape.JSONType != "string" && shape.JSONType != "null" && shape.JSONType != "other" {
+				return ErrInvalidEnvelope
+			}
+			if shape.NonBlank != nil && shape.JSONType != "string" {
 				return ErrInvalidEnvelope
 			}
 		}

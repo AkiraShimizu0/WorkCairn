@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/runner"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
@@ -190,6 +191,7 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 		}
 	}
 	var structuredPresence map[string]bool
+	var structuredFieldShape map[string]failure.StructuredOutputFieldShape
 	content := providerResponse.markdown()
 	if request.StructuredOutput != nil {
 		content, err = providerResponse.structuredJSON()
@@ -200,6 +202,7 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 			}
 		}
 		structuredPresence = structuredOutputFieldPresence(request.StructuredOutput.Schema, content)
+		structuredFieldShape = structuredOutputFieldShape(request.StructuredOutput.Schema, content)
 	}
 	if content == "" || strings.TrimSpace(providerResponse.Model) == "" {
 		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureResponse}
@@ -223,6 +226,7 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 		Duration:                 duration,
 		Metadata:                 cloneMetadata(request.Metadata),
 		StructuredOutputPresence: structuredPresence,
+		StructuredOutputFieldShape: structuredFieldShape,
 	}
 	if err := result.Validate(); err != nil {
 		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureResponse, Err: err}
@@ -426,6 +430,47 @@ func structuredOutputFieldPresence(schema map[string]any, content string) map[st
 		presence[key] = exists
 	}
 	return presence
+}
+
+// structuredOutputFieldShape reports, for each schema-declared top-level
+// property name, a content-blind shape diagnostic: whether the key was
+// present, its JSON value type class (string/null/other), and for strings
+// only whether TrimSpace is non-empty. It never inspects or retains field
+// values beyond what is needed for the non_blank boolean.
+func structuredOutputFieldShape(schema map[string]any, content string) map[string]failure.StructuredOutputFieldShape {
+	declared := declaredTopLevelKeys(schema)
+	if len(declared) == 0 {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &fields); err != nil || fields == nil {
+		return nil
+	}
+	shapes := make(map[string]failure.StructuredOutputFieldShape, len(declared))
+	for key := range declared {
+		raw, exists := fields[key]
+		shape := failure.StructuredOutputFieldShape{Present: exists}
+		if !exists {
+			shapes[key] = shape
+			continue
+		}
+		if string(raw) == "null" {
+			shape.JSONType = "null"
+			shapes[key] = shape
+			continue
+		}
+		var asString string
+		if err := json.Unmarshal(raw, &asString); err == nil {
+			shape.JSONType = "string"
+			nonBlank := strings.TrimSpace(asString) != ""
+			shape.NonBlank = &nonBlank
+			shapes[key] = shape
+			continue
+		}
+		shape.JSONType = "other"
+		shapes[key] = shape
+	}
+	return shapes
 }
 
 // declaredTopLevelKeys reads a JSON Schema's own declared top-level

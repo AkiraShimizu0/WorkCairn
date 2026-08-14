@@ -97,6 +97,7 @@ func (service *ReviewService) Execute(ctx context.Context, input review.PromptIn
 		var parseErr *review.ParseError
 		if errors.As(err, &parseErr) {
 			parseErr.Presence = runResult.StructuredOutputPresence
+			parseErr.FieldShape = runResult.StructuredOutputFieldShape
 		}
 		return review.ExecutionResult{}, newWorkerError(WorkerErrorInvalidReviewResult, err)
 	}

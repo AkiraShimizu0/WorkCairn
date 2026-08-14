@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 )
 
 // RunRequest is the only contract visible to provider-specific Runner
@@ -65,6 +67,10 @@ type RunResult struct {
 	// could not determine a schema's declared top-level shape, or when
 	// StructuredOutput was not requested.
 	StructuredOutputPresence map[string]bool `json:"structured_output_presence,omitempty"`
+	// StructuredOutputFieldShape carries content-blind field shape
+	// diagnostics captured by the Adapter at Provider response receipt
+	// time. Nil when unavailable.
+	StructuredOutputFieldShape map[string]failure.StructuredOutputFieldShape `json:"structured_output_field_shape,omitempty"`
 }
 
 func (result RunResult) Validate() error {

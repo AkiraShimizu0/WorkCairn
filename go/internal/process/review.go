@@ -351,6 +351,7 @@ func reviewFailureEnvelope(reviewErr error, provider *ProviderFailure, artifact 
 				// cannot add to.
 				if reason == string(review.ParseFailureMissingRequiredField) {
 					envelope.Parse.StructuredOutputPresence = reviewParseFailurePresence(reviewErr)
+					envelope.Parse.StructuredOutputFieldShape = reviewParseFailureFieldShape(reviewErr)
 				}
 			}
 		case service.WorkerErrorTimeout:
@@ -403,6 +404,14 @@ func reviewParseFailurePresence(reviewErr error) map[string]bool {
 		return nil
 	}
 	return parseErr.Presence
+}
+
+func reviewParseFailureFieldShape(reviewErr error) map[string]failure.StructuredOutputFieldShape {
+	var parseErr *review.ParseError
+	if !errors.As(reviewErr, &parseErr) {
+		return nil
+	}
+	return parseErr.FieldShape
 }
 
 func executeClaimedReview(ctx context.Context, input ExecuteReviewInput, provider ClaudeProcessConfig, httpClient claude.HTTPDoer) (ReviewExecutionResult, error) {

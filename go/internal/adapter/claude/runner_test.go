@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
@@ -524,6 +525,74 @@ func TestStructuredOutputFieldPresenceNeverGuessesOnMalformedContent(t *testing.
 // free-form ContentField schema TestRunnerUnwrapsStructuredOutputContentField
 // uses) — there is nothing to check presence against, so the diagnostic is
 // nil rather than an empty, misleadingly "complete" map.
+// TestStructuredOutputFieldShapeReportsSummaryShapeWithoutContent locks the
+// content-blind shape diagnostic used to disambiguate missing_required_field
+// when StructuredOutputPresence alone cannot (summary key present but empty,
+// null, or non-string).
+func TestStructuredOutputFieldShapeReportsSummaryShapeWithoutContent(t *testing.T) {
+	schema := review.TypedDecisionJSONSchema()
+	tests := []struct {
+		name string
+		content string
+		want failure.StructuredOutputFieldShape
+	}{
+		{
+			"non-blank string",
+			`{"verdict":"Approve","issues":[],"summary":"S"}`,
+			failure.StructuredOutputFieldShape{Present: true, JSONType: "string", NonBlank: boolPtr(true)},
+		},
+		{
+			"empty string",
+			`{"verdict":"Approve","issues":[],"summary":""}`,
+			failure.StructuredOutputFieldShape{Present: true, JSONType: "string", NonBlank: boolPtr(false)},
+		},
+		{
+			"whitespace string",
+			`{"verdict":"Approve","issues":[],"summary":"   "}`,
+			failure.StructuredOutputFieldShape{Present: true, JSONType: "string", NonBlank: boolPtr(false)},
+		},
+		{
+			"null",
+			`{"verdict":"Approve","issues":[],"summary":null}`,
+			failure.StructuredOutputFieldShape{Present: true, JSONType: "null"},
+		},
+		{
+			"key absent",
+			`{"verdict":"Approve","issues":[]}`,
+			failure.StructuredOutputFieldShape{Present: false},
+		},
+		{
+			"non-string",
+			`{"verdict":"Approve","issues":[],"summary":1}`,
+			failure.StructuredOutputFieldShape{Present: true, JSONType: "other"},
+		},
+	}
+	for _, current := range tests {
+		t.Run(current.name, func(t *testing.T) {
+			shapes := structuredOutputFieldShape(schema, current.content)
+			got := shapes["summary"]
+			if got.Present != current.want.Present || got.JSONType != current.want.JSONType {
+				t.Fatalf("shape = %#v, want %#v", got, current.want)
+			}
+			if !boolPtrEqual(got.NonBlank, current.want.NonBlank) {
+				t.Fatalf("NonBlank = %#v, want %#v", got.NonBlank, current.want.NonBlank)
+			}
+		})
+	}
+}
+
+func boolPtr(value bool) *bool { return &value }
+
+func boolPtrEqual(left, right *bool) bool {
+	if left == nil && right == nil {
+		return true
+	}
+	if left == nil || right == nil {
+		return false
+	}
+	return *left == *right
+}
+
 func TestStructuredOutputFieldPresenceReturnsNilForUndeclaredSchemaShape(t *testing.T) {
 	if presence := structuredOutputFieldPresence(map[string]any{"type": "object"}, `{"a":1}`); presence != nil {
 		t.Fatalf("presence = %#v, want nil for a schema with no declared properties", presence)

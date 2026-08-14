@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/prompt"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/runner"
@@ -22,10 +23,11 @@ type reviewServiceFixture struct {
 }
 
 type capturingReviewRunner struct {
-	request  worker.RunRequest
-	content  string
-	err      error
-	presence map[string]bool
+	request    worker.RunRequest
+	content    string
+	err        error
+	presence   map[string]bool
+	fieldShape map[string]failure.StructuredOutputFieldShape
 }
 
 func (*capturingReviewRunner) Name() string { return "ClaudeRunner" }
@@ -43,7 +45,8 @@ func (fake *capturingReviewRunner) Run(_ context.Context, request worker.RunRequ
 		Usage:                    worker.TokenUsage{InputTokens: &inputTokens, OutputTokens: &outputTokens},
 		Duration:                 10 * time.Millisecond,
 		Metadata:                 request.Metadata,
-		StructuredOutputPresence: fake.presence,
+		StructuredOutputPresence:   fake.presence,
+		StructuredOutputFieldShape: fake.fieldShape,
 	}, nil
 }
 
@@ -129,8 +132,11 @@ func TestReviewServiceMapsBuilderAndStructuredResultFailures(t *testing.T) {
 func TestReviewServiceAttachesRunnerPresenceOnlyToParseFailures(t *testing.T) {
 	fixture := loadReviewServiceFixture(t)
 	registry := runner.NewRegistry()
-	presence := map[string]bool{"verdict": true, "issues": true, "summary": false}
-	fake := &capturingReviewRunner{content: `{"verdict":"Approve","issues":[]}`, presence: presence}
+	presence := map[string]bool{"verdict": true, "issues": true, "summary": true}
+	fieldShape := map[string]failure.StructuredOutputFieldShape{
+		"summary": {Present: true, JSONType: "string", NonBlank: boolPtr(false)},
+	}
+	fake := &capturingReviewRunner{content: `{"verdict":"Approve","issues":[],"summary":""}`, presence: presence, fieldShape: fieldShape}
 	if err := registry.Register(fake); err != nil {
 		t.Fatal(err)
 	}
@@ -148,10 +154,13 @@ func TestReviewServiceAttachesRunnerPresenceOnlyToParseFailures(t *testing.T) {
 	}
 	var parseErr *review.ParseError
 	if !errors.As(executeErr, &parseErr) || parseErr.Reason != review.ParseFailureMissingRequiredField ||
-		parseErr.Field != "summary" || !reflect.DeepEqual(parseErr.Presence, presence) {
-		t.Fatalf("ParseError = %#v, want Presence = %#v", parseErr, presence)
+		parseErr.Field != "summary" || !reflect.DeepEqual(parseErr.Presence, presence) ||
+		!reflect.DeepEqual(parseErr.FieldShape, fieldShape) {
+		t.Fatalf("ParseError = %#v, want Presence = %#v FieldShape = %#v", parseErr, presence, fieldShape)
 	}
 }
+
+func boolPtr(value bool) *bool { return &value }
 
 // TestReviewServiceLeavesPresenceNilWhenRunnerDoesNotSupplyIt proves the
 // success-path Decision itself never carries a presence diagnostic (only

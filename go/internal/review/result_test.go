@@ -126,6 +126,8 @@ func TestParseTypedDecisionClassifiesSanitizedParseFailureReasonWithoutRawText(t
 		{"missing verdict field", `{"issues":[],"summary":"x","note":"` + secret + `"}`, ParseFailureUnknownField},
 		{"missing issues field", `{"verdict":"Approve","summary":"` + secret + `"}`, ParseFailureMissingRequiredField},
 		{"missing summary field", `{"verdict":"Approve","issues":[]}`, ParseFailureMissingRequiredField},
+		{"summary present but empty string", `{"verdict":"Approve","issues":[],"summary":""}`, ParseFailureMissingRequiredField},
+		{"summary present but whitespace only", `{"verdict":"Approve","issues":[],"summary":"   "}`, ParseFailureMissingRequiredField},
 		{"invalid verdict value", `{"verdict":"` + secret + `","issues":[],"summary":"x"}`, ParseFailureInvalidVerdict},
 		{"issues not an array", `{"verdict":"Approve","issues":"` + secret + `","summary":"x"}`, ParseFailureJSONDecodeFailed},
 		{"issues null", `{"verdict":"Approve","issues":null,"summary":"x"}`, ParseFailureMissingRequiredField},

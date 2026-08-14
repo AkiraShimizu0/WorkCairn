@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
@@ -55,7 +56,13 @@ type ParseError struct {
 	// the caller had none available (e.g. a pre-migration replay path, or
 	// a Runner that does not populate the diagnostic).
 	Presence map[string]bool
-	err      error
+	// FieldShape is the optional content-blind field shape diagnostic
+	// the Adapter captured at Provider response receipt time (see
+	// worker.RunResult.StructuredOutputFieldShape), attached here by
+	// the calling Service after ParseTypedDecision returns — never
+	// computed by this package itself, and never a field value.
+	FieldShape map[string]failure.StructuredOutputFieldShape
+	err        error
 }
 
 func (parseErr *ParseError) Error() string { return parseErr.err.Error() }

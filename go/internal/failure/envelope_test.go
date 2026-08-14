@@ -60,6 +60,34 @@ func TestEnvelopeValidateRejectsUnsafeSubStructures(t *testing.T) {
 	}
 }
 
+func TestEnvelopeValidateRejectsUnsafeStructuredOutputFieldShape(t *testing.T) {
+	envelope := New("REVIEW_RESULT_INVALID", "review_result_parser")
+	nonBlank := true
+	envelope.Parse = &ParseDiagnostic{
+		Domain: "review", Reason: "missing_required_field", Field: "summary",
+		StructuredOutputFieldShape: map[string]StructuredOutputFieldShape{
+			"summary\n": {Present: true, JSONType: "string", NonBlank: &nonBlank},
+		},
+	}
+	if err := envelope.Validate(); err == nil {
+		t.Fatal("Parse with an unsafe StructuredOutputFieldShape key accepted")
+	}
+}
+
+func TestEnvelopeValidateAcceptsStructuredOutputFieldShape(t *testing.T) {
+	envelope := New("REVIEW_RESULT_INVALID", "review_result_parser")
+	nonBlank := false
+	envelope.Parse = &ParseDiagnostic{
+		Domain: "review", Reason: "missing_required_field", Field: "summary",
+		StructuredOutputFieldShape: map[string]StructuredOutputFieldShape{
+			"summary": {Present: true, JSONType: "string", NonBlank: &nonBlank},
+		},
+	}
+	if err := envelope.Validate(); err != nil {
+		t.Fatalf("Envelope with well-formed StructuredOutputFieldShape rejected: %v", err)
+	}
+}
+
 // TestEnvelopeValidateAcceptsStructuredOutputPresenceValuesRegardlessOfBool
 // confirms Validate() never rejects an Envelope on the basis of what a
 // presence value actually is -- true and false are both legitimate,
