@@ -3,6 +3,7 @@ package ceoplan
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
 )
@@ -76,9 +77,7 @@ func NormalizeIntent(intent Intent, employees []organization.Identity) (Plan, er
 			continue
 		}
 
-		assignment, err := organization.ResolveTaskAssignment(organization.AssignmentRequest{
-			RequiredRole: step.RequiredRole,
-		}, employees)
+		assignment, err := resolveStepAssignment(step, employees)
 		if err != nil {
 			// employees was already validated above, so this indicates a
 			// defect in ResolveTaskAssignment's own re-check rather than a
@@ -90,10 +89,10 @@ func NormalizeIntent(intent Intent, employees []organization.Identity) (Plan, er
 			// fall through to task construction below
 		case organization.AssignmentNoMatch:
 			return Plan{}, newNormalizationError(NormalizationAssignmentNoMatch,
-				fmt.Errorf("%w: no employee currently holds role %q", ErrAssignmentUnresolved, step.RequiredRole))
+				fmt.Errorf("%w: no employee currently holds role %q", ErrAssignmentUnresolved, assignment.RequiredRole))
 		case organization.AssignmentAmbiguous:
 			return Plan{}, newNormalizationError(NormalizationAssignmentAmbiguous,
-				fmt.Errorf("%w: %d employees hold role %q", ErrAssignmentUnresolved, assignment.MatchCount, step.RequiredRole))
+				fmt.Errorf("%w: %d employees hold role %q", ErrAssignmentUnresolved, assignment.MatchCount, assignment.RequiredRole))
 		default:
 			return Plan{}, newNormalizationError(NormalizationAssignmentRequirementMissing,
 				fmt.Errorf("%w: required_role is empty", ErrAssignmentUnresolved))
@@ -136,6 +135,59 @@ func NormalizeIntent(intent Intent, employees []organization.Identity) (Plan, er
 		CEOQuestions:              intent.CEOQuestions,
 	}
 	return NormalizeCandidate(candidate, employees)
+}
+
+// kindPreferredRoles lists Organization Role titles Go may try after an exact
+// LLM required_role lookup fails with NoMatch. Only write steps receive a
+// deterministic fallback today; this is step-kind policy, not fuzzy matching.
+func kindPreferredRoles(kind IntentStepKind) []string {
+	if kind == IntentStepWrite {
+		return []string{"Content Writer"}
+	}
+	return nil
+}
+
+func roleCandidatesForStep(step IntentStep) []string {
+	candidates := make([]string, 0, 2)
+	if role := strings.TrimSpace(step.RequiredRole); role != "" {
+		candidates = append(candidates, role)
+	}
+	for _, preferred := range kindPreferredRoles(step.Kind) {
+		if !containsString(candidates, preferred) {
+			candidates = append(candidates, preferred)
+		}
+	}
+	return candidates
+}
+
+func resolveStepAssignment(step IntentStep, employees []organization.Identity) (organization.AssignmentResult, error) {
+	candidates := roleCandidatesForStep(step)
+	if len(candidates) == 0 {
+		return organization.AssignmentResult{Status: organization.AssignmentRequirementMissing}, nil
+	}
+	var last organization.AssignmentResult
+	for _, role := range candidates {
+		assignment, err := organization.ResolveTaskAssignment(organization.AssignmentRequest{
+			RequiredRole: role,
+		}, employees)
+		if err != nil {
+			return organization.AssignmentResult{}, err
+		}
+		switch assignment.Status {
+		case organization.AssignmentResolved:
+			return assignment, nil
+		case organization.AssignmentAmbiguous:
+			return assignment, nil
+		case organization.AssignmentNoMatch, organization.AssignmentRequirementMissing:
+			last = assignment
+		default:
+			last = assignment
+		}
+	}
+	if last.Status == "" {
+		return organization.AssignmentResult{Status: organization.AssignmentRequirementMissing}, nil
+	}
+	return last, nil
 }
 
 func employeeDepartment(employees []organization.Identity, employeeID string) string {

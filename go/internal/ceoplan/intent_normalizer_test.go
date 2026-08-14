@@ -125,6 +125,111 @@ func TestNormalizeIntentRejectsUnresolvableAssignmentAsTypedFailure(t *testing.T
 	}
 }
 
+func TestNormalizeIntentResolvesExactRequiredRoleWithoutWriteFallback(t *testing.T) {
+	employees := []organization.Identity{
+		{ID: "CW-001", Department: "コンテンツ部", Role: "Content Writer"},
+	}
+	intent := Intent{
+		ProjectName: "P", Objective: "O", Summary: "S",
+		Steps: []IntentStep{{Kind: IntentStepWrite, Description: "原稿を書く", RequiredRole: "Content Writer"}},
+	}
+	plan, err := NormalizeIntent(intent, employees)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.ProposedTasks) != 1 {
+		t.Fatalf("expected one task, got %#v", plan.ProposedTasks)
+	}
+	task := plan.ProposedTasks[0]
+	if task.RequiredRole != "Content Writer" || task.AssigneeID == nil || *task.AssigneeID != "CW-001" {
+		t.Fatalf("exact match should resolve without fallback: %#v", task)
+	}
+}
+
+func TestNormalizeIntentWriteFallbackResolvesUniqueContentWriter(t *testing.T) {
+	starterEmployees := []organization.Identity{
+		{ID: "PM-001", Department: "企画部", Role: "Product Manager"},
+		{ID: "CW-001", Department: "コンテンツ部", Role: "Content Writer"},
+		{ID: "QA-001", Department: "品質保証部", Role: "QA Engineer"},
+	}
+	intent := Intent{
+		ProjectName: "商品紹介文", Objective: "Web向け紹介文", Summary: "作成",
+		Steps: []IntentStep{
+			{Kind: IntentStepWrite, Description: "商品紹介文を作成する", RequiredRole: "Writer"},
+			{Kind: IntentStepReview, Description: "品質を確認する"},
+		},
+	}
+	plan, err := NormalizeIntent(intent, starterEmployees)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.ProposedTasks) != 1 {
+		t.Fatalf("expected one task, got %#v", plan.ProposedTasks)
+	}
+	task := plan.ProposedTasks[0]
+	if task.RequiredRole != "Content Writer" || task.AssigneeID == nil || *task.AssigneeID != "CW-001" {
+		t.Fatalf("write kind fallback should resolve Content Writer: %#v", task)
+	}
+}
+
+func TestNormalizeIntentWriteFallbackRejectsAmbiguousContentWriter(t *testing.T) {
+	employees := []organization.Identity{
+		{ID: "CONTENT-001", Department: "コンテンツ部", Role: "Content Writer"},
+		{ID: "CONTENT-002", Department: "コンテンツ部", Role: "Content Writer"},
+	}
+	intent := Intent{
+		ProjectName: "P", Objective: "O", Summary: "S",
+		Steps: []IntentStep{{Kind: IntentStepWrite, Description: "D", RequiredRole: "Writer"}},
+	}
+	_, err := NormalizeIntent(intent, employees)
+	var normErr *NormalizationError
+	if !errors.As(err, &normErr) || normErr.Reason != NormalizationAssignmentAmbiguous {
+		t.Fatalf("err = %v, want assignment_ambiguous", err)
+	}
+}
+
+func TestNormalizeIntentWriteFallbackRejectsWhenContentWriterMissing(t *testing.T) {
+	employees := []organization.Identity{
+		{ID: "PLAN-001", Department: "企画部", Role: "Product Manager"},
+	}
+	intent := Intent{
+		ProjectName: "P", Objective: "O", Summary: "S",
+		Steps: []IntentStep{{Kind: IntentStepWrite, Description: "D", RequiredRole: "Writer"}},
+	}
+	_, err := NormalizeIntent(intent, employees)
+	var normErr *NormalizationError
+	if !errors.As(err, &normErr) || normErr.Reason != NormalizationAssignmentNoMatch {
+		t.Fatalf("err = %v, want assignment_no_match", err)
+	}
+}
+
+func TestNormalizeIntentNonWriteKindsDoNotUseWriteFallback(t *testing.T) {
+	employees := []organization.Identity{
+		{ID: "PM-001", Department: "企画部", Role: "Product Manager"},
+		{ID: "CW-001", Department: "コンテンツ部", Role: "Content Writer"},
+	}
+	for _, test := range []struct {
+		name string
+		kind IntentStepKind
+	}{
+		{"research", IntentStepResearch},
+		{"analyze", IntentStepAnalyze},
+		{"implement", IntentStepImplement},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			intent := Intent{
+				ProjectName: "P", Objective: "O", Summary: "S",
+				Steps: []IntentStep{{Kind: test.kind, Description: "D", RequiredRole: "Unknown Role"}},
+			}
+			_, err := NormalizeIntent(intent, employees)
+			var normErr *NormalizationError
+			if !errors.As(err, &normErr) || normErr.Reason != NormalizationAssignmentNoMatch {
+				t.Fatalf("err = %v, want assignment_no_match without kind fallback", err)
+			}
+		})
+	}
+}
+
 func TestNormalizeIntentRejectsMalformedOrganizationRosterBeforeResolvingAssignment(t *testing.T) {
 	duplicateEmployees := []organization.Identity{
 		{ID: "DUP-001", Department: "D", Role: "R"},
