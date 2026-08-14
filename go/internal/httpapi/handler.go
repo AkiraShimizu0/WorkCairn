@@ -35,6 +35,7 @@ type Handler struct {
 	organizationInspector      OrganizationInspector
 	taskEvidenceInspector      TaskEvidenceInspector
 	workReportInspector        WorkReportInspector
+	companyActivityInspector   CompanyActivityInspector
 	providerStatusInspector    ProviderStatusInspector
 	localSetup                 LocalSetup
 	localSetupAddress          string
@@ -85,6 +86,10 @@ type TaskEvidenceInspector interface {
 
 type WorkReportInspector interface {
 	InspectWorkReport(ctx context.Context, sessionID string) (workspaceprocess.WorkReport, error)
+}
+
+type CompanyActivityInspector interface {
+	InspectCompanyActivity(ctx context.Context) (workspaceprocess.CompanyActivity, error)
 }
 
 type ProviderStatusInspector interface {
@@ -162,6 +167,10 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 	if workReportInspector, ok := executor.(WorkReportInspector); ok {
 		handler.workReportInspector = workReportInspector
 		handler.mux.HandleFunc("GET /v1/interactions/{session_id}/work-report", handler.inspectWorkReport)
+	}
+	if companyActivityInspector, ok := executor.(CompanyActivityInspector); ok {
+		handler.companyActivityInspector = companyActivityInspector
+		handler.mux.HandleFunc("GET /v1/company-activity", handler.inspectCompanyActivity)
 	}
 	if providerStatusInspector, ok := executor.(ProviderStatusInspector); ok {
 		handler.providerStatusInspector = providerStatusInspector
@@ -263,6 +272,20 @@ func (handler *Handler) inspectProviderStatus(response http.ResponseWriter, _ *h
 		return
 	}
 	writeCommandResponse(response, http.StatusOK, Response{Version: ProviderStatusVersion, OK: true, Result: encoded})
+}
+
+func (handler *Handler) inspectCompanyActivity(response http.ResponseWriter, request *http.Request) {
+	activity, err := handler.companyActivityInspector.InspectCompanyActivity(request.Context())
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: workspaceprocess.CompanyActivityVersion, OK: false, Error: &CommandError{Code: "COMPANY_ACTIVITY_INSPECTION_FAILED", RecoveryRequired: true}})
+		return
+	}
+	encoded, err := json.Marshal(activity)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: workspaceprocess.CompanyActivityVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: workspaceprocess.CompanyActivityVersion, OK: true, Result: encoded})
 }
 
 func (handler *Handler) inspectWorkReport(response http.ResponseWriter, request *http.Request) {

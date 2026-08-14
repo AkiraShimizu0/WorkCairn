@@ -298,8 +298,8 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 	}
 	for _, required := range []string{
 		`Prefer: "respond-async"`, "monitorAcceptedCommand", "?scope=workspace",
-		"Your company is working. No action needed.", "renderCompanyFlow", "const next = state.next",
-		"/work-report", "autonomy_contract", "renderProofOfWork", "renderCEOAttention",
+		"依頼詳細へ表示します", "renderEmployeesPane", "isRequestDetailVisible", "const next = state.next",
+		"/work-report", "/v1/company-activity", "autonomy_contract", "renderProofOfWork", "renderCEOAttention",
 		"cryptoAPI.getRandomValues", "BROWSER_SECURE_RANDOM_UNAVAILABLE",
 		`ui.requestForm.addEventListener("submit", prepareNewRequest)`, `requestJSON("/v1/interaction-plans"`,
 		`showError(error, "依頼内容を確認できませんでした")`,
@@ -340,7 +340,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 	}
 	index := httptest.NewRecorder()
 	handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/", nil))
-	for _, required := range []string{"My Actions", "Company View", "AI社員", "RESPONSIBILITY FLOW", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION", "AI Connections", "Automatic", "接続済みAIサービスから、WorkCairnが実行先を選びます", "この依頼の歩み", "会社の動き", "FIRST-RUN SETUP"} {
+	for _, required := range []string{"AI社員", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION", "AI Connections", "Automatic", "接続済みAIサービスから、WorkCairnが実行先を選びます", "この依頼の歩み", "依頼一覧へ戻る", "FIRST-RUN SETUP"} {
 		if !strings.Contains(index.Body.String(), required) {
 			t.Fatalf("mobile UI is missing Living Company Dashboard surface %q", required)
 		}
@@ -370,8 +370,8 @@ func TestEmbeddedWebUIProjectsAcceptedCommandAsInFlightUntilTerminal(t *testing.
 		!strings.Contains(script[pendingProjection:nextActionSwitch], "return renderInFlight(pendingCommand)") {
 		t.Fatal("polling can restore the submitted Next Action while its Command is pending")
 	}
-	if !strings.Contains(script, "pendingInForeground") || !strings.Contains(script, "Boolean(storedPendingCommand()) && company") {
-		t.Fatal("in-flight work is not reduced to the background indicator outside My Actions")
+	if !strings.Contains(script, "pendingInForeground") || !strings.Contains(script, "isRequestDetailVisible()") {
+		t.Fatal("in-flight work is not reduced to the background indicator outside request detail")
 	}
 	terminal := strings.Index(script, `if (record.state === "succeeded")`)
 	terminalEnd := strings.Index(script[terminal:], `if (record.state === "failed"`)

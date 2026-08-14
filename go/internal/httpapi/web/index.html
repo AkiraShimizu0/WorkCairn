@@ -14,14 +14,17 @@
 <body>
   <div class="page-shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="WorkCairn ホーム">
-        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span><strong>WorkCairn</strong><small>Your AI company</small></span>
-      </a>
+      <div class="topbar-start">
+        <button id="menu-button" class="menu-button" type="button" hidden aria-label="メニューを開く" aria-controls="nav-drawer" aria-expanded="false">☰</button>
+        <a class="brand" href="/" aria-label="WorkCairn ホーム">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span><strong>WorkCairn</strong><small>Your AI company</small></span>
+        </a>
+      </div>
       <div class="topbar-actions">
         <span id="background-status" class="background-status" hidden><i aria-hidden="true"></i><span>会社が働いています</span></span>
         <span id="connection-status" class="status-dot">接続確認中</span>
-        <button id="settings-button" class="settings-button" type="button" hidden aria-label="AI Connectionsを開く">Settings</button>
+        <button id="settings-button" class="settings-button" type="button" hidden aria-label="Settingsを開く">Settings</button>
       </div>
     </header>
 
@@ -38,85 +41,86 @@
       </section>
 
       <section id="workspace-view" hidden>
-        <nav class="view-switcher" aria-label="表示切替">
-          <button id="my-actions-tab" class="view-tab active" type="button" aria-selected="true">My Actions</button>
-          <button id="company-tab" class="view-tab" type="button" aria-selected="false">Company View</button>
+        <div id="nav-backdrop" class="nav-backdrop" hidden></div>
+        <nav id="nav-drawer" class="nav-drawer" hidden aria-label="メインメニュー">
+          <div class="nav-drawer-heading">
+            <p class="eyebrow">MENU</p>
+            <h2>WorkCairn</h2>
+          </div>
+          <div class="nav-drawer-links">
+            <button id="nav-employees-home" class="nav-link" type="button">AI社員一覧へ戻る</button>
+            <button id="nav-request-list" class="nav-link" type="button">依頼一覧</button>
+            <button id="nav-new-request" class="nav-link" type="button">＋ 新しい依頼</button>
+            <button id="nav-current-request" class="nav-link" type="button" hidden>選択中の依頼</button>
+            <button id="nav-settings" class="nav-link" type="button">Settings</button>
+          </div>
         </nav>
 
-        <section id="my-actions-view">
-          <div class="intro-row">
-            <div>
-              <p class="eyebrow">MY ACTIONS</p>
-              <h1>次の判断</h1>
-            </div>
-            <button id="new-request-button" class="button compact" type="button">＋ 依頼する</button>
-          </div>
+        <div class="workspace-layout">
+          <aside id="requests-pane" class="requests-pane">
+            <section id="request-list-view" class="request-pane-view">
+              <div class="pane-heading">
+                <div>
+                  <p class="eyebrow">REQUESTS</p>
+                  <h1>依頼</h1>
+                </div>
+                <button id="new-request-button" class="button compact" type="button">＋ 新しい依頼</button>
+              </div>
+              <div class="pane-toolbar">
+                <button id="refresh-button" class="text-button" type="button">更新</button>
+              </div>
+              <div id="session-list" class="session-list"></div>
+            </section>
 
-          <section id="active-card" class="action-card" aria-live="polite"></section>
+            <section id="request-detail-view" class="request-pane-view" hidden>
+              <div class="pane-heading detail-heading">
+                <button id="back-to-list-button" class="text-button back-button" type="button">← 依頼一覧へ戻る</button>
+                <div id="request-summary" class="request-summary" aria-live="polite"></div>
+              </div>
 
-          <details id="details-panel" class="detail-panel">
-            <summary>Project・Task・Reviewの詳細</summary>
-            <div id="details-content" class="detail-content"></div>
-          </details>
+              <section id="active-card" class="action-card" aria-live="polite"></section>
 
-          <section class="history-section">
-            <div class="section-heading">
-              <h2>最近の依頼</h2>
-              <button id="refresh-button" class="text-button" type="button">更新</button>
-            </div>
-            <div id="session-list" class="session-list"></div>
-          </section>
+              <section class="history-section" aria-labelledby="timeline-heading">
+                <div class="section-heading">
+                  <div><p class="eyebrow">WORKFLOW</p><h2 id="timeline-heading">この依頼の歩み</h2></div>
+                </div>
+                <div id="activity-timeline" class="activity-timeline"></div>
+              </section>
 
-          <section class="history-section" aria-labelledby="timeline-heading">
-            <div class="section-heading"><div><p class="eyebrow">ACTIVITY</p><h2 id="timeline-heading">この依頼の歩み</h2></div></div>
-            <div id="activity-timeline" class="activity-timeline"></div>
-          </section>
-        </section>
+              <details id="details-panel" class="detail-panel">
+                <summary>Technical details</summary>
+                <div id="details-content" class="detail-content"></div>
+              </details>
 
-        <section id="company-view" hidden>
-          <div class="company-hero">
-            <div>
-              <p class="eyebrow">LIVING COMPANY DASHBOARD</p>
-              <h1>あなたの会社</h1>
-              <p class="company-promise">会社は見える。仕事も見える。でも管理しなくていい。</p>
-            </div>
-            <button id="company-request-button" class="button compact" type="button">＋ 依頼する</button>
-          </div>
-          <section id="company-status" class="company-status" aria-live="polite"></section>
-          <section class="company-section attention-section" aria-labelledby="attention-heading">
-            <div class="section-heading">
-              <div><p class="eyebrow">CEO ATTENTION</p><h2 id="attention-heading">任せて進んだ仕事</h2></div>
-            </div>
-            <div id="attention-grid" class="attention-grid"></div>
-          </section>
-          <section class="company-section" aria-labelledby="team-heading">
-            <div class="section-heading">
-              <div><p class="eyebrow">YOUR TEAM</p><h2 id="team-heading">AI社員</h2></div>
+              <section class="history-section request-insights" aria-label="仕事の証明と任せている範囲">
+                <details class="insight-panel" open>
+                  <summary><span class="eyebrow">PROOF OF WORK</span> 実際に完了したこと</summary>
+                  <div id="proof-of-work"></div>
+                </details>
+                <details class="insight-panel">
+                  <summary><span class="eyebrow">AUTONOMY CONTRACT</span> 任せている範囲</summary>
+                  <div id="autonomy-summary"></div>
+                </details>
+                <details class="insight-panel">
+                  <summary><span class="eyebrow">CEO ATTENTION</span> 任せて進んだ仕事</summary>
+                  <div id="attention-grid" class="attention-grid"></div>
+                </details>
+              </section>
+            </section>
+          </aside>
+
+          <aside id="employees-pane" class="employees-pane">
+            <div class="pane-heading">
+              <div>
+                <p class="eyebrow">YOUR TEAM</p>
+                <h1>AI社員</h1>
+              </div>
               <span id="team-count" class="count-chip"></span>
             </div>
+            <p class="pane-lead">会社のAI社員と、今の仕事の状態を確認できます。</p>
             <div id="employee-grid" class="employee-grid"></div>
-          </section>
-          <section class="company-section" aria-labelledby="flow-heading">
-            <div class="section-heading">
-              <div><p class="eyebrow">RESPONSIBILITY FLOW</p><h2 id="flow-heading">仕事の流れ</h2></div>
-            </div>
-            <div id="company-flow" class="company-flow"></div>
-          </section>
-          <section class="company-section" aria-labelledby="company-history-heading">
-            <div class="section-heading"><div><p class="eyebrow">ACTIVITY HISTORY</p><h2 id="company-history-heading">会社の動き</h2></div></div>
-            <div id="company-timeline" class="activity-timeline compact-timeline"></div>
-          </section>
-          <section class="company-section company-insight-grid" aria-label="自律範囲と仕事の証明">
-            <article class="company-insight" aria-labelledby="autonomy-heading">
-              <div><p class="eyebrow">AUTONOMY CONTRACT</p><h2 id="autonomy-heading">任せている範囲</h2></div>
-              <div id="autonomy-summary"></div>
-            </article>
-            <article class="company-insight" aria-labelledby="proof-heading">
-              <div><p class="eyebrow">PROOF OF WORK</p><h2 id="proof-heading">実際に完了したこと</h2></div>
-              <div id="proof-of-work"></div>
-            </article>
-          </section>
-        </section>
+          </aside>
+        </div>
       </section>
     </main>
   </div>

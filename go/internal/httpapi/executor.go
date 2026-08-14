@@ -624,6 +624,10 @@ func (executor *ProcessExecutor) InspectWorkReport(ctx context.Context, sessionI
 	return workspaceprocess.InspectWorkReport(ctx, executor.vaultRoot, sessionID)
 }
 
+func (executor *ProcessExecutor) InspectCompanyActivity(ctx context.Context) (workspaceprocess.CompanyActivity, error) {
+	return workspaceprocess.InspectCompanyActivity(ctx, executor.vaultRoot)
+}
+
 func (executor *ProcessExecutor) PlanInteraction(ctx context.Context, request InteractionPlanRequest) (workspaceprocess.InteractionStartPlan, error) {
 	return workspaceprocess.PlanInteractionStart(ctx, workspaceprocess.InteractionStartInput{
 		VaultRoot: executor.vaultRoot, SessionID: request.SessionID, Request: request.Request,

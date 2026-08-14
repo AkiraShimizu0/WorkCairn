@@ -48,6 +48,19 @@ async function startRequest(page, requestText) {
   await expect(page.getByRole("button", { name: "進め方の作成を承認" })).toBeVisible();
 }
 
+async function ensureRequestDetail(page) {
+  const detail = page.locator("#request-detail-view");
+  if (await detail.isVisible()) return;
+  await page.locator("#menu-button").click();
+  const current = page.locator("#nav-current-request");
+  if (await current.isVisible()) {
+    await current.click();
+    return;
+  }
+  await page.locator("#nav-request-list").click();
+  await page.locator("#session-list .session-item").first().click();
+}
+
 async function approvePlanAndWorkflow(page) {
   await expect(page.locator("#active-card")).toContainText("このように進めます");
   await expect(page.locator("#active-card")).not.toContainText("PROPOSED-");
@@ -108,23 +121,21 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
     ]);
     expect(environment.provider.calls.map((call) => call.structured)).toEqual([true, true, false, true, false, true]);
 
-    await page.locator("#company-tab").click();
-    await expect(page.locator("#company-timeline")).toContainText("Reviewerが修正を依頼しました");
-    await expect(page.locator("#company-timeline")).toContainText("修正を完了しました");
+    await expect(page.locator("#activity-timeline")).toContainText("Reviewerが修正を依頼しました");
+    await expect(page.locator("#activity-timeline")).toContainText("修正を完了しました");
     await expect(page.locator("#proof-of-work")).toContainText("2件の仕事");
     await expect(page.locator("#proof-of-work")).toContainText("Review: Approve");
 
     await page.reload();
     await expect(page.locator("#workspace-view")).toBeVisible();
-    await page.locator("#my-actions-tab").click();
+    await ensureRequestDetail(page);
     await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible();
     await expect(page.locator("#activity-timeline")).toContainText("Reviewerが承認しました");
 
     const restarted = await environment.restartDaemon();
     await pairThroughUI(page, restarted);
-    await page.locator("#my-actions-tab").click();
+    await ensureRequestDetail(page);
     await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible();
-    await page.locator("#company-tab").click();
     await expect(page.locator("#proof-of-work")).toContainText("2件の仕事");
     expect(await pathExists(join(environment.vaultRoot, "プロジェクト", "Browser Acceptance Project", "Deliverables", "TASK-001.md"))).toBeTruthy();
     expect(await pathExists(join(environment.vaultRoot, "プロジェクト", "Browser Acceptance Project", "Reviews", "TASK-001.review.json"))).toBeTruthy();
@@ -172,7 +183,7 @@ test("typed Provider failure is restored from durable Ledger evidence", async ({
     });
     const freshPage = await freshContext.newPage();
     await pairThroughUI(freshPage, environment.daemon);
-    await freshPage.locator("#my-actions-tab").click();
+    await ensureRequestDetail(freshPage);
     await expect(freshPage.locator("#active-card")).toContainText("PROVIDER_RATE_LIMITED");
     await expect(freshPage.locator("#active-card")).toContainText("review_provider");
     await expect(freshPage.locator("#active-card")).toContainText("req_browser_rate_limit_001");
