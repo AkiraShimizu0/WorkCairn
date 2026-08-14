@@ -47,7 +47,7 @@ cross-build成功だけでnative supportを宣言しません。
 
 targetごとにclean output directoryを使います。
 
-- [ ] `make release-package RELEASE_GOOS=<os> RELEASE_GOARCH=<arch> BUILD_DATE=<RFC3339>`が成功する。
+- [ ] `make release-package RELEASE_GOOS=<os> RELEASE_GOARCH=<arch> BUILD_DATE=<RFC3339>`が成功する。darwin archiveはSecurity.frameworkをlinkするためmacOS hostで作成する。
 - [ ] archive名、root directory、`VERSION`、3 binaryのversion、commit、build dateが一致する。
 - [ ] macOSの`shasum -a 256 -c`またはLinuxの`sha256sum -c`でchecksumが成功する。
 - [ ] archiveは3 binary、`VERSION`、LICENSE、README、CHANGELOG、SECURITY、CONTRIBUTING、docsだけを含む。

@@ -350,6 +350,7 @@ Public Beta公開前に残る人間／実環境確認：
 - temporary Vaultとtest credentialによる最小Provider smoke
 - iCloud Drive上のWorkCairn専用VaultをFinderで選択し、Obsidianで開くfirst-run実機smoke（既存個人Vaultは変更しない、writerは1 daemon）
 - [完了] native folder picker、Application Supportの再起動参照、Mac native hidden-input＋Keychainによりterminal不要のmacOS First-runを実装。trusted LANへpath／secret値を受けるendpointは追加しない
+- [完了] macOS Keychain保存を不定な`security`対話PTYから、anonymous socketとbounded helperを使うSecurity.framework native Adapterへ置換。write後read-back、existing update、restart read、timeout時kill/reapを固定
 - ADR-0036の`workcairn-auto`を起点に、複数Provider導入時だけEmployee Role／Task capability／接続済みRuntime／quality・cost・latency policyからtyped Routeを解決する拡張（暗黙fallbackなし）
 - tag、Release note、archive checksumの最終sign-off
 

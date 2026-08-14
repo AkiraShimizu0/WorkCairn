@@ -89,6 +89,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0041: Typed FailureEnvelopeをchild→outer→Ledger→HTTP→UIへそのまま伝播する](adr/ADR-0041-typed-failure-envelope-propagation.md)
 - [ADR-0042: Public Betaの一般daemonをInteraction Reviewed Workflow経路へ限定する](adr/ADR-0042-public-beta-product-path.md)
 - [ADR-0043: actual daemonとChromium／WebKitによるPublic Beta Browser Acceptance Gate](adr/ADR-0043-public-beta-browser-acceptance-gate.md)
+- [ADR-0044: macOS Keychain永続化をnative helperへ移す](adr/ADR-0044-native-macos-keychain-persistence.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -206,7 +207,7 @@ ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環�
 - `go/internal/scheduler`: Storage／transport非依存のone-shot Schedule、state、Version／CAS、Dispatcher port
 - `go/internal/runner`: model値とRunner Adapterを解決するthread-safe Registry
 - `go/internal/adapter/claude`: Anthropic Messages APIを既存Runner契約へ変換するProvider Adapter
-- `go/internal/adapter/localos`: macOS folder picker、Application Support path reference、Keychain、Finder／browser openをRuntime edgeへ閉じ込めるOS Adapter。Core、Vault contract、Task／Eventを知らない
+- `go/internal/adapter/localos`: macOS folder picker、Application Support path reference、Finder／browser openと、bounded helperからSecurity.frameworkを直接呼ぶKeychain persistenceをRuntime edgeへ閉じ込めるOS Adapter。credentialはanonymous socketだけを通り、Core、Vault contract、Task／EventはmacOS APIやsecretを知らない
 - `go/internal/adapter/vault`: read-only Context／Organization Loader、Project／Task／Deliverable／Review／Revision intent／Schedule／Interaction Store、Audit Event subscriber
 - `go/internal/runtime`: Provider／Storage AdapterをServiceへ注入するprocess-neutral execution／Review／Revision composition
 - `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／reviewed Workflow／Schedule／Interaction Workflow／Recoveryのread-only planと明示承認付きexecute、canonical evidenceからのWork Report projection

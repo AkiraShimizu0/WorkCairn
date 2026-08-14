@@ -16,6 +16,8 @@ macOSの配布daemonは`--vault`未指定時に、Runtime起動edgeからネイ�
 
 Claude connectionはADR-0036を拡張し、Mac本体からの明示操作だけがネイティブhidden-inputを起動します。secretはHTTP request、browser、localStorage、Vault、Command、Audit、logへ渡さず、macOS Keychainのgeneric passwordとして保存します。daemonは起動時にprocess environmentの明示overrideを優先し、それがない場合だけKeychainから読みます。接続後はRuntime edgeのProvider configだけを更新し、Core／Interaction／Workflowへcredentialを渡しません。
 
+Keychainへの具体的な永続化はADR-0044に従います。`security` CLIの対話PTYは使用せず、bounded native helperがSecurity.frameworkを直接呼び、anonymous socketだけでsecretを受け取ります。macOS releaseはSecurity.frameworkをlinkするnative cgo buildとします。
+
 local setup endpointはpathやcredentialの値をpayloadに持ちません。daemonを実行しているMac自身からのsame-origin intentだけを許可し、paired iPhone等の別hostは拒否します。iPhoneはredactedなConnected／Setup requiredだけを読み、Macで設定する次Actionを表示します。Finder revealも同じMac-only境界で、明示button操作時だけ行います。
 
 Starter Organizationは引き続きADR-0037の`workspace.setup`、既存Organization writer、明示承認を通します。folder picker、Keychain、FinderはAdapter／Runtime edgeであり、Task状態、Event、Plan、Review、Revision、canonical evidenceを知りません。

@@ -27,6 +27,23 @@ package_dir="$dist_root/$archive_name"
 archive_path="$dist_root/$archive_name.tar.gz"
 checksum_path="$archive_path.sha256"
 
+case "$RELEASE_GOOS" in
+  darwin)
+    if [ "$(cd "$repository_root/go" && go env GOOS)" != "darwin" ]; then
+      echo "darwin release packages require a macOS build host for Security.framework" >&2
+      exit 2
+    fi
+    release_cgo=1
+    ;;
+  linux)
+    release_cgo=0
+    ;;
+  *)
+    echo "unsupported release OS: $RELEASE_GOOS" >&2
+    exit 2
+    ;;
+esac
+
 if [ -e "$package_dir" ] || [ -e "$archive_path" ] || [ -e "$checksum_path" ]; then
   echo "release output already exists; refusing to overwrite: $archive_name" >&2
   exit 1
@@ -42,7 +59,7 @@ ldflags="-s -w -X $module.Version=$RELEASE_VERSION -X $module.Commit=$commit -X 
 for command in workcairn-core workcairn workcairn-daemon; do
   (
     cd "$repository_root/go"
-    CGO_ENABLED=0 GOOS="$RELEASE_GOOS" GOARCH="$RELEASE_GOARCH" GOTELEMETRY=off \
+    CGO_ENABLED="$release_cgo" GOOS="$RELEASE_GOOS" GOARCH="$RELEASE_GOARCH" GOTELEMETRY=off \
       go build -trimpath -buildvcs=false -ldflags "$ldflags" -o "$package_dir/bin/$command" "./cmd/$command"
   )
 done

@@ -8,6 +8,7 @@ type unsupportedIntegration struct{}
 
 func NewWorkspaceSelector() WorkspaceSelector         { return unsupportedIntegration{} }
 func NewClaudeCredentialStore() ClaudeCredentialStore { return unsupportedIntegration{} }
+func RunCredentialHelperIfRequested() (bool, int)     { return false, 0 }
 func NewWorkspaceViewer() WorkspaceViewer             { return unsupportedIntegration{} }
 func NewBrowserOpener() BrowserOpener                 { return unsupportedIntegration{} }
 

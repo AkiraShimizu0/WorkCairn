@@ -27,6 +27,9 @@ import (
 )
 
 func main() {
+	if handled, exitCode := localos.RunCredentialHelperIfRequested(); handled {
+		os.Exit(exitCode)
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
 		if err := json.NewEncoder(os.Stdout).Encode(buildinfo.Current()); err != nil {
 			os.Exit(1)

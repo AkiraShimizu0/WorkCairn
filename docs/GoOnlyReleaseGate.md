@@ -4,6 +4,8 @@
 
 WorkCairnの製品Runtime、build、正式Release Gate、release、distributionはGo Onlyです。正式な製品surfaceは`workcairn`、`workcairn-daemon`、JSON Contract v1の`workcairn-core`であり、clone後のbuild／unit test／release検証にGo toolchain以外の言語runtimeやpackage managerを必要としません。Public Beta候補versionは`VERSION`の`v1.0.0-beta.1`です。
 
+macOSの`workcairn-daemon`はADR-0044のKeychain AdapterでSecurity.frameworkをlinkするため、darwin release archiveをmacOS host上で`CGO_ENABLED=1`としてbuildします。これはGo標準のcgoとmacOS system frameworkだけを使い、別language runtimeを配布しません。Linux archiveは`CGO_ENABLED=0`のままです。非macOS hostではdarwin no-cgo stubのcompile確認だけが可能で、darwin release archiveを作る経路はfail closedです。
+
 ADR-0043のactual browser acceptanceだけは、製品外のtest-only Node／Playwright harnessを別Gateとして使用します。これは`make v1-release-gate`の構成、Go module、製品binary、release archiveを変更しません。
 
 ## Capability matrix

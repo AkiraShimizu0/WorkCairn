@@ -53,10 +53,15 @@ func TestGoProductSourcesCannotLaunchExternalProcesses(t *testing.T) {
 		if info.IsDir() || !strings.HasSuffix(info.Name(), ".go") {
 			return nil
 		}
-		// ADR-0038 explicitly confines macOS native UI, Keychain, Finder, and
-		// browser launch to this Adapter. Its tests assert a fixed allow-list
-		// of absolute OS tools and keep secrets out of argv.
-		if filepath.ToSlash(path) == filepath.ToSlash(filepath.Join(goRoot, "internal", "adapter", "localos", "integration_darwin.go")) {
+		// ADR-0038/0044 confine macOS native UI, Finder/browser launch, and the
+		// bounded native Keychain helper to this Adapter. Dedicated tests assert
+		// fixed tools, a closed helper operation protocol, process cleanup, and
+		// that credentials never enter argv, environment, or standard streams.
+		localOSProcessAllowList := map[string]bool{
+			filepath.ToSlash(filepath.Join(goRoot, "internal", "adapter", "localos", "integration_darwin.go")):      true,
+			filepath.ToSlash(filepath.Join(goRoot, "internal", "adapter", "localos", "keychain_process_darwin.go")): true,
+		}
+		if localOSProcessAllowList[filepath.ToSlash(path)] {
 			return nil
 		}
 		file, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, 0)

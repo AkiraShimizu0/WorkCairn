@@ -18,7 +18,7 @@ First Run → Interaction Start → CEO Intent → Go Canonical Plan → Plan Ap
 
 一般daemonは`workspace.setup`とこのInteractionを進める5 operationだけをside-effect allow-listへ持ちます。direct Task／Review／Revision、plain／direct Reviewed Workflow、writer、Scheduler、External Actionはoperator CLI／内部Processとして維持しますが、一般Web UI／daemonから実行できません。
 
-macOSの初回起動では、利用者がnative pickerでWorkCairn専用directoryを明示選択します。iCloud Driveを推奨しますが、既存Vaultを探索・変更しません。選択済みrootはRuntime edgeのApplication Support configから再起動時にcomposeし、Starter Organizationは既存Organization writer、Claude credentialはMac native inputとKeychain Adapterを通します。iPhoneはpath／secretを送らず、redactedなsetup状態とNext Actionだけを表示します。
+macOSの初回起動では、利用者がnative pickerでWorkCairn専用directoryを明示選択します。iCloud Driveを推奨しますが、既存Vaultを探索・変更しません。選択済みrootはRuntime edgeのApplication Support configから再起動時にcomposeし、Starter Organizationは既存Organization writerを通します。Claude credentialはMac native inputからanonymous socketでbounded helperへ渡し、Security.frameworkを直接呼ぶKeychain Adapterで保存・read-backします。iPhoneはpath／secretを送らず、redactedなsetup状態とNext Actionだけを表示します。
 
 この文書は「現在どう動くか」を説明します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、個別判断の理由は[ADR](adr/)、詳細なpackage構造は[Architecture.md](Architecture.md)、安全な導入は[PublicBetaQuickstart.md](PublicBetaQuickstart.md)と[OperatorGuide.md](OperatorGuide.md)、HTTP運用は[HTTPAPI.md](HTTPAPI.md)、今後の順序は[ROADMAP.md](ROADMAP.md)を正とします。
 

@@ -7,17 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	urlpkg "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
-
-	"github.com/creack/pty"
 )
 
 const (
@@ -44,83 +40,6 @@ func (execRunner) Run(ctx context.Context, name string, args []string, stdin str
 		return "", newCommandExecutionError(err, stderr.String(), "")
 	}
 	return string(output), nil
-}
-
-// RunSecretPrompt uses a pseudo-terminal because security(1)'s password
-// prompt is interactive and does not accept a daemon pipe as a non-interactive
-// password source. The secret is written only to the PTY and is never argv,
-// stdout, stderr, a returned error, or persistent evidence.
-func (execRunner) RunSecretPrompt(ctx context.Context, name string, args []string, secret string) error {
-	command := exec.CommandContext(ctx, name, args...)
-	terminal, err := pty.Start(command)
-	if err != nil {
-		return newCommandExecutionError(err, "", secret)
-	}
-	defer terminal.Close()
-
-	type terminalResult struct {
-		content []byte
-		err     error
-	}
-	promptReady := make(chan struct{}, 1)
-	output := make(chan terminalResult, 1)
-	go func() {
-		var content bytes.Buffer
-		buffer := make([]byte, 1024)
-		var signalPrompt sync.Once
-		for {
-			count, readErr := terminal.Read(buffer)
-			if count > 0 {
-				signalPrompt.Do(func() { promptReady <- struct{}{} })
-				if content.Len() < 16<<10 {
-					remaining := (16 << 10) - content.Len()
-					if count < remaining {
-						remaining = count
-					}
-					_, _ = content.Write(buffer[:remaining])
-				}
-			}
-			if readErr != nil {
-				output <- terminalResult{content: content.Bytes(), err: readErr}
-				return
-			}
-		}
-	}()
-
-	// security(1) initializes readpassphrase after starting. Writing before it
-	// emits its prompt races with terminal input flushing and can leave the
-	// child waiting forever. The first PTY output marks the prompt boundary.
-	select {
-	case <-promptReady:
-	case result := <-output:
-		_ = command.Wait()
-		return newCommandExecutionError(result.err, string(result.content), secret)
-	case <-ctx.Done():
-		_ = command.Process.Kill()
-		_ = command.Wait()
-		result := <-output
-		return newCommandExecutionError(ctx.Err(), string(result.content), secret)
-	}
-
-	written, err := io.WriteString(terminal, secret+"\n")
-	if err != nil || written != len(secret)+1 {
-		if err == nil {
-			err = io.ErrShortWrite
-		}
-		_ = command.Process.Kill()
-		_ = command.Wait()
-		result := <-output
-		return newCommandExecutionError(err, string(result.content), secret)
-	}
-	waitErr := command.Wait()
-	result := <-output
-	if waitErr != nil {
-		if ctx.Err() != nil {
-			waitErr = ctx.Err()
-		}
-		return newCommandExecutionError(waitErr, string(result.content), secret)
-	}
-	return nil
 }
 
 type commandExecutionError struct {
@@ -187,12 +106,13 @@ end try`
 
 type DarwinClaudeCredentialStore struct {
 	runner          CommandRunner
+	keychain        credentialKeychain
 	inputTimeout    time.Duration
 	keychainTimeout time.Duration
 }
 
 func NewClaudeCredentialStore() ClaudeCredentialStore {
-	return &DarwinClaudeCredentialStore{runner: execRunner{}}
+	return &DarwinClaudeCredentialStore{runner: execRunner{}, keychain: newProcessCredentialKeychain()}
 }
 
 func (store *DarwinClaudeCredentialStore) Load(ctx context.Context) (string, error) {
@@ -202,11 +122,12 @@ func (store *DarwinClaudeCredentialStore) Load(ctx context.Context) (string, err
 func (store *DarwinClaudeCredentialStore) load(ctx context.Context, substage string) (string, error) {
 	commandCtx, cancel := context.WithTimeout(ctx, store.keychainCommandDuration())
 	defer cancel()
-	output, err := store.runner.Run(commandCtx, "/usr/bin/security", []string{"find-generic-password", "-a", claudeKeychainAccount, "-s", claudeKeychainService, "-w"}, "")
+	output, err := store.keychain.Read(commandCtx)
 	if err != nil {
 		return "", classifyCredentialError(substage, err)
 	}
-	credential := strings.TrimSpace(output)
+	defer zeroBytes(output)
+	credential := strings.TrimSpace(string(output))
 	if credential == "" {
 		return "", &CredentialError{Substage: substage, Classification: CredentialOutputInvalid}
 	}
@@ -231,7 +152,7 @@ end try`
 		return "", ErrCanceled
 	}
 	writeCtx, cancelWrite := context.WithTimeout(ctx, store.keychainCommandDuration())
-	err = store.runner.RunSecretPrompt(writeCtx, "/usr/bin/security", []string{"add-generic-password", "-U", "-a", claudeKeychainAccount, "-s", claudeKeychainService, "-w"}, credential)
+	err = store.keychain.Upsert(writeCtx, []byte(credential))
 	cancelWrite()
 	if err != nil {
 		return "", classifyCredentialError(CredentialWrite, err)
@@ -259,8 +180,11 @@ func (store *DarwinClaudeCredentialStore) keychainCommandDuration() time.Duratio
 func classifyCredentialError(substage string, err error) error {
 	classification := CredentialCommandFailed
 	var commandErr *commandExecutionError
+	var keychainErr *keychainOperationError
 	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &commandErr) && commandErr.timedOut {
 		classification = CredentialSetupTimeout
+	} else if errors.As(err, &keychainErr) {
+		classification = keychainErr.classification
 	} else if errors.As(err, &commandErr) {
 		diagnostic := strings.ToLower(commandErr.diagnostic)
 		switch {

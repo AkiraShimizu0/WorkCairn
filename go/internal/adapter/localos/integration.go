@@ -20,10 +20,6 @@ const workspaceConfigVersion = "workcairn-local-workspace.v1"
 
 type CommandRunner interface {
 	Run(ctx context.Context, name string, args []string, stdin string) (string, error)
-	// RunSecretPrompt starts a command on a pseudo-terminal and answers its
-	// interactive secret prompt without placing the secret in argv. The
-	// implementation must never return the secret in an error or diagnostic.
-	RunSecretPrompt(ctx context.Context, name string, args []string, secret string) error
 }
 
 type CredentialFailure string
@@ -34,6 +30,7 @@ const (
 	CredentialCommandFailed    CredentialFailure = "keychain_command_failed"
 	CredentialOutputInvalid    CredentialFailure = "keychain_output_invalid"
 	CredentialSetupTimeout     CredentialFailure = "keychain_setup_timeout"
+	CredentialUnavailable      CredentialFailure = "keychain_unavailable"
 )
 
 const (
