@@ -31,12 +31,16 @@ type OrchestrationResult struct {
 	// ParseFailureReason is set only when FailureCode is REVIEW_RESULT_INVALID.
 	// It is a sanitized ParseFailureReason value, never raw Provider text.
 	ParseFailureReason string `json:"parse_failure_reason,omitempty"`
+	// ParseFailureField is the optional sanitized ParseError.Field (e.g.
+	// "issues", "summary"), set only when ParseFailureReason is
+	// missing_required_field. It never contains a field value.
+	ParseFailureField string `json:"parse_failure_field,omitempty"`
 	// Failure is the single typed classification this Review Command
 	// determined once, forwarded unchanged by every composing caller
 	// (Reviewed Workflow, Interaction Workflow). ProviderFailure/
-	// FailureCode/FailureStage/ParseFailureReason above are kept as a
-	// migration-period read-model projection of this same Envelope, not
-	// independently computed.
+	// FailureCode/FailureStage/ParseFailureReason/ParseFailureField above
+	// are kept as a migration-period read-model projection of this same
+	// Envelope, not independently computed.
 	Failure *failure.Envelope `json:"failure,omitempty"`
 }
 

@@ -266,6 +266,22 @@ func TestReviewFailureEnvelopeCarriesParseDiagnosticForInvalidReviewResult(t *te
 	}
 }
 
+// TestReviewFailureEnvelopeCarriesParseFieldForMissingRequiredField covers
+// the missing_required_field branch specifically: the Envelope's Parse
+// diagnostic must carry the sanitized review.ParseError.Field (never a
+// field value) alongside Reason, so an operator can tell which of the
+// Review Typed Decision's required fields the Runner omitted.
+func TestReviewFailureEnvelopeCarriesParseFieldForMissingRequiredField(t *testing.T) {
+	_, parseErr := review.ParseTypedDecision(`{"verdict":"Approve","issues":[]}`)
+	workerErr := &service.WorkerExecutionError{Kind: service.WorkerErrorInvalidReviewResult, Err: parseErr}
+	envelope := reviewFailureEnvelope(workerErr, nil, nil)
+	if envelope.Code != "REVIEW_RESULT_INVALID" || envelope.Stage != "review_result_parser" ||
+		envelope.Parse == nil || envelope.Parse.Domain != "review" ||
+		envelope.Parse.Reason != string(review.ParseFailureMissingRequiredField) || envelope.Parse.Field != "summary" {
+		t.Fatalf("reviewFailureEnvelope() = %#v", envelope)
+	}
+}
+
 // TestExecuteReviewReplaysPreMigrationLedgerRecordWithoutEnvelope proves
 // backward compatibility: a Ledger record committed before this Phase (a
 // Failure with no "details" key at all) still replays correctly. The

@@ -168,7 +168,8 @@ func ExecuteReviewedWorkflow(
 			EventID: executed.EventID, EventPublished: executed.EventPublished,
 			ProviderFailure: reviewOrchestrationProviderFailure(executed.ProviderFailure),
 			FailureCode:     executed.FailureCode, FailureStage: executed.FailureStage,
-			ParseFailureReason: executed.ParseFailureReason, Failure: executed.Failure,
+			ParseFailureReason: executed.ParseFailureReason, ParseFailureField: executed.ParseFailureField,
+			Failure: executed.Failure,
 		}, reviewErr
 	})
 	reviser := reviewedWorkflowReviserFunc(func(runContext context.Context, sourceTaskID, childCommandID string) (revision.Result, error) {

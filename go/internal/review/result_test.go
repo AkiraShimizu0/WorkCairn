@@ -171,6 +171,65 @@ func TestParseTypedDecisionRejectsEveryKindOfTrailingContent(t *testing.T) {
 	}
 }
 
+// TestParseTypedDecisionParseErrorFieldOnlyForMissingRequiredField locks
+// which of the seven required Review Typed Decision fields can actually
+// produce Reason == ParseFailureMissingRequiredField, and that Field is
+// populated only for those two (issues, summary). verdict and the four
+// issue fields fail JSON decode into their zero value ("") when absent,
+// which is indistinguishable from an explicitly wrong value, so they
+// already carry a more specific Reason (invalid_verdict,
+// invalid_issue_category, invalid_issue_severity, issue_text_required)
+// instead — ParseError.Field stays empty for those, matching
+// ceoplan.IntentParseError's identical scoping of Field to
+// missing_required_field only.
+func TestParseTypedDecisionParseErrorFieldOnlyForMissingRequiredField(t *testing.T) {
+	tests := []struct {
+		name      string
+		output    string
+		reason    ParseFailureReason
+		wantField string
+	}{
+		{"missing verdict", `{"issues":[],"summary":"x"}`, ParseFailureInvalidVerdict, ""},
+		{"missing issues", `{"verdict":"Approve","summary":"x"}`, ParseFailureMissingRequiredField, "issues"},
+		{"missing summary", `{"verdict":"Approve","issues":[]}`, ParseFailureMissingRequiredField, "summary"},
+		{
+			"missing issue.category",
+			`{"verdict":"Request Changes","issues":[{"severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`,
+			ParseFailureInvalidIssueCategory, "",
+		},
+		{
+			"missing issue.severity",
+			`{"verdict":"Request Changes","issues":[{"category":"date","description":"x","suggested_action":"y"}],"summary":"x"}`,
+			ParseFailureInvalidIssueSeverity, "",
+		},
+		{
+			"missing issue.description",
+			`{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","suggested_action":"y"}],"summary":"x"}`,
+			ParseFailureIssueTextRequired, "",
+		},
+		{
+			"missing issue.suggested_action",
+			`{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","description":"x"}],"summary":"x"}`,
+			ParseFailureIssueTextRequired, "",
+		},
+	}
+	for _, current := range tests {
+		t.Run(current.name, func(t *testing.T) {
+			_, err := ParseTypedDecision(current.output)
+			var parseErr *ParseError
+			if !errors.As(err, &parseErr) {
+				t.Fatalf("error = %v, want *ParseError", err)
+			}
+			if parseErr.Reason != current.reason {
+				t.Fatalf("Reason = %q, want %q", parseErr.Reason, current.reason)
+			}
+			if parseErr.Field != current.wantField {
+				t.Fatalf("Field = %q, want %q", parseErr.Field, current.wantField)
+			}
+		})
+	}
+}
+
 func TestDecodeDecisionAcceptsCanonicalJSONWithAndWithoutSummary(t *testing.T) {
 	old, err := DecodeDecision([]byte(`{"verdict":"Approve","issues":[]}`))
 	if err != nil {

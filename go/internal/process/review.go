@@ -83,11 +83,16 @@ type ReviewExecutionResult struct {
 	// ParseFailureReason is set only when FailureCode is REVIEW_RESULT_INVALID.
 	// It is a sanitized review.ParseFailureReason value, never raw Provider text.
 	ParseFailureReason string `json:"parse_failure_reason,omitempty"`
+	// ParseFailureField is the optional sanitized review.ParseError.Field
+	// (e.g. "issues", "summary"), set only when ParseFailureReason is
+	// missing_required_field. It never contains a field value.
+	ParseFailureField string `json:"parse_failure_field,omitempty"`
 	// Failure is the single typed classification this Command determines
 	// exactly once (see reviewFailureEnvelope), forwarded unchanged by
 	// every composing caller. ProviderFailure/FailureCode/FailureStage/
-	// ParseFailureReason above are a migration-period read-model
-	// projection derived from this Envelope, not independently computed.
+	// ParseFailureReason/ParseFailureField above are a migration-period
+	// read-model projection derived from this Envelope, not independently
+	// computed.
 	Failure *failure.Envelope `json:"failure,omitempty"`
 }
 
@@ -185,6 +190,7 @@ func ExecuteReview(ctx context.Context, input ExecuteReviewInput, provider Claud
 		result.Failure = reviewFailureEnvelope(reviewErr, result.ProviderFailure, result.Artifact)
 		result.FailureCode, result.FailureStage = result.Failure.Code, result.Failure.Stage
 		result.ParseFailureReason = reviewParseFailureReason(reviewErr)
+		result.ParseFailureField = reviewParseFailureField(reviewErr)
 	}
 	return result, finishReviewCommand(ctx, claim, result, reviewErr)
 }
@@ -335,7 +341,7 @@ func reviewFailureEnvelope(reviewErr error, provider *ProviderFailure, artifact 
 		case service.WorkerErrorInvalidReviewResult:
 			envelope = failure.New("REVIEW_RESULT_INVALID", "review_result_parser")
 			if reason := reviewParseFailureReason(reviewErr); reason != "" {
-				envelope.Parse = &failure.ParseDiagnostic{Domain: "review", Reason: reason}
+				envelope.Parse = &failure.ParseDiagnostic{Domain: "review", Reason: reason, Field: reviewParseFailureField(reviewErr)}
 			}
 		case service.WorkerErrorTimeout:
 			envelope = failure.New("PROVIDER_UNAVAILABLE", "review_provider")
@@ -362,6 +368,19 @@ func reviewParseFailureReason(reviewErr error) string {
 		return ""
 	}
 	return string(parseErr.Reason)
+}
+
+// reviewParseFailureField extracts the sanitized review.ParseError.Field
+// (e.g. "issues", "summary") from a Review failure, mirroring
+// ceoPlanParseFailureField's identical role for CEO Intent. It returns ""
+// for every other failure kind, and for parse failures whose Reason does
+// not carry a Field (e.g. invalid_verdict, invalid_issue_category).
+func reviewParseFailureField(reviewErr error) string {
+	var parseErr *review.ParseError
+	if !errors.As(reviewErr, &parseErr) {
+		return ""
+	}
+	return parseErr.Field
 }
 
 func executeClaimedReview(ctx context.Context, input ExecuteReviewInput, provider ClaudeProcessConfig, httpClient claude.HTTPDoer) (ReviewExecutionResult, error) {

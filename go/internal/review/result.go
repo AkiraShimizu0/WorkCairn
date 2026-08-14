@@ -41,7 +41,13 @@ const (
 // Reason is the stable, machine-classifiable field callers should persist.
 type ParseError struct {
 	Reason ParseFailureReason
-	err    error
+	// Field is a sanitized Review Typed Decision contract field identifier
+	// such as "issues" or "summary". It never contains a field value, array
+	// index, raw Provider output, or user-authored text. Set only when
+	// Reason is ParseFailureMissingRequiredField (mirrors
+	// ceoplan.IntentParseError.Field).
+	Field string
+	err   error
 }
 
 func (parseErr *ParseError) Error() string { return parseErr.err.Error() }
@@ -49,6 +55,10 @@ func (parseErr *ParseError) Unwrap() error { return parseErr.err }
 
 func newParseError(reason ParseFailureReason, err error) *ParseError {
 	return &ParseError{Reason: reason, err: err}
+}
+
+func newFieldParseError(reason ParseFailureReason, field string, err error) *ParseError {
+	return &ParseError{Reason: reason, Field: field, err: err}
 }
 
 type Verdict string
@@ -152,11 +162,11 @@ func parseDecision(content []byte, requireSummary bool) (Decision, error) {
 		return Decision{}, newParseError(ParseFailureInvalidVerdict, fmt.Errorf("%w: unsupported verdict", ErrInvalidResult))
 	}
 	if candidate.Issues == nil {
-		return Decision{}, newParseError(ParseFailureMissingRequiredField, fmt.Errorf("%w: issues must be an array", ErrInvalidResult))
+		return Decision{}, newFieldParseError(ParseFailureMissingRequiredField, "issues", fmt.Errorf("%w: issues must be an array", ErrInvalidResult))
 	}
 	summary := strings.TrimSpace(candidate.Summary)
 	if requireSummary && summary == "" {
-		return Decision{}, newParseError(ParseFailureMissingRequiredField, fmt.Errorf("%w: summary", ErrInvalidResult))
+		return Decision{}, newFieldParseError(ParseFailureMissingRequiredField, "summary", fmt.Errorf("%w: summary", ErrInvalidResult))
 	}
 	issues := candidate.Issues
 	decision := Decision{Verdict: verdict, Issues: issues, Summary: summary}

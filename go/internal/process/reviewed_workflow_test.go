@@ -351,6 +351,68 @@ func TestReviewedWorkflowReviewResultInvalidClassifiesOuterCommandWithoutProvide
 	}
 }
 
+// TestReviewedWorkflowReviewResultInvalidMissingFieldPropagatesParseField
+// covers the missing_required_field branch at the outer Reviewed Workflow
+// boundary: the Runner's Typed Decision response omits "summary", and the
+// outer Command's own Ledger Details must carry the child Review's
+// sanitized Parse.Field ("summary") unchanged — proving parse_failure_field
+// propagates through child Review -> outer Reviewed Workflow -> Command
+// Ledger without re-derivation, the same as Parse.Reason already does.
+func TestReviewedWorkflowReviewResultInvalidMissingFieldPropagatesParseField(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	calls := 0
+	client := httpDoerFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		text := "# TASK-001 deliverable\n\n本文"
+		if calls == 2 {
+			text = `{"verdict":"Approve","issues":[]}`
+		}
+		encoded, _ := json.Marshal(map[string]any{
+			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": text}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+		return &http.Response{
+			StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(string(encoded))),
+		}, nil
+	})
+	input := ExecuteReviewedWorkflowInput{
+		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
+			WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+			ReviewerID:        "QA-001",
+		},
+		Approved: true, ApprovalReference: "approval-review-missing-field", CommandID: "CMD-REVIEWED-REVIEW-MISSING-FIELD", MaxTasks: 10,
+	}
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}
+	result, err := ExecuteReviewedWorkflow(context.Background(), input, provider, client)
+	if err == nil || result.Status != "partial_failure" || len(result.Tasks) != 1 {
+		t.Fatalf("ExecuteReviewedWorkflow() = %#v, %v", result, err)
+	}
+	current := result.Tasks[0]
+	if current.TaskID != "TASK-001" || current.Review == nil ||
+		current.Review.FailureCode != "REVIEW_RESULT_INVALID" || current.Review.FailureStage != "review_result_parser" ||
+		current.Review.ParseFailureReason != string(review.ParseFailureMissingRequiredField) ||
+		current.Review.ParseFailureField != "summary" {
+		t.Fatalf("Review parser failure = %#v", current.Review)
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, getErr := ledger.Get(context.Background(), input.CommandID)
+	if getErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
+		record.Failure.Code != "REVIEW_RESULT_INVALID" || record.Failure.Stage != "review_result_parser" {
+		t.Fatalf("outer reviewed Workflow Ledger = %#v, %v", record, getErr)
+	}
+	if record.Failure.Details == nil || record.Failure.Details.Parse == nil ||
+		record.Failure.Details.Parse.Domain != "review" ||
+		record.Failure.Details.Parse.Reason != string(review.ParseFailureMissingRequiredField) ||
+		record.Failure.Details.Parse.Field != "summary" {
+		t.Fatalf("outer reviewed Workflow parse diagnostic = %#v", record.Failure.Details)
+	}
+}
+
 func writeReviewedWorkflowVault(t *testing.T) string {
 	t.Helper()
 	root := writePlanVault(t)
