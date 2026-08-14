@@ -265,3 +265,147 @@ test("Claude connection always leaves in-flight state on terminal outcome", asyn
     await environment.stop();
   }
 });
+
+async function generatePlanThroughClarification(page) {
+  await page.getByRole("button", { name: "進め方の作成を承認" }).click();
+  const clarification = page.locator("#composer-input");
+  try {
+    await expect(clarification).toBeEditable({ timeout: 8_000 });
+    await clarification.fill("はい。初めてWorkCairnを使う人向けです。");
+    await page.getByRole("button", { name: "送信" }).click();
+    await expect(page.getByRole("button", { name: "進め方の作成を承認" })).toBeVisible();
+    await page.getByRole("button", { name: "進め方の作成を承認" }).click();
+  } catch {}
+  await expect(page.locator(".msg-embed-plan")).toBeVisible({ timeout: 20_000 });
+}
+
+async function composerMetrics(page) {
+  return page.evaluate(() => {
+    const composer = document.querySelector("#thread-composer");
+    const detail = document.querySelector("#request-detail-view");
+    const pane = document.querySelector("#requests-pane");
+    const anchor = detail && !detail.hidden ? detail : pane;
+    if (!composer || !anchor || anchor.hidden) return null;
+    const composerRect = composer.getBoundingClientRect();
+    const anchorRect = anchor.getBoundingClientRect();
+    if (!composerRect.height || !anchorRect.height) return null;
+    return {
+      composerBottom: composerRect.bottom,
+      anchorBottom: anchorRect.bottom,
+      viewportBottom: window.innerHeight,
+      composerDelta: Math.abs(anchorRect.bottom - composerRect.bottom),
+    };
+  });
+}
+
+async function seedTimelineMessages(page, count, prefix = "seed") {
+  await page.evaluate(({ count, prefix }) => {
+    const timeline = document.querySelector("#activity-timeline");
+    if (!timeline) return;
+    for (let index = 0; index < count; index += 1) {
+      const article = document.createElement("article");
+      article.className = "msg msg-system";
+      article.textContent = `${prefix} ${index} `.repeat(24);
+      timeline.appendChild(article);
+    }
+  }, { count, prefix });
+}
+
+async function assertComposerBottomStable(page, label, tolerance = 2) {
+  const metrics = await composerMetrics(page);
+  expect(metrics, `${label}: composer metrics missing`).not.toBeNull();
+  expect(metrics.composerDelta, `${label}: composer should hug requests pane bottom`).toBeLessThanOrEqual(tolerance);
+  return metrics.composerBottom;
+}
+
+test("composer stays pinned to the requests pane bottom across conversation shapes", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "りんごについて100文字程度で説明して");
+    const shortBottom = await assertComposerBottomStable(page, "short conversation");
+
+    await seedTimelineMessages(page, 20, "long");
+    const longBottom = await assertComposerBottomStable(page, "long conversation");
+    expect(Math.abs(longBottom - shortBottom)).toBeLessThanOrEqual(2);
+
+    await page.evaluate(() => {
+      const timeline = document.querySelector("#activity-timeline");
+      const article = document.createElement("article");
+      article.className = "msg msg-user";
+      const body = document.createElement("div");
+      body.className = "msg-body msg-body-user";
+      const paragraph = document.createElement("p");
+      paragraph.className = "msg-text";
+      paragraph.textContent = "長文".repeat(400);
+      body.appendChild(paragraph);
+      article.appendChild(body);
+      timeline?.appendChild(article);
+    });
+    const longTextBottom = await assertComposerBottomStable(page, "long message");
+    expect(Math.abs(longTextBottom - shortBottom)).toBeLessThanOrEqual(2);
+
+    await generatePlanThroughClarification(page);
+    await expect(page.locator(".msg-embed-plan .msg-attach-task-title")).not.toHaveText(/^x$/i);
+    await expect(page.locator(".msg-embed-plan .msg-attach-task-title")).toContainText("紹介文");
+    const planBottom = await assertComposerBottomStable(page, "plan visible");
+    expect(Math.abs(planBottom - shortBottom)).toBeLessThanOrEqual(2);
+
+    await expect(page.getByRole("button", { name: "この進め方で始める" })).toBeVisible();
+    const quickReplyBottom = await assertComposerBottomStable(page, "quick replies visible");
+    expect(Math.abs(quickReplyBottom - shortBottom)).toBeLessThanOrEqual(2);
+
+    await page.setViewportSize({ width: 1280, height: 640 });
+    await page.waitForTimeout(150);
+    await assertComposerBottomStable(page, "after resize");
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("composer stays pinned on mobile and plan tasks show canonical titles", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await ensureRequestDetail(page);
+    await startRequest(page, "りんごについて100文字程度で説明して");
+    const mobileBottom = await assertComposerBottomStable(page, "mobile short");
+
+    await seedTimelineMessages(page, 24, "mobile-long");
+    const mobileLongBottom = await assertComposerBottomStable(page, "mobile long");
+    expect(Math.abs(mobileLongBottom - mobileBottom)).toBeLessThanOrEqual(2);
+
+    await generatePlanThroughClarification(page);
+    await expect(page.locator(".msg-embed-plan .msg-attach-task-title")).not.toHaveText(/^x$/i);
+    await expect(page.locator(".msg-embed-plan")).toContainText("佐藤 葵");
+    await assertComposerBottomStable(page, "mobile plan");
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("failure technical details do not move the composer", async ({ page }) => {
+  const environment = await startBrowserEnvironment("provider_failure");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await ensureRequestDetail(page);
+    await startRequest(page, "Provider failureの安全な表示を確認する成果物を作ってください");
+    await page.getByRole("button", { name: "進め方の作成を承認" }).click();
+    await expect(page.getByRole("button", { name: "この進め方で始める" })).toBeVisible();
+    await approvePlanAndWorkflow(page);
+    await expect(page.locator("#activity-timeline")).toContainText("PROVIDER_RATE_LIMITED", { timeout: 30_000 });
+
+    const before = await assertComposerBottomStable(page, "failure before details");
+    const toggle = page.locator("#activity-timeline .msg-info-toggle").last();
+    await expect(toggle).toBeVisible();
+    await toggle.click();
+    await expect(page.locator("#activity-timeline .msg-technical-panel").last()).toBeVisible();
+    const after = await assertComposerBottomStable(page, "failure after details");
+    expect(Math.abs(after - before)).toBeLessThanOrEqual(2);
+  } finally {
+    await environment.stop();
+  }
+});

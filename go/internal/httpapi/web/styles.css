@@ -53,6 +53,10 @@ button { touch-action: manipulation; }
   padding: env(safe-area-inset-top) max(18px, env(safe-area-inset-right)) calc(36px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
 }
 
+#workspace-view {
+  min-height: 0;
+}
+
 .topbar {
   min-height: 74px;
   display: flex;
@@ -138,7 +142,7 @@ button { touch-action: manipulation; }
 
 .status-dot.online::before { background: #2a946f; }
 
-main { padding-top: 25px; }
+main { padding-top: 25px; min-height: 0; }
 h1, h2, h3, p { margin-top: 0; }
 h1 { margin-bottom: 8px; font-family: Georgia, "Yu Mincho", serif; font-size: clamp(32px, 10vw, 48px); line-height: 1.1; letter-spacing: -.035em; }
 h2 { margin-bottom: 0; font-size: 20px; letter-spacing: -.02em; }
@@ -643,13 +647,52 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 }
 
 @media (min-width: 900px) {
-  .page-shell { padding-right: 42px; padding-left: 42px; }
+  .page-shell {
+    height: 100dvh;
+    max-height: 100dvh;
+    padding-right: 42px;
+    padding-left: 42px;
+    padding-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
   .menu-button, .nav-backdrop, .nav-drawer { display: none !important; }
-  .workspace-layout { grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); align-items: stretch; gap: 12px; }
+
+  main {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding-top: 12px;
+  }
+
+  #workspace-view {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .workspace-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
+    align-items: stretch;
+    gap: 12px;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+
   .requests-pane {
     display: flex;
     flex-direction: column;
-    max-height: calc(100dvh - 88px);
+    height: 100%;
+    max-height: 100%;
     min-height: 0;
     overflow: hidden;
     background: var(--pane-left);
@@ -658,6 +701,16 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
     box-shadow: none;
     padding: 16px 18px 20px;
   }
+
+  .requests-pane > .request-pane-view {
+    min-height: 0;
+  }
+
+  .requests-pane > .request-detail-view.request-thread:not([hidden]) {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
   .request-list-view {
     flex: 1 1 auto;
     min-height: 0;
@@ -673,16 +726,15 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   .request-detail-view.request-thread {
     flex: 1 1 auto;
     min-height: 0;
-    height: auto;
-    max-height: none;
+    height: 100%;
+    max-height: 100%;
     overflow: hidden;
   }
   .employees-pane {
-    position: sticky;
-    top: 12px;
     display: flex;
     flex-direction: column;
-    max-height: calc(100dvh - 88px);
+    height: 100%;
+    max-height: 100%;
     min-height: 0;
     overflow: hidden;
     background: var(--pane-right);
@@ -720,25 +772,78 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   .employee-grid { grid-template-columns: 1fr; }
   .attention-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .thread-scroll {
-    flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
   }
+
   .conversation-thread { overflow: visible; padding-bottom: 8px; }
 }
 
 @media (max-width: 899px) {
+  .page-shell {
+    height: 100dvh;
+    max-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+
+  main {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding-top: 8px;
+  }
+
+  #workspace-view {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #workspace-view {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .workspace-layout {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
   .requests-pane { display: none; }
   .requests-pane.mobile-visible {
     display: flex;
     flex-direction: column;
+    flex: 1 1 auto;
+    height: 100%;
+    max-height: 100%;
     min-height: 0;
+    overflow: hidden;
     background: var(--pane-left);
+  }
+
+  .requests-pane.mobile-visible > .request-detail-view.request-thread:not([hidden]) {
+    flex: 1 1 auto;
+    min-height: 0;
   }
   .employees-pane {
     display: flex;
     flex-direction: column;
+    flex: 1 1 auto;
     min-height: 0;
+    overflow: hidden;
   }
   .employee-status-section {
     flex: 0 0 auto;
@@ -1259,9 +1364,10 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 
 .request-thread {
   max-width: 100%;
-  display: flex;
-  flex-direction: column;
   min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
 }
 
 .request-detail-view {
@@ -1269,11 +1375,9 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 }
 
 .request-detail-view.request-thread {
-  height: calc(100dvh - 72px - env(safe-area-inset-top));
-  max-height: calc(100dvh - 72px - env(safe-area-inset-top));
+  height: 100%;
+  max-height: 100%;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
 }
 
 .requests-pane .thread-header {
@@ -1283,9 +1387,12 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   background: var(--pane-left);
 }
 
+.thread-header {
+  grid-row: 1;
+  flex-shrink: 0;
+}
+
 .thread-header-sticky {
-  position: sticky;
-  top: 0;
   z-index: 3;
   padding-top: 2px;
 }
@@ -1301,9 +1408,9 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 }
 
 .thread-scroll {
+  grid-row: 2;
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   position: relative;
@@ -1326,8 +1433,10 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 }
 
 .thread-footer {
-  flex: 0 0 auto;
-  margin-top: auto;
+  grid-row: 3;
+  flex: none;
+  flex-shrink: 0;
+  margin-top: 0;
   padding-top: 8px;
   padding-bottom: env(safe-area-inset-bottom, 0);
   border-top: 1px solid var(--line);
@@ -1674,6 +1783,12 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   font-weight: 600;
 }
 
+.msg-attach-task-title {
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .msg-attach-preview {
   margin: 0 0 8px;
   color: var(--ink);
@@ -1698,20 +1813,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 }
 
 @media (max-width: 899px) {
-  .request-detail-view.request-thread {
-    height: calc(100dvh - 64px - env(safe-area-inset-top));
-    max-height: calc(100dvh - 64px - env(safe-area-inset-top));
-  }
-
-  .thread-scroll {
-    min-height: 0;
-    flex: 1 1 auto;
-  }
-
   .thread-footer {
-    position: sticky;
-    bottom: 0;
-    z-index: 2;
     padding-bottom: env(safe-area-inset-bottom);
   }
 

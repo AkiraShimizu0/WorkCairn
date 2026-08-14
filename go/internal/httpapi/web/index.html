@@ -58,7 +58,7 @@
 
         <div class="workspace-layout">
           <aside id="requests-pane" class="requests-pane">
-            <section id="request-list-view" class="request-pane-view">
+            <section id="request-list-view" class="request-pane-view request-list-view">
               <header class="list-header">
                 <h1 class="pane-title">依頼</h1>
                 <div class="list-actions">
@@ -69,18 +69,18 @@
               <div id="session-list" class="session-list"></div>
             </section>
 
-            <section id="request-detail-view" class="request-pane-view request-thread" hidden>
+            <section id="request-detail-view" class="request-pane-view request-detail-view request-thread" hidden>
               <header class="thread-header thread-header-sticky">
                 <button id="back-to-list-button" class="text-link back-button" type="button">← 依頼一覧へ戻る</button>
                 <div id="request-summary" class="request-summary" aria-live="polite"></div>
+                <h2 id="completion-heading" class="visually-hidden" hidden>すべての仕事とReviewが完了しています</h2>
               </header>
 
               <div id="thread-scroll" class="thread-scroll">
+                <h2 id="timeline-heading" class="visually-hidden">この依頼の歩み</h2>
                 <div id="activity-timeline" class="conversation-thread" aria-labelledby="timeline-heading"></div>
                 <button id="thread-jump-latest" class="thread-jump-latest" type="button" hidden>新しい更新</button>
               </div>
-
-              <h2 id="timeline-heading" class="visually-hidden">この依頼の歩み</h2>
 
               <footer class="thread-footer">
                 <div id="quick-replies" class="quick-replies" aria-live="polite"></div>

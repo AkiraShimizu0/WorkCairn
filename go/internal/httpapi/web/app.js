@@ -49,6 +49,7 @@ const ui = {
   attentionGrid: document.querySelector("#attention-grid"),
   autonomySummary: document.querySelector("#autonomy-summary"),
   proofOfWork: document.querySelector("#proof-of-work"),
+  completionHeading: document.querySelector("#completion-heading"),
   requestDialog: document.querySelector("#request-dialog"),
   actionDialog: document.querySelector("#action-dialog"),
   actionForm: document.querySelector("#action-form"),
@@ -637,6 +638,7 @@ function structuredFieldShapeSummary(shapes, field) {
 function parseDiagnosticsFacts(error) {
   const parse = error.details?.parse;
   const structuredFields = structuredFieldsSummary(parse?.structured_output_presence);
+  const parseFailureReason = error.parse_failure_reason || parse?.reason || "—";
   const parseField = parse?.field || error.parse_failure_field || "—";
   const fieldShape = structuredFieldShapeSummary(parse?.structured_output_field_shape, parseField);
   return [
@@ -647,7 +649,7 @@ function parseDiagnosticsFacts(error) {
     ["HTTP status", error.http_status || "—"],
     ["Command ID", error.command_id || "—"],
     ["Request ID", error.request_id || "—"],
-    ["Parse reason", error.parse_failure_reason || parse?.reason || "—"],
+    ["Parse reason", parseFailureReason],
     ["Parse field", parseField],
     ...(structuredFields ? [["Structured fields", structuredFields]] : []),
     ...(fieldShape ? [[`${parseField} shape`, fieldShape]] : []),
@@ -828,31 +830,7 @@ function toast(message) {
   toastTimer = setTimeout(() => { ui.toast.hidden = true; }, 4200);
 }
 
-function showError(error, title = "処理を完了できませんでした") {
-  setBusy(false);
-  setBackgroundWorking(false);
-  const remembered = rememberError(error, title);
-  const detail = error instanceof APIError ? error.detail : null;
-  const code = detail?.code || error.message || "UNKNOWN_ERROR";
-  const stage = detail?.stage;
-  const providerSetupRequired = code === "PROVIDER_CONFIGURATION_REQUIRED";
-  const providerGenerationFailed = code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_generation";
-  const planCommitConflict = code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_commit_cas";
-  // Covers every CEO Plan generation-side stage that can no longer produce
-  // a safe Canonical Plan: the small Intent contract itself was malformed
-  // ("ceo_plan_intent"), Go could not deterministically resolve an Employee
-  // assignment ("ceo_plan_normalization"), or the Go-constructed candidate
-  // still failed final canonical validation ("ceo_plan_parser", kept as
-  // defense-in-depth). All three share the same safe, unapplied outcome.
-  const planResponseInvalid = code === "INTERACTION_PLAN_FAILED" &&
-    (stage === "ceo_plan_intent" || stage === "ceo_plan_normalization" || stage === "ceo_plan_parser");
-  const workflowAssignmentRequired = code === "WORKFLOW_TASK_ASSIGNMENT_REQUIRED";
-  const workflowReviewerRequired = code === "WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED";
-  // Safety net for the rare case where automatic Project name disambiguation
-  // itself was exhausted. The common case (same request sent twice) is
-  // handled silently by creating a distinctly named Project, so this should
-  // be uncommon; when it happens, never suggest editing a directory name.
-  const projectNameCollision = code === "PROJECT_NAME_COLLISION";
+function interactionErrorGuidance(code, stage = "") {
   const providerFailures = {
     PROVIDER_AUTHENTICATION_REQUIRED: "Claudeの接続を確認してください。credentialが無効・失効している可能性があります。",
     PROVIDER_BILLING_REQUIRED: "Claude側の請求・支払い設定を確認してください。WorkCairnは自動retryしません。",
@@ -862,67 +840,77 @@ function showError(error, title = "処理を完了できませんでした") {
     PROVIDER_UNAVAILABLE: "Claudeへ接続できないか、Claude側が一時的に利用できません。自動fallbackやretryは行っていません。",
     PROVIDER_RESPONSE_INVALID: "Claudeから正常に読み取れる応答を受け取れませんでした。自動retryせず、問い合わせIDを確認してください。",
   };
-  const providerFailureCopy = providerFailures[code];
-  // Non-Provider Review contract failures: the Runner responded, but its
-  // structured Review result did not satisfy the typed Review contract
-  // (missing/duplicate markers, invalid verdict, invalid issues shape, ...),
-  // or the Prompt/route could not be built at all. These are deliberately
-  // kept out of providerFailures so they never trigger the "open AI
-  // Connections" action -- there is no connection problem to fix.
   const reviewContractFailures = {
     REVIEW_PROMPT_FAILED: "レビュー用の指示を組み立てられませんでした。成果物は保持されています。",
     REVIEW_ROUTE_FAILED: "レビュー担当のAIモデルを解決できませんでした。成果物は保持されています。",
     REVIEW_RESULT_INVALID: "AIのレビュー結果を正しく解釈できませんでした。成果物は保持されています。",
   };
-  const reviewContractCopy = reviewContractFailures[code];
-  const providerIssue = providerSetupRequired || providerGenerationFailed || Boolean(providerFailureCopy);
-  const providerRequestID = detail?.provider_failure?.request_id;
-  const parseFailureReason = detail?.parse_failure_reason;
+  if (code === "PROVIDER_CONFIGURATION_REQUIRED") {
+    return "AIサービスの接続設定が不足しています。Providerへ依頼は送信されていません。MacのAI Connectionsから接続してください。";
+  }
+  if (providerFailures[code]) return providerFailures[code];
+  if (reviewContractFailures[code]) return reviewContractFailures[code];
+  if (code === "PROJECT_NAME_COLLISION") return "同じ名前の仕事がすでにあります。新しい仕事として作成できませんでした。少し時間を置くか、依頼の表現を変えて改めて送ってください。";
+  if (code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_commit_cas") {
+    return "同じ依頼の状態が先に更新されたため、この進め方は保存していません。新しい状態を確認してください。";
+  }
+  if (code === "INTERACTION_PLAN_FAILED" &&
+    (stage === "ceo_plan_intent" || stage === "ceo_plan_normalization" || stage === "ceo_plan_parser")) {
+    return "AIサービスから応答を受信しましたが、安全な進め方として確認できる形式ではありませんでした。進め方は保存・適用されていません。";
+  }
+  if (code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_generation") {
+    return "AIサービスで進め方を生成できませんでした。自動retryや別サービスへの切替は行っていません。接続状態を確認してください。";
+  }
+  if (code === "WORKFLOW_TASK_ASSIGNMENT_REQUIRED") {
+    return "担当AIを決められない仕事があるため、実行を開始していません。Organizationを確認してから、改めて実行内容を確認してください。";
+  }
+  if (code === "WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED") {
+    return "Makerと異なるReviewerを一意に決められなかったため、Workflowを開始していません。OrganizationのQA Engineerを確認してください。";
+  }
+  return "成立済みの記録を推測で変更せず、現在の状態を確認してください。";
+}
+
+function showError(error, title = "処理を完了できませんでした") {
+  setBusy(false);
+  setBackgroundWorking(false);
+  const remembered = rememberError(error, title);
+  const detail = error instanceof APIError ? error.detail : null;
+  const code = detail?.code || error.message || "UNKNOWN_ERROR";
+  const stage = detail?.stage;
+  const providerSetupRequired = code === "PROVIDER_CONFIGURATION_REQUIRED";
+  const providerGenerationFailed = code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_generation";
+  const providerFailures = {
+    PROVIDER_AUTHENTICATION_REQUIRED: true,
+    PROVIDER_PERMISSION_DENIED: true,
+  };
+  const providerFailureCopy = code in {
+    PROVIDER_AUTHENTICATION_REQUIRED: 1,
+    PROVIDER_BILLING_REQUIRED: 1,
+    PROVIDER_PERMISSION_DENIED: 1,
+    PROVIDER_REQUEST_INVALID: 1,
+    PROVIDER_RATE_LIMITED: 1,
+    PROVIDER_UNAVAILABLE: 1,
+    PROVIDER_RESPONSE_INVALID: 1,
+  };
+  const providerIssue = providerSetupRequired || providerGenerationFailed || providerFailureCopy;
   const providerSettingsAction = providerSetupRequired || code === "PROVIDER_AUTHENTICATION_REQUIRED" || code === "PROVIDER_PERMISSION_DENIED";
   const pending = sessionStorage.getItem(STORAGE_PENDING);
   const errorRenderKey = `error:${JSON.stringify([remembered?.session_id || "", remembered?.session_version || 0, code, stage || "", remembered?.command_id || ""] )}`;
   if (state.renderKey === errorRenderKey) return;
   state.renderKey = errorRenderKey;
-  ui.activeCard.className = "conversation-composer action-card attention";
-  const structuredFields = structuredFieldsSummary(detail?.details?.parse?.structured_output_presence);
-  ui.activeCard.replaceChildren(
-    conversationNode({ side: "system", speaker: "WorkCairn", text: title, attention: true }),
-    node("p", { class: "composer-note" }, providerSetupRequired
-      ? "AIサービスの接続設定が不足しています。Providerへ依頼は送信されていません。MacのAI Connectionsから接続してください。"
-      : providerFailureCopy
-        ? providerFailureCopy
-      : reviewContractCopy
-        ? reviewContractCopy
-      : projectNameCollision
-        ? "同じ名前の仕事がすでにあります。新しい仕事として作成できませんでした。少し時間を置くか、依頼の表現を変えて改めて送ってください。"
-      : planResponseInvalid
-        ? "AIサービスから応答を受信しましたが、安全な進め方として確認できる形式ではありませんでした。進め方は保存・適用されていません。"
-      : planCommitConflict
-        ? "同じ依頼の状態が先に更新されたため、この進め方は保存していません。新しい状態を確認してください。"
-      : workflowAssignmentRequired
-        ? "担当AIを決められない仕事があるため、実行を開始していません。Organizationを確認してから、改めて実行内容を確認してください。"
-      : workflowReviewerRequired
-        ? "Makerと異なるReviewerを一意に決められなかったため、Workflowを開始していません。OrganizationのQA Engineerを確認してください。"
-      : providerGenerationFailed
-        ? "AIサービスで進め方を生成できませんでした。自動retryや別サービスへの切替は行っていません。接続状態を確認してください。"
-      : "成立済みの記録を推測で変更せず、現在の状態を確認してください。"),
-    technicalDetails("技術的な詳細を見る", [
-      ["Error code", code],
-      ["Stage", stage || "—"],
-      ["Substage", detail?.details?.substage || "—"],
-      ["Category", detail?.category || detail?.details?.category || "—"],
-      ["HTTP status", detail?.details?.provider?.http_status || detail?.http_status || "—"],
-      ["Command ID", remembered?.command_id || detail?.command_id || "未発行"],
-      ["問い合わせID", providerRequestID || detail?.provider_failure?.request_id || "—"],
-      ["Parse reason", parseFailureReason || detail?.parse_failure_reason || "—"],
-      ["Parse field", detail?.parse_failure_field || "—"],
-      ...(structuredFields ? [["Structured fields", structuredFields]] : []),
-    ]),
-    node("div", { class: "button-row" },
-      button(providerSettingsAction ? "AI Connectionsを開く" : (providerIssue ? "進め方の作成待ちへ戻る" : (pending ? "Command状態を再確認" : "状態を再確認")), "primary", () => providerSettingsAction ? openSettingsDialog() : (pending ? resumePendingCommand(pending) : refreshCurrent())),
-      button("依頼一覧へ", "quiet", () => { selectSession(null); showRequestList(); }),
-    ),
-  );
+  const recoveryAction = providerSettingsAction
+    ? button("AI Connectionsを開く", "primary chip", () => openSettingsDialog())
+    : providerIssue
+      ? button("進め方の作成待ちへ戻る", "primary chip", () => refreshCurrent())
+      : pending
+        ? button("処理を再確認", "primary chip", () => resumePendingCommand(pending))
+        : button("状態を更新", "primary chip", () => refreshCurrent());
+  setQuickReplies([
+    recoveryAction,
+    button("依頼一覧へ", "quiet chip", () => { selectSession(null); showRequestList(); }),
+  ]);
+  ui.activeCard.hidden = true;
+  ui.activeCard.replaceChildren();
   if (remembered) {
     renderTimeline();
     renderSessions();
@@ -1269,18 +1257,14 @@ function renderNext(force = false) {
 }
 
 function renderRememberedError(error) {
-  const facts = parseDiagnosticsFacts(error);
   setQuickReplies([
-    button(error.command_id ? "Command状態を確認" : "状態を再確認", "primary chip", () => error.command_id
+    button(error.command_id ? "処理を再確認" : "状態を更新", "primary chip", () => error.command_id
       ? inspectCommands([{ scope: "workspace", command_id: error.command_id }])
       : refreshCurrent()),
-    button("新しい状態を確認", "quiet chip", async () => { clearCurrentError(); state.renderKey = ""; await refreshCurrent(); }),
+    button("再読み込み", "quiet chip", async () => { clearCurrentError(); state.renderKey = ""; await refreshCurrent(); }),
   ]);
-  ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(
-    node("p", { class: "composer-note" }, "エラーは消さずに保存しています。成立済みの仕事は保持し、自動retryや推測修復は行っていません。"),
-    technicalDetails("技術的な詳細を見る", facts),
-  );
+  ui.activeCard.hidden = true;
+  ui.activeCard.replaceChildren();
   state.forceScrollToBottom = true;
   renderTimeline();
 }
@@ -1323,10 +1307,8 @@ function renderPlanGeneration(next) {
     }, "進め方を作成しています", "質問または仕事の進め方ができるまでお待ちください。")),
     button("今は承認しない", "quiet chip", () => toast("変更せず、承認待ちのまま保存されています。")),
   ]);
-  ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(
-    node("p", { class: "composer-note" }, "AIはまだ会社データを変更しません。依頼内容を整理し、必要な質問と進め方を作成します。"),
-  );
+  ui.activeCard.hidden = true;
+  ui.activeCard.replaceChildren();
   state.forceScrollToBottom = true;
   renderTimeline();
 }
@@ -1410,8 +1392,21 @@ function roleLabel(role) {
   return labels[role] || "担当AI";
 }
 
+function planTaskDisplayTitle(task) {
+  const title = String(task?.title ?? "").trim();
+  if (title) return title;
+  const rationale = String(task?.rationale ?? "").trim();
+  if (rationale) return rationale;
+  return "";
+}
+
+function planTaskAssigneeIdentity(task) {
+  if (task?.assignee_id) return employeeIdentityByID(task.assignee_id);
+  return employeeIdentityByRole(task?.required_role);
+}
+
 function planStepCopy(task, index) {
-  return `${index + 1}. ${roleLabel(task.required_role)}が${task.title}`;
+  return `${index + 1}. ${roleLabel(task.required_role)}が${planTaskDisplayTitle(task)}`;
 }
 
 function renderPlanApproval(next) {
@@ -1428,13 +1423,8 @@ function renderPlanApproval(next) {
     }),
     button("承認しない", "quiet chip", () => toast("Workspaceは変更されていません。")),
   ]);
-  ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(
-    node("p", { class: "composer-note visually-hidden" }, "このように進めます"),
-    technicalDetails("技術的な詳細を見る", [
-      ["Project ID", identifier], ["Plan digest", shortDigest(current.digest)], ["Task数", String(current.plan.proposed_tasks.length)],
-    ]),
-  );
+  ui.activeCard.hidden = true;
+  ui.activeCard.replaceChildren();
   state.forceScrollToBottom = true;
   renderTimeline();
 }
@@ -1450,10 +1440,8 @@ async function renderWorkflowApproval(next) {
     button("実行内容を確認", "primary chip", () => prepareWorkflowApproval(next, 20)),
     button("今は実行しない", "quiet chip", () => toast("仕事は開始されていません。")),
   ]);
-  ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(
-    node("p", { class: "composer-note" }, "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。今回任せる仕事ステップの上限は20件です。"),
-  );
+  ui.activeCard.hidden = true;
+  ui.activeCard.replaceChildren();
   state.forceScrollToBottom = true;
   renderTimeline();
 }
@@ -1478,20 +1466,8 @@ async function prepareWorkflowApproval(next, maxTasks) {
       }, "Workflowを実行しています", "Task、Review、必要なRevisionを順番に進めています。")),
       button("今は実行しない", "quiet chip", () => toast("仕事は開始されていません。")),
     ]);
-    ui.activeCard.hidden = false;
-    ui.activeCard.replaceChildren(
-      node("p", { class: "composer-note" }, "承認後は担当AIが成果物を作り、別のReviewerが確認し、必要な修正まで上限内で進めます。"),
-      approvalFacts([
-        ["仕事", plan.project_name],
-        ["レビュー担当", plan.reviewer_name],
-        ["任せる上限", `${plan.autonomy_contract.execution_limit}件の仕事ステップ`],
-        ["任せるAI社員", plan.autonomy_contract.allowed_employee_ids.map(employeeLabel).join(" / ")],
-      ]),
-      technicalDetails("技術的な詳細を見る", [
-        ["Project ID", plan.project_id], ["Reviewer ID", plan.reviewer_id],
-        ["Next Task", plan.next?.task_id || "readinessに従う"], ["Plan digest", plan.workflow_plan_digest],
-      ]),
-    );
+    ui.activeCard.hidden = true;
+    ui.activeCard.replaceChildren();
     state.forceScrollToBottom = true;
     renderTimeline();
   } catch (error) {
@@ -1499,16 +1475,18 @@ async function prepareWorkflowApproval(next, maxTasks) {
   }
 }
 
+function showCompletionHeading() {
+  if (ui.completionHeading) ui.completionHeading.hidden = false;
+}
+
 function renderCompletion(next) {
   setQuickReplies([
     button("完了を確認", "primary chip", () => toast("この依頼は完了しています。")),
     button("新しい仕事を依頼", "quiet chip", openRequestDialog),
   ]);
-  ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(
-    node("h2", { class: "visually-hidden" }, "すべての仕事とReviewが完了しています"),
-    node("p", { class: "composer-note" }, "成果物はWorkspaceに保存されています。"),
-  );
+  showCompletionHeading();
+  ui.activeCard.hidden = true;
+  ui.activeCard.replaceChildren();
   renderComposerState(next);
   renderTimeline();
 }
@@ -1516,29 +1494,20 @@ function renderCompletion(next) {
 function renderDone() {
   const action = [...state.record.turns].reverse().find((turn) => turn.action)?.action;
   setQuickReplies([button("新しい仕事を依頼", "primary chip", openRequestDialog)]);
-  ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(
-    node("p", { class: "composer-note" }, action?.publication?.url ? "成果物の外部公開まで完了しています。" : "成果物はWorkspaceに保存されています。"),
-    action?.publication?.url ? node("a", { class: "button quiet chip-link", href: action.publication.url, target: "_blank", rel: "noreferrer" }, "公開先を開く") : null,
-  );
+  showCompletionHeading();
+  ui.activeCard.hidden = true;
+  ui.activeCard.replaceChildren();
   renderComposerState(state.next);
   renderTimeline();
 }
 
 function renderAttention(next, title) {
-  const commandFacts = (next.commands || []).map((reference) => [
-    reference.scope === "workspace" ? "Workspace command" : "Project command",
-    reference.command_id,
-  ]);
   setQuickReplies([
-    button("Command状態を確認", "primary chip", () => inspectCommands(next.commands || [])),
-    button("Sessionを再確認", "quiet chip", () => refreshCurrent()),
+    button("詳細を確認", "primary chip", () => inspectCommands(next.commands || [])),
+    button("状態を更新", "quiet chip", () => refreshCurrent()),
   ]);
-  ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(
-    node("p", { class: "composer-note" }, "成立済みの成果物や記録は保持されています。自動retryやrollbackをせず、CommandとRecovery evidenceを確認してください。"),
-    commandFacts.length ? technicalDetails("Command references", commandFacts) : null,
-  );
+  ui.activeCard.hidden = true;
+  ui.activeCard.replaceChildren();
   state.pendingAttentionTitle = title;
   state.forceScrollToBottom = true;
   renderTimeline();
@@ -1567,17 +1536,12 @@ async function inspectCommands(references) {
     });
     setBusy(false);
     setQuickReplies([button("閉じる", "quiet chip", () => renderNext(true))]);
-    ui.activeCard.hidden = false;
-    ui.activeCard.replaceChildren(
-      node("h2", { class: "visually-hidden" }, "Command Ledger"),
-      node("p", { class: "composer-note" }, "自動回復は行いません。partialまたはrunningの場合はMacのRecovery手順でcanonical evidenceを確認してください。"),
-      approvalFacts(results.map((result, index) => [references[index].command_id, `${result.state}${result.failure?.stage ? ` / ${result.failure.stage}` : ""}`])),
-      failures.length ? technicalDetails("技術的な詳細を見る", failures) : null,
-    );
-    state.pendingAttentionTitle = "Command Ledgerを確認してください。";
+    ui.activeCard.hidden = true;
+    ui.activeCard.replaceChildren();
+    state.pendingAttentionTitle = "処理記録を確認してください。";
     renderTimeline();
   } catch (error) {
-    showError(error, "Command状態を取得できませんでした");
+    showError(error, "処理記録を取得できませんでした");
   }
 }
 
@@ -1867,10 +1831,11 @@ function planEmbedNode(plan) {
     node("div", { class: "msg-attach" },
       node("p", { class: "msg-attach-label" }, "進め方"),
       node("ul", { class: "msg-attach-list" }, ...plan.proposed_tasks.map((task) => {
-        const identity = employeeIdentityByRole(task.required_role);
+        const identity = planTaskAssigneeIdentity(task);
+        const title = planTaskDisplayTitle(task);
         return node("li", {},
           node("strong", {}, identity.name),
-          node("span", {}, task.title),
+          title ? node("span", { class: "msg-attach-task-title" }, title) : null,
         );
       })),
     ),
@@ -1961,7 +1926,8 @@ function pendingInteractionMessages() {
     })];
   }
   if (state.lastError) {
-    return [liaisonMessage(`${state.lastError.title || "処理を完了できませんでした。"} 自動retryせず、次の判断を待っています。`, state.lastError.at, {
+    const guidance = interactionErrorGuidance(state.lastError.code, state.lastError.stage);
+    return [liaisonMessage(`${state.lastError.title || "処理を完了できませんでした。"}\n\n${guidance} 自動retryせず、次の判断を待っています。`, state.lastError.at, {
       attention: true,
       detail: parseDiagnosticsFacts(state.lastError),
       onCopy: () => copySanitizedError(state.lastError),
@@ -1995,9 +1961,19 @@ function pendingInteractionMessages() {
   }
   case "approve_workflow":
     if (state.workflowPlanPreview) {
-      return [liaisonMessage("この進め方で開始しますか？")];
+      const plan = state.workflowPlanPreview;
+      return [liaisonMessage("この内容で実行してよろしいですか？", null, {
+        detail: [
+          `Project: ${plan.project_name}`,
+          `Reviewer: ${plan.reviewer_name}`,
+          `Execution limit: ${plan.autonomy_contract.execution_limit}`,
+          `Project ID: ${plan.project_id}`,
+          `Reviewer ID: ${plan.reviewer_id}`,
+          `Plan digest: ${plan.workflow_plan_digest}`,
+        ].join("\n"),
+      })];
     }
-    return [liaisonMessage("担当AIに仕事を開始させます。Reviewerの指摘があれば修正と再確認まで進めます。")];
+    return [liaisonMessage("担当AIに仕事を開始させます。Reviewerの指摘があれば修正と再確認まで進めます。\n\nMakerとは別のQA Reviewerを、役割と許可範囲から自動選択します。今回任せる仕事ステップの上限は20件です。")];
   case "inspect_workflow_recovery":
     return [liaisonMessage("Workflowの確認が必要です", null, { attention: true })];
   case "inspect_action_recovery":
@@ -2034,8 +2010,8 @@ function conversationMessages() {
       const planTurn = [...record.turns.slice(0, turnIndex)].reverse().find((candidate) => candidate.kind === "plan_generated" && candidate.plan);
       if (planTurn?.plan?.proposed_tasks?.length) {
         const assignments = planTurn.plan.proposed_tasks.map((task) => {
-          const assignee = employeeIdentityByRole(task.required_role);
-          return `${assignee.name}に${task.title}`;
+          const assignee = planTaskAssigneeIdentity(task);
+          return `${assignee.name}に${planTaskDisplayTitle(task)}`;
         });
         messages.push(liaisonMessage(`この内容で進めます。\n\n${assignments.join("\n")}`, turn.at, {
           detail: `Project: ${turn.project_name}\nProject ID: ${turn.project_id}`,
