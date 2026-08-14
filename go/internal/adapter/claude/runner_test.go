@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
@@ -290,6 +293,42 @@ func TestRunnerSendsStructuredOutputConfigWhenRequested(t *testing.T) {
 	}
 	if received.OutputConfig != nil {
 		t.Fatalf("output_config leaked onto a request without StructuredOutput: %#v", received.OutputConfig)
+	}
+}
+
+func TestRunnerSerializesCEOIntentRequestFixture(t *testing.T) {
+	var received []byte
+	runner := configuredRunner(t, doerFunc(func(request *http.Request) (*http.Response, error) {
+		var err error
+		received, err = io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		intent := `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"D","required_role":"R"}],"ceo_questions":[]}`
+		body := `{"model":"claude-sonnet-5","content":[{"type":"text","text":` + jsonQuote(t, intent) + `}],"usage":{"input_tokens":1,"output_tokens":1}}`
+		return jsonResponse(http.StatusOK, body, "req-ceo-intent"), nil
+	}))
+
+	request := validRunRequest()
+	request.StructuredOutput = &worker.StructuredOutputContract{Schema: ceoplan.IntentJSONSchema()}
+	if _, err := runner.Run(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+
+	fixturePath := filepath.Join("..", "..", "..", "..", "fixtures", "provider", "claude_ceo_intent_request_v1.json")
+	want, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotJSON, wantJSON any
+	if err := json.Unmarshal(received, &gotJSON); err != nil {
+		t.Fatalf("serialized request is not JSON: %v", err)
+	}
+	if err := json.Unmarshal(want, &wantJSON); err != nil {
+		t.Fatalf("request fixture is not JSON: %v", err)
+	}
+	if !reflect.DeepEqual(gotJSON, wantJSON) {
+		t.Fatalf("serialized CEO Intent request does not match fixed Provider fixture\ngot:  %s\nwant: %s", received, want)
 	}
 }
 

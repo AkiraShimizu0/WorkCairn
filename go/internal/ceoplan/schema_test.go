@@ -34,8 +34,11 @@ func TestIntentJSONSchemaShape(t *testing.T) {
 	}
 	for _, field := range []string{"project_name", "objective", "summary"} {
 		fieldSchema := properties[field].(map[string]any)
-		if fieldSchema["type"] != "string" || fieldSchema["pattern"] != `\S` {
+		if fieldSchema["type"] != "string" || fieldSchema["description"] == "" {
 			t.Fatalf("%s schema = %#v", field, fieldSchema)
+		}
+		if _, exists := fieldSchema["pattern"]; exists {
+			t.Fatalf("%s schema contains Provider-unsupported semantic pattern: %#v", field, fieldSchema)
 		}
 	}
 	stepsSchema := properties["steps"].(map[string]any)
@@ -43,7 +46,7 @@ func TestIntentJSONSchemaShape(t *testing.T) {
 		t.Fatalf("steps schema = %#v", stepsSchema)
 	}
 	questionsSchema := properties["ceo_questions"].(map[string]any)
-	if questionsSchema["type"] != "array" || questionsSchema["items"].(map[string]any)["pattern"] != `\S` {
+	if questionsSchema["type"] != "array" || questionsSchema["items"].(map[string]any)["type"] != "string" {
 		t.Fatalf("ceo_questions schema = %#v", questionsSchema)
 	}
 
@@ -62,9 +65,14 @@ func TestIntentJSONSchemaShape(t *testing.T) {
 				t.Fatalf("steps item %d schema is missing field %q", index, field)
 			}
 		}
-		if stepProperties["description"].(map[string]any)["pattern"] != `\S` ||
-			stepProperties["required_role"].(map[string]any)["pattern"] != `\S` {
-			t.Fatalf("steps item %d text constraints = %#v", index, stepProperties)
+		for _, field := range []string{"description", "required_role"} {
+			fieldSchema := stepProperties[field].(map[string]any)
+			if fieldSchema["type"] != "string" {
+				t.Fatalf("steps item %d field %s schema = %#v", index, field, fieldSchema)
+			}
+			if _, exists := fieldSchema["pattern"]; exists {
+				t.Fatalf("steps item %d field %s contains Provider-unsupported semantic pattern: %#v", index, field, fieldSchema)
+			}
 		}
 		kindSchema := stepProperties["kind"].(map[string]any)
 		required := stepSchema["required"].([]string)
@@ -93,6 +101,48 @@ func TestIntentJSONSchemaShape(t *testing.T) {
 
 	if _, err := json.Marshal(schema); err != nil {
 		t.Fatalf("schema does not marshal to JSON: %v", err)
+	}
+}
+
+// TestIntentJSONSchemaUsesAnthropicSupportedSubset prevents strict Go-only
+// semantic constraints from leaking back into the raw Provider schema. The
+// Claude Adapter sends this map directly, without an SDK transformation pass,
+// so every keyword here must be accepted by Anthropic Structured Outputs.
+func TestIntentJSONSchemaUsesAnthropicSupportedSubset(t *testing.T) {
+	assertAnthropicSchemaNode(t, "$", IntentJSONSchema())
+}
+
+func assertAnthropicSchemaNode(t *testing.T, path string, raw any) {
+	t.Helper()
+	node, ok := raw.(map[string]any)
+	if !ok {
+		t.Fatalf("%s schema node = %#v", path, raw)
+	}
+	allowed := map[string]bool{
+		"type": true, "properties": true, "required": true,
+		"additionalProperties": true, "items": true, "minItems": true,
+		"anyOf": true, "enum": true, "const": true, "description": true,
+	}
+	for keyword := range node {
+		if !allowed[keyword] {
+			t.Fatalf("%s uses unsupported Structured Outputs keyword %q", path, keyword)
+		}
+	}
+	if minItems, exists := node["minItems"]; exists && minItems != 0 && minItems != 1 {
+		t.Fatalf("%s minItems = %#v, Anthropic supports only 0 or 1", path, minItems)
+	}
+	if properties, exists := node["properties"]; exists {
+		for name, property := range properties.(map[string]any) {
+			assertAnthropicSchemaNode(t, path+".properties."+name, property)
+		}
+	}
+	if items, exists := node["items"]; exists {
+		assertAnthropicSchemaNode(t, path+".items", items)
+	}
+	if variants, exists := node["anyOf"]; exists {
+		for _, variant := range variants.([]any) {
+			assertAnthropicSchemaNode(t, path+".anyOf", variant)
+		}
 	}
 }
 

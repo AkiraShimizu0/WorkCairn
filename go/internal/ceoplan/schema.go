@@ -6,14 +6,16 @@ package ceoplan
 // steps, required roles) — never Employee ID, Task ID, dependency ID, or
 // any other field NormalizeIntent derives deterministically in Go. This is
 // a second line of defense alongside the Prompt's own output-format
-// instructions; ParseIntent/NormalizeIntent still validate every business
-// rule after a Structured Output response is decoded.
+// instructions. The Provider schema deliberately uses only Anthropic's
+// supported Structured Outputs subset; semantic constraints such as
+// non-whitespace text remain strict in ParseIntent/NormalizeIntent after a
+// Structured Output response is decoded.
 func IntentJSONSchema() map[string]any {
 	stepProperties := func(kind map[string]any) map[string]any {
 		return map[string]any{
 			"kind":          kind,
-			"description":   intentNonBlankString("A concrete description of the work. Must contain a non-whitespace character."),
-			"required_role": intentNonBlankString("The exact Organization role required for this step. Must contain a non-whitespace character when present."),
+			"description":   intentString("A concrete description of the work. Must contain a non-whitespace character."),
+			"required_role": intentString("The exact Organization role required for this step. Must contain a non-whitespace character when present."),
 		}
 	}
 	nonReviewStep := map[string]any{
@@ -33,15 +35,15 @@ func IntentJSONSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"project_name": intentNonBlankString("A display name proposal. Must contain a non-whitespace character."),
-			"objective":    intentNonBlankString("The requested outcome. Must contain a non-whitespace character."),
-			"summary":      intentNonBlankString("A short plan summary. Must contain a non-whitespace character."),
+			"project_name": intentString("A display name proposal. Must contain a non-whitespace character."),
+			"objective":    intentString("The requested outcome. Must contain a non-whitespace character."),
+			"summary":      intentString("A short plan summary. Must contain a non-whitespace character."),
 			"steps": map[string]any{
 				"type": "array", "minItems": 1,
 				"items": map[string]any{"anyOf": []any{nonReviewStep, reviewStep}},
 			},
 			"ceo_questions": map[string]any{
-				"type": "array", "items": intentNonBlankString("A genuine CEO clarification question. Must contain a non-whitespace character."),
+				"type": "array", "items": intentString("A genuine CEO clarification question. Must contain a non-whitespace character."),
 			},
 		},
 		"required":             []string{"project_name", "objective", "summary", "steps", "ceo_questions"},
@@ -49,6 +51,6 @@ func IntentJSONSchema() map[string]any {
 	}
 }
 
-func intentNonBlankString(description string) map[string]any {
-	return map[string]any{"type": "string", "pattern": `\S`, "description": description}
+func intentString(description string) map[string]any {
+	return map[string]any{"type": "string", "description": description}
 }

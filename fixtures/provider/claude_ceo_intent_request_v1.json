@@ -1,0 +1,88 @@
+{
+  "model": "claude-sonnet-5",
+  "max_tokens": 3000,
+  "system": "System Prompt",
+  "messages": [
+    {
+      "role": "user",
+      "content": "User Prompt"
+    }
+  ],
+  "output_config": {
+    "format": {
+      "type": "json_schema",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "project_name": {
+            "type": "string",
+            "description": "A display name proposal. Must contain a non-whitespace character."
+          },
+          "objective": {
+            "type": "string",
+            "description": "The requested outcome. Must contain a non-whitespace character."
+          },
+          "summary": {
+            "type": "string",
+            "description": "A short plan summary. Must contain a non-whitespace character."
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": ["write", "research", "analyze", "implement"]
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "A concrete description of the work. Must contain a non-whitespace character."
+                    },
+                    "required_role": {
+                      "type": "string",
+                      "description": "The exact Organization role required for this step. Must contain a non-whitespace character when present."
+                    }
+                  },
+                  "required": ["kind", "description", "required_role"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "review"
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "A concrete description of the work. Must contain a non-whitespace character."
+                    },
+                    "required_role": {
+                      "type": "string",
+                      "description": "The exact Organization role required for this step. Must contain a non-whitespace character when present."
+                    }
+                  },
+                  "required": ["kind", "description"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "ceo_questions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "A genuine CEO clarification question. Must contain a non-whitespace character."
+            }
+          }
+        },
+        "required": ["project_name", "objective", "summary", "steps", "ceo_questions"],
+        "additionalProperties": false
+      }
+    }
+  }
+}
