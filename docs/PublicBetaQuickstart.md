@@ -98,6 +98,8 @@ make public-beta-smoke
 - 一般daemonがInteraction経路以外の副作用Commandをdefault denyすること
 - Provider呼出しがMock HTTP serverだけへ向くこと
 
+actual daemonとbrowserを含むAcceptanceは初回だけ`make public-beta-browser-setup`でtest-only browserを用意し、`make public-beta-browser-gate`を実行します。ChromiumとWebKit iPhone viewportでpairing、polling、Request Changes／Revision、reload、daemon restart、FailureEnvelope表示を確認します。詳細は[PublicBetaBrowserAcceptance.md](PublicBetaBrowserAcceptance.md)を参照してください。
+
 ## 実Providerを使う前の確認
 
 実Provider確認はPublic Beta公開者が別途行います。このrepository作業では実行しません。

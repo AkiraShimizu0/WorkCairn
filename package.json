@@ -1,0 +1,18 @@
+{
+  "name": "workcairn-browser-acceptance",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Test-only browser acceptance harness for the WorkCairn Public Beta product path.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "browser:gate": "playwright test",
+    "browser:gate:headed": "playwright test --headed",
+    "browser:install": "playwright install chromium webkit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

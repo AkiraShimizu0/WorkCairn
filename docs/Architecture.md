@@ -88,6 +88,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0040: Reviewer RequirementをGo単一箇所で解決しReviewをTyped Decisionへ移行する](adr/ADR-0040-reviewer-requirement-and-typed-review-decision.md)
 - [ADR-0041: Typed FailureEnvelopeをchild→outer→Ledger→HTTP→UIへそのまま伝播する](adr/ADR-0041-typed-failure-envelope-propagation.md)
 - [ADR-0042: Public Betaの一般daemonをInteraction Reviewed Workflow経路へ限定する](adr/ADR-0042-public-beta-product-path.md)
+- [ADR-0043: actual daemonとChromium／WebKitによるPublic Beta Browser Acceptance Gate](adr/ADR-0043-public-beta-browser-acceptance-gate.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -97,6 +98,12 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 一般利用者の正式経路は`First Run → Interaction → CEO Intent → Go Canonical Plan → Plan Approval → Project／Task commit → Reviewed Workflow Approval → Task／Deliverable → Typed Review → Revision／再Review → Completion → Timeline／Proof of Work`です。`workcairn-daemon`の`POST /v1/commands`はADR-0042により`workspace.setup`と5つの`interaction.*` operationだけをexact allow-listし、それ以外をExecutor前にdefault denyします。
 
 direct Task／Review／Revision、plain／direct Reviewed Workflow、CEO apply、Project／Task／Organization writer、Scheduler、External Actionは既存CLI／内部Process／Recovery用に維持しますが、一般daemonのside-effect surfaceとLocal Web UIからは到達不能です。JSON Contract v1、Command Ledger、Vault canonical evidenceは変更しません。
+
+### Browser acceptance boundary
+
+`tests/browser`は製品Runtimeの外にあるtest-only harnessです。Playwrightがactual `workcairn-daemon` subprocess、embedded UI、temporary Vault、`fixtures/provider/browser_acceptance_v1.json`の固定Anthropic互換responseをChromium／WebKitから操作します。NodeはGo module、Kernel／Domain／Service／Adapter、release binary／archiveへ入らず、`make public-beta-browser-gate`もGo品質を判定する`make v1-release-gate`から分離します。
+
+Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しますが、実Safari／iPhone、private-LAN source address、実Providerはhuman acceptanceとして残します。詳細は[PublicBetaBrowserAcceptance.md](PublicBetaBrowserAcceptance.md)を参照してください。
 
 | コンポーネント | 責務 |
 |---|---|

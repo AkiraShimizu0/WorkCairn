@@ -223,6 +223,9 @@ function rememberError(error, title, commandID = state.activeCommandID) {
     stage: detail?.stage || "",
     command_id: detail?.command_id || commandID || "",
     request_id: detail?.provider_failure?.request_id || "",
+    substage: detail?.details?.substage || "",
+    category: detail?.details?.category || detail?.provider_failure?.category || "",
+    http_status: detail?.provider_failure?.http_status || 0,
     parse_failure_reason: detail?.parse_failure_reason || "",
     recovery_required: Boolean(detail?.recovery_required),
     // details is the additive, optional single failure.Envelope. Kept
@@ -234,8 +237,10 @@ function rememberError(error, title, commandID = state.activeCommandID) {
   try {
     const existing = JSON.parse(localStorage.getItem(errorStorageKey(sessionID)) || "null");
     if (existing && existing.session_version === snapshot.session_version && existing.title === snapshot.title &&
-        existing.code === snapshot.code && existing.stage === snapshot.stage && existing.command_id === snapshot.command_id &&
-        existing.request_id === snapshot.request_id && existing.parse_failure_reason === snapshot.parse_failure_reason &&
+    existing.code === snapshot.code && existing.stage === snapshot.stage && existing.command_id === snapshot.command_id &&
+        existing.request_id === snapshot.request_id && existing.substage === snapshot.substage &&
+        existing.category === snapshot.category && existing.http_status === snapshot.http_status &&
+        existing.parse_failure_reason === snapshot.parse_failure_reason &&
         existing.recovery_required === snapshot.recovery_required &&
         JSON.stringify(existing.details) === JSON.stringify(snapshot.details)) {
       state.lastError = existing;
@@ -273,6 +278,9 @@ async function copySanitizedError(error) {
   const detail = [
     `Error code: ${error.code || "UNKNOWN_ERROR"}`,
     `Stage: ${error.stage || "—"}`,
+    `Substage: ${error.substage || "—"}`,
+    `Category: ${error.category || "—"}`,
+    `HTTP status: ${error.http_status || "—"}`,
     `Command ID: ${error.command_id || "—"}`,
     `Request ID: ${error.request_id || "—"}`,
     `Parse reason: ${error.parse_failure_reason || "—"}`,
@@ -450,6 +458,7 @@ function showError(error, title = "処理を完了できませんでした") {
     node("div", { class: "error-box" },
       node("strong", {}, code),
       stage ? node("div", {}, `stage: ${stage}`) : null,
+      detail?.details?.substage ? node("div", {}, `substage: ${detail.details.substage}`) : null,
       providerRequestID ? node("div", {}, `問い合わせID: ${providerRequestID}`) : null,
       parseFailureReason ? node("div", {}, `parse reason: ${parseFailureReason}`) : null,
     ),
@@ -650,6 +659,7 @@ async function refreshCurrent(silent = false) {
     state.workReport = reportResult.report || null;
     state.workReportError = reportResult.error || null;
     restoreError(record);
+    if (!state.lastError) await restoreDurableFailure(next);
     setConnected(true);
     renderNext();
     renderDetails();
@@ -732,6 +742,8 @@ function renderRememberedError(error) {
       node("summary", {}, "詳細を見る"),
       approvalFacts([
         ["Error code", error.code], ["Stage", error.stage || "—"],
+        ["Substage", error.substage || "—"], ["Category", error.category || "—"],
+        ["HTTP status", error.http_status || "—"],
         ["Command ID", error.command_id || "未発行"], ["問い合わせID", error.request_id || "—"],
         ["Parse reason", error.parse_failure_reason || "—"],
       ]),
@@ -744,6 +756,34 @@ function renderRememberedError(error) {
       button("新しい状態を確認", "quiet", async () => { clearCurrentError(); state.renderKey = ""; await refreshCurrent(); }),
     ),
   );
+}
+
+// restoreDurableFailure reconstructs the presentation from the Command
+// references already persisted by an Interaction attention state. Browser
+// storage remains a UX cache only: a fresh browser can recover the same safe
+// FailureEnvelope projection from Ledger/server evidence after reload.
+async function restoreDurableFailure(next) {
+  if (!next || !["inspect_workflow_recovery", "inspect_action_recovery"].includes(next.kind) || !next.commands?.length) return;
+  for (const reference of next.commands) {
+    try {
+      const query = new URLSearchParams({ scope: reference.scope });
+      if (reference.project_name) query.set("project", reference.project_name);
+      const record = await requestJSON(`/v1/commands/${encodeURIComponent(reference.command_id)}?${query}`);
+      if (!record.failure || !["failed", "partial_failure"].includes(record.state)) continue;
+      const diagnostics = errorDiagnostics(record.failure.details, record.result);
+      rememberError(new APIError(record.failure.code, 422, {
+        code: record.failure.code,
+        stage: record.failure.stage,
+        command_id: reference.command_id,
+        recovery_required: record.state === "partial_failure",
+        ...diagnostics,
+      }), "前回のCommandを完了できませんでした", reference.command_id);
+      return;
+    } catch {
+      // The existing attention screen still exposes an explicit read-only
+      // inspection action. Never infer success or repair a missing record.
+    }
+  }
 }
 
 function renderPlanGeneration(next) {
@@ -993,11 +1033,25 @@ async function inspectCommands(references) {
       if (reference.project_name) query.set("project", reference.project_name);
       return requestJSON(`/v1/commands/${encodeURIComponent(reference.command_id)}?${query}`);
     }));
+    const failures = results.flatMap((result, index) => {
+      if (!result.failure) return [];
+      const details = result.failure.details;
+      return [
+        ["Error code", result.failure.code],
+        ["Stage", result.failure.stage || "—"],
+        ["Substage", details?.substage || "—"],
+        ["Category", details?.category || details?.provider?.category || "—"],
+        ["HTTP status", details?.provider?.http_status || "—"],
+        ["Request ID", details?.provider?.request_id || "—"],
+        ["Command ID", references[index].command_id],
+      ];
+    });
     setBusy(false);
     showApprovalSheet({
       title: "Command Ledger",
       description: "自動回復は行いません。partialまたはrunningの場合はMacのRecovery手順でcanonical evidenceを確認してください。",
       facts: results.map((result, index) => [references[index].command_id, `${result.state}${result.failure?.stage ? ` / ${result.failure.stage}` : ""}`]),
+      technicalFacts: failures,
       approveLabel: "閉じる",
       approveKind: "quiet",
       onApprove: () => {},
@@ -1221,7 +1275,7 @@ function timelineEntries() {
     } else if (turn.workflow) {
       for (const task of turn.workflow.tasks || []) {
         entries.push({ title: task.targeted_revision ? "修正を完了しました" : "成果物を作成しました", description: `${task.task_id}の成果物を保存しました。`, at: turn.at, detail: `Execution: ${task.execution_command_id || "—"}` });
-        if (task.verdict) entries.push({ title: task.verdict === "request_changes" ? "Reviewerが修正を依頼しました" : "Reviewerが承認しました", description: task.revision_task_id ? `修正Task ${task.revision_task_id}へ引き渡しました。` : `${task.task_id}のReviewが完了しました。`, at: turn.at, detail: `Review: ${task.review_command_id || "—"}` });
+        if (task.verdict) entries.push({ title: task.verdict === "Request Changes" ? "Reviewerが修正を依頼しました" : "Reviewerが承認しました", description: task.revision_task_id ? `修正Task ${task.revision_task_id}へ引き渡しました。` : `${task.task_id}のReviewが完了しました。`, at: turn.at, detail: `Review: ${task.review_command_id || "—"}` });
       }
       if (turn.workflow.failure) entries.push({ title: "自動継続を停止しました", description: "成立済みの仕事を保持し、確認を待っています。", at: turn.at, attention: true, detail: `${turn.workflow.failure.code} / ${turn.workflow.failure.stage}` });
     } else if (turn.action) {

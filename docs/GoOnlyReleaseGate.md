@@ -2,7 +2,9 @@
 
 ## 判定
 
-WorkCairnのrepository、build、test、release、distributionはGo Onlyです。正式な製品surfaceは`workcairn`、`workcairn-daemon`、JSON Contract v1の`workcairn-core`であり、clone後の検証にGo toolchain以外の言語runtimeやpackage managerを必要としません。Public Beta候補versionは`VERSION`の`v1.0.0-beta.1`です。
+WorkCairnの製品Runtime、build、正式Release Gate、release、distributionはGo Onlyです。正式な製品surfaceは`workcairn`、`workcairn-daemon`、JSON Contract v1の`workcairn-core`であり、clone後のbuild／unit test／release検証にGo toolchain以外の言語runtimeやpackage managerを必要としません。Public Beta候補versionは`VERSION`の`v1.0.0-beta.1`です。
+
+ADR-0043のactual browser acceptanceだけは、製品外のtest-only Node／Playwright harnessを別Gateとして使用します。これは`make v1-release-gate`の構成、Go module、製品binary、release archiveを変更しません。
 
 ## Capability matrix
 
@@ -43,6 +45,8 @@ Go test内のRelease Gateはさらに次を拒否します。
 - `.py`、`.python-version`、`.venv`、`pyproject.toml`、`uv.lock`等、撤去済みruntime資産のrepository再混入
 
 Provider APIはMock HTTP serverだけ、Vaultはtemporary directoryだけで検証し、実API、実Vault、`.env`を使用しません。
+
+actual daemon／DOM／Chromium／WebKitのPublic Beta確認は、別途`make public-beta-browser-gate`で実行します。初回のtest-only dependency準備は`make public-beta-browser-setup`です。詳細は[PublicBetaBrowserAcceptance.md](PublicBetaBrowserAcceptance.md)を参照してください。
 
 ## Release artifact
 

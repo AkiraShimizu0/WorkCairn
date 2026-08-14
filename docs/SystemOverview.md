@@ -198,7 +198,7 @@ ADR-0030のExternal Action handoffは任意です。completed Workflowに含ま�
 
 製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／Metrics、External Action、Local Web UIはGoだけで構成されます。CLIに加え、loopback既定の`workcairn-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。
 
-Public Beta前に移行用compatibility distributionを撤去しました。repository、test、release、distributionにも別言語runtimeやSDKはありません。JSON Contract v1とgolden／migration fixtureはGoが直接検証するlanguage-neutralな契約資産です。
+Public Beta前に移行用compatibility distributionを撤去しました。製品Runtime、Go build／test、release、distributionに別言語runtimeやSDKはありません。JSON Contract v1とgolden／migration fixtureはGoが直接検証するlanguage-neutralな契約資産です。ADR-0043のactual browser acceptanceに限りtest-only Node／Playwrightを独立Gateで使いますが、Go moduleやrelease archiveには含めません。
 
 正式な判定は[GoOnlyReleaseGate.md](GoOnlyReleaseGate.md)、移行履歴は[MigrationHistory.md](MigrationHistory.md)を参照してください。
 

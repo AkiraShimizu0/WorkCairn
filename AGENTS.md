@@ -18,6 +18,7 @@
 ## Architecture Rules
 
 - 製品コード、build、test、release、distributionはGo Onlyです。中核ビジネスルールはGoへ実装します。
+- ADR-0043のPublic Beta Browser Acceptance harnessだけはtest-only Node／Playwrightを許可します。Go module、製品Runtime、release archive、通常の`v1-release-gate`へ混入させず、browser専用Gateとして分離します。
 - repositoryへ別言語Runtime、legacy implementation、暗黙fallbackを再導入しません。
 - KernelはService登録、ライフサイクル、Command調停に限定し、DomainロジックやProvider固有処理を持たせません。
 - DomainはObsidian、Markdown、外部LLM SDK、`.env`、APIキーを知りません。

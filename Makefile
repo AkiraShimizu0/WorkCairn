@@ -13,7 +13,7 @@ RELEASE_GOARCH ?= $(shell cd $(GO_DIR) && go env GOARCH)
 DIST_DIR ?= dist
 PUBLIC_BETA_VERSION := $(shell sed -n '1p' VERSION)
 
-.PHONY: go-build go-test public-beta-smoke public-beta-build-matrix v1-release-gate release-package verify-release-package test
+.PHONY: go-build go-test public-beta-smoke public-beta-browser-setup public-beta-browser-gate public-beta-build-matrix v1-release-gate release-package verify-release-package test
 
 go-build:
 	mkdir -p bin
@@ -33,6 +33,17 @@ public-beta-smoke:
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/httpapi -run '^TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand$$'
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/runtime -run '^TestRuntimeCompletesTemporaryVaultExecutionWithDeliverableAndAudit$$'
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/process -run '^TestReviewedWorkflowTemporaryVaultRequestChangesRevisionReReviewAndReplay$$'
+
+# Node and Playwright are test-only dependencies for the actual-daemon browser
+# acceptance harness. They are intentionally absent from Go modules, product
+# binaries, release archives, and the v1 release gate.
+public-beta-browser-setup:
+	npm ci --ignore-scripts
+	npm exec -- playwright install chromium webkit
+
+public-beta-browser-gate: go-build
+	test -x node_modules/.bin/playwright
+	npm run browser:gate
 
 public-beta-build-matrix:
 	./scripts/check-release-matrix.sh

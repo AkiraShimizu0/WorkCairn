@@ -106,7 +106,8 @@ func TestRepositoryHasNoRetiredRuntimeAssets(t *testing.T) {
 		if relErr != nil {
 			return relErr
 		}
-		if entry.IsDir() && (relative == ".git" || relative == "work" || relative == "workspace" || relative == "bin" || relative == "dist") {
+		if entry.IsDir() && (relative == ".git" || relative == "work" || relative == "workspace" || relative == "bin" || relative == "dist" ||
+			relative == "node_modules" || relative == "test-results" || relative == "playwright-report") {
 			return filepath.SkipDir
 		}
 		if forbiddenNames[entry.Name()] || (!entry.IsDir() && filepath.Ext(entry.Name()) == ".py") {

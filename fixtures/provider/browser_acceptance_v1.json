@@ -1,0 +1,73 @@
+{
+  "schema_version": "workcairn-browser-provider-fixture.v1",
+  "description": "Sanitized fixed Anthropic-compatible responses captured as a provider-boundary acceptance contract. Test code must not derive these payloads from Go parser expectations.",
+  "scenarios": {
+    "happy_path": [
+      {
+        "name": "ceo_intent_clarification",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_ceo_clarify_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Browser Acceptance Project\",\"objective\":\"Public Betaの依頼を成果物として完成する\",\"summary\":\"Content Writerが作成しQA Engineerが確認する\",\"steps\":[{\"kind\":\"write\",\"description\":\"Public Beta向けの紹介文を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[\"読者は初めてWorkCairnを使う人ですか？\"]}"}], "usage": {"input_tokens": 18, "output_tokens": 42}}
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 500,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_ceo_final_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Browser Acceptance Project\",\"objective\":\"Public Betaの依頼を成果物として完成する\",\"summary\":\"初めての利用者向け紹介文を作成し独立Reviewする\",\"steps\":[{\"kind\":\"write\",\"description\":\"初めての利用者向け紹介文を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 21, "output_tokens": 39}}
+      },
+      {
+        "name": "task_execution_success",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_task_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# WorkCairn紹介文\n\nWorkCairnは、必要な判断だけを人に返し、AI社員が計画・作成・確認を進める、自分専用のAI会社です。"}], "usage": {"input_tokens": 24, "output_tokens": 31}}
+      },
+      {
+        "name": "review_request_changes",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_review_changes_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"初めての利用者が次に何をすればよいかが不明確です。\",\"suggested_action\":\"最初の依頼を入力する案内を追記してください。\"}],\"summary\":\"利用開始の案内を追加すると目的を満たします。\"}"}], "usage": {"input_tokens": 30, "output_tokens": 38}}
+      },
+      {
+        "name": "revision_success",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_revision_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# WorkCairn紹介文\n\nWorkCairnは、必要な判断だけを人に返し、AI社員が計画・作成・確認を進める、自分専用のAI会社です。まず自然な言葉で、会社に任せたい仕事を入力してください。"}], "usage": {"input_tokens": 34, "output_tokens": 36}}
+      },
+      {
+        "name": "re_review_approve",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_review_approve_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"利用開始の案内が追加され、要件を満たしています。\"}"}], "usage": {"input_tokens": 27, "output_tokens": 22}}
+      }
+    ],
+    "provider_failure": [
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 300,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_failure_ceo_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Browser Failure Project\",\"objective\":\"Provider failureを安全に表示する\",\"summary\":\"成果物作成後のReview failureを確認する\",\"steps\":[{\"kind\":\"write\",\"description\":\"診断用の短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"成果物を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 14, "output_tokens": 28}}
+      },
+      {
+        "name": "task_execution_success",
+        "delay_ms": 300,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_failure_task_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# 診断用成果物\n\nReview前までcommitされる固定成果物です。"}], "usage": {"input_tokens": 10, "output_tokens": 12}}
+      },
+      {
+        "name": "provider_typed_failure",
+        "delay_ms": 300,
+        "status": 429,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_rate_limit_001"},
+        "body": {"type": "error", "error": {"type": "rate_limit_error", "message": "sanitized fixture failure"}}
+      }
+    ]
+  }
+}

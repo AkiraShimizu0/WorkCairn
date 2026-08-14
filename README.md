@@ -6,7 +6,7 @@ WorkCairnは、自分専用のAI会社へ自然言語で仕事を依頼するloc
 
 **あなたのAI会社。必要な判断だけ、あなたがする。** 会社は見える。仕事も見える。でも管理しなくていい。
 
-現在の候補versionは`v1.0.0-beta.1`です。repository、build、test、release、distributionはGo Onlyです。
+現在の候補versionは`v1.0.0-beta.1`です。製品Runtime、build、release、distributionはGo Onlyです。actual browserを検証する独立Acceptance harnessだけはADR-0043のtest-only Node／Playwrightを使い、製品archiveには含めません。
 
 ## 自分のAI会社を持つ
 
@@ -124,8 +124,12 @@ Public Betaの一般daemonは、この経路に必要な`workspace.setup`、`int
 
 ```bash
 make public-beta-smoke
+make public-beta-browser-setup # 初回のみ。test-only Node / Chromium / WebKit
+make public-beta-browser-gate
 make v1-release-gate
 ```
+
+Browser Gateはactual daemonとembedded UIを操作する独立Acceptanceです。Node／Playwrightはtest-onlyで、Go製品Runtimeやrelease archiveには含まれません。
 
 `public-beta-smoke`はtemporary VaultとMock Providerだけで、Task execution、Deliverable／Audit、Review／Revision分岐、mobile Interaction完了までを検証します。`v1-release-gate`は3 binary、4 target cross-build、全Go test、race、vet、gofmt、repository asset guardを確認します。
 

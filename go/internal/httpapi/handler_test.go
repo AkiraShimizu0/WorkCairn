@@ -312,6 +312,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"renderInFlight", "storedPendingCommand", "進め方を考えています", "AI社員が仕事を進めています",
 		"この画面を閉じても処理はMacで続きます。",
 		"commandProviderFailure", "task?.execution?.provider_failure",
+		"restoreDurableFailure", "record.failure.details", "前回のCommandを完了できませんでした",
 		"state.renderKey === key", "state.detailRenderKey === key", "state.timelineRenderKey === key",
 	} {
 		if !strings.Contains(asset.Body.String(), required) {

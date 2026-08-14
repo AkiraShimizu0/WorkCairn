@@ -44,7 +44,20 @@ ADR-0042に基づき、一般利用者の正式経路を`First Run → Interacti
 - CLI、Recovery、内部Process、Command Ledger、canonical evidenceは維持
 - WordPress、Scheduler、Notification／Metrics、advanced Autonomy／Shadow ModeはBeta後surfaceとして通常UIから非表示
 
-次のPublic Beta品質Phaseはactual daemon、embedded JavaScript、DOM、polling、reloadを通すBrowser E2Eです。Playwright等の導入は本Phaseに含めません。
+このproduct path固定をactual daemonとbrowserまで検証する次Phaseは、下記Browser Acceptance Gateとして完了しました。
+
+## Completed — Public Beta Browser Acceptance Gate
+
+ADR-0043に基づき、test-only Playwrightでactual daemonとbrowserを通す独立Gateを追加しました。
+
+- Chromium desktopとWebKit iPhone viewport
+- actual `workcairn-daemon`、temporary Vault、空きport、graceful shutdown／restart
+- parserから生成しないsanitized固定Anthropic互換fixture
+- pairing、First Run、clarification draft／focus、single-flight、Request Changes、Revision、再Review、Completion
+- reload、daemon restart、Timeline／Proof of Work、FailureEnvelopeのfresh browser再投影
+- `make v1-release-gate`と分離した`make public-beta-browser-gate`
+
+実Mac Safari／iPhone Safari、private-LAN secure-context、実ProviderはPublic Beta human Device Acceptanceに残ります。
 
 ## Completed — v1.0 Candidate Stabilization
 
