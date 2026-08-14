@@ -62,6 +62,7 @@ type Envelope struct {
 // body, no credential, no message text.
 type ProviderDiagnostic struct {
 	Category     string `json:"category"`
+	Subcategory  string `json:"subcategory,omitempty"`
 	HTTPStatus   int    `json:"http_status,omitempty"`
 	ProviderType string `json:"provider_type,omitempty"`
 	RequestID    string `json:"request_id,omitempty"`
@@ -115,8 +116,11 @@ func (envelope Envelope) Validate() error {
 	if envelope.ChildCommandID != "" && !canonicalText(envelope.ChildCommandID) {
 		return ErrInvalidEnvelope
 	}
-	if envelope.Provider != nil && !canonicalText(envelope.Provider.Category) {
-		return ErrInvalidEnvelope
+	if envelope.Provider != nil {
+		if !canonicalText(envelope.Provider.Category) ||
+			(envelope.Provider.Subcategory != "" && !canonicalText(envelope.Provider.Subcategory)) {
+			return ErrInvalidEnvelope
+		}
 	}
 	if envelope.Parse != nil && (!canonicalText(envelope.Parse.Domain) || !canonicalText(envelope.Parse.Reason) ||
 		(envelope.Parse.Field != "" && !canonicalText(envelope.Parse.Field))) {

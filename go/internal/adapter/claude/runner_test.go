@@ -2,14 +2,18 @@ package claude
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -432,6 +436,36 @@ func TestRunnerMapsTransportAndContextFailures(t *testing.T) {
 	defer stop()
 	if _, err := runner.Run(expired, validRunRequest()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadline error = %v", err)
+	}
+}
+
+func TestRunnerClassifiesTypedTransportFailuresWithoutRawErrorText(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want TransportFailureCategory
+	}{
+		{"DNS", &url.Error{Op: "Post", URL: "https://provider.invalid", Err: &net.DNSError{Err: "no such host", Name: "provider.invalid"}}, TransportDNSFailed},
+		{"connect", &url.Error{Op: "Post", URL: "https://provider.invalid", Err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}}, TransportConnectFailed},
+		{"TLS", &url.Error{Op: "Post", URL: "https://provider.invalid", Err: x509.UnknownAuthorityError{}}, TransportTLSFailed},
+		{"timeout", &url.Error{Op: "Post", URL: "https://provider.invalid", Err: context.DeadlineExceeded}, TransportTimeout},
+		{"reset", &url.Error{Op: "Post", URL: "https://provider.invalid", Err: syscall.ECONNRESET}, TransportConnectionReset},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+				return nil, test.err
+			}))
+			_, err := runner.Run(context.Background(), validRunRequest())
+			var providerError *Error
+			if !errors.As(err, &providerError) || providerError.Category != FailureTransport || providerError.Transport != test.want ||
+				providerError.StatusCode != 0 || providerError.RequestID != "" {
+				t.Fatalf("transport failure = %#v, %v", providerError, err)
+			}
+			if strings.Contains(providerError.Error(), "provider.invalid") || strings.Contains(providerError.Error(), "no such host") {
+				t.Fatalf("transport Error() exposed raw diagnostics: %q", providerError.Error())
+			}
+		})
 	}
 }
 

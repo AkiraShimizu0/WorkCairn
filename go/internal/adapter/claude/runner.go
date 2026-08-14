@@ -152,7 +152,10 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 		if contextError := ctx.Err(); contextError != nil {
 			return worker.RunResult{}, contextError
 		}
-		return worker.RunResult{}, &Error{Kind: ErrTransport, Category: FailureTransport, Err: err}
+		return worker.RunResult{}, &Error{
+			Kind: ErrTransport, Category: FailureTransport,
+			Transport: classifyTransportFailure(err), Err: err,
+		}
 	}
 	if response == nil || response.Body == nil {
 		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, Category: FailureResponse}

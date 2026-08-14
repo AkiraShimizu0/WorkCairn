@@ -21,6 +21,9 @@ func TestEnvelopeValidateRequiresCodeAndStage(t *testing.T) {
 		func(envelope *Envelope) { envelope.Substage = "\n" },
 		func(envelope *Envelope) { envelope.Category = "\r" },
 		func(envelope *Envelope) { envelope.ChildCommandID = " " },
+		func(envelope *Envelope) {
+			envelope.Provider = &ProviderDiagnostic{Category: "provider_transport", Subcategory: "bad\nvalue"}
+		},
 	} {
 		invalid := valid
 		mutate(&invalid)

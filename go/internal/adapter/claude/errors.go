@@ -1,8 +1,15 @@
 package claude
 
 import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
+	"os"
+	"strings"
+	"syscall"
 )
 
 var (
@@ -14,6 +21,11 @@ var (
 )
 
 type FailureCategory string
+
+// TransportFailureCategory is a closed, sanitized classification derived
+// only from Go's typed network error chain. It never contains an endpoint,
+// raw error text, request data, or credentials.
+type TransportFailureCategory string
 
 const (
 	FailureAuthentication FailureCategory = "authentication_required"
@@ -35,6 +47,14 @@ const (
 	FailureStructuredOutputInvalid FailureCategory = "structured_output_invalid"
 )
 
+const (
+	TransportDNSFailed       TransportFailureCategory = "provider_dns_failed"
+	TransportConnectFailed   TransportFailureCategory = "provider_connect_failed"
+	TransportTLSFailed       TransportFailureCategory = "provider_tls_failed"
+	TransportTimeout         TransportFailureCategory = "provider_timeout"
+	TransportConnectionReset TransportFailureCategory = "provider_connection_reset"
+)
+
 // Error retains machine-readable Adapter failure details without exposing the
 // Provider response body or credential-bearing request data in its text.
 type Error struct {
@@ -43,6 +63,7 @@ type Error struct {
 	RequestID    string
 	ProviderType string
 	Category     FailureCategory
+	Transport    TransportFailureCategory
 	Err          error
 }
 
@@ -64,4 +85,43 @@ func (failure *Error) Unwrap() []error {
 		return []error{failure.Kind}
 	}
 	return []error{failure.Kind, failure.Err}
+}
+
+// classifyTransportFailure deliberately leaves unrecognized network errors
+// unclassified. Callers retain the broad provider_transport category rather
+// than guessing from a raw error string.
+func classifyTransportFailure(err error) TransportFailureCategory {
+	if err == nil {
+		return ""
+	}
+	var dnsError *net.DNSError
+	if errors.As(err, &dnsError) {
+		return TransportDNSFailed
+	}
+	var certificateError *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostnameError x509.HostnameError
+	var invalidCertificate x509.CertificateInvalidError
+	if errors.As(err, &certificateError) || errors.As(err, &unknownAuthority) ||
+		errors.As(err, &hostnameError) || errors.As(err, &invalidCertificate) {
+		return TransportTLSFailed
+	}
+	if errors.Is(err, syscall.ECONNRESET) {
+		return TransportConnectionReset
+	}
+	if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+		return TransportTimeout
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) && networkError.Timeout() {
+		return TransportTimeout
+	}
+	var operationError *net.OpError
+	if errors.As(err, &operationError) && strings.EqualFold(operationError.Op, "dial") {
+		return TransportConnectFailed
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) {
+		return TransportConnectFailed
+	}
+	return ""
 }

@@ -61,10 +61,11 @@ type InteractionPlanResult struct {
 // ProviderFailure is redacted diagnostic evidence derived from a typed
 // Adapter error. It never contains credential values or Provider messages.
 type ProviderFailure struct {
-	Category     string `json:"category"`
-	HTTPStatus   int    `json:"http_status,omitempty"`
-	ProviderType string `json:"provider_error_type,omitempty"`
-	RequestID    string `json:"request_id,omitempty"`
+	Category          string `json:"category"`
+	TransportCategory string `json:"transport_category,omitempty"`
+	HTTPStatus        int    `json:"http_status,omitempty"`
+	ProviderType      string `json:"provider_error_type,omitempty"`
+	RequestID         string `json:"request_id,omitempty"`
 }
 
 type InteractionApplyResult struct {
@@ -276,6 +277,19 @@ func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, resul
 		}
 		return result, finishDurableCommandWithEnvelope(ctx, claim, result, err, &envelope, partial)
 	}
+	if err != nil && result.ProviderFailure != nil {
+		envelope := failure.New(code, stage)
+		envelope.Substage = result.ProviderFailure.TransportCategory
+		envelope.Category = result.ProviderFailure.Category
+		envelope.Partial = partial
+		envelope.RecoveryRequired = partial
+		envelope.Provider = &failure.ProviderDiagnostic{
+			Category: result.ProviderFailure.Category, Subcategory: result.ProviderFailure.TransportCategory,
+			HTTPStatus: result.ProviderFailure.HTTPStatus, ProviderType: result.ProviderFailure.ProviderType,
+			RequestID: result.ProviderFailure.RequestID,
+		}
+		return result, finishDurableCommandWithEnvelope(ctx, claim, result, err, &envelope, partial)
+	}
 	return result, finishDurableCommand(ctx, claim, result, err, code, stage, partial)
 }
 
@@ -289,7 +303,7 @@ func providerFailure(err error) *ProviderFailure {
 		category = claude.FailureUnknown
 	}
 	return &ProviderFailure{
-		Category: string(category), HTTPStatus: failure.StatusCode,
+		Category: string(category), TransportCategory: string(failure.Transport), HTTPStatus: failure.StatusCode,
 		ProviderType: failure.ProviderType, RequestID: failure.RequestID,
 	}
 }

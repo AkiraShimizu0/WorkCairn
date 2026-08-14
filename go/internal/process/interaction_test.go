@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
@@ -324,6 +327,50 @@ func TestInteractionPlanRecordsRedactedTypedProviderFailure(t *testing.T) {
 		decodeErr != nil || stored.ProviderFailure == nil || stored.ProviderFailure.HTTPStatus != http.StatusUnauthorized ||
 		strings.Contains(string(record.Result), "must not be stored") {
 		t.Fatalf("redacted Provider Ledger = %#v, %v, decode=%v", record, ledgerErr, decodeErr)
+	}
+}
+
+func TestInteractionPlanPersistsSanitizedTransportSubcategoryInFailureEnvelope(t *testing.T) {
+	fixture := loadCEOPlanFixture(t)
+	root := ceoPlanVault(t, fixture.Employees)
+	at := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	start := InteractionStartInput{
+		VaultRoot: root, SessionID: "SESSION-PROVIDER-DNS", Request: fixture.Request,
+		Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-PROVIDER-DNS-START",
+	}
+	plan, err := PlanInteractionStart(context.Background(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.RequestDigest = plan.Session.RequestDigest
+	if _, err := ExecuteInteractionStart(context.Background(), start, true); err != nil {
+		t.Fatal(err)
+	}
+	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
+		return nil, &url.Error{
+			Op: "Post", URL: "https://must-not-be-persisted.invalid",
+			Err: &net.DNSError{Err: "must-not-be-persisted", Name: "must-not-be-persisted.invalid"},
+		}
+	})
+	result, err := ExecuteInteractionPlanGeneration(context.Background(), InteractionPlanGenerationInput{
+		VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: 1,
+		CurrentTime: at.Add(time.Minute), CommandID: "CMD-PROVIDER-DNS-PLAN",
+	}, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
+	var recorded *RecordedCommandError
+	if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_UNAVAILABLE" || recorded.Stage != "ceo_plan_runner" ||
+		recorded.Envelope == nil || recorded.Envelope.Substage != string(claude.TransportDNSFailed) ||
+		recorded.Envelope.Provider == nil || recorded.Envelope.Provider.Subcategory != string(claude.TransportDNSFailed) ||
+		result.ProviderFailure == nil || result.ProviderFailure.TransportCategory != string(claude.TransportDNSFailed) ||
+		result.ProviderFailure.HTTPStatus != 0 || result.ProviderFailure.RequestID != "" || result.SessionCommitted {
+		t.Fatalf("transport failure = %#v, result=%#v, err=%v", recorded, result, err)
+	}
+	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
+	record, ledgerErr := ledger.Get(context.Background(), "CMD-PROVIDER-DNS-PLAN")
+	encoded, _ := json.Marshal(record)
+	if ledgerErr != nil || record.Failure == nil || record.Failure.Details == nil ||
+		record.Failure.Details.Substage != string(claude.TransportDNSFailed) ||
+		strings.Contains(string(encoded), "must-not-be-persisted") {
+		t.Fatalf("transport failure Ledger = %#v, %v", record, ledgerErr)
 	}
 }
 
