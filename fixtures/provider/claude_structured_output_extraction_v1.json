@@ -1,0 +1,47 @@
+{
+  "single_json_with_thinking": {
+    "model": "claude-sonnet-5",
+    "content": [
+      {"type": "thinking", "thinking": "synthetic test-only thinking block"},
+      {"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"Approved.\"}"}
+    ],
+    "usage": {"input_tokens": 1, "output_tokens": 1}
+  },
+  "multiple_text_blocks": {
+    "model": "claude-sonnet-5",
+    "content": [
+      {"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"Approved.\"}"},
+      {"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"Second.\"}"}
+    ],
+    "usage": {"input_tokens": 1, "output_tokens": 1}
+  },
+  "trailing_prose": {
+    "model": "claude-sonnet-5",
+    "content": [
+      {"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"Approved.\"}\nDone."}
+    ],
+    "usage": {"input_tokens": 1, "output_tokens": 1}
+  },
+  "second_json_value": {
+    "model": "claude-sonnet-5",
+    "content": [
+      {"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"Approved.\"} {\"second\":true}"}
+    ],
+    "usage": {"input_tokens": 1, "output_tokens": 1}
+  },
+  "unexpected_content_block": {
+    "model": "claude-sonnet-5",
+    "content": [
+      {"type": "tool_use"},
+      {"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"Approved.\"}"}
+    ],
+    "usage": {"input_tokens": 1, "output_tokens": 1}
+  },
+  "refusal": {
+    "model": "claude-sonnet-5",
+    "content": [],
+    "stop_reason": "refusal",
+    "stop_details": {"category": "cyber"},
+    "usage": {"input_tokens": 1, "output_tokens": 0}
+  }
+}

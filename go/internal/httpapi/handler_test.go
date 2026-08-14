@@ -1218,16 +1218,13 @@ func TestMobileInteractionHTTPFlowRequestChangesRevisionReReviewToCompletion(t *
 	}
 }
 
-// TestMobileInteractionHTTPFlowMalformedReviewResponseClassifiesOuterCommand
-// exercises the real daemon/process composition when the Runner's Review
-// response violates the typed Review contract (marked JSON wrapped in a
-// Markdown code fence, a realistic Claude Sonnet 5 slip) instead of failing
-// at the Provider transport layer. It verifies the outer
-// interaction.workflow.execute Command surfaces the same typed
-// REVIEW_RESULT_INVALID/review_result_parser classification the Review child
-// Command records, instead of the generic REVIEWED_WORKFLOW_FAILED/review
-// pair, and that the Deliverable is preserved.
-func TestMobileInteractionHTTPFlowMalformedReviewResponseClassifiesOuterCommand(t *testing.T) {
+// TestMobileInteractionHTTPFlowStructuredReviewResponseViolationClassifiesOuterCommand
+// exercises the real daemon/process composition when a Provider returns one
+// text block that violates the Structured Outputs response contract. The
+// Claude Adapter must reject it before the Domain parser, and the outer
+// interaction.workflow.execute Command must preserve that safe Provider
+// response classification while keeping the committed Deliverable.
+func TestMobileInteractionHTTPFlowStructuredReviewResponseViolationClassifiesOuterCommand(t *testing.T) {
 	root := t.TempDir()
 	for _, directory := range []string{"社員", "プロジェクト"} {
 		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
@@ -1250,11 +1247,9 @@ func TestMobileInteractionHTTPFlowMalformedReviewResponseClassifiesOuterCommand(
 	providerOutputs := []string{
 		string(planOutput),
 		"# 成果物\n\n要件の下書きです。",
-		// Realistic Claude Sonnet 5 contract slip: valid verdict/issues/
-		// summary JSON, but wrapped in a Markdown code fence the Review
-		// Prompt forbids. Structured Outputs guarantees the field set is
-		// well-formed JSON; it does not stop this slip from prefixing that
-		// JSON with fence text.
+		// Synthetic Provider contract violation: Structured Outputs promises
+		// one JSON document, so a Markdown fence must be rejected by the
+		// Adapter rather than forwarded to the Review Domain parser.
 		"```json\n" + typedReviewOutput("Approve", `[]`, "問題ありません。") + "\n```",
 	}
 	providerCalls := 0
@@ -1329,23 +1324,23 @@ func TestMobileInteractionHTTPFlowMalformedReviewResponseClassifiesOuterCommand(
 	var record commandledger.Record
 	decodeHTTPResult(t, statusResponse, &record)
 	if record.State != commandledger.StatePartialFailure || record.Failure == nil ||
-		record.Failure.Code != "REVIEW_RESULT_INVALID" || record.Failure.Stage != "review_result_parser" {
+		record.Failure.Code != "PROVIDER_RESPONSE_INVALID" || record.Failure.Stage != "review_provider" {
 		t.Fatalf("outer Command status = %#v", record)
 	}
 	// The HTTP-exposed Ledger status must carry the same Envelope the
 	// Review child determined once -- proving this system-level failure
 	// reaches the HTTP boundary unchanged, not just the Ledger record's
 	// flat Code/Stage.
-	if record.Failure.Details == nil || record.Failure.Details.Code != "REVIEW_RESULT_INVALID" ||
-		record.Failure.Details.Stage != "review_result_parser" || record.Failure.Details.Parse == nil ||
-		record.Failure.Details.Parse.Domain != "review" || record.Failure.Details.Parse.Reason == "" {
+	if record.Failure.Details == nil || record.Failure.Details.Code != "PROVIDER_RESPONSE_INVALID" ||
+		record.Failure.Details.Stage != "review_provider" || record.Failure.Details.Provider == nil ||
+		record.Failure.Details.Provider.Category != "structured_output_invalid" || record.Failure.Details.Parse != nil {
 		t.Fatalf("outer Command status Details = %#v", record.Failure.Details)
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "プロジェクト", "iPhone依頼3", "Deliverables", "TASK-001.md")); statErr != nil {
-		t.Fatalf("Deliverable was not preserved after Review parser failure: %v", statErr)
+		t.Fatalf("Deliverable was not preserved after structured Review response failure: %v", statErr)
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "プロジェクト", "iPhone依頼3", "Reviews", "TASK-001.review.json")); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("canonical Review artifact should not exist after parser failure: %v", statErr)
+		t.Fatalf("canonical Review artifact should not exist after structured response failure: %v", statErr)
 	}
 }
 

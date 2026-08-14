@@ -76,6 +76,10 @@ func TestReviewBuilderIsDeterministicAndKeepsSectionOrder(t *testing.T) {
 		!strings.Contains(first.System, "summaryは、今回の判定理由を短く要約した文字列にしてください。空文字列は禁止です。") {
 		t.Fatal("Review Prompt does not make the Go-owned Markdown / required summary responsibility explicit")
 	}
+	if strings.Contains(first.System, "成果物はMarkdownで出力してください。") ||
+		!strings.Contains(first.System, "レビュー結果は、後述するJSON形式だけで出力してください。") {
+		t.Fatal("Review Prompt retained the Task-only Markdown output instruction")
+	}
 }
 
 func TestReviewBuilderHandlesOptionalContextDeterministically(t *testing.T) {

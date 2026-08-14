@@ -24,11 +24,11 @@ func (builder Builder) BuildReview(ctx context.Context, input review.PromptInput
 		return worker.Prompt{}, fmt.Errorf("build review prompt: %w", err)
 	}
 
-	base, err := builder.Build(ctx, worker.PromptInput{
+	base, err := builder.build(ctx, worker.PromptInput{
 		Employee:    input.Reviewer,
 		Task:        input.Task,
 		CurrentTime: input.CurrentTime,
-	})
+	}, "レビュー結果は、後述するJSON形式だけで出力してください。")
 	if err != nil {
 		return worker.Prompt{}, fmt.Errorf("build review prompt: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -189,6 +190,15 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 		}
 	}
 	content := providerResponse.markdown()
+	if request.StructuredOutput != nil {
+		content, err = providerResponse.structuredJSON()
+		if err != nil {
+			return worker.RunResult{}, &Error{
+				Kind: ErrInvalidResponse, RequestID: requestID,
+				Category: FailureStructuredOutputInvalid, Err: err,
+			}
+		}
+	}
 	if content == "" || strings.TrimSpace(providerResponse.Model) == "" {
 		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureResponse}
 	}
@@ -359,6 +369,32 @@ func (response messageResponse) markdown() string {
 		}
 	}
 	return strings.Join(texts, "\n")
+}
+
+// structuredJSON extracts the one direct-output text block promised by
+// Anthropic Structured Outputs. Sonnet may also return thinking or
+// redacted-thinking blocks; those are not part of the constrained direct
+// output. Multiple text blocks, other block types, or anything other than one
+// complete JSON document are Provider response contract violations and must
+// never be concatenated into Domain parser input.
+func (response messageResponse) structuredJSON() (string, error) {
+	var content string
+	textBlocks := 0
+	for _, block := range response.Content {
+		switch block.Type {
+		case "thinking", "redacted_thinking":
+			continue
+		case "text":
+			textBlocks++
+			content = strings.TrimSpace(block.Text)
+		default:
+			return "", errors.New("structured output response contains an unexpected content block")
+		}
+	}
+	if textBlocks != 1 || content == "" || !json.Valid([]byte(content)) {
+		return "", errors.New("structured output response must contain exactly one JSON text block")
+	}
+	return content, nil
 }
 
 func cloneMetadata(metadata map[string]string) map[string]string {

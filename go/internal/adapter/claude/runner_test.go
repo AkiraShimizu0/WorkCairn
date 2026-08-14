@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
@@ -332,6 +333,82 @@ func TestRunnerSerializesCEOIntentRequestFixture(t *testing.T) {
 	}
 }
 
+func TestRunnerSendsReviewStructuredOutputAndExtractsOneJSONTextBlock(t *testing.T) {
+	fixtures := loadStructuredOutputExtractionFixtures(t)
+	var payload map[string]json.RawMessage
+	runner := configuredRunner(t, doerFunc(func(request *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		return jsonResponse(http.StatusOK, string(fixtures["single_json_with_thinking"]), "req-review-structured"), nil
+	}))
+	request := validRunRequest()
+	request.StructuredOutput = &worker.StructuredOutputContract{Schema: review.TypedDecisionJSONSchema()}
+	result, err := runner.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Content != `{"verdict":"Approve","issues":[],"summary":"Approved."}` {
+		t.Fatalf("structured Review content = %q", result.Content)
+	}
+
+	wantKeys := []string{"max_tokens", "messages", "model", "output_config", "system"}
+	keys := make([]string, 0, len(payload))
+	for key := range payload {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	if !reflect.DeepEqual(keys, wantKeys) {
+		t.Fatalf("Review request keys = %v, want %v", keys, wantKeys)
+	}
+	var config outputConfig
+	if err := json.Unmarshal(payload["output_config"], &config); err != nil {
+		t.Fatal(err)
+	}
+	gotSchema, err := json.Marshal(config.Format.Schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSchema, err := json.Marshal(review.TypedDecisionJSONSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Format.Type != "json_schema" || string(gotSchema) != string(wantSchema) {
+		t.Fatalf("Review output_config = %#v", config)
+	}
+}
+
+func TestRunnerRejectsStructuredOutputResponseContractViolations(t *testing.T) {
+	fixtures := loadStructuredOutputExtractionFixtures(t)
+	for _, name := range []string{"multiple_text_blocks", "trailing_prose", "second_json_value", "unexpected_content_block"} {
+		t.Run(name, func(t *testing.T) {
+			runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+				return jsonResponse(http.StatusOK, string(fixtures[name]), "req-review-invalid"), nil
+			}))
+			request := validRunRequest()
+			request.StructuredOutput = &worker.StructuredOutputContract{Schema: review.TypedDecisionJSONSchema()}
+			_, err := runner.Run(context.Background(), request)
+			var failure *Error
+			if !errors.As(err, &failure) || failure.Category != FailureStructuredOutputInvalid || failure.RequestID != "req-review-invalid" {
+				t.Fatalf("structured response failure = %#v, %v", failure, err)
+			}
+		})
+	}
+}
+
+func loadStructuredOutputExtractionFixtures(t *testing.T) map[string]json.RawMessage {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "fixtures", "provider", "claude_structured_output_extraction_v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtures := map[string]json.RawMessage{}
+	if err := json.Unmarshal(content, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	return fixtures
+}
+
 // TestRunnerUnwrapsStructuredOutputContentField locks the generic
 // ContentField unwrap mechanism itself (worker.StructuredOutputContract),
 // independent of any specific Domain package's use of it. No production
@@ -402,12 +479,13 @@ func TestRunnerRejectsEmptyStructuredOutputSchemaWithoutCallingTransport(t *test
 }
 
 func TestRunnerClassifiesRefusalStopReasonWithoutContent(t *testing.T) {
+	fixtures := loadStructuredOutputExtractionFixtures(t)
 	runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
-		return jsonResponse(http.StatusOK,
-			`{"model":"claude-sonnet-5","content":[],"stop_reason":"refusal","stop_details":{"category":"cyber"},"usage":{"input_tokens":1,"output_tokens":0}}`,
-			"req-refusal"), nil
+		return jsonResponse(http.StatusOK, string(fixtures["refusal"]), "req-refusal"), nil
 	}))
-	_, err := runner.Run(context.Background(), validRunRequest())
+	request := validRunRequest()
+	request.StructuredOutput = &worker.StructuredOutputContract{Schema: review.TypedDecisionJSONSchema()}
+	_, err := runner.Run(context.Background(), request)
 	var failure *Error
 	if !errors.As(err, &failure) || failure.Category != FailureRefusal || failure.ProviderType != "cyber" {
 		t.Fatalf("err = %v, failure = %#v", err, failure)

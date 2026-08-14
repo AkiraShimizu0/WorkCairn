@@ -138,7 +138,7 @@ func TestExecuteReviewRecordsParserSubstageWithoutArtifacts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		providerCalls.Add(1)
 		response.Header().Set("content-type", "application/json")
-		reviewText := "{invalid}"
+		reviewText := `{"verdict":"Request Changes","issues":[{"category":"unsupported","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`
 		_ = json.NewEncoder(response).Encode(map[string]any{
 			"model":   "claude-test",
 			"content": []map[string]string{{"type": "text", "text": reviewText}},
@@ -153,7 +153,7 @@ func TestExecuteReviewRecordsParserSubstageWithoutArtifacts(t *testing.T) {
 	}, server.Client())
 	if err == nil || providerCalls.Load() != 1 || result.Execution != nil || result.Artifact != nil || result.ProviderFailure != nil ||
 		result.FailureCode != "REVIEW_RESULT_INVALID" || result.FailureStage != "review_result_parser" ||
-		result.ParseFailureReason != string(review.ParseFailureJSONDecodeFailed) {
+		result.ParseFailureReason != string(review.ParseFailureInvalidIssueCategory) {
 		t.Fatalf("parser failure result=%#v err=%v calls=%d", result, err, providerCalls.Load())
 	}
 	ledger, ledgerErr := vault.NewCommandLedgerStore(root, input.ProjectName)
@@ -166,7 +166,7 @@ func TestExecuteReviewRecordsParserSubstageWithoutArtifacts(t *testing.T) {
 		t.Fatalf("parser Ledger=%#v err=%v", record, ledgerErr)
 	}
 	var storedResult ReviewExecutionResult
-	if json.Unmarshal(record.Result, &storedResult) != nil || storedResult.ParseFailureReason != string(review.ParseFailureJSONDecodeFailed) {
+	if json.Unmarshal(record.Result, &storedResult) != nil || storedResult.ParseFailureReason != string(review.ParseFailureInvalidIssueCategory) {
 		t.Fatalf("stored parse failure reason = %#v", storedResult)
 	}
 	project := filepath.Join(root, "プロジェクト", input.ProjectName)

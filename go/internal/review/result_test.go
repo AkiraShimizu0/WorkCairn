@@ -157,6 +157,20 @@ func TestParseTypedDecisionClassifiesSanitizedParseFailureReasonWithoutRawText(t
 	}
 }
 
+func TestParseTypedDecisionRejectsEveryKindOfTrailingContent(t *testing.T) {
+	valid := `{"verdict":"Approve","issues":[],"summary":"問題ありません。"}`
+	for _, content := range []string{
+		valid + " trailing prose",
+		valid + ` {"verdict":"Approve","issues":[],"summary":"second value"}`,
+	} {
+		_, err := ParseTypedDecision(content)
+		var parseErr *ParseError
+		if !errors.As(err, &parseErr) || parseErr.Reason != ParseFailureTrailingContent {
+			t.Fatalf("error = %v, want trailing_content", err)
+		}
+	}
+}
+
 func TestDecodeDecisionAcceptsCanonicalJSONWithAndWithoutSummary(t *testing.T) {
 	old, err := DecodeDecision([]byte(`{"verdict":"Approve","issues":[]}`))
 	if err != nil {

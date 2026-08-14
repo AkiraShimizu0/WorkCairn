@@ -22,7 +22,11 @@ var _ worker.PromptBuilder = Builder{}
 func NewBuilder() Builder { return Builder{} }
 
 // Build converts structured Worker context into the stable task prompt.
-func (Builder) Build(ctx context.Context, input worker.PromptInput) (worker.Prompt, error) {
+func (builder Builder) Build(ctx context.Context, input worker.PromptInput) (worker.Prompt, error) {
+	return builder.build(ctx, input, "成果物はMarkdownで出力してください。")
+}
+
+func (Builder) build(ctx context.Context, input worker.PromptInput, outputInstruction string) (worker.Prompt, error) {
 	if ctx == nil {
 		return worker.Prompt{}, fmt.Errorf("build prompt: nil context")
 	}
@@ -52,7 +56,7 @@ func (Builder) Build(ctx context.Context, input worker.PromptInput) (worker.Prom
 		"## 会社情報\n" + strings.Join([]string{
 			"あなたはWorkspace社のAI社員です。",
 			"CEOの依頼ではなく担当タスクを遂行してください。",
-			"成果物はMarkdownで出力してください。",
+			outputInstruction,
 			"不明点は推測せずTODOとして残してください。",
 			"推測で事実を書かないでください。",
 		}, "\n"),
