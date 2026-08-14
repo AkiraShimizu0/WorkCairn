@@ -62,45 +62,56 @@
               <header class="list-header">
                 <h1 class="pane-title">依頼</h1>
                 <div class="list-actions">
-                  <button id="new-request-button" class="text-link" type="button">＋ 新しい依頼</button>
                   <button id="refresh-button" class="text-link" type="button">更新</button>
                 </div>
               </header>
+              <section id="new-request-inline" class="new-request-inline" aria-label="新しい依頼">
+                <form id="request-form" class="stack-form">
+                  <label for="request-text">会社に任せたい仕事</label>
+                  <textarea id="request-text" name="request" rows="3" placeholder="例：新商品の紹介記事を企画して、レビューまで完了してください" required></textarea>
+                  <div class="button-row">
+                    <button id="new-request-button" class="button primary" type="submit">窓口社員に依頼する</button>
+                  </div>
+                </form>
+              </section>
               <div id="session-list" class="session-list"></div>
             </section>
 
-            <section id="request-detail-view" class="request-pane-view request-document" hidden>
-              <header class="detail-header">
+            <section id="request-detail-view" class="request-pane-view request-thread" hidden>
+              <header class="thread-header thread-header-sticky">
                 <button id="back-to-list-button" class="text-link back-button" type="button">← 依頼一覧へ戻る</button>
                 <div id="request-summary" class="request-summary" aria-live="polite"></div>
               </header>
 
-              <section id="active-card" class="action-card" aria-live="polite"></section>
+              <div id="thread-scroll" class="thread-scroll">
+                <div id="activity-timeline" class="conversation-thread" aria-labelledby="timeline-heading"></div>
+                <button id="thread-jump-latest" class="thread-jump-latest" type="button" hidden>新しい更新</button>
+              </div>
 
-              <section class="timeline-section" aria-labelledby="timeline-heading">
-                <h2 id="timeline-heading" class="visually-hidden">この依頼の歩み</h2>
-                <div id="activity-timeline" class="activity-timeline"></div>
-              </section>
+              <h2 id="timeline-heading" class="visually-hidden">この依頼の歩み</h2>
 
-              <details id="details-panel" class="detail-panel">
+              <footer class="thread-footer">
+                <div id="quick-replies" class="quick-replies" aria-live="polite"></div>
+                <section id="active-card" class="action-card" aria-live="polite" hidden></section>
+                <form id="thread-composer" class="thread-composer" aria-label="メッセージ入力">
+                  <textarea id="composer-input" name="message" rows="2" placeholder="メッセージを入力..." aria-label="メッセージを入力"></textarea>
+                  <button id="composer-send" class="button primary composer-send" type="submit" aria-label="送信">送信</button>
+                </form>
+              </footer>
+
+              <div class="request-insights-hidden visually-hidden" aria-hidden="true">
+                <span>PROOF OF WORK</span>
+                <span>AUTONOMY CONTRACT</span>
+                <span>CEO ATTENTION</span>
+                <div id="proof-of-work"></div>
+                <div id="autonomy-summary"></div>
+                <div id="attention-grid" class="attention-grid"></div>
+              </div>
+
+              <details id="details-panel" class="detail-panel visually-hidden" hidden aria-hidden="true">
                 <summary>Technical details</summary>
                 <div id="details-content" class="detail-content"></div>
               </details>
-
-              <section class="request-insights" aria-label="仕事の証明と任せている範囲">
-                <details class="insight-panel">
-                  <summary><span class="visually-hidden">PROOF OF WORK</span>実際に完了したこと</summary>
-                  <div id="proof-of-work"></div>
-                </details>
-                <details class="insight-panel">
-                  <summary><span class="visually-hidden">AUTONOMY CONTRACT</span>任せている範囲</summary>
-                  <div id="autonomy-summary"></div>
-                </details>
-                <details class="insight-panel">
-                  <summary><span class="visually-hidden">CEO ATTENTION</span>任せて進んだ仕事</summary>
-                  <div id="attention-grid" class="attention-grid"></div>
-                </details>
-              </section>
             </section>
           </aside>
 
@@ -112,33 +123,19 @@
               </div>
               <span id="team-count" class="count-chip"></span>
             </div>
-            <p class="pane-lead">会社のAI社員と、今の仕事の状態を確認できます。</p>
+            <p class="pane-lead">会社のAI社員と、社内の動きをリアルタイムに確認できます。</p>
             <div id="employee-grid" class="employee-grid"></div>
+            <section class="company-feed-section" aria-labelledby="company-feed-heading">
+              <h2 id="company-feed-heading" class="feed-heading">社内の動き</h2>
+              <div id="company-feed" class="company-feed" aria-live="polite"></div>
+            </section>
           </aside>
         </div>
       </section>
     </main>
   </div>
 
-  <dialog id="request-dialog" class="sheet-dialog">
-    <form id="request-form" method="dialog" class="sheet">
-      <div class="sheet-handle" aria-hidden="true"></div>
-      <div class="sheet-heading">
-        <div>
-          <p class="eyebrow">NEW REQUEST</p>
-          <h2>会社に何を任せますか？</h2>
-        </div>
-        <button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button>
-      </div>
-      <label for="request-text">依頼内容</label>
-      <textarea id="request-text" name="request" rows="6" placeholder="例：新商品の紹介記事を企画して、レビューまで完了してください" required></textarea>
-      <p class="supporting">接続済みAIサービスから、WorkCairnが実行先を選びます。</p>
-      <div class="sheet-actions">
-        <button class="button quiet" type="button" data-close-dialog>キャンセル</button>
-        <button class="button primary" type="submit">依頼内容を確認</button>
-      </div>
-    </form>
-  </dialog>
+  <dialog id="request-dialog" class="sheet-dialog" hidden aria-hidden="true"></dialog>
 
   <dialog id="action-dialog" class="sheet-dialog">
     <form id="action-form" method="dialog" class="sheet"></form>
@@ -162,7 +159,7 @@
           <div><p class="eyebrow">ROUTING</p><h3 id="routing-heading">Automatic</h3></div>
           <span class="state-chip">推奨</span>
         </div>
-        <p>通常はModel IDを選ぶ必要はありません。接続済みサービスからWorkCairnが選択します。</p>
+        <p>通常はModel IDを選ぶ必要はありません。接続済みAIサービスから、WorkCairnが実行先を選びます。</p>
         <details class="advanced-settings">
           <summary>Advanced</summary>
           <p>EmployeeごとのProvider・Model固定やMaker／Reviewerの分離は将来のoverrideとして追加予定です。</p>

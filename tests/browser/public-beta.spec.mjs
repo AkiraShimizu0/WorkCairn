@@ -33,17 +33,17 @@ async function completeFirstRun(page) {
   await expect(page.locator("#setup-content")).toContainText("Content Writer");
   await expect(page.locator("#setup-content")).toContainText("QA Engineer");
   await page.getByRole("button", { name: "最初のAIチームを確認" }).click();
-  await expect(page.locator("#action-dialog")).toBeVisible();
+  await expect(page.locator("#setup-content")).toContainText("最小のAIチームを作成しますか？");
   await page.getByRole("button", { name: "承認してセットアップ" }).click();
   await expect(page.getByRole("button", { name: "会社を始める" })).toBeVisible();
   await page.getByRole("button", { name: "会社を始める" }).click();
-  await expect(page.locator("#request-dialog")).toBeVisible();
+  await expect(page.locator("#new-request-inline")).toBeVisible();
 }
 
 async function startRequest(page, requestText) {
-  await page.locator("#request-text").fill(requestText);
-  await page.getByRole("button", { name: "依頼内容を確認" }).click();
-  await expect(page.locator("#action-dialog")).toBeVisible();
+  await page.locator("#new-request-inline #request-text").fill(requestText);
+  await page.getByRole("button", { name: /依頼する$/ }).click();
+  await expect(page.locator("#new-request-inline")).toContainText("この依頼を開始してよろしいですか？");
   await page.getByRole("button", { name: "依頼を開始" }).click();
   await expect(page.getByRole("button", { name: "進め方の作成を承認" })).toBeVisible();
 }
@@ -51,19 +51,24 @@ async function startRequest(page, requestText) {
 async function ensureRequestDetail(page) {
   const detail = page.locator("#request-detail-view");
   if (await detail.isVisible()) return;
-  await page.locator("#menu-button").click();
-  const current = page.locator("#nav-current-request");
-  if (await current.isVisible()) {
-    await current.click();
+  const menu = page.locator("#menu-button");
+  if (await menu.isVisible()) {
+    await menu.click();
+    const current = page.locator("#nav-current-request");
+    if (await current.isVisible()) {
+      await current.click();
+      return;
+    }
+    await page.locator("#nav-request-list").click();
+    await page.locator("#session-list .session-item").first().click();
     return;
   }
-  await page.locator("#nav-request-list").click();
   await page.locator("#session-list .session-item").first().click();
 }
 
 async function approvePlanAndWorkflow(page) {
-  await expect(page.locator("#active-card")).toContainText("このように進めます");
-  await expect(page.locator("#active-card")).not.toContainText("PROPOSED-");
+  await expect(page.locator("#activity-timeline")).toContainText("この進め方で開始しますか？");
+  await expect(page.locator("#activity-timeline")).not.toContainText("PROPOSED-");
   await page.getByRole("button", { name: "この進め方で始める" }).click();
   await expect(page.getByRole("button", { name: "実行内容を確認" })).toBeVisible();
 
@@ -74,10 +79,10 @@ async function approvePlanAndWorkflow(page) {
   await expect(limit).toHaveValue("8");
   expect(await limit.evaluate((element) => document.activeElement === element)).toBeTruthy();
   await page.getByRole("button", { name: "実行内容を確認" }).click();
-  await expect(page.locator("#action-dialog")).toBeVisible();
+  await expect(page.getByRole("button", { name: "承認して実行" })).toBeVisible();
   const approve = page.getByRole("button", { name: "承認して実行" });
   await approve.evaluate((element) => { element.click(); element.click(); });
-  await expect(page.locator("#active-card")).toContainText("AI社員が仕事を進めています");
+  await expect(page.locator("#activity-timeline")).toContainText("仕事を進めています");
   await expect(page.getByRole("button", { name: "承認して実行" })).toHaveCount(0);
 }
 
@@ -95,12 +100,12 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
 
     const generate = page.getByRole("button", { name: "進め方の作成を承認" });
     await generate.evaluate((element) => { element.click(); element.click(); });
-    await expect(page.locator("#active-card")).toContainText("進め方を考えています");
+    await expect(page.locator("#activity-timeline")).toContainText("進め方を考えています");
     await expect(generate).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "確認したいことがあります" })).toBeVisible();
     expect(commands.filter((command) => command.operation === "interaction.plan.generate")).toHaveLength(1);
 
-    const clarification = page.locator('textarea[name="answer-0"]');
+    const clarification = page.locator('textarea[name="answer-0"], #composer-input');
     await clarification.fill("途中まで入力した回答");
     await clarification.focus();
     await page.waitForTimeout(10_500);
@@ -121,8 +126,8 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
     ]);
     expect(environment.provider.calls.map((call) => call.structured)).toEqual([true, true, false, true, false, true]);
 
-    await expect(page.locator("#activity-timeline")).toContainText("Reviewerが修正を依頼しました");
-    await expect(page.locator("#activity-timeline")).toContainText("修正を完了しました");
+    await expect(page.locator("#activity-timeline")).toContainText("修正をお願い");
+    await expect(page.locator("#activity-timeline")).toContainText("修正しました");
     await expect(page.locator("#proof-of-work")).toContainText("2件の仕事");
     await expect(page.locator("#proof-of-work")).toContainText("Review: Approve");
 
@@ -130,7 +135,7 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
     await expect(page.locator("#workspace-view")).toBeVisible();
     await ensureRequestDetail(page);
     await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible();
-    await expect(page.locator("#activity-timeline")).toContainText("Reviewerが承認しました");
+    await expect(page.locator("#activity-timeline")).toContainText("完了しました");
 
     const restarted = await environment.restartDaemon();
     await pairThroughUI(page, restarted);
@@ -161,10 +166,10 @@ test("typed Provider failure is restored from durable Ledger evidence", async ({
     await expect(page.getByRole("button", { name: "この進め方で始める" })).toBeVisible();
     await approvePlanAndWorkflow(page);
 
-    await expect(page.locator("#active-card")).toContainText("PROVIDER_RATE_LIMITED", { timeout: 30_000 });
-    await expect(page.locator("#active-card")).toContainText("review_provider");
-    await expect(page.locator("#active-card")).toContainText("req_browser_rate_limit_001");
-    await expect(page.locator("#active-card")).not.toContainText("sanitized fixture failure");
+    await expect(page.locator("#activity-timeline")).toContainText("PROVIDER_RATE_LIMITED", { timeout: 30_000 });
+    await expect(page.locator("#activity-timeline")).toContainText("review_provider");
+    await expect(page.locator("#activity-timeline")).toContainText("req_browser_rate_limit_001");
+    await expect(page.locator("#activity-timeline")).not.toContainText("sanitized fixture failure");
 
     const workflowCommand = commands.find((command) => command.operation === "interaction.workflow.execute");
     expect(workflowCommand?.command_id).toBeTruthy();
@@ -184,11 +189,11 @@ test("typed Provider failure is restored from durable Ledger evidence", async ({
     const freshPage = await freshContext.newPage();
     await pairThroughUI(freshPage, environment.daemon);
     await ensureRequestDetail(freshPage);
-    await expect(freshPage.locator("#active-card")).toContainText("PROVIDER_RATE_LIMITED");
-    await expect(freshPage.locator("#active-card")).toContainText("review_provider");
-    await expect(freshPage.locator("#active-card")).toContainText("req_browser_rate_limit_001");
+    await expect(freshPage.locator("#activity-timeline")).toContainText("PROVIDER_RATE_LIMITED");
+    await expect(freshPage.locator("#activity-timeline")).toContainText("review_provider");
+    await expect(freshPage.locator("#activity-timeline")).toContainText("req_browser_rate_limit_001");
     await expect(freshPage.locator("#activity-timeline")).toContainText("自動retryせず");
-    await freshPage.locator("#active-card button").filter({ hasText: "詳細をコピー" }).click();
+    await freshPage.locator("#activity-timeline").getByRole("button", { name: "詳細をコピー" }).click();
     await expect(freshPage.locator("#toast")).toContainText(/コピー|詳細を選択/);
   } finally {
     if (freshContext) await freshContext.close();
