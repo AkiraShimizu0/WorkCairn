@@ -34,6 +34,7 @@ const ui = {
   threadScroll: document.querySelector("#thread-scroll"),
   threadJumpLatest: document.querySelector("#thread-jump-latest"),
   threadComposer: document.querySelector("#thread-composer"),
+  composerStatus: document.querySelector("#composer-status"),
   composerInput: document.querySelector("#composer-input"),
   composerSend: document.querySelector("#composer-send"),
   detailsPanel: document.querySelector("#details-panel"),
@@ -87,6 +88,7 @@ const state = {
   forceScrollToBottom: false,
   pendingAttentionTitle: "",
   workflowPlanPreview: null,
+  clarificationDraft: null,
 };
 
 class APIError extends Error {
@@ -331,21 +333,90 @@ function clearActionSurface() {
   setQuickReplies([]);
 }
 
+function resetClarificationDraft() {
+  state.clarificationDraft = null;
+}
+
+function clarificationDraft(next) {
+  const key = JSON.stringify([next.session_id, next.expected_version, next.questions]);
+  if (!state.clarificationDraft || state.clarificationDraft.key !== key) {
+    state.clarificationDraft = { key, answers: [], index: 0 };
+  }
+  return state.clarificationDraft;
+}
+
+function activeEmployeeStatuses() {
+  return (state.companyActivity?.employees || []).filter((employee) =>
+    ["作業中", "レビュー中", "修正中"].includes(employee.display_status),
+  );
+}
+
+function employeeActivityStatusText(employee) {
+  const name = employee.name || employee.id || "AI社員";
+  switch (employee.display_status) {
+  case "作業中":
+    return employee.current_work_title ? `${name}が${employee.current_work_title}を作成しています` : `${name}が作業しています`;
+  case "レビュー中":
+    return employee.current_work_title ? `${name}が${employee.current_work_title}をレビューしています` : `${name}がレビューしています`;
+  case "修正中":
+    return employee.current_work_title ? `${name}が${employee.current_work_title}の修正版を確認しています` : `${name}が修正しています`;
+  default:
+    return "";
+  }
+}
+
+function composerStatusText(next) {
+  if (state.lastError) return "確認が必要です";
+  const pending = storedPendingCommand();
+  if (pending) {
+    const copy = inFlightCopy(pending.operation);
+    return copy.title || copy.label;
+  }
+  if (!next) return "依頼を選択してください";
+
+  const activeEmployees = activeEmployeeStatuses();
+  if (activeEmployees.length === 1) {
+    const status = employeeActivityStatusText(activeEmployees[0]);
+    if (status) return status;
+  } else if (activeEmployees.length > 1) {
+    return `${activeEmployees.length}人の社員が作業しています`;
+  }
+
+  if (next.kind === "answer_clarifications") {
+    const total = next.questions.length;
+    if (total <= 1) return "回答を入力してください";
+    const draft = clarificationDraft(next);
+    return `質問 ${draft.index + 1} / ${total} に回答してください`;
+  }
+  if (next.kind === "approve_plan_generation") return "進め方の作成承認待ちです";
+  if (next.kind === "approve_plan_apply") return "進め方の承認待ちです";
+  if (next.kind === "approve_workflow") return "実行承認待ちです";
+  if (next.kind === "done" || next.kind === "optional_external_action_or_done") return "完了しました";
+  if (next.kind === "inspect_workflow_recovery" || next.kind === "inspect_action_recovery") return "確認が必要です";
+
+  const liaison = (state.companyActivity?.employees || []).find((employee) =>
+    employee.is_liaison && employee.display_status === "社長と相談中",
+  );
+  if (liaison?.name) return `${liaison.name}が社長の回答待ちです`;
+  return "作業を進めています";
+}
+
 function composerCapabilities(next) {
   if (!next || state.lastError) {
-    return { enabled: false, placeholder: "現在は社員が作業しています", mode: "idle" };
+    return { enabled: false, placeholder: "メッセージを入力...", mode: "idle" };
   }
   if (storedPendingCommand()) {
-    return { enabled: false, placeholder: "現在は社員が作業しています", mode: "running" };
+    return { enabled: false, placeholder: "メッセージを入力...", mode: "running" };
   }
   if (next.kind === "answer_clarifications") {
     return { enabled: true, placeholder: "回答を入力...", mode: "clarification" };
   }
-  return { enabled: false, placeholder: "現在は社員が作業しています", mode: "idle" };
+  return { enabled: false, placeholder: "メッセージを入力...", mode: "idle" };
 }
 
 function renderComposerState(next) {
   const capabilities = composerCapabilities(next);
+  ui.composerStatus.textContent = composerStatusText(next);
   ui.composerInput.placeholder = capabilities.placeholder;
   ui.composerInput.readOnly = !capabilities.enabled;
   ui.composerInput.setAttribute("aria-readonly", capabilities.enabled ? "false" : "true");
@@ -527,20 +598,38 @@ function structuredFieldsSummary(presence) {
   return keys.map((key) => `${key}: ${presence[key] ? "present" : "missing"}`).join(", ");
 }
 
+function structuredFieldShapeSummary(shapes, field) {
+  const shape = shapes?.[field];
+  if (!shape || typeof shape !== "object") return "";
+  const parts = [`present: ${shape.present ? "yes" : "no"}`];
+  if (shape.json_type) parts.push(`json_type: ${shape.json_type}`);
+  if (typeof shape.non_blank === "boolean") parts.push(`non_blank: ${shape.non_blank ? "yes" : "no"}`);
+  return parts.join(", ");
+}
+
+function parseDiagnosticsFacts(error) {
+  const parse = error.details?.parse;
+  const structuredFields = structuredFieldsSummary(parse?.structured_output_presence);
+  const parseField = parse?.field || error.parse_failure_field || "—";
+  const fieldShape = structuredFieldShapeSummary(parse?.structured_output_field_shape, parseField);
+  return [
+    ["Error code", error.code],
+    ["Stage", error.stage || "—"],
+    ["Substage", error.substage || "—"],
+    ["Category", error.category || "—"],
+    ["HTTP status", error.http_status || "—"],
+    ["Command ID", error.command_id || "—"],
+    ["Request ID", error.request_id || "—"],
+    ["Parse reason", error.parse_failure_reason || parse?.reason || "—"],
+    ["Parse field", parseField],
+    ...(structuredFields ? [["Structured fields", structuredFields]] : []),
+    ...(fieldShape ? [[`${parseField} shape`, fieldShape]] : []),
+  ];
+}
+
 async function copySanitizedError(error) {
-  const structuredFields = structuredFieldsSummary(error.details?.parse?.structured_output_presence);
-  const detail = [
-    `Error code: ${error.code || "UNKNOWN_ERROR"}`,
-    `Stage: ${error.stage || "—"}`,
-    `Substage: ${error.substage || "—"}`,
-    `Category: ${error.category || "—"}`,
-    `HTTP status: ${error.http_status || "—"}`,
-    `Command ID: ${error.command_id || "—"}`,
-    `Request ID: ${error.request_id || "—"}`,
-    `Parse reason: ${error.parse_failure_reason || "—"}`,
-    `Parse field: ${error.parse_failure_field || "—"}`,
-    ...(structuredFields ? [`Structured fields: ${structuredFields}`] : []),
-  ].join("\n");
+  const facts = parseDiagnosticsFacts(error);
+  const detail = facts.map(([label, value]) => `${label}: ${value}`).join("\n");
   let copied = false;
   if (window.isSecureContext && navigator.clipboard?.writeText) {
     try {
@@ -1115,6 +1204,7 @@ function renderNext(force = false) {
   state.renderKey = key;
   state.pendingAttentionTitle = "";
   if (next.kind !== "approve_workflow") state.workflowPlanPreview = null;
+  if (next.kind !== "answer_clarifications") resetClarificationDraft();
   clearActionSurface();
   renderComposerState(next);
   if (state.lastError) return renderRememberedError(state.lastError);
@@ -1132,16 +1222,7 @@ function renderNext(force = false) {
 }
 
 function renderRememberedError(error) {
-  const structuredFields = structuredFieldsSummary(error.details?.parse?.structured_output_presence);
-  const facts = [
-    ["Error code", error.code], ["Stage", error.stage || "—"],
-    ["Substage", error.substage || "—"], ["Category", error.category || "—"],
-    ["HTTP status", error.http_status || "—"],
-    ["Command ID", error.command_id || "未発行"], ["問い合わせID", error.request_id || "—"],
-    ["Parse reason", error.parse_failure_reason || "—"],
-    ["Parse field", error.parse_failure_field || "—"],
-    ...(structuredFields ? [["Structured fields", structuredFields]] : []),
-  ];
+  const facts = parseDiagnosticsFacts(error);
   setQuickReplies([
     button(error.command_id ? "Command状態を確認" : "状態を再確認", "primary chip", () => error.command_id
       ? inspectCommands([{ scope: "workspace", command_id: error.command_id }])
@@ -1224,68 +1305,55 @@ function renderProviderSetup() {
 }
 
 function renderQuestions(next) {
-  const clarificationKey = JSON.stringify([next.session_id, next.expected_version, next.questions]);
-  const heading = node("h2", { class: "visually-hidden" }, "確認したいことがあります");
-  if (next.questions.length === 1) {
-    ui.activeCard.hidden = false;
-    ui.activeCard.replaceChildren(heading);
-    setQuickReplies([
-      button("回答を送信", "primary chip", () => submitClarificationAnswers(next)),
-      button("後で回答する", "quiet chip", () => toast("質問は回答待ちのまま保存されています。")),
-    ]);
-    state.forceScrollToBottom = true;
-    renderTimeline();
-    return;
-  }
-  const currentForm = ui.activeCard.querySelector("form.question-list[data-clarification-key]");
-  if (currentForm?.dataset.clarificationKey === clarificationKey) return;
-  const form = node("form", { class: "question-list", dataset: { clarificationKey } });
-  for (const [index, question] of next.questions.entries()) {
-    form.append(node("label", { class: "question-card" },
-      node("span", { class: "question-label" }, question),
-      node("textarea", { name: `answer-${index}`, rows: "2", required: true, placeholder: "回答を入力" }),
-    ));
-  }
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    submitClarificationForm(next, form);
-  });
-  setQuickReplies([
-    button("回答を送信", "primary chip", () => form.requestSubmit()),
-    button("後で回答する", "quiet chip", () => toast("質問は回答待ちのまま保存されています。")),
-  ]);
+  const draft = clarificationDraft(next);
+  const total = next.questions.length;
   ui.activeCard.hidden = false;
   ui.activeCard.replaceChildren(
-    heading,
-    form,
+    node("h2", { class: "visually-hidden" }, "確認したいことがあります"),
+    total > 1 ? node("p", { class: "composer-note" }, `質問 ${draft.index + 1} / ${total}`) : null,
   );
+  setQuickReplies([
+    button("回答を送信", "primary chip", () => submitClarificationAnswers(next)),
+    button("後で回答する", "quiet chip", () => toast("質問は回答待ちのまま保存されています。")),
+  ]);
   state.forceScrollToBottom = true;
   renderTimeline();
 }
 
 function submitClarificationAnswers(next, answers = null) {
-  const resolved = answers || [{
-    question: next.questions[0],
-    answer: ui.composerInput.value.trim(),
-  }];
-  if (resolved.some((entry) => !entry.answer)) return toast("回答を入力してください。");
+  if (answers) {
+    if (answers.some((entry) => !entry.answer)) return toast("回答を入力してください。");
+    executeNextCommand(next, {
+      session_id: next.session_id,
+      expected_version: next.expected_version,
+      answers,
+      current_time: now(),
+    }, "回答を保存しています", "保存後に次の進め方の作成確認へ進みます。");
+    resetClarificationDraft();
+    ui.composerInput.value = "";
+    return;
+  }
+  const draft = clarificationDraft(next);
+  const answer = ui.composerInput.value.trim();
+  if (!answer) return toast("回答を入力してください。");
+  const currentQuestion = next.questions[draft.index];
+  draft.answers.push({ question: currentQuestion, answer });
+  ui.composerInput.value = "";
+  if (draft.index + 1 < next.questions.length) {
+    draft.index += 1;
+    state.renderKey = "";
+    state.timelineRenderKey = "";
+    renderQuestions(next);
+    renderComposerState(next);
+    return;
+  }
   executeNextCommand(next, {
     session_id: next.session_id,
     expected_version: next.expected_version,
-    answers: resolved,
+    answers: draft.answers,
     current_time: now(),
   }, "回答を保存しています", "保存後に次の進め方の作成確認へ進みます。");
-  ui.composerInput.value = "";
-}
-
-function submitClarificationForm(next, form) {
-  const data = new FormData(form);
-  const answers = next.questions.map((question, index) => ({
-    question,
-    answer: data.get(`answer-${index}`)?.toString().trim() || "",
-  }));
-  if (answers.some((answer) => !answer.answer)) return toast("すべての質問に回答してください。");
-  submitClarificationAnswers(next, answers);
+  resetClarificationDraft();
 }
 
 function currentPlan() {
@@ -1859,21 +1927,9 @@ function pendingInteractionMessages() {
     })];
   }
   if (state.lastError) {
-    const structuredFields = structuredFieldsSummary(state.lastError.details?.parse?.structured_output_presence);
     return [liaisonMessage(`${state.lastError.title || "処理を完了できませんでした。"} 自動retryせず、次の判断を待っています。`, state.lastError.at, {
       attention: true,
-      detail: [
-        ["Error code", state.lastError.code],
-        ["Stage", state.lastError.stage || "—"],
-        ["Substage", state.lastError.substage || "—"],
-        ["Category", state.lastError.category || "—"],
-        ["HTTP status", state.lastError.http_status || "—"],
-        ["Command ID", state.lastError.command_id || "—"],
-        ["Request ID", state.lastError.request_id || "—"],
-        ["Parse reason", state.lastError.parse_failure_reason || "—"],
-        ["Parse field", state.lastError.parse_failure_field || "—"],
-        ...(structuredFields ? [["Structured fields", structuredFields]] : []),
-      ],
+      detail: parseDiagnosticsFacts(state.lastError),
       onCopy: () => copySanitizedError(state.lastError),
     })];
   }
@@ -1888,8 +1944,17 @@ function pendingInteractionMessages() {
     const hasAnswers = state.record?.turns?.some((turn) => turn.kind === "clarification_answered");
     return [liaisonMessage(hasAnswers ? "回答をもとに進め方を作り直します。" : "仕事の進め方を作成します。")];
   }
-  case "answer_clarifications":
-    return next.questions.map((question) => liaisonMessage(question));
+  case "answer_clarifications": {
+    const draft = clarificationDraft(next);
+    const messages = [];
+    for (const entry of draft.answers) {
+      messages.push(liaisonMessage(entry.question));
+      messages.push({ side: "user", speaker: "あなた", text: entry.answer });
+    }
+    const current = next.questions[draft.index];
+    if (current) messages.push(liaisonMessage(current));
+    return messages;
+  }
   case "approve_plan_apply": {
     const current = currentPlan();
     return [liaisonMessage("この進め方で開始しますか？", null, { embed: current ? planEmbedNode(current.plan) : null })];

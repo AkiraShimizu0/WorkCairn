@@ -303,8 +303,8 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"cryptoAPI.getRandomValues", "BROWSER_SECURE_RANDOM_UNAVAILABLE",
 		`ui.requestForm.addEventListener("submit", prepareNewRequest)`, `requestJSON("/v1/interaction-plans"`,
 		`showError(error, "依頼内容を確認できませんでした")`,
-		`form.question-list[data-clarification-key]`, "currentForm?.dataset.clarificationKey === clarificationKey",
 		`form.stack-form[data-workflow-form-key]`, "currentForm?.dataset.workflowFormKey === workflowFormKey", `form.dataset.submitting === "true"`,
+		"clarificationDraft", "resetClarificationDraft", "state.clarificationDraft",
 		`requestJSON("/v1/provider-status")`, "PROVIDER_CONFIGURATION_REQUIRED", "AIサービスへ接続してください",
 		"openSettingsDialog", "renderProviderSettings", "秘密情報はiPhoneやbrowser storageへ保存しません",
 		"PROVIDER_AUTHENTICATION_REQUIRED", "PROVIDER_BILLING_REQUIRED", "PROVIDER_PERMISSION_DENIED",
@@ -323,7 +323,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"renderTimeline", "rememberError", "setBackgroundWorking", `requestJSON("/v1/workspace-status")`, "最初のAIチームを確認",
 		`requestJSON("/v1/local-setup/claude"`, `requestJSON("/v1/local-setup/reveal-workspace"`, "会社を始める",
 		"state.commandInFlight", "同じ処理を実行中です", "window.isSecureContext", `document.execCommand("copy")`, "showManualCopy",
-		"選択内容をコピー", "Error code:", "Stage:", "Command ID:", "Request ID:",
+		"選択内容をコピー", "parseDiagnosticsFacts", "Error code", "Stage", "Command ID", "Request ID",
 		"renderInFlight", "storedPendingCommand", "進め方を考えています", "AI社員が仕事を進めています",
 		"この画面を閉じても処理はMacで続きます。",
 		"commandProviderFailure", "task?.execution?.provider_failure",
@@ -332,7 +332,8 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"new AbortController()", "keychain_setup_timeout", "Claudeの接続設定を完了できませんでした",
 		"state.renderKey === key", "state.detailRenderKey === key", "state.timelineRenderKey === key",
 		"structuredFieldsSummary", "structured_output_presence", "Structured fields",
-		"error.details?.parse?.structured_output_presence",
+		"structured_output_field_shape", "structuredFieldShapeSummary",
+		"parse?.structured_output_presence",
 	} {
 		if !strings.Contains(asset.Body.String(), required) {
 			t.Fatalf("mobile UI is missing command continuity boundary %q", required)

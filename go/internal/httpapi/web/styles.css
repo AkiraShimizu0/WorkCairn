@@ -656,15 +656,48 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   .employees-pane {
     position: sticky;
     top: 12px;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100dvh - 88px);
+    min-height: 0;
+    overflow: hidden;
     background: var(--pane-right);
     border: 0;
     border-radius: 14px;
     box-shadow: none;
   }
+  .employee-status-section {
+    flex: 0 0 45%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .employee-status-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    margin-top: 10px;
+  }
+  .company-feed-section {
+    flex: 1 1 55%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin-top: 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+  .company-feed {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
   .employee-grid { grid-template-columns: 1fr; }
   .attention-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .thread-scroll {
-    max-height: calc(100dvh - 260px);
+    flex: 1 1 auto;
+    min-height: 0;
     overflow-y: auto;
   }
   .conversation-thread { overflow: visible; padding-bottom: 8px; }
@@ -673,8 +706,42 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 @media (max-width: 899px) {
   .requests-pane { display: none; }
   .requests-pane.mobile-visible {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     background: var(--pane-left);
+  }
+  .employees-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .employee-status-section {
+    flex: 0 0 auto;
+    max-height: 45vh;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .employee-status-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .company-feed-section {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin-top: 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+  .company-feed {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
   }
   .employees-pane.mobile-hidden { display: none; }
   .request-list-view.mobile-hidden, .request-detail-view.mobile-hidden { display: none !important; }
@@ -1163,7 +1230,13 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 }
 
 .request-detail-view {
-  min-height: calc(100dvh - 120px);
+  min-height: 0;
+}
+
+.request-detail-view.request-thread {
+  height: calc(100dvh - 72px - env(safe-area-inset-top));
+  max-height: calc(100dvh - 72px - env(safe-area-inset-top));
+  overflow: hidden;
 }
 
 .requests-pane .thread-header {
@@ -1260,14 +1333,31 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 }
 
 .thread-composer {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
-  align-items: end;
+  display: block;
   padding: 10px 2px calc(6px + env(safe-area-inset-bottom));
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #fff;
+}
+
+.composer-shell {
+  display: grid;
+  gap: 6px;
+}
+
+.composer-status {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.composer-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: end;
 }
 
 .thread-composer textarea {
@@ -1568,8 +1658,9 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 }
 
 @media (max-width: 899px) {
-  .request-detail-view {
-    min-height: calc(100dvh - 88px);
+  .request-detail-view.request-thread {
+    height: calc(100dvh - 64px - env(safe-area-inset-top));
+    max-height: calc(100dvh - 64px - env(safe-area-inset-top));
   }
 
   .thread-scroll {
@@ -1634,8 +1725,8 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 }
 
 .company-feed-section {
-  margin-top: 22px;
-  padding-top: 18px;
+  margin-top: 0;
+  padding-top: 12px;
   border-top: 1px solid var(--line);
 }
 

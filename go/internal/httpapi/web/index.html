@@ -94,8 +94,13 @@
                 <div id="quick-replies" class="quick-replies" aria-live="polite"></div>
                 <section id="active-card" class="action-card" aria-live="polite" hidden></section>
                 <form id="thread-composer" class="thread-composer" aria-label="メッセージ入力">
-                  <textarea id="composer-input" name="message" rows="2" placeholder="メッセージを入力..." aria-label="メッセージを入力"></textarea>
-                  <button id="composer-send" class="button primary composer-send" type="submit" aria-label="送信">送信</button>
+                  <div class="composer-shell">
+                    <p id="composer-status" class="composer-status" aria-live="polite"></p>
+                    <div class="composer-input-row">
+                      <textarea id="composer-input" name="message" rows="2" placeholder="メッセージを入力..." aria-label="メッセージを入力"></textarea>
+                      <button id="composer-send" class="button primary composer-send" type="submit" aria-label="送信">送信</button>
+                    </div>
+                  </div>
                 </form>
               </footer>
 
@@ -116,15 +121,16 @@
           </aside>
 
           <aside id="employees-pane" class="employees-pane">
-            <div class="pane-heading">
-              <div>
-                <p class="eyebrow">YOUR TEAM</p>
-                <h1>AI社員</h1>
-              </div>
-              <span id="team-count" class="count-chip"></span>
-            </div>
-            <p class="pane-lead">会社のAI社員と、社内の動きをリアルタイムに確認できます。</p>
-            <div id="employee-grid" class="employee-grid"></div>
+            <section class="employee-status-section" aria-labelledby="employee-status-heading">
+              <header class="pane-heading employee-status-heading">
+                <div>
+                  <p class="eyebrow">YOUR TEAM</p>
+                  <h1 id="employee-status-heading">AI社員</h1>
+                </div>
+                <span id="team-count" class="count-chip"></span>
+              </header>
+              <div id="employee-grid" class="employee-grid employee-status-list"></div>
+            </section>
             <section class="company-feed-section" aria-labelledby="company-feed-heading">
               <h2 id="company-feed-heading" class="feed-heading">社内の動き</h2>
               <div id="company-feed" class="company-feed" aria-live="polite"></div>
