@@ -645,13 +645,37 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 @media (min-width: 900px) {
   .page-shell { padding-right: 42px; padding-left: 42px; }
   .menu-button, .nav-backdrop, .nav-drawer { display: none !important; }
-  .workspace-layout { grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); align-items: start; gap: 12px; }
+  .workspace-layout { grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); align-items: stretch; gap: 12px; }
   .requests-pane {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100dvh - 88px);
+    min-height: 0;
+    overflow: hidden;
     background: var(--pane-left);
     border: 0;
     border-radius: 14px;
     box-shadow: none;
     padding: 16px 18px 20px;
+  }
+  .request-list-view {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .request-list-view .session-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .request-detail-view.request-thread {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    overflow: hidden;
   }
   .employees-pane {
     position: sticky;
@@ -788,9 +812,17 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 }
 
 .requests-pane .list-actions {
-  display: flex;
-  gap: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.new-request-button {
+  min-height: 36px;
+  padding: 8px 14px;
+  font-size: 13px;
 }
 
 .requests-pane .text-link {
@@ -843,7 +875,10 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 .requests-pane .session-item {
   width: 100%;
   min-height: 0;
-  display: block;
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px;
+  align-items: start;
   padding: 10px 8px;
   margin: 0 -8px;
   border: 0;
@@ -1237,6 +1272,8 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   height: calc(100dvh - 72px - env(safe-area-inset-top));
   max-height: calc(100dvh - 72px - env(safe-area-inset-top));
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .requests-pane .thread-header {
@@ -1292,8 +1329,11 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   flex: 0 0 auto;
   margin-top: auto;
   padding-top: 8px;
+  padding-bottom: env(safe-area-inset-bottom, 0);
   border-top: 1px solid var(--line);
   background: var(--pane-left);
+  position: relative;
+  z-index: 2;
 }
 
 .quick-replies {
@@ -1684,11 +1724,22 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   }
 }
 
-.requests-pane .session-item {
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 10px;
-  align-items: start;
+.session-menu-button {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.session-menu-button:hover {
+  color: var(--ink);
+  background: rgba(25, 35, 31, .06);
 }
 
 .session-icon {
@@ -1711,17 +1762,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 .session-copy { min-width: 0; }
 
 .new-request-inline {
-  margin: 12px 0 18px;
-  padding: 14px 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.92);
-}
-
-.new-request-inline textarea {
-  width: 100%;
-  min-height: 72px;
-  color: var(--ink-strong, var(--ink));
+  display: none;
 }
 
 .company-feed-section {

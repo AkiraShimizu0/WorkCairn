@@ -1,3 +1,5 @@
+const BACKGROUND_CONTINUITY_COPY = "この画面を閉じても処理はMacで続きます。次に判断が必要になったら依頼詳細へ表示します。";
+
 const INTERACTION_VERSION = "workspace-interaction.v1";
 const COMMAND_VERSION = "workspace-command.v1";
 const STORAGE_SESSION = "workcairn.active-session";
@@ -48,7 +50,6 @@ const ui = {
   autonomySummary: document.querySelector("#autonomy-summary"),
   proofOfWork: document.querySelector("#proof-of-work"),
   requestDialog: document.querySelector("#request-dialog"),
-  requestForm: document.querySelector("#new-request-inline #request-form"),
   actionDialog: document.querySelector("#action-dialog"),
   actionForm: document.querySelector("#action-form"),
   settingsDialog: document.querySelector("#settings-dialog"),
@@ -84,6 +85,7 @@ const state = {
   commandInFlight: false,
   busy: false,
   pendingStart: null,
+  draftRequest: null,
   threadNearBottom: true,
   forceScrollToBottom: false,
   pendingAttentionTitle: "",
@@ -196,6 +198,24 @@ function workcairnEvent(text, at, extras = {}) {
   return { side: "system", speaker: "WorkCairn", text, at, ...extras };
 }
 
+function requestTitleText(value, max = 48) {
+  const text = String(value || "").trim();
+  if (!text) return "新しい依頼";
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1)}…`;
+}
+
+function truncatePreview(value, max = 120) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 1)}…`;
+}
+
+function isDraftRequestActive() {
+  return Boolean(state.draftRequest);
+}
+
 function sessionListPresentation(record) {
   const liaison = liaisonIdentity();
   const activeID = state.record?.session_id;
@@ -243,7 +263,7 @@ function sessionListPresentation(record) {
 }
 
 function sessionIconNode(icon) {
-  const labels = { attention: "対応待ち", working: "作業中", complete: "完了", warning: "要確認" };
+  const labels = { attention: "対応待ち", working: "作業中", complete: "完了", warning: "失敗" };
   return node("span", { class: `session-icon session-icon-${icon}`, "aria-label": labels[icon] || icon },
     icon === "complete" ? "✓" : "",
   );
@@ -369,9 +389,16 @@ function composerStatusText(next) {
   if (state.lastError) return "確認が必要です";
   const pending = storedPendingCommand();
   if (pending) {
+    if (pending.operation === "interaction.workflow.execute") {
+      return "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。";
+    }
+    if (pending.operation === "interaction.plan.generate") {
+      return "進め方を準備しています";
+    }
     const copy = inFlightCopy(pending.operation);
-    return copy.title || copy.label;
+    return copy.message || copy.title || copy.label;
   }
+  if (isDraftRequestActive()) return "依頼内容を入力してください";
   if (!next) return "依頼を選択してください";
 
   const activeEmployees = activeEmployeeStatuses();
@@ -402,6 +429,9 @@ function composerStatusText(next) {
 }
 
 function composerCapabilities(next) {
+  if (isDraftRequestActive()) {
+    return { enabled: true, placeholder: "依頼内容を入力...", mode: "draft" };
+  }
   if (!next || state.lastError) {
     return { enabled: false, placeholder: "メッセージを入力...", mode: "idle" };
   }
@@ -499,7 +529,7 @@ function inFlightCopy(operation) {
   case "interaction.plan.generate":
     return { label: "進め方を考えています", title: "企画担当が進め方を考えています", message: "質問または進め方ができるまで、Macで処理を続けます。" };
   case "interaction.workflow.execute":
-    return { label: "仕事を進めています", title: "AI社員が仕事を進めています", message: "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。" };
+    return { label: "仕事を進めています", title: "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。", message: "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。" };
   default:
     return { label: "処理中", title: "会社が仕事を進めています", message: "承認済みの処理をMacで安全に続けています。" };
   }
@@ -508,12 +538,9 @@ function inFlightCopy(operation) {
 function renderInFlight(command) {
   const copy = inFlightCopy(command?.operation);
   clearActionSurface();
-  renderComposerState(null);
-  ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(
-    node("p", { class: "composer-note" }, copy.message),
-    node("p", { class: "composer-note visually-hidden" }, "この画面を閉じても処理はMacで続きます。次に判断が必要になったら依頼詳細へ表示します。"),
-  );
+  renderComposerState(state.next);
+  ui.activeCard.hidden = true;
+  ui.activeCard.replaceChildren();
   state.forceScrollToBottom = true;
   renderTimeline();
 }
@@ -702,8 +729,9 @@ function isDesktopLayout() {
 }
 
 function isRequestDetailVisible() {
-  if (isDesktopLayout()) return Boolean(state.record);
-  return state.nav === "request_detail" && Boolean(state.record);
+  if (isDraftRequestActive()) return true;
+  if (isDesktopLayout()) return Boolean(state.record) || isDraftRequestActive();
+  return state.nav === "request_detail" && (Boolean(state.record) || isDraftRequestActive());
 }
 
 function setNav(name, remember = true) {
@@ -720,13 +748,14 @@ function setNav(name, remember = true) {
 
 function applyNavigationLayout() {
   const desktop = isDesktopLayout();
+  const showDetail = Boolean(state.record) || isDraftRequestActive();
   ui.menuButton.hidden = desktop;
-  ui.requestsPane.classList.toggle("mobile-visible", desktop || state.nav === "request_list" || state.nav === "request_detail");
+  ui.requestsPane.classList.toggle("mobile-visible", desktop || state.nav === "request_list" || state.nav === "request_detail" || isDraftRequestActive());
   ui.employeesPane.classList.toggle("mobile-hidden", !desktop && state.nav !== "employees_home");
   ui.requestListView.classList.toggle("mobile-hidden", !desktop && state.nav !== "request_list");
-  ui.requestDetailView.hidden = desktop ? !state.record : state.nav !== "request_detail" || !state.record;
+  ui.requestDetailView.hidden = desktop ? !showDetail : state.nav !== "request_detail" || !showDetail;
   ui.requestDetailView.classList.toggle("mobile-hidden", ui.requestDetailView.hidden);
-  ui.requestListView.hidden = desktop ? Boolean(state.record) : state.nav !== "request_list";
+  ui.requestListView.hidden = desktop ? showDetail : state.nav !== "request_list";
   ui.requestListView.classList.toggle("mobile-hidden", ui.requestListView.hidden);
   setBackgroundWorking(Boolean(storedPendingCommand()) && !isRequestDetailVisible());
 }
@@ -750,6 +779,7 @@ function updateNavDrawerState() {
 
 function showRequestList() {
   closeNavDrawer();
+  state.draftRequest = null;
   if (isDesktopLayout()) {
     if (state.record) selectSession(null);
     else applyNavigationLayout();
@@ -761,6 +791,15 @@ function showRequestList() {
 
 function showRequestDetail(sessionID = state.record?.session_id) {
   closeNavDrawer();
+  if (isDraftRequestActive()) {
+    if (isDesktopLayout()) {
+      applyNavigationLayout();
+      renderDraftRequestDetail();
+    } else {
+      setNav("request_detail");
+    }
+    return;
+  }
   if (sessionID && sessionID !== state.record?.session_id) {
     selectSession(sessionID);
     return;
@@ -1093,12 +1132,15 @@ async function selectSession(id, options = {}) {
     state.detailRenderKey = "";
     state.timelineRenderKey = "";
     localStorage.removeItem(STORAGE_SESSION);
-    renderEmpty();
-    renderRequestDetail();
+    if (!isDraftRequestActive()) {
+      renderEmpty();
+      renderRequestDetail();
+    }
     renderEmployeesPane();
     applyNavigationLayout();
     return;
   }
+  state.draftRequest = null;
   localStorage.setItem(STORAGE_SESSION, id);
   state.renderKey = "";
   state.detailRenderKey = "";
@@ -1131,6 +1173,7 @@ async function refreshCurrent(silent = false) {
     state.workReportError = reportResult.error || null;
     restoreError(record);
     if (!state.lastError) await restoreDurableFailure(next);
+    await loadTaskEvidenceDetails().catch(() => null);
     setConnected(true);
     renderRequestDetail();
     await loadSessions();
@@ -1143,16 +1186,20 @@ async function refreshCurrent(silent = false) {
 }
 
 function renderEmpty() {
-  if (isRequestDetailVisible()) {
-    clearActionSurface();
-    renderComposerState(null);
-    ui.activeCard.hidden = false;
-    ui.activeCard.replaceChildren(
-      node("p", { class: "composer-note" }, "依頼した後はAI社員が計画・実行・レビューを進め、必要な質問と承認だけをここに表示します。"),
-    );
-    setQuickReplies([button("仕事を依頼する", "primary chip", openRequestDialog)]);
+  if (!isRequestDetailVisible()) return;
+  clearActionSurface();
+  renderComposerState(null);
+  if (isDraftRequestActive()) {
+    ui.activeCard.hidden = true;
     renderTimeline();
+    return;
   }
+  ui.activeCard.hidden = false;
+  ui.activeCard.replaceChildren(
+    node("p", { class: "composer-note" }, "依頼した後はAI社員が計画・実行・レビューを進め、必要な質問と承認だけをここに表示します。"),
+  );
+  setQuickReplies([button("＋ 新規作成", "primary chip", openNewRequestDraft)]);
+  renderTimeline();
 }
 
 function renderSessions() {
@@ -1177,7 +1224,7 @@ function renderSessions() {
         },
         sessionIconNode(presentation.icon),
         node("span", { class: "session-copy" },
-          node("span", { class: "session-title" }, record.request),
+          node("span", { class: "session-title" }, requestTitleText(record.request)),
           node("span", { class: "session-meta" }, presentation.label),
         ),
         );
@@ -1305,15 +1352,9 @@ function renderProviderSetup() {
 }
 
 function renderQuestions(next) {
-  const draft = clarificationDraft(next);
-  const total = next.questions.length;
-  ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(
-    node("h2", { class: "visually-hidden" }, "確認したいことがあります"),
-    total > 1 ? node("p", { class: "composer-note" }, `質問 ${draft.index + 1} / ${total}`) : null,
-  );
+  ui.activeCard.hidden = true;
+  ui.activeCard.replaceChildren();
   setQuickReplies([
-    button("回答を送信", "primary chip", () => submitClarificationAnswers(next)),
     button("後で回答する", "quiet chip", () => toast("質問は回答待ちのまま保存されています。")),
   ]);
   state.forceScrollToBottom = true;
@@ -1405,33 +1446,14 @@ async function loadOrganization(force = false) {
 
 async function renderWorkflowApproval(next) {
   state.workflowPlanPreview = null;
-  const workflowFormKey = JSON.stringify([next.session_id, next.expected_version]);
-  const currentForm = ui.activeCard.querySelector("form.stack-form[data-workflow-form-key]");
-  if (currentForm?.dataset.workflowFormKey === workflowFormKey) return;
-  const form = node("form", { class: "stack-form", dataset: { workflowFormKey } });
-  const maxTasks = node("input", { id: "max-tasks", name: "max_tasks", type: "number", min: "1", max: "100", value: "20", inputmode: "numeric", required: true });
-  form.append(
-    node("p", { class: "empty" }, "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。"),
-    node("label", { for: "max-tasks" }, "今回任せる仕事ステップの上限"), maxTasks,
-  );
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (form.dataset.submitting === "true") return;
-    const limit = Number(maxTasks.value);
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) return toast("1〜100のTask上限を確認してください。");
-    form.dataset.submitting = "true";
-    try {
-      await prepareWorkflowApproval(next, limit);
-    } finally {
-      delete form.dataset.submitting;
-    }
-  });
   setQuickReplies([
-    button("実行内容を確認", "primary chip", () => form.requestSubmit()),
+    button("実行内容を確認", "primary chip", () => prepareWorkflowApproval(next, 20)),
     button("今は実行しない", "quiet chip", () => toast("仕事は開始されていません。")),
   ]);
   ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(form);
+  ui.activeCard.replaceChildren(
+    node("p", { class: "composer-note" }, "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。今回任せる仕事ステップの上限は20件です。"),
+  );
   state.forceScrollToBottom = true;
   renderTimeline();
 }
@@ -1855,22 +1877,34 @@ function planEmbedNode(plan) {
   );
 }
 
+function deliverablePreviewText(proof) {
+  const workflow = [...(state.record?.turns || [])].reverse().find((turn) => turn.workflow)?.workflow;
+  if (!workflow || !proof?.task_id) return "";
+  const evidence = state.evidence.get(`${workflow.project_name}/${proof.task_id}`);
+  return truncatePreview(evidence?.deliverable?.content);
+}
+
 function deliverableEmbedNode(proof) {
   if (!proof?.deliverable?.committed && !proof?.title) return null;
-  const label = proof.deliverable?.title || proof.title || "成果物";
+  const previewText = deliverablePreviewText(proof) || "成果物を開いて本文を確認";
   const preview = node("pre", { class: "deliverable-preview", hidden: true });
   const panel = node("div", { class: "msg-deliverable-panel", hidden: true }, preview);
   return node("div", { class: "msg-embed msg-embed-deliverable" },
     node("div", { class: "msg-attach" },
       node("p", { class: "msg-attach-label" }, "成果物"),
-      node("p", { class: "msg-attach-preview" }, label),
-      iconButton("成果物を見る", "⋯", async () => {
+      node("p", { class: "msg-attach-preview" }, previewText),
+      iconButton("成果物を見る", "⋯", async (event) => {
         panel.hidden = !panel.hidden;
-        if (!panel.hidden && !preview.textContent) {
+        if (!panel.hidden) {
           await loadTaskEvidenceDetails();
           const workflow = [...(state.record?.turns || [])].reverse().find((turn) => turn.workflow)?.workflow;
           const evidence = workflow ? state.evidence.get(`${workflow.project_name}/${proof.task_id}`) : null;
-          preview.textContent = evidence?.deliverable?.content || "（本文なし）";
+          const body = evidence?.deliverable?.content || "";
+          preview.textContent = body || "（本文なし）";
+          const previewLabel = event.currentTarget.closest(".msg-attach")?.querySelector(".msg-attach-preview");
+          if (previewLabel) {
+            previewLabel.textContent = truncatePreview(body) || "成果物を開いて本文を確認";
+          }
         }
       }, "icon-button msg-more-toggle"),
       panel,
@@ -2185,6 +2219,10 @@ async function loadTaskEvidenceDetails() {
 }
 
 function renderRequestDetail() {
+  if (isDraftRequestActive()) {
+    renderDraftRequestDetail();
+    return;
+  }
   renderRequestSummary();
   if (!state.record) {
     ui.requestSummary.replaceChildren();
@@ -2208,6 +2246,19 @@ function renderRequestDetail() {
   renderComposerState(state.next);
 }
 
+function renderDraftRequestDetail() {
+  ui.requestSummary.replaceChildren(
+    node("h1", { class: "thread-title" }, "新しい依頼"),
+  );
+  clearActionSurface();
+  ui.activeCard.hidden = true;
+  ui.timeline.replaceChildren();
+  ui.detailsPanel.hidden = true;
+  ui.details.replaceChildren();
+  applyNavigationLayout();
+  renderComposerState(null);
+}
+
 function renderRequestSummary() {
   const record = state.record;
   if (!record) {
@@ -2215,7 +2266,7 @@ function renderRequestSummary() {
     return;
   }
   ui.requestSummary.replaceChildren(
-    node("h1", { class: "thread-title" }, record.request),
+    node("h1", { class: "thread-title" }, requestTitleText(record.request)),
   );
 }
 
@@ -2329,7 +2380,7 @@ function renderSetupWizard() {
     node("div", { class: "setup-actions" },
 	  !workspace.organization_ready ? button("最初のAIチームを確認", "primary", () => renderSetupTeamApproval(workspace)) : null,
       !state.providerStatus?.configured ? button("AI Connectionsを確認", "primary", () => { ui.setupDialog.close(); openSettingsDialog(); }) : null,
-	  workspace.organization_ready && state.providerStatus?.configured ? button("会社を始める", "primary", () => { ui.setupDialog.close(); setNav("request_list"); focusNewRequestForm(); }) : null,
+	  workspace.organization_ready && state.providerStatus?.configured ? button("会社を始める", "primary", () => { ui.setupDialog.close(); openNewRequestDraft(); }) : null,
 	  workspace.layout_ready && state.localSetupAvailable ? button("Obsidianで会社データを見る", "quiet", revealWorkspaceOnMac) : null,
       button("Macで設定してから再確認", "quiet", async () => { await Promise.all([loadWorkspaceStatus(), loadProviderStatus(), loadOrganization().catch(() => null)]); renderSetupWizard(); }),
     ),
@@ -2442,68 +2493,68 @@ function renderSetupTeamApproval(workspace) {
   );
 }
 
-function focusNewRequestForm() {
-  showRequestList();
-  const field = document.querySelector("#request-text");
-  if (field) {
-    field.focus();
-    field.scrollIntoView({ block: "nearest" });
+function openNewRequestDraft() {
+  closeNavDrawer();
+  state.draftRequest = { sessionID: sessionID(), text: "" };
+  state.record = null;
+  state.next = null;
+  state.workReport = null;
+  state.workReportError = null;
+  state.lastError = null;
+  state.renderKey = "";
+  state.timelineRenderKey = "";
+  state.pendingStart = null;
+  localStorage.removeItem(STORAGE_SESSION);
+  ui.composerInput.value = "";
+  clearActionSurface();
+  if (isDesktopLayout()) {
+    applyNavigationLayout();
+    renderDraftRequestDetail();
+  } else {
+    setNav("request_detail");
+    renderDraftRequestDetail();
   }
 }
 
-function restoreNewRequestForm() {
-  const inline = document.querySelector("#new-request-inline");
-  if (!inline) return;
-  inline.replaceChildren(
-    node("form", { id: "request-form", class: "stack-form" },
-      node("label", { for: "request-text" }, "会社に任せたい仕事"),
-      node("textarea", { id: "request-text", name: "request", rows: "3", placeholder: "例：新商品の紹介記事を企画して、レビューまで完了してください", required: true }),
-      node("div", { class: "button-row" },
-        button(liaisonRequestLabel(), "primary", null, "submit"),
-      ),
-    ),
-  );
-  ui.requestForm = document.querySelector("#request-form");
-  ui.requestForm.addEventListener("submit", prepareNewRequest);
-}
-
-function openRequestDialog() {
-  focusNewRequestForm();
-}
-
-async function prepareNewRequest(event) {
-  event.preventDefault();
+async function submitDraftRequest() {
+  if (!isDraftRequestActive() || submitDraftRequest.inFlight || state.commandInFlight) {
+    if (submitDraftRequest.inFlight || state.commandInFlight) toast("同じ処理を実行中です");
+    return;
+  }
+  const request = ui.composerInput.value.trim();
+  if (!request) return toast("依頼内容を入力してください。");
+  submitDraftRequest.inFlight = true;
+  const input = { version: INTERACTION_VERSION, session_id: state.draftRequest.sessionID, request, current_time: now() };
   try {
-    const data = new FormData(ui.requestForm);
-    const request = data.get("request")?.toString().trim();
-    if (!request) return toast("依頼内容を入力してください。");
-    const input = { version: INTERACTION_VERSION, session_id: sessionID(), request, current_time: now() };
     setBusy(true, "依頼内容を確認しています", "まだWorkspaceやProviderは変更しません。");
     const plan = await requestJSON("/v1/interaction-plans", { method: "POST", body: JSON.stringify(input) });
     setBusy(false);
-    state.pendingStart = { input, plan, request };
-    const inline = document.querySelector("#new-request-inline");
-    inline.replaceChildren(
-      conversationNode(liaisonMessage("この依頼を開始してよろしいですか？", now())),
-      node("p", { class: "composer-note" }, request),
-      technicalDetails("技術的な詳細を見る", [["Request digest", plan.session.request_digest]]),
-      node("div", { class: "inline-actions button-row" },
-        button("依頼を開始", "primary", async () => {
-          localStorage.setItem(STORAGE_SESSION, input.session_id);
-          const completed = await executeNextCommand({ operation: "interaction.start" }, {
-            session_id: input.session_id, request, request_digest: plan.session.request_digest,
-            model: plan.session.model, current_time: input.current_time,
-          }, "依頼を保存しています", "Sessionを作成しています。", commandID());
-          state.pendingStart = null;
-          restoreNewRequestForm();
-          if (completed) showRequestDetail(input.session_id);
-        }),
-        button("やめる", "quiet", () => { state.pendingStart = null; restoreNewRequestForm(); }),
-      ),
-    );
+    localStorage.setItem(STORAGE_SESSION, input.session_id);
+    const completed = await executeNextCommand({ operation: "interaction.start" }, {
+      session_id: input.session_id,
+      request,
+      request_digest: plan.session.request_digest,
+      model: plan.session.model,
+      current_time: input.current_time,
+    }, "依頼を保存しています", "Sessionを作成しています。", commandID());
+    state.draftRequest = null;
+    ui.composerInput.value = "";
+    if (completed) {
+      await selectSession(input.session_id);
+      showRequestDetail(input.session_id);
+    } else {
+      applyNavigationLayout();
+    }
   } catch (error) {
     showError(error, "依頼内容を確認できませんでした");
+  } finally {
+    submitDraftRequest.inFlight = false;
   }
+}
+submitDraftRequest.inFlight = false;
+
+function openRequestDialog() {
+  openNewRequestDraft();
 }
 
 function closeDialog(event) {
@@ -2512,7 +2563,7 @@ function closeDialog(event) {
 }
 
 ui.pairingForm.addEventListener("submit", pair);
-ui.requestForm.addEventListener("submit", prepareNewRequest);
+document.querySelector("#new-request-button")?.addEventListener("click", openNewRequestDraft);
 document.querySelector("#refresh-button").addEventListener("click", () => refreshCurrent());
 ui.settingsButton.addEventListener("click", openSettingsDialog);
 document.querySelector("#provider-status-refresh").addEventListener("click", refreshProviderStatus);
@@ -2520,7 +2571,7 @@ ui.menuButton.addEventListener("click", openNavDrawer);
 ui.navBackdrop.addEventListener("click", closeNavDrawer);
 ui.navEmployeesHome.addEventListener("click", showEmployeesHome);
 ui.navRequestList.addEventListener("click", showRequestList);
-ui.navNewRequest.addEventListener("click", () => { closeNavDrawer(); focusNewRequestForm(); });
+ui.navNewRequest.addEventListener("click", () => { closeNavDrawer(); openNewRequestDraft(); });
 ui.navCurrentRequest.addEventListener("click", () => showRequestDetail());
 ui.navSettings.addEventListener("click", () => { closeNavDrawer(); openSettingsDialog(); });
 ui.backToListButton.addEventListener("click", showRequestList);
@@ -2538,10 +2589,14 @@ if (ui.threadJumpLatest) {
   });
 }
 if (ui.threadComposer) {
-  ui.threadComposer.addEventListener("submit", (event) => {
+  ui.threadComposer.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (isDraftRequestActive()) {
+      await submitDraftRequest();
+      return;
+    }
     const next = state.next;
-    if (!next || next.kind !== "answer_clarifications" || next.questions.length !== 1) return;
+    if (!next || next.kind !== "answer_clarifications") return;
     submitClarificationAnswers(next);
   });
 }

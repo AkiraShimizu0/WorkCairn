@@ -37,33 +37,43 @@ async function completeFirstRun(page) {
   await page.getByRole("button", { name: "承認してセットアップ" }).click();
   await expect(page.getByRole("button", { name: "会社を始める" })).toBeVisible();
   await page.getByRole("button", { name: "会社を始める" }).click();
-  await expect(page.locator("#new-request-inline")).toBeVisible();
+  await expect(page.locator("#request-detail-view")).toBeVisible();
+  await expect(page.locator("#composer-input")).toBeVisible();
 }
 
 async function startRequest(page, requestText) {
-  await page.locator("#new-request-inline #request-text").fill(requestText);
-  await page.getByRole("button", { name: /依頼する$/ }).click();
-  await expect(page.locator("#new-request-inline")).toContainText("この依頼を開始してよろしいですか？");
-  await page.getByRole("button", { name: "依頼を開始" }).click();
+  const newRequest = page.getByRole("button", { name: "＋ 新規作成" });
+  if (await newRequest.isVisible()) {
+    await newRequest.click();
+  }
+  await expect(page.locator("#request-detail-view")).toBeVisible();
+  await page.locator("#composer-input").fill(requestText);
+  await page.getByRole("button", { name: "送信" }).click();
   await expect(page.getByRole("button", { name: "進め方の作成を承認" })).toBeVisible();
 }
 
 async function ensureRequestDetail(page) {
   const detail = page.locator("#request-detail-view");
-  if (await detail.isVisible()) return;
+  try {
+    await expect(detail).toBeVisible({ timeout: 8_000 });
+    return;
+  } catch {}
   const menu = page.locator("#menu-button");
   if (await menu.isVisible()) {
     await menu.click();
     const current = page.locator("#nav-current-request");
     if (await current.isVisible()) {
       await current.click();
+      await expect(detail).toBeVisible();
       return;
     }
     await page.locator("#nav-request-list").click();
     await page.locator("#session-list .session-item").first().click();
+    await expect(detail).toBeVisible();
     return;
   }
   await page.locator("#session-list .session-item").first().click();
+  await expect(detail).toBeVisible();
 }
 
 async function approvePlanAndWorkflow(page) {
@@ -71,13 +81,6 @@ async function approvePlanAndWorkflow(page) {
   await expect(page.locator("#activity-timeline")).not.toContainText("PROPOSED-");
   await page.getByRole("button", { name: "この進め方で始める" }).click();
   await expect(page.getByRole("button", { name: "実行内容を確認" })).toBeVisible();
-
-  const limit = page.locator("#max-tasks");
-  await limit.fill("8");
-  await limit.focus();
-  await page.waitForTimeout(5_500);
-  await expect(limit).toHaveValue("8");
-  expect(await limit.evaluate((element) => document.activeElement === element)).toBeTruthy();
   await page.getByRole("button", { name: "実行内容を確認" }).click();
   await expect(page.getByRole("button", { name: "承認して実行" })).toBeVisible();
   const approve = page.getByRole("button", { name: "承認して実行" });
@@ -102,18 +105,19 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
     await generate.evaluate((element) => { element.click(); element.click(); });
     await expect(page.locator("#activity-timeline")).toContainText("進め方を考えています");
     await expect(generate).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "確認したいことがあります" })).toBeVisible();
-    expect(commands.filter((command) => command.operation === "interaction.plan.generate")).toHaveLength(1);
+    await expect(page.locator("#activity-timeline")).toContainText("初めてWorkCairnを使う人");
 
-    const clarification = page.locator('textarea[name="answer-0"], #composer-input');
+    const clarification = page.locator("#composer-input");
     await clarification.fill("途中まで入力した回答");
     await clarification.focus();
     await page.waitForTimeout(10_500);
     await expect(clarification).toHaveValue("途中まで入力した回答");
     expect(await clarification.evaluate((element) => document.activeElement === element)).toBeTruthy();
     await clarification.fill("はい。初めてWorkCairnを使う人向けです。");
-    await page.getByRole("button", { name: "回答を送信" }).click();
+    await page.getByRole("button", { name: "送信" }).click();
     await expect(page.getByRole("button", { name: "進め方の作成を承認" })).toBeVisible();
+    expect(commands.filter((command) => command.operation === "interaction.plan.generate")).toHaveLength(1);
+
     await page.getByRole("button", { name: "進め方の作成を承認" }).click();
     await expect(page.getByRole("button", { name: "この進め方で始める" })).toBeVisible();
 

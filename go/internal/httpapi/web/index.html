@@ -50,7 +50,7 @@
           <div class="nav-drawer-links">
             <button id="nav-employees-home" class="nav-link" type="button">AI社員一覧へ戻る</button>
             <button id="nav-request-list" class="nav-link" type="button">依頼一覧</button>
-            <button id="nav-new-request" class="nav-link" type="button">＋ 新しい依頼</button>
+            <button id="nav-new-request" class="nav-link" type="button">＋ 新規作成</button>
             <button id="nav-current-request" class="nav-link" type="button" hidden>選択中の依頼</button>
             <button id="nav-settings" class="nav-link" type="button">Settings</button>
           </div>
@@ -62,18 +62,10 @@
               <header class="list-header">
                 <h1 class="pane-title">依頼</h1>
                 <div class="list-actions">
+                  <button id="new-request-button" class="button primary new-request-button" type="button">＋ 新規作成</button>
                   <button id="refresh-button" class="text-link" type="button">更新</button>
                 </div>
               </header>
-              <section id="new-request-inline" class="new-request-inline" aria-label="新しい依頼">
-                <form id="request-form" class="stack-form">
-                  <label for="request-text">会社に任せたい仕事</label>
-                  <textarea id="request-text" name="request" rows="3" placeholder="例：新商品の紹介記事を企画して、レビューまで完了してください" required></textarea>
-                  <div class="button-row">
-                    <button id="new-request-button" class="button primary" type="submit">窓口社員に依頼する</button>
-                  </div>
-                </form>
-              </section>
               <div id="session-list" class="session-list"></div>
             </section>
 
@@ -94,7 +86,8 @@
                 <div id="quick-replies" class="quick-replies" aria-live="polite"></div>
                 <section id="active-card" class="action-card" aria-live="polite" hidden></section>
                 <form id="thread-composer" class="thread-composer" aria-label="メッセージ入力">
-                  <div class="composer-shell">
+                    <div class="composer-shell">
+                    <p class="visually-hidden">この画面を閉じても処理はMacで続きます。次に判断が必要になったら依頼詳細へ表示します。</p>
                     <p id="composer-status" class="composer-status" aria-live="polite"></p>
                     <div class="composer-input-row">
                       <textarea id="composer-input" name="message" rows="2" placeholder="メッセージを入力..." aria-label="メッセージを入力"></textarea>
