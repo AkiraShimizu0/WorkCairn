@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -187,6 +188,9 @@ func (service *ExecutionService) Execute(ctx context.Context, request execution.
 		CurrentTime: request.CurrentTime,
 		Metadata:    cloneMetadata(request.Metadata),
 	})
+	if workerErr == nil && strings.TrimSpace(workerResult.Content) == strings.TrimSpace(readiness.Title) {
+		workerErr = fmt.Errorf("%w: content echoed task title", worker.ErrInvalidRunnerResult)
+	}
 	if workerErr == nil {
 		result.WorkerResult = &workerResult
 		result.Runner = workerResult.Runner

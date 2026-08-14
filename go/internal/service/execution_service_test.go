@@ -276,6 +276,24 @@ func TestExecutionServiceSuccessfulFlow(t *testing.T) {
 	}
 }
 
+func TestExecutionServiceRejectsWorkerResultThatEchoesTaskTitle(t *testing.T) {
+	readiness, tasks, workers, approvals, failures := defaultExecutionFakes()
+	workers.result.Content = "要件整理"
+	deliverables := &orchestrationDeliverables{
+		record: deliverable.Record{TaskID: "TASK-001", RelativePath: "Deliverables/TASK-001.md"},
+	}
+	service := activeExecutionServiceWithDeliverables(t, readiness, tasks, workers, deliverables, approvals, failures)
+
+	result, err := service.Execute(context.Background(), executionRequest(true))
+	assertExecutionError(t, err, execution.StageWorker, execution.ErrorWorkerFailed)
+	status, calls, _ := tasks.snapshot()
+	if result.Status != execution.StatusHeld || !result.Held || result.Deliverable != nil ||
+		result.FailureReason != "worker_execution_failed" || status != task.StatusOnHold ||
+		!equalStrings(calls, []string{"start", "fail", "hold"}) || deliverables.calls != 0 || failures.calls != 1 {
+		t.Fatalf("result=%#v status=%s calls=%v deliverables=%d policy=%d", result, status, calls, deliverables.calls, failures.calls)
+	}
+}
+
 func TestExecutionServiceDeliverableFailureIsRecordedAndHeldWithoutComplete(t *testing.T) {
 	readiness, tasks, workers, approvals, failures := defaultExecutionFakes()
 	deliverables := &orchestrationDeliverables{err: deliverable.ErrAlreadyExists}

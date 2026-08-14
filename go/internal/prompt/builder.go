@@ -23,7 +23,11 @@ func NewBuilder() Builder { return Builder{} }
 
 // Build converts structured Worker context into the stable task prompt.
 func (builder Builder) Build(ctx context.Context, input worker.PromptInput) (worker.Prompt, error) {
-	return builder.build(ctx, input, "成果物はMarkdownで出力してください。")
+	return builder.build(ctx, input, strings.Join([]string{
+		"成果物はMarkdownで出力してください。",
+		"タイトルや作業指示をそのまま成果物として返さないでください。",
+		"要求を満たす本文だけを書いてください。",
+	}, "\n"))
 }
 
 func (Builder) build(ctx context.Context, input worker.PromptInput, outputInstruction string) (worker.Prompt, error) {
@@ -80,9 +84,10 @@ func (Builder) build(ctx context.Context, input worker.PromptInput, outputInstru
 		User: strings.Join([]string{
 			"プロジェクト: " + input.Task.ProjectName,
 			"タスクID: " + input.Task.TaskID,
-			"担当タスク: " + input.Task.Title,
+			"作業指示: " + input.Task.Title,
 			"",
-			"この担当タスクの成果物を作成してください。",
+			"上記の作業指示に従い、成果物本文を作成してください。",
+			"作業指示そのものを成果物として返さないでください。",
 		}, "\n"),
 	}, nil
 }

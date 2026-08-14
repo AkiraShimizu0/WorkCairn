@@ -120,7 +120,7 @@ func TestBuilderPreservesUnicodeSpecialCharactersAndNewlines(t *testing.T) {
 			t.Fatalf("Build() did not preserve %q in %q", expected, built.System)
 		}
 	}
-	if !strings.Contains(built.User, "担当タスク: 仕様を整理する | #重要\n補足行") {
+	if !strings.Contains(built.User, "作業指示: 仕様を整理する | #重要\n補足行") {
 		t.Fatalf("user prompt did not preserve task text: %q", built.User)
 	}
 }
