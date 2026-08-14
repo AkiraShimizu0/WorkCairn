@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/recovery"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
+	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
 	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
@@ -110,7 +110,7 @@ func main() {
 		lookupEnv: os.LookupEnv,
 		now:       time.Now,
 		newHTTPClient: func(timeout time.Duration) claude.HTTPDoer {
-			return &http.Client{Timeout: timeout}
+			return workspaceruntime.NewProviderHTTPClient(timeout)
 		},
 	}
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, dependencies))
@@ -942,7 +942,7 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 }
 
 func parseOptions(operation string, args []string) (commandOptions, error) {
-	options := commandOptions{timeout: 60 * time.Second}
+	options := commandOptions{timeout: workspaceruntime.DefaultProviderRequestTimeout}
 	set := flag.NewFlagSet("workcairn "+operation, flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	set.StringVar(&options.vaultRoot, "vault", "", "Vault root")

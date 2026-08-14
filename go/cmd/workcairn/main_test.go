@@ -23,9 +23,22 @@ import (
 	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
 	"github.com/AkiraShimizu0/workcairn/go/internal/recovery"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
+
+func TestProviderTimeoutUsesSharedPublicBetaDefaultAndKeepsCLIOverride(t *testing.T) {
+	base := []string{"--vault", t.TempDir(), "--request", "依頼", "--model", "workcairn-auto"}
+	options, err := parseOptions("ceo-plan-generate", base)
+	if err != nil || options.timeout != workspaceruntime.DefaultProviderRequestTimeout {
+		t.Fatalf("default options = %#v, %v", options, err)
+	}
+	overridden, err := parseOptions("ceo-plan-generate", append(base, "--timeout", "37s"))
+	if err != nil || overridden.timeout != 37*time.Second {
+		t.Fatalf("override options = %#v, %v", overridden, err)
+	}
+}
 
 func TestPlanCommandIsReadOnlyAndNeedsNoProviderConfig(t *testing.T) {
 	root := writeCommandVault(t)

@@ -23,6 +23,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/httpapi"
 	"github.com/AkiraShimizu0/workcairn/go/internal/kernel"
 	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
+	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 )
 
@@ -48,7 +49,7 @@ func run() error {
 	var mobile bool
 	flag.StringVar(&vaultRoot, "vault", "", "Vault root")
 	flag.StringVar(&address, "listen", "127.0.0.1:8787", "HTTP listen address")
-	flag.DurationVar(&providerTimeout, "provider-timeout", 60*time.Second, "Provider request timeout")
+	flag.DurationVar(&providerTimeout, "provider-timeout", workspaceruntime.DefaultProviderRequestTimeout, "Provider request timeout")
 	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "graceful shutdown timeout")
 	flag.DurationVar(&schedulerInterval, "scheduler-interval", time.Second, "one-shot Schedule polling interval")
 	flag.BoolVar(&mobile, "mobile", false, "serve the paired Web UI on a trusted local network")
@@ -77,7 +78,7 @@ func run() error {
 	}, workspaceprocess.WordPressProcessConfig{
 		TargetID: os.Getenv("WORKCAIRN_WORDPRESS_TARGET_ID"), BaseURL: os.Getenv("WORKCAIRN_WORDPRESS_BASE_URL"),
 		Username: os.Getenv("WORKCAIRN_WORDPRESS_USERNAME"), ApplicationPassword: os.Getenv("WORKCAIRN_WORDPRESS_APPLICATION_PASSWORD"),
-	}, &http.Client{Timeout: providerTimeout})
+	}, workspaceruntime.NewProviderHTTPClient(providerTimeout))
 	if err != nil {
 		return err
 	}

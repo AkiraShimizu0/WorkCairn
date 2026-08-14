@@ -331,46 +331,63 @@ func TestInteractionPlanRecordsRedactedTypedProviderFailure(t *testing.T) {
 }
 
 func TestInteractionPlanPersistsSanitizedTransportSubcategoryInFailureEnvelope(t *testing.T) {
-	fixture := loadCEOPlanFixture(t)
-	root := ceoPlanVault(t, fixture.Employees)
-	at := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
-	start := InteractionStartInput{
-		VaultRoot: root, SessionID: "SESSION-PROVIDER-DNS", Request: fixture.Request,
-		Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-PROVIDER-DNS-START",
+	tests := []struct {
+		name      string
+		transport error
+		want      claude.TransportFailureCategory
+	}{
+		{
+			name: "DNS", want: claude.TransportDNSFailed,
+			transport: &url.Error{Op: "Post", URL: "https://must-not-be-persisted.invalid", Err: &net.DNSError{
+				Err: "must-not-be-persisted", Name: "must-not-be-persisted.invalid",
+			}},
+		},
+		{
+			name: "timeout", want: claude.TransportTimeout,
+			transport: &url.Error{Op: "Post", URL: "https://must-not-be-persisted.invalid", Err: context.DeadlineExceeded},
+		},
 	}
-	plan, err := PlanInteractionStart(context.Background(), start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	start.RequestDigest = plan.Session.RequestDigest
-	if _, err := ExecuteInteractionStart(context.Background(), start, true); err != nil {
-		t.Fatal(err)
-	}
-	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
-		return nil, &url.Error{
-			Op: "Post", URL: "https://must-not-be-persisted.invalid",
-			Err: &net.DNSError{Err: "must-not-be-persisted", Name: "must-not-be-persisted.invalid"},
-		}
-	})
-	result, err := ExecuteInteractionPlanGeneration(context.Background(), InteractionPlanGenerationInput{
-		VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: 1,
-		CurrentTime: at.Add(time.Minute), CommandID: "CMD-PROVIDER-DNS-PLAN",
-	}, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
-	var recorded *RecordedCommandError
-	if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_UNAVAILABLE" || recorded.Stage != "ceo_plan_runner" ||
-		recorded.Envelope == nil || recorded.Envelope.Substage != string(claude.TransportDNSFailed) ||
-		recorded.Envelope.Provider == nil || recorded.Envelope.Provider.Subcategory != string(claude.TransportDNSFailed) ||
-		result.ProviderFailure == nil || result.ProviderFailure.TransportCategory != string(claude.TransportDNSFailed) ||
-		result.ProviderFailure.HTTPStatus != 0 || result.ProviderFailure.RequestID != "" || result.SessionCommitted {
-		t.Fatalf("transport failure = %#v, result=%#v, err=%v", recorded, result, err)
-	}
-	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
-	record, ledgerErr := ledger.Get(context.Background(), "CMD-PROVIDER-DNS-PLAN")
-	encoded, _ := json.Marshal(record)
-	if ledgerErr != nil || record.Failure == nil || record.Failure.Details == nil ||
-		record.Failure.Details.Substage != string(claude.TransportDNSFailed) ||
-		strings.Contains(string(encoded), "must-not-be-persisted") {
-		t.Fatalf("transport failure Ledger = %#v, %v", record, ledgerErr)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := loadCEOPlanFixture(t)
+			root := ceoPlanVault(t, fixture.Employees)
+			at := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+			identifier := strings.ToUpper(test.name)
+			start := InteractionStartInput{
+				VaultRoot: root, SessionID: "SESSION-PROVIDER-" + identifier, Request: fixture.Request,
+				Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-PROVIDER-" + identifier + "-START",
+			}
+			plan, err := PlanInteractionStart(context.Background(), start)
+			if err != nil {
+				t.Fatal(err)
+			}
+			start.RequestDigest = plan.Session.RequestDigest
+			if _, err := ExecuteInteractionStart(context.Background(), start, true); err != nil {
+				t.Fatal(err)
+			}
+			client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) { return nil, test.transport })
+			planCommandID := "CMD-PROVIDER-" + identifier + "-PLAN"
+			result, err := ExecuteInteractionPlanGeneration(context.Background(), InteractionPlanGenerationInput{
+				VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: 1,
+				CurrentTime: at.Add(time.Minute), CommandID: planCommandID,
+			}, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
+			var recorded *RecordedCommandError
+			if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_UNAVAILABLE" || recorded.Stage != "ceo_plan_runner" ||
+				recorded.Envelope == nil || recorded.Envelope.Substage != string(test.want) ||
+				recorded.Envelope.Provider == nil || recorded.Envelope.Provider.Subcategory != string(test.want) ||
+				result.ProviderFailure == nil || result.ProviderFailure.TransportCategory != string(test.want) ||
+				result.ProviderFailure.HTTPStatus != 0 || result.ProviderFailure.RequestID != "" || result.SessionCommitted {
+				t.Fatalf("transport failure = %#v, result=%#v, err=%v", recorded, result, err)
+			}
+			ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
+			record, ledgerErr := ledger.Get(context.Background(), planCommandID)
+			encoded, _ := json.Marshal(record)
+			if ledgerErr != nil || record.Failure == nil || record.Failure.Details == nil ||
+				record.Failure.Details.Substage != string(test.want) ||
+				strings.Contains(string(encoded), "must-not-be-persisted") {
+				t.Fatalf("transport failure Ledger = %#v, %v", record, ledgerErr)
+			}
+		})
 	}
 }
 

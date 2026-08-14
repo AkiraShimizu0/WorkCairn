@@ -82,6 +82,6 @@ statusはLedger recordをread-onlyで返します。`recovery_required: true`は
 - `GET /readyz`: handler readiness
 - `--scheduler-interval`: one-shot Scheduleのpoll間隔
 - SIGINT／SIGTERM: 新規受付を止め、`--shutdown-timeout`まで実行中commandを待つ
-- Provider command: `--provider-timeout`とrequest cancellationを適用
+- Provider command: ADR-0045のbounded default 5分を適用し、`--provider-timeout` overrideとrequest cancellationを維持
 
 v1は同期requestです。durable background queue、自動resume、Event replay、Transactional Outboxは実装していません。

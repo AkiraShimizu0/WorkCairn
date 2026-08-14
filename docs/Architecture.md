@@ -374,6 +374,6 @@ Provider固有のLLM呼び出し、Schedule永続形式、Obsidian I/OはKernel�
 
 ## Runner拡張
 
-Go製品Runtimeは論理model値を`runner.Registry`でRunner Adapterへ解決し、未知のモデル値や未登録Runnerを安全に拒否します。Claudeの`workcairn-auto`はAdapter edgeのversioned policyが具体Provider modelへ解決し、APIキーとHTTP timeoutはRuntimeからconstructorへ注入します。具体model ID、APIキー、HTTP timeoutをKernel、WorkerService、Employee Contextへ持ち込みません。Adapterは自動retry、Task状態変更、成果物保存、Auditを行いません。
+Go製品Runtimeは論理model値を`runner.Registry`でRunner Adapterへ解決し、未知のモデル値や未登録Runnerを安全に拒否します。Claudeの`workcairn-auto`はAdapter edgeのversioned policyが具体Provider modelへ解決し、APIキーとHTTP timeoutはRuntimeからconstructorへ注入します。ADR-0045によりProvider requestはRuntime compositionが作る単一のbounded HTTP clientを共有し、Public Beta defaultは5分、CLI／daemonの明示overrideは維持します。具体model ID、APIキー、HTTP timeoutをKernel、WorkerService、Employee Contextへ持ち込みません。Adapterは自動retry、Task状態変更、成果物保存、Auditを行いません。
 
 OpenAI、Gemini、Ollamaなどは、同じ`run()`契約を実装して登録する拡張を想定しています。

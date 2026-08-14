@@ -30,6 +30,7 @@ WorkCairnは、自分専用のAI会社へ仕事を任せ、必要な質問と重
 - ADR-0042によりPublic Betaの一般daemonは`workspace.setup`と`interaction.start|plan.generate|answer|plan.apply|workflow.execute`だけをside-effect allow-listへ持ちます。direct Task／Review／Revision、plain／direct Reviewed Workflow、writer、Scheduler、External Actionはoperator CLI／内部Processとして維持しますが、一般Web UI／daemonからは実行できません。
 - ADR-0043の`make public-beta-browser-gate`はtest-only Playwrightでactual daemon、temporary Vault、固定Provider fixture、Chromium／WebKitを通し、pairing、polling、Revision、reload、restart、FailureEnvelope UIを検証します。NodeはBrowser Acceptance harness限定で、Go module、製品Runtime、release archive、`v1-release-gate`へ含めません。
 - ADR-0044によりMac loopback限定のClaude接続は、native hidden-inputからanonymous socketでbounded helperへcredentialを渡し、Security.frameworkを直接呼んでKeychainへ保存・read-backします。`security`対話PTY、secret argv、平文fallbackは使わず、timeout時はhelperをkill/reapします。Local Web UIはredacted接続状態とAutomatic routingだけを表示します。
+- ADR-0045によりProvider request timeoutはRuntime compositionへ一本化し、Public Beta defaultをboundedな5分にします。CLI／daemon override、request context cancellation、typed `provider_timeout`、no retry／no fallbackを維持し、streamingは後続候補です。
 - RevisionはADR-0012のimmutable intent、TaskService.Create、`revision.created`、Auditをtemporary VaultでEnd-to-End検証済みです。
 - Go Review PromptBuilder、構造化結果parser、ReviewService、ADR-0010 Vault Review Store、`workcairn review-*`は実装済みです。
 - ADR-0011 Review orchestrationがcanonical JSON commit後だけ`review.completed`を発行し、Vault Audit subscriberが保存します。projection／Event失敗はartifactを保持したpartial failureです。
