@@ -327,6 +327,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"commandProviderFailure", "task?.execution?.provider_failure",
 		"restoreDurableFailure", "record.failure.details", "前回のCommandを完了できませんでした",
 		"providerSetupError", "Claude APIキーをMacのKeychainへ保存できませんでした", "Keychainへ保存",
+		"new AbortController()", "keychain_setup_timeout", "Claudeの接続設定を完了できませんでした",
 		"state.renderKey === key", "state.detailRenderKey === key", "state.timelineRenderKey === key",
 	} {
 		if !strings.Contains(asset.Body.String(), required) {

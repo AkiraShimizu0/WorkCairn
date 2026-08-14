@@ -184,3 +184,64 @@ test("typed Provider failure is restored from durable Ledger evidence", async ({
     await environment.stop();
   }
 });
+
+test("Claude connection always leaves in-flight state on terminal outcome", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  let attempt = 0;
+  const providerStatusRoute = async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        version: "workspace-provider-status.v1", ok: true,
+        result: { version: "workspace-provider-status.v1", provider: "anthropic", configured: false, selection_mode: "automatic", missing: ["credential"], invalid: [] }
+      })
+    });
+  };
+  const connectRoute = async (route) => {
+    attempt += 1;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (attempt === 1) {
+      await route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({
+          version: "workspace-provider-status.v1", ok: false,
+          error: {
+            code: "PROVIDER_CONNECTION_SETUP_FAILED", stage: "provider_connection_setup",
+            details: { substage: "keychain_write", category: "keychain_setup_timeout" }
+          }
+        })
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        version: "workspace-provider-status.v1", ok: true,
+        result: { version: "workspace-provider-status.v1", provider: "anthropic", configured: true, selection_mode: "automatic", missing: [], invalid: [] }
+      })
+    });
+  };
+  try {
+    await page.route("**/v1/provider-status", providerStatusRoute);
+    await page.route("**/v1/local-setup/claude", connectRoute);
+    await page.goto(environment.daemon.baseURL);
+    await expect(page.locator("#setup-dialog")).toBeVisible();
+
+    const connect = page.locator("#setup-content").getByRole("button", { name: "MacでClaudeを接続" });
+    await connect.click();
+    await expect(page.locator("#busy-overlay")).toBeVisible();
+    await expect(page.locator("#busy-overlay")).toBeHidden();
+    await expect(page.locator("#setup-content")).toContainText("Claudeの接続設定を完了できませんでした");
+
+    await connect.click();
+    await expect(page.locator("#busy-overlay")).toBeVisible();
+    await expect(page.locator("#busy-overlay")).toBeHidden();
+    await expect(page.locator("#setup-content")).toContainText("Connected");
+    expect(attempt).toBe(2);
+  } finally {
+    await environment.stop();
+  }
+});

@@ -33,12 +33,14 @@ const (
 	CredentialPermissionDenied CredentialFailure = "keychain_permission_denied"
 	CredentialCommandFailed    CredentialFailure = "keychain_command_failed"
 	CredentialOutputInvalid    CredentialFailure = "keychain_output_invalid"
+	CredentialSetupTimeout     CredentialFailure = "keychain_setup_timeout"
 )
 
 const (
 	CredentialWrite          = "keychain_write"
 	CredentialRead           = "keychain_read"
 	CredentialReadAfterWrite = "keychain_read_after_write"
+	CredentialInput          = "credential_input"
 )
 
 // CredentialError is a secret-free diagnostic crossing the Local OS Adapter

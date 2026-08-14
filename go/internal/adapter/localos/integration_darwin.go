@@ -14,13 +14,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/creack/pty"
 )
 
 const (
-	claudeKeychainService = "com.workcairn.provider.anthropic"
-	claudeKeychainAccount = "api-key"
+	claudeKeychainService  = "com.workcairn.provider.anthropic"
+	claudeKeychainAccount  = "api-key"
+	nativeInputTimeout     = 2 * time.Minute
+	keychainCommandTimeout = 15 * time.Second
 )
 
 type execRunner struct{}
@@ -34,6 +38,9 @@ func (execRunner) Run(ctx context.Context, name string, args []string, stdin str
 	}
 	output, err := command.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return "", newCommandExecutionError(err, stderr.String(), "")
 	}
 	return string(output), nil
@@ -51,20 +58,67 @@ func (execRunner) RunSecretPrompt(ctx context.Context, name string, args []strin
 	}
 	defer terminal.Close()
 
-	output := make(chan []byte, 1)
+	type terminalResult struct {
+		content []byte
+		err     error
+	}
+	promptReady := make(chan struct{}, 1)
+	output := make(chan terminalResult, 1)
 	go func() {
-		content, _ := io.ReadAll(io.LimitReader(terminal, 16<<10))
-		output <- content
+		var content bytes.Buffer
+		buffer := make([]byte, 1024)
+		var signalPrompt sync.Once
+		for {
+			count, readErr := terminal.Read(buffer)
+			if count > 0 {
+				signalPrompt.Do(func() { promptReady <- struct{}{} })
+				if content.Len() < 16<<10 {
+					remaining := (16 << 10) - content.Len()
+					if count < remaining {
+						remaining = count
+					}
+					_, _ = content.Write(buffer[:remaining])
+				}
+			}
+			if readErr != nil {
+				output <- terminalResult{content: content.Bytes(), err: readErr}
+				return
+			}
+		}
 	}()
-	if _, err := io.WriteString(terminal, secret+"\n"); err != nil {
+
+	// security(1) initializes readpassphrase after starting. Writing before it
+	// emits its prompt races with terminal input flushing and can leave the
+	// child waiting forever. The first PTY output marks the prompt boundary.
+	select {
+	case <-promptReady:
+	case result := <-output:
+		_ = command.Wait()
+		return newCommandExecutionError(result.err, string(result.content), secret)
+	case <-ctx.Done():
 		_ = command.Process.Kill()
 		_ = command.Wait()
-		return newCommandExecutionError(err, "", secret)
+		result := <-output
+		return newCommandExecutionError(ctx.Err(), string(result.content), secret)
+	}
+
+	written, err := io.WriteString(terminal, secret+"\n")
+	if err != nil || written != len(secret)+1 {
+		if err == nil {
+			err = io.ErrShortWrite
+		}
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		result := <-output
+		return newCommandExecutionError(err, string(result.content), secret)
 	}
 	waitErr := command.Wait()
-	transcript := <-output
+	result := <-output
 	if waitErr != nil {
-		return newCommandExecutionError(waitErr, string(transcript), secret)
+		if ctx.Err() != nil {
+			waitErr = ctx.Err()
+		}
+		return newCommandExecutionError(waitErr, string(result.content), secret)
 	}
 	return nil
 }
@@ -72,6 +126,7 @@ func (execRunner) RunSecretPrompt(ctx context.Context, name string, args []strin
 type commandExecutionError struct {
 	exitCode   int
 	diagnostic string
+	timedOut   bool
 }
 
 func (commandErr *commandExecutionError) Error() string { return "local OS command failed" }
@@ -92,7 +147,7 @@ func newCommandExecutionError(err error, diagnostic, secret string) error {
 	} else if status, ok := err.(interface{ ExitStatus() int }); ok {
 		exitCode = status.ExitStatus()
 	}
-	return &commandExecutionError{exitCode: exitCode, diagnostic: diagnostic}
+	return &commandExecutionError{exitCode: exitCode, diagnostic: diagnostic, timedOut: errors.Is(err, context.DeadlineExceeded)}
 }
 
 type DarwinWorkspaceSelector struct {
@@ -131,7 +186,9 @@ end try`
 }
 
 type DarwinClaudeCredentialStore struct {
-	runner CommandRunner
+	runner          CommandRunner
+	inputTimeout    time.Duration
+	keychainTimeout time.Duration
 }
 
 func NewClaudeCredentialStore() ClaudeCredentialStore {
@@ -143,7 +200,9 @@ func (store *DarwinClaudeCredentialStore) Load(ctx context.Context) (string, err
 }
 
 func (store *DarwinClaudeCredentialStore) load(ctx context.Context, substage string) (string, error) {
-	output, err := store.runner.Run(ctx, "/usr/bin/security", []string{"find-generic-password", "-a", claudeKeychainAccount, "-s", claudeKeychainService, "-w"}, "")
+	commandCtx, cancel := context.WithTimeout(ctx, store.keychainCommandDuration())
+	defer cancel()
+	output, err := store.runner.Run(commandCtx, "/usr/bin/security", []string{"find-generic-password", "-a", claudeKeychainAccount, "-s", claudeKeychainService, "-w"}, "")
 	if err != nil {
 		return "", classifyCredentialError(substage, err)
 	}
@@ -161,15 +220,20 @@ func (store *DarwinClaudeCredentialStore) RequestAndStore(ctx context.Context) (
 on error number -128
   return ""
 end try`
-	output, err := store.runner.Run(ctx, "/usr/bin/osascript", []string{"-e", script}, "")
+	inputCtx, cancelInput := context.WithTimeout(ctx, store.inputDuration())
+	output, err := store.runner.Run(inputCtx, "/usr/bin/osascript", []string{"-e", script}, "")
+	cancelInput()
 	if err != nil {
-		return "", fmt.Errorf("request Claude credential: %w", err)
+		return "", classifyCredentialError(CredentialInput, err)
 	}
 	credential := strings.TrimSpace(output)
 	if credential == "" {
 		return "", ErrCanceled
 	}
-	if err := store.runner.RunSecretPrompt(ctx, "/usr/bin/security", []string{"add-generic-password", "-U", "-a", claudeKeychainAccount, "-s", claudeKeychainService, "-w"}, credential); err != nil {
+	writeCtx, cancelWrite := context.WithTimeout(ctx, store.keychainCommandDuration())
+	err = store.runner.RunSecretPrompt(writeCtx, "/usr/bin/security", []string{"add-generic-password", "-U", "-a", claudeKeychainAccount, "-s", claudeKeychainService, "-w"}, credential)
+	cancelWrite()
+	if err != nil {
 		return "", classifyCredentialError(CredentialWrite, err)
 	}
 	// A zero exit status alone is not a commit point. Read the exact same
@@ -178,10 +242,26 @@ end try`
 	return store.load(ctx, CredentialReadAfterWrite)
 }
 
+func (store *DarwinClaudeCredentialStore) inputDuration() time.Duration {
+	if store.inputTimeout > 0 {
+		return store.inputTimeout
+	}
+	return nativeInputTimeout
+}
+
+func (store *DarwinClaudeCredentialStore) keychainCommandDuration() time.Duration {
+	if store.keychainTimeout > 0 {
+		return store.keychainTimeout
+	}
+	return keychainCommandTimeout
+}
+
 func classifyCredentialError(substage string, err error) error {
 	classification := CredentialCommandFailed
 	var commandErr *commandExecutionError
-	if errors.As(err, &commandErr) {
+	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &commandErr) && commandErr.timedOut {
+		classification = CredentialSetupTimeout
+	} else if errors.As(err, &commandErr) {
 		diagnostic := strings.ToLower(commandErr.diagnostic)
 		switch {
 		case strings.Contains(diagnostic, "could not be found"), strings.Contains(diagnostic, "item not found"), strings.Contains(diagnostic, "errsecitemnotfound"):

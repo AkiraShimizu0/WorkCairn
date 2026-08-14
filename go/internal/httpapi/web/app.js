@@ -4,6 +4,7 @@ const STORAGE_SESSION = "workcairn.active-session";
 const STORAGE_PENDING = "workcairn.pending-command";
 const STORAGE_VIEW = "workcairn.active-view";
 const STORAGE_ERROR_PREFIX = "workcairn.last-error.";
+const LOCAL_PROVIDER_SETUP_TIMEOUT_MS = 180000;
 
 const ui = {
   pairingView: document.querySelector("#pairing-view"),
@@ -532,11 +533,16 @@ async function refreshProviderStatus() {
 }
 
 async function connectClaudeOnMac() {
+	const controller = new AbortController();
+	let clientTimedOut = false;
+	const timeout = window.setTimeout(() => {
+		clientTimedOut = true;
+		controller.abort();
+	}, LOCAL_PROVIDER_SETUP_TIMEOUT_MS);
 	setBusy(true, "MacでClaudeへ接続しています", "Macに表示される安全な入力画面を確認してください。secretはbrowserへ送信しません。");
 	try {
-		state.providerStatus = await requestJSON("/v1/local-setup/claude", { method: "POST", body: "{}" });
+		state.providerStatus = await requestJSON("/v1/local-setup/claude", { method: "POST", body: "{}", signal: controller.signal });
 		state.providerSetupError = null;
-		setBusy(false);
 		renderProviderSettings();
 		if (state.workspaceStatus?.organization_ready) {
 			if (ui.settingsDialog.open) ui.settingsDialog.close();
@@ -548,11 +554,14 @@ async function connectClaudeOnMac() {
 			code: error.detail?.code || error.message || "PROVIDER_CONNECTION_SETUP_FAILED",
 			stage: error.detail?.stage || "provider_connection_setup",
 			substage: error.detail?.details?.substage || "",
-			category: error.detail?.details?.category || "",
+			category: clientTimedOut ? "keychain_setup_timeout" : (error.detail?.details?.category || ""),
 		};
-		setBusy(false);
 		renderProviderSettings();
-		toast(error.status === 403 ? "AI ConnectionはMac本体の画面から設定してください。" : "Claude APIキーをMacのKeychainへ保存できませんでした。");
+		if (ui.setupDialog.open) renderSetupWizard();
+		toast(error.status === 403 ? "AI ConnectionはMac本体の画面から設定してください。" : providerSetupFailureCopy().title);
+	} finally {
+		window.clearTimeout(timeout);
+		setBusy(false);
 	}
 }
 
@@ -602,14 +611,26 @@ function renderProviderSettings() {
 
 function providerSetupFailureNode() {
   if (!state.providerSetupError) return null;
+  const copy = providerSetupFailureCopy();
   return node("section", { class: "error-box" },
-	node("strong", {}, "Claude APIキーをMacのKeychainへ保存できませんでした"),
-	node("p", {}, "自動retryや別の保存先へのfallbackは行っていません。MacのKeychain設定を確認してください。"),
+	node("strong", {}, copy.title),
+	node("p", {}, copy.message),
 	node("details", {}, node("summary", {}, "技術的な詳細を見る"), approvalFacts([
 	  ["Error code", state.providerSetupError.code], ["Stage", state.providerSetupError.stage],
 	  ["Substage", state.providerSetupError.substage || "—"], ["Category", state.providerSetupError.category || "—"],
 	])),
   );
+}
+
+function providerSetupFailureCopy() {
+  if (state.providerSetupError?.category === "keychain_setup_timeout") return {
+	title: "Claudeの接続設定を完了できませんでした",
+	message: "安全な待機時間を超えたため処理を終了しました。Macの入力画面を閉じてから、もう一度お試しください。",
+  };
+  return {
+	title: "Claude APIキーをMacのKeychainへ保存できませんでした",
+	message: "自動retryや別の保存先へのfallbackは行っていません。MacのKeychain設定を確認してください。",
+  };
 }
 
 function storageStatusCopy() {

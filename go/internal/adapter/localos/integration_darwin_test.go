@@ -10,14 +10,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 type recordingRunner struct {
-	outputs      []string
-	errors       []error
-	secretErrors []error
-	calls        []runnerCall
+	outputs        []string
+	errors         []error
+	secretErrors   []error
+	calls          []runnerCall
+	expectedSecret string
+	secretMatched  bool
 }
 
 type runnerCall struct {
@@ -42,8 +46,9 @@ func (runner *recordingRunner) Run(_ context.Context, name string, args []string
 	return output, err
 }
 
-func (runner *recordingRunner) RunSecretPrompt(_ context.Context, name string, args []string, _ string) error {
+func (runner *recordingRunner) RunSecretPrompt(_ context.Context, name string, args []string, secret string) error {
 	runner.calls = append(runner.calls, runnerCall{name: name, args: append([]string(nil), args...), secretPrompt: true})
+	runner.secretMatched = secret == runner.expectedSecret
 	if len(runner.secretErrors) == 0 {
 		return nil
 	}
@@ -53,7 +58,7 @@ func (runner *recordingRunner) RunSecretPrompt(_ context.Context, name string, a
 }
 
 func TestDarwinCredentialStoreKeepsSecretOutOfArguments(t *testing.T) {
-	runner := &recordingRunner{outputs: []string{"fake-secret\n", "stored-secret\n"}}
+	runner := &recordingRunner{outputs: []string{"fake-secret\n", "stored-secret\n"}, expectedSecret: "fake-secret"}
 	store := &DarwinClaudeCredentialStore{runner: runner}
 	credential, err := store.RequestAndStore(context.Background())
 	if err != nil || credential != "stored-secret" {
@@ -62,7 +67,7 @@ func TestDarwinCredentialStoreKeepsSecretOutOfArguments(t *testing.T) {
 	if len(runner.calls) != 3 || runner.calls[0].name != "/usr/bin/osascript" || runner.calls[1].name != "/usr/bin/security" || runner.calls[2].name != "/usr/bin/security" {
 		t.Fatalf("calls = %#v", runner.calls)
 	}
-	if strings.Contains(strings.Join(runner.calls[1].args, " "), "fake-secret") || runner.calls[1].stdin != "" || !runner.calls[1].secretPrompt {
+	if strings.Contains(strings.Join(runner.calls[1].args, " "), "fake-secret") || runner.calls[1].stdin != "" || !runner.calls[1].secretPrompt || !runner.secretMatched {
 		t.Fatalf("credential entered argv/stdin instead of the secret prompt: %#v", runner.calls[1])
 	}
 	for _, call := range runner.calls[1:] {
@@ -140,6 +145,15 @@ func TestDarwinCredentialStoreClassifiesMissingPermissionAndInvalidOutput(t *tes
 			},
 			substage: CredentialWrite, classification: CredentialCommandFailed,
 		},
+		{
+			name:  "keychain setup timeout",
+			store: &DarwinClaudeCredentialStore{runner: &recordingRunner{outputs: []string{"secret\n"}, secretErrors: []error{&commandExecutionError{timedOut: true}}}},
+			operation: func(store *DarwinClaudeCredentialStore) error {
+				_, err := store.RequestAndStore(context.Background())
+				return err
+			},
+			substage: CredentialWrite, classification: CredentialSetupTimeout,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -177,6 +191,29 @@ func TestExecRunnerUsesPseudoTerminalWithoutSecretArgument(t *testing.T) {
 	}
 }
 
+func TestExecRunnerWaitsForPromptAndTerminatesOnTimeout(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("prompt synchronization", func(t *testing.T) {
+		t.Setenv("WORKCAIRN_KEYCHAIN_PTY_HELPER", "delayed-prompt")
+		if err := (execRunner{}).RunSecretPrompt(context.Background(), executable, []string{"-test.run=^TestKeychainPTYHelperProcess$"}, "full-fake-credential"); err != nil {
+			t.Fatalf("delayed prompt = %v", err)
+		}
+	})
+	t.Run("bounded timeout", func(t *testing.T) {
+		t.Setenv("WORKCAIRN_KEYCHAIN_PTY_HELPER", "no-prompt")
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		err := (execRunner{}).RunSecretPrompt(ctx, executable, []string{"-test.run=^TestKeychainPTYHelperProcess$"}, "full-fake-credential")
+		var commandErr *commandExecutionError
+		if !errors.As(err, &commandErr) || !commandErr.timedOut {
+			t.Fatalf("timeout = %#v", err)
+		}
+	})
+}
+
 func TestExecRunnerSanitizesEchoedSecretOnFailure(t *testing.T) {
 	t.Setenv("WORKCAIRN_KEYCHAIN_PTY_HELPER", "fail")
 	executable, err := os.Executable()
@@ -195,6 +232,23 @@ func TestKeychainPTYHelperProcess(t *testing.T) {
 	mode := os.Getenv("WORKCAIRN_KEYCHAIN_PTY_HELPER")
 	if mode == "" {
 		return
+	}
+	if mode == "no-prompt" {
+		time.Sleep(10 * time.Second)
+		os.Exit(3)
+	}
+	if mode == "delayed-prompt" {
+		if err := syscall.SetNonblock(int(os.Stdin.Fd()), true); err != nil {
+			os.Exit(4)
+		}
+		time.Sleep(75 * time.Millisecond)
+		early := make([]byte, 4096)
+		if count, _ := os.Stdin.Read(early); count != 0 {
+			os.Exit(5)
+		}
+		if err := syscall.SetNonblock(int(os.Stdin.Fd()), false); err != nil {
+			os.Exit(6)
+		}
 	}
 	fmt.Fprint(os.Stdout, "Password: ")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -246,8 +300,8 @@ func TestDarwinIntegrationUsesOnlyFixedAbsoluteSystemTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(content)
-	if strings.Count(source, ".Run(ctx,") != 5 || strings.Count(source, ".RunSecretPrompt(ctx,") != 1 {
-		t.Fatalf("review OS command call allow-list: Run=%d secret=%d", strings.Count(source, ".Run(ctx,"), strings.Count(source, ".RunSecretPrompt(ctx,"))
+	if strings.Count(source, ".runner.Run(") != 5 || strings.Count(source, ".runner.RunSecretPrompt(") != 1 {
+		t.Fatalf("review OS command call allow-list: Run=%d secret=%d", strings.Count(source, ".runner.Run("), strings.Count(source, ".runner.RunSecretPrompt("))
 	}
 	for _, tool := range []string{"/usr/bin/osascript", "/usr/bin/security", "/usr/bin/open"} {
 		if !strings.Contains(source, tool) {
