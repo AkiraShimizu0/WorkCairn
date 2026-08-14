@@ -53,6 +53,9 @@ type InteractionPlanResult struct {
 	// ceo_plan_parser stage. It is a sanitized ceoplan.ParseFailureReason
 	// value, never raw Provider text.
 	ParseFailureReason string `json:"parse_failure_reason,omitempty"`
+	// ParseFailureField is the optional sanitized Intent contract field that
+	// failed validation. It never contains the rejected value or raw output.
+	ParseFailureField string `json:"parse_failure_field,omitempty"`
 }
 
 // ProviderFailure is redacted diagnostic evidence derived from a typed
@@ -195,6 +198,7 @@ func ExecuteInteractionPlanGeneration(
 		result := InteractionPlanResult{
 			Session: record, Generation: generation, ProviderFailure: providerFailure(generationErr),
 			ParseFailureReason: ceoPlanParseFailureReason(generationErr),
+			ParseFailureField:  ceoPlanParseFailureField(generationErr),
 		}
 		return finishInteractionPlan(ctx, claim, result, generationErr, interactionPlanGenerationStage(generationErr), false)
 	}
@@ -247,6 +251,14 @@ func ceoPlanParseFailureReason(err error) string {
 	return ""
 }
 
+func ceoPlanParseFailureField(err error) string {
+	var intentErr *ceoplan.IntentParseError
+	if errors.As(err, &intentErr) {
+		return intentErr.Field
+	}
+	return ""
+}
+
 func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, result InteractionPlanResult, err error, stage string, partial bool) (InteractionPlanResult, error) {
 	code := "INTERACTION_PLAN_FAILED"
 	if errors.Is(err, claude.ErrInvalidConfig) {
@@ -254,6 +266,15 @@ func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, resul
 		stage = "provider_configuration"
 	} else if result.ProviderFailure != nil {
 		code = providerFailureCode(result.ProviderFailure.Category)
+	}
+	if err != nil && stage == string(service.CEOPlanIntentStage) && result.ParseFailureReason != "" {
+		envelope := failure.New(code, stage)
+		envelope.Partial = partial
+		envelope.RecoveryRequired = partial
+		envelope.Parse = &failure.ParseDiagnostic{
+			Domain: "ceo_plan_intent", Reason: result.ParseFailureReason, Field: result.ParseFailureField,
+		}
+		return result, finishDurableCommandWithEnvelope(ctx, claim, result, err, &envelope, partial)
 	}
 	return result, finishDurableCommand(ctx, claim, result, err, code, stage, partial)
 }

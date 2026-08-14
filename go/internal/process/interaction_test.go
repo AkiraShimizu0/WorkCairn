@@ -344,8 +344,9 @@ func TestInteractionPlanRecordsSafeParserSubstageWithoutCommittingPlan(t *testin
 		t.Fatal(err)
 	}
 	providerCalls := 0
+	intentMissingRole := `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"D"}],"ceo_questions":[]}`
 	providerResponse, _ := json.Marshal(map[string]any{
-		"model": "claude-sonnet-5", "content": []map[string]string{{"type": "text", "text": "not a JSON plan"}},
+		"model": "claude-sonnet-5", "content": []map[string]string{{"type": "text", "text": intentMissingRole}},
 		"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
 	})
 	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
@@ -358,18 +359,25 @@ func TestInteractionPlanRecordsSafeParserSubstageWithoutCommittingPlan(t *testin
 	}, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
 	var recorded *RecordedCommandError
 	if !errors.As(err, &recorded) || recorded.Code != "INTERACTION_PLAN_FAILED" || recorded.Stage != "ceo_plan_intent" ||
-		recorded.Partial || providerCalls != 1 || result.ProviderFailure != nil || result.SessionCommitted ||
-		result.ParseFailureReason != string(ceoplan.IntentParseJSONDecodeFailed) {
+		recorded.Partial || recorded.Envelope == nil || recorded.Envelope.Parse == nil ||
+		recorded.Envelope.Parse.Field != "steps.required_role" || providerCalls != 1 ||
+		result.ProviderFailure != nil || result.SessionCommitted ||
+		result.ParseFailureReason != string(ceoplan.IntentParseMissingRequiredField) ||
+		result.ParseFailureField != "steps.required_role" {
 		t.Fatalf("parser failure = %#v, result=%#v, calls=%d, err=%v", recorded, result, providerCalls, err)
 	}
 	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
 	record, ledgerErr := ledger.Get(context.Background(), "CMD-PLAN-PARSER-GENERATE")
 	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil ||
-		record.Failure.Stage != "ceo_plan_intent" {
+		record.Failure.Stage != "ceo_plan_intent" || record.Failure.Details == nil ||
+		record.Failure.Details.Parse == nil || record.Failure.Details.Parse.Reason != string(ceoplan.IntentParseMissingRequiredField) ||
+		record.Failure.Details.Parse.Field != "steps.required_role" {
 		t.Fatalf("parser failure Ledger = %#v, %v", record, ledgerErr)
 	}
 	var storedResult InteractionPlanResult
-	if json.Unmarshal(record.Result, &storedResult) != nil || storedResult.ParseFailureReason != string(ceoplan.IntentParseJSONDecodeFailed) {
+	if json.Unmarshal(record.Result, &storedResult) != nil ||
+		storedResult.ParseFailureReason != string(ceoplan.IntentParseMissingRequiredField) ||
+		storedResult.ParseFailureField != "steps.required_role" {
 		t.Fatalf("stored parse failure reason = %#v", storedResult)
 	}
 	stored, inspectErr := InspectInteraction(context.Background(), root, start.SessionID)

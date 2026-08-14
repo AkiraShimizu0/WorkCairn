@@ -75,6 +75,10 @@ type ParseDiagnostic struct {
 	// so the same Reason string from different Domains is never confused.
 	Domain string `json:"domain"`
 	Reason string `json:"reason"`
+	// Field is an optional, sanitized contract field identifier such as
+	// "ceo_questions" or "steps.required_role". It never contains a field
+	// value, array index, raw Provider output, or user-authored text.
+	Field string `json:"field,omitempty"`
 }
 
 // CommittedEvidence records only what is certainly committed. Every field
@@ -114,7 +118,8 @@ func (envelope Envelope) Validate() error {
 	if envelope.Provider != nil && !canonicalText(envelope.Provider.Category) {
 		return ErrInvalidEnvelope
 	}
-	if envelope.Parse != nil && (!canonicalText(envelope.Parse.Domain) || !canonicalText(envelope.Parse.Reason)) {
+	if envelope.Parse != nil && (!canonicalText(envelope.Parse.Domain) || !canonicalText(envelope.Parse.Reason) ||
+		(envelope.Parse.Field != "" && !canonicalText(envelope.Parse.Field))) {
 		return ErrInvalidEnvelope
 	}
 	return nil

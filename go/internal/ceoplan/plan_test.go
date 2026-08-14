@@ -172,7 +172,9 @@ func TestCEOPlanIntentPromptExampleIsValidAndContractIsExplicit(t *testing.T) {
 	if !strings.Contains(built.System, "JSONオブジェクトだけを返してください") ||
 		!strings.Contains(built.System, "code fence（```）、説明文を一切含めないでください") ||
 		!strings.Contains(built.System, "それ以外のfieldを一切追加しないでください") ||
-		!strings.Contains(built.System, "該当しない配列も省略せず、空配列[]として出力してください") {
+		!strings.Contains(built.System, "該当しない配列も省略せず、空配列[]として出力してください") ||
+		!strings.Contains(built.System, "write・research・analyze・implementでは必須") ||
+		!strings.Contains(built.System, `"review"の場合だけ省略可能`) {
 		t.Fatal("Prompt does not make the strict output contract explicit")
 	}
 	for _, heading := range []string{

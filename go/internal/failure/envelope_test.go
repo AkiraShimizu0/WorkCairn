@@ -42,6 +42,11 @@ func TestEnvelopeValidateRejectsUnsafeSubStructures(t *testing.T) {
 	if withBadParse.Validate() == nil {
 		t.Fatal("Parse with empty Reason accepted")
 	}
+	withBadParseField := base
+	withBadParseField.Parse = &ParseDiagnostic{Domain: "ceo_plan_intent", Reason: "missing_required_field", Field: "steps\nrequired_role"}
+	if withBadParseField.Validate() == nil {
+		t.Fatal("Parse with unsafe Field accepted")
+	}
 }
 
 func TestErrorUnwrapPreservesCause(t *testing.T) {
@@ -118,7 +123,7 @@ func TestEnvelopeJSONRoundTripsWithoutOptionalFields(t *testing.T) {
 		SchemaVersion: SchemaVersion, Code: "PROVIDER_RATE_LIMITED", Stage: "review_provider", Substage: "retry_after",
 		Category: "rate_limited", Partial: true, RecoveryRequired: true, ChildCommandID: "CHILD-abc123",
 		Provider: &ProviderDiagnostic{Category: "rate_limited", HTTPStatus: 429, ProviderType: "rate_limit_error", RequestID: "req_1"},
-		Parse:    &ParseDiagnostic{Domain: "review", Reason: "invalid_verdict"},
+		Parse:    &ParseDiagnostic{Domain: "ceo_plan_intent", Reason: "missing_required_field", Field: "steps.required_role"},
 		Evidence: &CommittedEvidence{ReviewCanonical: true},
 	}
 	encoded, err := json.Marshal(full)

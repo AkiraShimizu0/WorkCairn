@@ -30,15 +30,6 @@ const (
 	IntentStepReview IntentStepKind = "review"
 )
 
-func validIntentStepKind(kind IntentStepKind) bool {
-	switch kind {
-	case IntentStepWrite, IntentStepResearch, IntentStepAnalyze, IntentStepImplement, IntentStepReview:
-		return true
-	default:
-		return false
-	}
-}
-
 // IntentParseFailureReason is a sanitized, non-identifying classification of
 // why a Runner's raw output failed the Intent contract. It never carries
 // raw Provider text.
@@ -58,7 +49,10 @@ const (
 // and review.ParseError.
 type IntentParseError struct {
 	Reason IntentParseFailureReason
-	err    error
+	// Field is a sanitized contract field identifier. It never contains the
+	// rejected value, an array index, or raw Provider output.
+	Field string
+	err   error
 }
 
 func (parseErr *IntentParseError) Error() string { return parseErr.err.Error() }
@@ -66,6 +60,10 @@ func (parseErr *IntentParseError) Unwrap() error { return parseErr.err }
 
 func newIntentParseError(reason IntentParseFailureReason, err error) *IntentParseError {
 	return &IntentParseError{Reason: reason, err: err}
+}
+
+func newIntentFieldParseError(reason IntentParseFailureReason, field string, err error) *IntentParseError {
+	return &IntentParseError{Reason: reason, Field: field, err: err}
 }
 
 // IntentStep is one unit of semantic work the LLM proposes. It intentionally
@@ -102,9 +100,9 @@ type Intent struct {
 }
 
 type candidateIntentStep struct {
-	Kind         IntentStepKind `json:"kind"`
-	Description  string         `json:"description"`
-	RequiredRole string         `json:"required_role"`
+	Kind         IntentStepKind  `json:"kind"`
+	Description  string          `json:"description"`
+	RequiredRole json.RawMessage `json:"required_role"`
 }
 
 type candidateIntent struct {
@@ -142,41 +140,76 @@ func ParseIntent(content string) (Intent, error) {
 	objective := strings.TrimSpace(candidate.Objective)
 	summary := strings.TrimSpace(candidate.Summary)
 	if projectName == "" {
-		return Intent{}, newIntentParseError(IntentParseMissingRequiredField, fmt.Errorf("%w: project_name", ErrInvalidIntent))
+		return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "project_name", fmt.Errorf("%w: project_name", ErrInvalidIntent))
 	}
 	if objective == "" {
-		return Intent{}, newIntentParseError(IntentParseMissingRequiredField, fmt.Errorf("%w: objective", ErrInvalidIntent))
+		return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "objective", fmt.Errorf("%w: objective", ErrInvalidIntent))
 	}
 	if summary == "" {
-		return Intent{}, newIntentParseError(IntentParseMissingRequiredField, fmt.Errorf("%w: summary", ErrInvalidIntent))
+		return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "summary", fmt.Errorf("%w: summary", ErrInvalidIntent))
 	}
 	if len(candidate.Steps) == 0 {
-		return Intent{}, newIntentParseError(IntentParseMissingRequiredField, fmt.Errorf("%w: steps", ErrInvalidIntent))
+		return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "steps", fmt.Errorf("%w: steps", ErrInvalidIntent))
 	}
 
 	steps := make([]IntentStep, 0, len(candidate.Steps))
 	for index, candidateStep := range candidate.Steps {
-		if !validIntentStepKind(candidateStep.Kind) {
-			return Intent{}, newIntentParseError(IntentParseUnknownStepKind, fmt.Errorf("%w: steps[%d].kind %q", ErrInvalidIntent, index, candidateStep.Kind))
+		if strings.TrimSpace(string(candidateStep.Kind)) == "" {
+			return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "steps.kind", fmt.Errorf("%w: steps[%d].kind", ErrInvalidIntent, index))
+		}
+		kind, validKind := canonicalIntentStepKind(candidateStep.Kind)
+		if !validKind {
+			return Intent{}, newIntentFieldParseError(IntentParseUnknownStepKind, "steps.kind", fmt.Errorf("%w: steps[%d].kind %q", ErrInvalidIntent, index, candidateStep.Kind))
 		}
 		description := strings.TrimSpace(candidateStep.Description)
 		if description == "" {
-			return Intent{}, newIntentParseError(IntentParseMissingRequiredField, fmt.Errorf("%w: steps[%d].description", ErrInvalidIntent, index))
+			return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "steps.description", fmt.Errorf("%w: steps[%d].description", ErrInvalidIntent, index))
 		}
-		requiredRole := strings.TrimSpace(candidateStep.RequiredRole)
-		if candidateStep.Kind != IntentStepReview && requiredRole == "" {
-			return Intent{}, newIntentParseError(IntentParseMissingRequiredField, fmt.Errorf("%w: steps[%d].required_role", ErrInvalidIntent, index))
+		requiredRole, rolePresent, roleErr := decodeIntentRequiredRole(candidateStep.RequiredRole)
+		if roleErr != nil {
+			return Intent{}, newIntentFieldParseError(IntentParseJSONDecodeFailed, "steps.required_role", fmt.Errorf("%w: steps[%d].required_role", ErrInvalidIntent, index))
 		}
-		steps = append(steps, IntentStep{Kind: candidateStep.Kind, Description: description, RequiredRole: requiredRole})
+		if kind != IntentStepReview && requiredRole == "" {
+			return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "steps.required_role", fmt.Errorf("%w: steps[%d].required_role", ErrInvalidIntent, index))
+		}
+		if kind == IntentStepReview && rolePresent && requiredRole == "" {
+			return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "steps.required_role", fmt.Errorf("%w: steps[%d].required_role", ErrInvalidIntent, index))
+		}
+		steps = append(steps, IntentStep{Kind: kind, Description: description, RequiredRole: requiredRole})
 	}
 
-	questions, err := optionalStringList(candidate.CEOQuestions, "ceo_questions")
+	questions, err := requiredStringList(candidate.CEOQuestions, "ceo_questions")
 	if err != nil {
-		return Intent{}, newIntentParseError(IntentParseMissingRequiredField, err)
+		return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "ceo_questions", fmt.Errorf("%w: ceo_questions", ErrInvalidIntent))
 	}
 
 	return Intent{
 		ProjectName: projectName, Objective: objective, Summary: summary,
 		Steps: steps, CEOQuestions: questions,
 	}, nil
+}
+
+func canonicalIntentStepKind(value IntentStepKind) (IntentStepKind, bool) {
+	for _, candidate := range []IntentStepKind{
+		IntentStepWrite, IntentStepResearch, IntentStepAnalyze, IntentStepImplement, IntentStepReview,
+	} {
+		if strings.EqualFold(string(value), string(candidate)) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func decodeIntentRequiredRole(raw json.RawMessage) (string, bool, error) {
+	if len(raw) == 0 {
+		return "", false, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return "", true, ErrInvalidIntent
+	}
+	var role string
+	if err := json.Unmarshal(raw, &role); err != nil {
+		return "", true, ErrInvalidIntent
+	}
+	return strings.TrimSpace(role), true, nil
 }

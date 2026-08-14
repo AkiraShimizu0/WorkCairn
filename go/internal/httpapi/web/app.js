@@ -229,6 +229,7 @@ function rememberError(error, title, commandID = state.activeCommandID) {
     category: detail?.details?.category || detail?.provider_failure?.category || "",
     http_status: detail?.provider_failure?.http_status || 0,
     parse_failure_reason: detail?.parse_failure_reason || "",
+    parse_failure_field: detail?.parse_failure_field || detail?.details?.parse?.field || "",
     recovery_required: Boolean(detail?.recovery_required),
     // details is the additive, optional single failure.Envelope. Kept
     // alongside the flat fields above (still the legacy fallback source)
@@ -243,6 +244,7 @@ function rememberError(error, title, commandID = state.activeCommandID) {
         existing.request_id === snapshot.request_id && existing.substage === snapshot.substage &&
         existing.category === snapshot.category && existing.http_status === snapshot.http_status &&
         existing.parse_failure_reason === snapshot.parse_failure_reason &&
+        existing.parse_failure_field === snapshot.parse_failure_field &&
         existing.recovery_required === snapshot.recovery_required &&
         JSON.stringify(existing.details) === JSON.stringify(snapshot.details)) {
       state.lastError = existing;
@@ -286,6 +288,7 @@ async function copySanitizedError(error) {
     `Command ID: ${error.command_id || "—"}`,
     `Request ID: ${error.request_id || "—"}`,
     `Parse reason: ${error.parse_failure_reason || "—"}`,
+    `Parse field: ${error.parse_failure_field || "—"}`,
   ].join("\n");
   let copied = false;
   if (window.isSecureContext && navigator.clipboard?.writeText) {
@@ -789,6 +792,7 @@ function renderRememberedError(error) {
         ["HTTP status", error.http_status || "—"],
         ["Command ID", error.command_id || "未発行"], ["問い合わせID", error.request_id || "—"],
         ["Parse reason", error.parse_failure_reason || "—"],
+        ["Parse field", error.parse_failure_field || "—"],
       ]),
     ),
     node("div", { class: "button-row" },
@@ -1263,6 +1267,7 @@ function errorDiagnostics(details, result) {
     details: details || null,
     provider_failure: details?.provider || commandProviderFailure(result),
     parse_failure_reason: details?.parse?.reason || result?.parse_failure_reason || null,
+    parse_failure_field: details?.parse?.field || result?.parse_failure_field || null,
   };
 }
 

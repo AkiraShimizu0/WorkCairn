@@ -19,6 +19,7 @@ import (
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/action"
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
@@ -313,9 +314,10 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"REVIEW_PROMPT_FAILED", "REVIEW_ROUTE_FAILED", "REVIEW_RESULT_INVALID", "reviewContractFailures",
 		"AIのレビュー結果を正しく解釈できませんでした。成果物は保持されています。",
 		"PROJECT_NAME_COLLISION", "同じ名前の仕事がすでにあります。新しい仕事として作成できませんでした。",
-		"parse_failure_reason", "Parse reason", "parseFailureReason",
+		"parse_failure_reason", "parse_failure_field", "Parse reason", "Parse field", "parseFailureReason",
 		"errorDiagnostics(payload.error.details, payload.result)", "errorDiagnostics(record.failure?.details, record.result)",
 		"details?.parse?.reason || result?.parse_failure_reason || null",
+		"details?.parse?.field || result?.parse_failure_field || null",
 		"interaction_plan_commit_cas", "同じ依頼の状態が先に更新されたため、この進め方は保存していません。",
 		"WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED", "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。",
 		"renderTimeline", "rememberError", "setBackgroundWorking", `requestJSON("/v1/workspace-status")`, "最初のAIチームを確認",
@@ -1501,8 +1503,8 @@ func TestMobileInteractionHTTPFlowSameRequestTwiceCreatesDistinctProjectsSafely(
 
 // TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand
 // exercises the real daemon/process composition when the Runner's CEO Plan
-// response violates the typed Intent contract (malformed JSON, a realistic
-// Claude Sonnet 5 slip) instead of the Provider transport layer. It verifies
+// response violates the typed Intent contract (a non-review step omits its
+// required_role) instead of the Provider transport layer. It verifies
 // the outer interaction.plan.generate Command surfaces the same
 // INTERACTION_PLAN_FAILED/ceo_plan_intent classification and a sanitized
 // parse_failure_reason. Valid CEO Plan generation is already exercised end
@@ -1523,11 +1525,9 @@ func TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand
 			t.Fatalf("unexpected mock Provider request path=%s", request.URL.Path)
 		}
 		providerCalls++
-		// Realistic Claude Sonnet 5 contract slip: prose instead of the
-		// required bare JSON object.
 		response.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(response).Encode(map[string]any{
-			"model": "claude-mobile-test", "content": []map[string]string{{"type": "text", "text": "承知しました。計画を検討します。"}},
+			"model": "claude-mobile-test", "content": []map[string]string{{"type": "text", "text": `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"D"}],"ceo_questions":[]}`}},
 			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
 		})
 	}))
@@ -1562,11 +1562,15 @@ func TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand
 	if err := json.Unmarshal(generateResponse.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.OK || envelope.Error == nil || envelope.Error.Code != "INTERACTION_PLAN_FAILED" || envelope.Error.Stage != "ceo_plan_intent" {
+	if envelope.OK || envelope.Error == nil || envelope.Error.Code != "INTERACTION_PLAN_FAILED" || envelope.Error.Stage != "ceo_plan_intent" ||
+		envelope.Error.Details == nil || envelope.Error.Details.Parse == nil ||
+		envelope.Error.Details.Parse.Field != "steps.required_role" {
 		t.Fatalf("plan generation response = %#v", envelope)
 	}
 	var syncResult workspaceprocess.InteractionPlanResult
-	if err := json.Unmarshal(envelope.Result, &syncResult); err != nil || syncResult.ParseFailureReason == "" {
+	if err := json.Unmarshal(envelope.Result, &syncResult); err != nil ||
+		syncResult.ParseFailureReason != string(ceoplan.IntentParseMissingRequiredField) ||
+		syncResult.ParseFailureField != "steps.required_role" {
 		t.Fatalf("synchronous response result = %#v, %v", syncResult, err)
 	}
 	if providerCalls != 1 {
@@ -1578,11 +1582,15 @@ func TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand
 	var record commandledger.Record
 	decodeHTTPResult(t, statusResponse, &record)
 	if record.State != commandledger.StateFailed || record.Failure == nil ||
-		record.Failure.Code != "INTERACTION_PLAN_FAILED" || record.Failure.Stage != "ceo_plan_intent" {
+		record.Failure.Code != "INTERACTION_PLAN_FAILED" || record.Failure.Stage != "ceo_plan_intent" ||
+		record.Failure.Details == nil || record.Failure.Details.Parse == nil ||
+		record.Failure.Details.Parse.Field != "steps.required_role" {
 		t.Fatalf("outer Command status = %#v", record)
 	}
 	var storedResult workspaceprocess.InteractionPlanResult
-	if err := json.Unmarshal(record.Result, &storedResult); err != nil || storedResult.ParseFailureReason == "" || storedResult.SessionCommitted {
+	if err := json.Unmarshal(record.Result, &storedResult); err != nil ||
+		storedResult.ParseFailureReason != string(ceoplan.IntentParseMissingRequiredField) ||
+		storedResult.ParseFailureField != "steps.required_role" || storedResult.SessionCommitted {
 		t.Fatalf("stored parse failure reason = %#v, %v", storedResult, err)
 	}
 }
