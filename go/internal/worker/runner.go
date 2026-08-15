@@ -71,6 +71,12 @@ type RunResult struct {
 	// diagnostics captured by the Adapter at Provider response receipt
 	// time. Nil when unavailable.
 	StructuredOutputFieldShape map[string]failure.StructuredOutputFieldShape `json:"structured_output_field_shape,omitempty"`
+	// StructuredOutputStepDescriptionShape carries the same content-blind
+	// shape diagnostic as StructuredOutputFieldShape, scoped to each
+	// steps[].description value of a CEO Intent-shaped Structured Output
+	// response (keyed "steps.<index>.description"). Nil for every other
+	// schema shape, or when StructuredOutput was not requested.
+	StructuredOutputStepDescriptionShape map[string]failure.StructuredOutputFieldShape `json:"structured_output_step_description_shape,omitempty"`
 }
 
 func (result RunResult) Validate() error {

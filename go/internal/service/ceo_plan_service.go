@@ -114,6 +114,16 @@ func (service *CEOPlanService) Generate(ctx context.Context, input CEOPlanInput)
 	}
 	intent, err := ceoplan.ParseIntent(result.Content)
 	if err != nil {
+		// Attach the Adapter's already-captured, content-blind step
+		// description shape diagnostic to the typed parse failure here, at
+		// the one place that holds both the Runner result and the parse
+		// error together -- mirrors review_service.go's identical pattern
+		// for review.ParseError. ceoplan itself never observes Provider
+		// response shape.
+		var intentErr *ceoplan.IntentParseError
+		if errors.As(err, &intentErr) {
+			intentErr.FieldShape = result.StructuredOutputStepDescriptionShape
+		}
 		return CEOPlanResult{}, &CEOPlanError{Stage: CEOPlanIntentStage, Err: err}
 	}
 	plan, err := ceoplan.NormalizeIntent(intent, input.Employees, ceoplan.IntentContext{

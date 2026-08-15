@@ -40,7 +40,29 @@ func TestParseIntentAcceptsValidContentAndRejectsMalformedShapes(t *testing.T) {
 		{"empty steps", `{"project_name":"P","objective":"O","summary":"S","steps":[],"ceo_questions":[]}`, IntentParseMissingRequiredField, "steps"},
 		{"step missing kind", `{"project_name":"P","objective":"O","summary":"S","steps":[{"description":"D","required_role":"R"}],"ceo_questions":[]}`, IntentParseMissingRequiredField, "steps.kind"},
 		{"step missing description", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","required_role":"R"}],"ceo_questions":[]}`, IntentParseMissingRequiredField, "steps.description"},
+		{"step empty description", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"","required_role":"R"}],"ceo_questions":[]}`, IntentParseMissingRequiredField, "steps.description"},
 		{"step whitespace description", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"   ","required_role":"R"}],"ceo_questions":[]}`, IntentParseMissingRequiredField, "steps.description"},
+		// steps[].description is a plain Go string field (unlike
+		// project_name/objective/summary/required_role, which decode via
+		// json.RawMessage specifically to reject an explicit null as a type
+		// violation). encoding/json unmarshals a JSON null into a string
+		// field as "" without an error, so an explicit null here is
+		// indistinguishable from an absent key at this layer and reaches
+		// the same blank-after-trim rejection below — never silently
+		// accepted. See the CMD-E35C1166 investigation: this is a known,
+		// intentionally-unchanged diagnostic-precision gap (not a
+		// correctness gap — the outcome is still a safe rejection), now
+		// partially closed by the content-blind step description shape
+		// diagnostic (adapter/claude's structuredOutputStepDescriptionShape)
+		// distinguishing JSONType "null" from Present=false.
+		{"step null description", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":null,"required_role":"R"}],"ceo_questions":[]}`, IntentParseMissingRequiredField, "steps.description"},
+		// Unlike null, a wrong JSON type for description (a plain string
+		// field) fails the whole-object decode immediately, before the
+		// per-step loop runs -- so this is JSONDecodeFailed with no field
+		// breakdown, a genuinely different diagnostic signature than the
+		// three blank/null cases above.
+		{"step wrong type description (number)", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":42,"required_role":"R"}],"ceo_questions":[]}`, IntentParseJSONDecodeFailed, ""},
+		{"step wrong type description (object)", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":{},"required_role":"R"}],"ceo_questions":[]}`, IntentParseJSONDecodeFailed, ""},
 		{"non-review step missing required_role", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"D"}],"ceo_questions":[]}`, IntentParseMissingRequiredField, "steps.required_role"},
 		{"non-review step whitespace required_role", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"D","required_role":"   "}],"ceo_questions":[]}`, IntentParseMissingRequiredField, "steps.required_role"},
 		{"non-review step null required_role", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"D","required_role":null}],"ceo_questions":[]}`, IntentParseJSONDecodeFailed, "steps.required_role"},

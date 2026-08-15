@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 )
 
 var ErrInvalidIntent = errors.New("invalid CEO plan intent")
@@ -52,7 +54,18 @@ type IntentParseError struct {
 	// Field is a sanitized contract field identifier. It never contains the
 	// rejected value, an array index, or raw Provider output.
 	Field string
-	err   error
+	// FieldShape is an optional, content-blind shape diagnostic that may
+	// explain a missing_required_field failure when key presence alone
+	// cannot (e.g. steps[].description present but blank, whitespace, or
+	// null). It is never computed by ParseIntent itself, which never
+	// inspects raw content beyond strict decode -- it is attached by the
+	// calling Service after ParseIntent returns, from the Adapter's
+	// already-captured diagnostic (worker.RunResult.
+	// StructuredOutputStepDescriptionShape), mirroring review.ParseError.
+	// FieldShape's established pattern. Keys and values never carry a
+	// field's actual text.
+	FieldShape map[string]failure.StructuredOutputFieldShape
+	err        error
 }
 
 func (parseErr *IntentParseError) Error() string { return parseErr.err.Error() }

@@ -51,6 +51,12 @@ type InteractionPlanResult struct {
 	// ParseFailureField is the optional sanitized Intent contract field that
 	// failed validation. It never contains the rejected value or raw output.
 	ParseFailureField string `json:"parse_failure_field,omitempty"`
+	// ParseFieldShape is an optional, content-blind shape diagnostic
+	// (presence / JSON type / post-trim non-blankness only, never a
+	// field's actual text) that may explain a missing_required_field
+	// failure when key presence alone cannot -- e.g. steps[].description
+	// present but blank, whitespace-only, or null.
+	ParseFieldShape map[string]failure.StructuredOutputFieldShape `json:"parse_field_shape,omitempty"`
 }
 
 // ProviderFailure is redacted diagnostic evidence derived from a typed
@@ -253,6 +259,7 @@ func executeInteractionPlanGenerationCommand(
 			Session: record, Generation: generation, ProviderFailure: providerFailure(generationErr),
 			ParseFailureReason: ceoPlanParseFailureReason(generationErr),
 			ParseFailureField:  ceoPlanParseFailureField(generationErr),
+			ParseFieldShape:    ceoPlanParseFailureFieldShape(generationErr),
 		}
 		return finishInteractionPlan(ctx, claim, result, generationErr, interactionPlanGenerationStage(generationErr), false)
 	}
@@ -339,6 +346,19 @@ func ceoPlanParseFailureField(err error) string {
 	return ""
 }
 
+// ceoPlanParseFailureFieldShape extracts the optional, content-blind
+// step description shape diagnostic ceo_plan_service.go attached to the
+// Intent parse failure (see ceoplan.IntentParseError.FieldShape). Returns
+// nil for every other failure kind, or when the diagnostic could not be
+// computed (e.g. the Runner never observed a "steps" array).
+func ceoPlanParseFailureFieldShape(err error) map[string]failure.StructuredOutputFieldShape {
+	var intentErr *ceoplan.IntentParseError
+	if errors.As(err, &intentErr) {
+		return intentErr.FieldShape
+	}
+	return nil
+}
+
 func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, result InteractionPlanResult, err error, stage string, partial bool) (InteractionPlanResult, error) {
 	code := "INTERACTION_PLAN_FAILED"
 	if errors.Is(err, claude.ErrInvalidConfig) {
@@ -353,6 +373,7 @@ func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, resul
 		envelope.RecoveryRequired = partial
 		envelope.Parse = &failure.ParseDiagnostic{
 			Domain: "ceo_plan_intent", Reason: result.ParseFailureReason, Field: result.ParseFailureField,
+			StructuredOutputFieldShape: result.ParseFieldShape,
 		}
 		return result, finishDurableCommandWithEnvelope(ctx, claim, result, err, &envelope, partial)
 	}

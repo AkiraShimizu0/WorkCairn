@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
 	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
@@ -74,5 +75,37 @@ func TestCEOPlanServiceMapsRunnerIntentNormalizationAndParserFailures(t *testing
 				t.Fatalf("err=%v, want stage %v", err, test.stage)
 			}
 		})
+	}
+}
+
+// TestCEOPlanServiceAttachesStepDescriptionShapeToIntentParseFailure locks
+// the CMD-E35C1166 investigation's diagnostic addition: when ParseIntent
+// fails, Generate must attach the Runner's already-captured content-blind
+// step description shape diagnostic to the returned *ceoplan.IntentParseError,
+// mirroring review_service.go's identical pattern for review.ParseError.
+// This never changes parser strictness -- the failure Reason/Field/Stage
+// are unaffected; only the diagnostic detail available to the caller grows.
+func TestCEOPlanServiceAttachesStepDescriptionShapeToIntentParseFailure(t *testing.T) {
+	employees := []organization.Identity{{ID: "E-001", Department: "D", Role: "R"}}
+	shape := map[string]failure.StructuredOutputFieldShape{
+		"steps.0.description": {Present: true, JSONType: "null"},
+	}
+	fake := &ceoPlanFakeRunner{result: worker.RunResult{
+		Content: `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":null,"required_role":"R"}],"ceo_questions":[]}`,
+		Runner:  "Fake", Model: "m",
+		StructuredOutputStepDescriptionShape: shape,
+	}}
+	service, _ := NewCEOPlanService(fake)
+	_, err := service.Generate(context.Background(), CEOPlanInput{Request: "r", Model: "m", Employees: employees})
+
+	var intentErr *ceoplan.IntentParseError
+	if !errors.As(err, &intentErr) {
+		t.Fatalf("err = %v, want *ceoplan.IntentParseError", err)
+	}
+	if intentErr.Reason != ceoplan.IntentParseMissingRequiredField || intentErr.Field != "steps.description" {
+		t.Fatalf("intentErr = %#v, want unaffected Reason/Field", intentErr)
+	}
+	if !reflect.DeepEqual(intentErr.FieldShape, shape) {
+		t.Fatalf("intentErr.FieldShape = %#v, want %#v", intentErr.FieldShape, shape)
 	}
 }

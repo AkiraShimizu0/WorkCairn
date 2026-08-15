@@ -587,6 +587,61 @@ func TestStructuredOutputFieldShapeReportsSummaryShapeWithoutContent(t *testing.
 	}
 }
 
+// TestStructuredOutputStepDescriptionShapeReportsPerStepShapeAcrossMultiStepIntent
+// locks the content-blind diagnostic added for the CMD-E35C1166
+// investigation: a missing_required_field/steps.description failure alone
+// cannot distinguish an absent key from an empty string, a whitespace-only
+// string, an explicit null, or a non-string value. This asserts every one
+// of those five shapes is reported independently and correctly across a
+// single multi-step Intent response, keyed by step index, and that a
+// valid non-blank description is reported too (not just failure shapes).
+func TestStructuredOutputStepDescriptionShapeReportsPerStepShapeAcrossMultiStepIntent(t *testing.T) {
+	schema, err := ceoplan.IntentJSONSchema([]string{"Content Writer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := `{"steps":[` +
+		`{"kind":"write","description":"D","required_role":"Content Writer"},` +
+		`{"kind":"write","required_role":"Content Writer"},` +
+		`{"kind":"write","description":"","required_role":"Content Writer"},` +
+		`{"kind":"write","description":"   ","required_role":"Content Writer"},` +
+		`{"kind":"write","description":null,"required_role":"Content Writer"},` +
+		`{"kind":"write","description":42,"required_role":"Content Writer"}` +
+		`],"ceo_questions":[]}`
+	shapes := structuredOutputStepDescriptionShape(schema, content)
+	want := map[string]failure.StructuredOutputFieldShape{
+		"steps.0.description": {Present: true, JSONType: "string", NonBlank: boolPtr(true)},
+		"steps.1.description": {Present: false},
+		"steps.2.description": {Present: true, JSONType: "string", NonBlank: boolPtr(false)},
+		"steps.3.description": {Present: true, JSONType: "string", NonBlank: boolPtr(false)},
+		"steps.4.description": {Present: true, JSONType: "null"},
+		"steps.5.description": {Present: true, JSONType: "other"},
+	}
+	if len(shapes) != len(want) {
+		t.Fatalf("shapes = %#v, want %d entries", shapes, len(want))
+	}
+	for key, wantShape := range want {
+		got, ok := shapes[key]
+		if !ok {
+			t.Fatalf("shapes missing key %q: %#v", key, shapes)
+		}
+		if got.Present != wantShape.Present || got.JSONType != wantShape.JSONType || !boolPtrEqual(got.NonBlank, wantShape.NonBlank) {
+			t.Fatalf("shapes[%q] = %#v, want %#v", key, got, wantShape)
+		}
+	}
+}
+
+// TestStructuredOutputStepDescriptionShapeIsNilForNonCEOIntentSchema locks
+// that this diagnostic only activates for a schema declaring a top-level
+// "steps" array (CEO Intent) -- every other Structured Output caller
+// (e.g. Review) must see a nil result, never a spurious empty map.
+func TestStructuredOutputStepDescriptionShapeIsNilForNonCEOIntentSchema(t *testing.T) {
+	schema := review.TypedDecisionJSONSchema()
+	if shapes := structuredOutputStepDescriptionShape(schema, `{"verdict":"Approve","issues":[],"summary":"S"}`); shapes != nil {
+		t.Fatalf("shapes = %#v, want nil", shapes)
+	}
+}
+
 func boolPtr(value bool) *bool { return &value }
 
 func boolPtrEqual(left, right *bool) bool {

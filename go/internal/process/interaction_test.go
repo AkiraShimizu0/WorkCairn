@@ -21,6 +21,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 )
 
@@ -455,6 +456,59 @@ func TestInteractionPlanRecordsSafeParserSubstageWithoutCommittingPlan(t *testin
 	stored, inspectErr := InspectInteraction(context.Background(), root, start.SessionID)
 	if inspectErr != nil || stored.Version != 1 || stored.State != interaction.StatePlanGenerationApprovalRequired || len(stored.Turns) != 0 {
 		t.Fatalf("parser failure committed Plan = %#v, %v", stored, inspectErr)
+	}
+}
+
+// TestInteractionPlanRecordsStepDescriptionShapeForMissingRequiredFieldFailure
+// is an end-to-end regression for the CMD-E35C1166 investigation: a real
+// Mock Provider response with steps[0].description explicit null (the
+// same shape a "missing_required_field"/"steps.description" incident
+// cannot otherwise be distinguished from an absent key, a blank string,
+// or a whitespace-only string) must surface a content-blind shape
+// diagnostic on the outer Command's own FailureEnvelope -- through the
+// real Adapter, Service, ParseIntent, and Command Ledger persistence,
+// not a mocked RunResult. This never changes what fails or why (Reason/
+// Field/Stage are identical to the sibling
+// TestInteractionPlanRecordsSafeParserSubstageWithoutCommittingPlan
+// case); it only adds diagnostic detail.
+func TestInteractionPlanRecordsStepDescriptionShapeForMissingRequiredFieldFailure(t *testing.T) {
+	fixture := loadCEOPlanFixture(t)
+	root := ceoPlanVault(t, fixture.Employees)
+	at := time.Date(2026, 8, 15, 13, 0, 0, 0, time.UTC)
+	start := InteractionStartInput{
+		VaultRoot: root, SessionID: "SESSION-PLAN-STEP-SHAPE", Request: fixture.Request,
+		Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-PLAN-STEP-SHAPE-START",
+	}
+	plan, err := PlanInteractionStart(context.Background(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.RequestDigest = plan.Session.RequestDigest
+	intentNullDescription := `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":null,"required_role":"Content Writer"}],"ceo_questions":[]}`
+	providerResponse, _ := json.Marshal(map[string]any{
+		"model": "claude-sonnet-5", "content": []map[string]string{{"type": "text", "text": intentNullDescription}},
+		"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+	})
+	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
+	})
+	_, err = ExecuteInteractionStart(context.Background(), start, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
+	var recorded *RecordedCommandError
+	if !errors.As(err, &recorded) || recorded.Code != "INTERACTION_PLAN_FAILED" || recorded.Stage != "ceo_plan_intent" ||
+		recorded.Envelope == nil || recorded.Envelope.Parse == nil || recorded.Envelope.Parse.Field != "steps.description" {
+		t.Fatalf("parser failure = %#v, err = %v", recorded, err)
+	}
+	wantShape := map[string]failure.StructuredOutputFieldShape{
+		"steps.0.description": {Present: true, JSONType: "null"},
+	}
+	if !reflect.DeepEqual(recorded.Envelope.Parse.StructuredOutputFieldShape, wantShape) {
+		t.Fatalf("Envelope.Parse.StructuredOutputFieldShape = %#v, want %#v", recorded.Envelope.Parse.StructuredOutputFieldShape, wantShape)
+	}
+	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
+	record, ledgerErr := ledger.Get(context.Background(), "CMD-PLAN-STEP-SHAPE-START")
+	if ledgerErr != nil || record.Failure == nil || record.Failure.Details == nil || record.Failure.Details.Parse == nil ||
+		!reflect.DeepEqual(record.Failure.Details.Parse.StructuredOutputFieldShape, wantShape) {
+		t.Fatalf("Ledger-persisted shape diagnostic = %#v, %v", record, ledgerErr)
 	}
 }
 
