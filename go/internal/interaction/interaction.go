@@ -152,15 +152,24 @@ type Answer struct {
 }
 
 type Turn struct {
-	Kind        TurnKind          `json:"kind"`
-	At          time.Time         `json:"at"`
-	Plan        *ceoplan.Plan     `json:"plan,omitempty"`
-	PlanDigest  string            `json:"plan_digest,omitempty"`
-	Answers     []Answer          `json:"answers,omitempty"`
-	ProjectID   string            `json:"project_id,omitempty"`
-	ProjectName string            `json:"project_name,omitempty"`
-	Workflow    *WorkflowEvidence `json:"workflow,omitempty"`
-	Action      *ActionEvidence   `json:"action,omitempty"`
+	Kind        TurnKind      `json:"kind"`
+	At          time.Time     `json:"at"`
+	Plan        *ceoplan.Plan `json:"plan,omitempty"`
+	PlanDigest  string        `json:"plan_digest,omitempty"`
+	Answers     []Answer      `json:"answers,omitempty"`
+	ProjectID   string        `json:"project_id,omitempty"`
+	ProjectName string        `json:"project_name,omitempty"`
+	// PreAuthorizedWorkflowCommandID is set only on a TurnPlanApplied turn
+	// produced by the Go-owned interaction.plan.approve_and_execute chain
+	// (ADR-0049). It durably records that the single CEO approval behind
+	// this Command ID already covers the Reviewed Workflow execution that
+	// follows -- Next() must not ask for a second approval while it is set.
+	// Empty for a TurnPlanApplied turn produced by the standalone
+	// interaction.plan.apply command, which still requires a separate
+	// interaction.workflow.execute approval exactly as before.
+	PreAuthorizedWorkflowCommandID string            `json:"pre_authorized_workflow_command_id,omitempty"`
+	Workflow                       *WorkflowEvidence `json:"workflow,omitempty"`
+	Action                         *ActionEvidence   `json:"action,omitempty"`
 }
 
 type Record struct {
@@ -300,7 +309,8 @@ func (record Record) Validate() error {
 		case TurnPlanApplied:
 			if state != StatePlanApprovalRequired || turn.Plan != nil || len(turn.Answers) != 0 ||
 				turn.PlanDigest != activeDigest || strings.TrimSpace(turn.ProjectID) == "" || turn.ProjectID != strings.TrimSpace(turn.ProjectID) ||
-				strings.TrimSpace(turn.ProjectName) == "" || turn.ProjectName != strings.TrimSpace(turn.ProjectName) || turn.Workflow != nil || turn.Action != nil {
+				strings.TrimSpace(turn.ProjectName) == "" || turn.ProjectName != strings.TrimSpace(turn.ProjectName) || turn.Workflow != nil || turn.Action != nil ||
+				turn.PreAuthorizedWorkflowCommandID != "" && commandledger.ValidateCommandID(turn.PreAuthorizedWorkflowCommandID) != nil {
 				return ErrInvalidSession
 			}
 			activeProjectID, activeProjectName = turn.ProjectID, turn.ProjectName
@@ -375,20 +385,52 @@ func (record Record) RecordAnswers(answers []Answer, at time.Time) (Record, erro
 	return next, next.Validate()
 }
 
-func (record Record) RecordApplied(projectID, projectName, planDigest string, at time.Time) (Record, error) {
+// RecordApplied appends the canonical Plan-apply outcome as a durable Turn.
+// preAuthorizedWorkflowCommandID is empty for the standalone
+// interaction.plan.apply command (unchanged, pre-CP4 semantics: Workflow
+// execution still needs its own interaction.workflow.execute approval). A
+// non-empty, well-formed Command ID marks this Plan apply as performed under
+// the Go-owned interaction.plan.approve_and_execute chain (ADR-0049) -- the
+// single CEO approval behind that outer Command ID already covers the
+// Reviewed Workflow execution that Next() will resume without asking again.
+func (record Record) RecordApplied(projectID, projectName, planDigest, preAuthorizedWorkflowCommandID string, at time.Time) (Record, error) {
 	_, currentDigest, ok := record.CurrentPlan()
 	projectID, projectName, planDigest = strings.TrimSpace(projectID), strings.TrimSpace(projectName), strings.TrimSpace(planDigest)
+	preAuthorizedWorkflowCommandID = strings.TrimSpace(preAuthorizedWorkflowCommandID)
 	if record.Validate() != nil || record.State != StatePlanApprovalRequired || !ok || currentDigest != planDigest ||
-		projectID == "" || projectName == "" || at.IsZero() {
+		projectID == "" || projectName == "" || at.IsZero() ||
+		preAuthorizedWorkflowCommandID != "" && commandledger.ValidateCommandID(preAuthorizedWorkflowCommandID) != nil {
 		return Record{}, ErrInvalidState
 	}
 	next := record.Clone()
 	next.Turns = append(next.Turns, Turn{
 		Kind: TurnPlanApplied, At: at, PlanDigest: planDigest, ProjectID: projectID, ProjectName: projectName,
+		PreAuthorizedWorkflowCommandID: preAuthorizedWorkflowCommandID,
 	})
 	next.Version++
 	next.State = StateReadyToExecute
 	return next, next.Validate()
+}
+
+// PendingWorkflowPreAuthorization reports the outer Command ID a not-yet-
+// started Reviewed Workflow execution is already durably approved under, so
+// Next() can resume the same chain instead of asking for a second approval.
+// It only ever looks at the single most recent Turn: if the session reached
+// StateReadyToExecute through a Blocked/LimitReached WorkflowEvidence turn
+// (an existing, unrelated continuation path this checkpoint does not
+// change), that most recent Turn is a TurnWorkflowRecorded, not a
+// TurnPlanApplied, and this correctly reports no pending pre-authorization --
+// continuing that case still requires a fresh interaction.workflow.execute
+// approval, exactly as before CP4.
+func (record Record) PendingWorkflowPreAuthorization() (string, bool) {
+	if record.State != StateReadyToExecute || len(record.Turns) == 0 {
+		return "", false
+	}
+	last := record.Turns[len(record.Turns)-1]
+	if last.Kind != TurnPlanApplied || last.PreAuthorizedWorkflowCommandID == "" {
+		return "", false
+	}
+	return last.PreAuthorizedWorkflowCommandID, true
 }
 
 func (record Record) RecordWorkflow(evidence WorkflowEvidence, at time.Time) (Record, error) {
@@ -485,13 +527,31 @@ func (record Record) Next() (NextAction, error) {
 		if !ok {
 			return NextAction{}, ErrInvalidSession
 		}
-		next.Kind, next.Operation, next.ApprovalRequired = NextApprovePlanApply, "interaction.plan.apply", true
+		// ADR-0049: the CEO's single "この内容で進める" approval covers both
+		// canonical Plan apply and the Reviewed Workflow execution that
+		// follows -- Go, not the client, owns continuing the chain after
+		// apply succeeds. The standalone interaction.plan.apply command
+		// (unchanged, still Ledger-tracked) remains available for operator
+		// and Recovery use; the normal product path only ever reaches it
+		// through this Next() operation now.
+		next.Kind, next.Operation, next.ApprovalRequired = NextApprovePlanApply, "interaction.plan.approve_and_execute", true
 		next.RequiredFields = []string{"project_id", "command_id", "current_time"}
 		next.PlanDigest = digest
 		next.ProjectName = plan.ProjectName
 	case StateReadyToExecute:
-		next.Kind, next.Operation, next.ApprovalRequired = NextApproveWorkflow, "interaction.workflow.execute", true
-		next.RequiredFields = []string{"reviewer_id", "max_tasks", "workflow_plan_digest", "command_id", "current_time"}
+		if preAuthCommandID, ok := record.PendingWorkflowPreAuthorization(); ok {
+			// The Reviewed Workflow execution behind this Turn is already
+			// durably pre-authorized (ADR-0049) -- observed only in the brief
+			// window while the same synchronous chain is still running, or
+			// after a daemon crash left it there. Never ask for a second
+			// approval; point at the pre-authorizing outer Command so a human
+			// can inspect what actually happened instead of guessing.
+			next.Kind = NextInspectWorkflow
+			next.Commands = []CommandReference{{Scope: "workspace", CommandID: preAuthCommandID}}
+		} else {
+			next.Kind, next.Operation, next.ApprovalRequired = NextApproveWorkflow, "interaction.workflow.execute", true
+			next.RequiredFields = []string{"reviewer_id", "max_tasks", "workflow_plan_digest", "command_id", "current_time"}
+		}
 	case StateWorkflowAttentionRequired:
 		next.Kind = NextInspectWorkflow
 		workflow, ok := record.LatestWorkflow()

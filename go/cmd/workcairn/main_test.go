@@ -79,7 +79,18 @@ func TestVersionDoesNotRequireVaultOrRuntimeDependencies(t *testing.T) {
 	}
 }
 
-func TestInteractionStartPlanIsReadOnlyAndGenerationNeedsApprovalBeforeProviderConfig(t *testing.T) {
+// TestInteractionStartPlanIsReadOnlyAndStartChainsIntoPlanGenerationWithApproval
+// covers ADR-0049's request-submit chain from the operator CLI side:
+// interaction-start-plan stays a read-only preview that never touches the
+// Provider, an unapproved interaction-start still never touches the
+// Provider (the approval check runs before any Provider config is
+// resolved), but an approved interaction-start now itself performs Plan
+// generation as a deterministic child Command -- interaction-next no longer
+// shows approve_plan_generation afterward. The standalone
+// interaction-plan-generate command is unchanged and still independently
+// requires its own approval before touching the Provider (operator/Recovery
+// parity, section 16).
+func TestInteractionStartPlanIsReadOnlyAndStartChainsIntoPlanGenerationWithApproval(t *testing.T) {
 	root := t.TempDir()
 	before := commandVaultSnapshot(t, root)
 	var output bytes.Buffer
@@ -101,25 +112,70 @@ func TestInteractionStartPlanIsReadOnlyAndGenerationNeedsApprovalBeforeProviderC
 		t.Fatalf("Interaction plan = %#v, %v", plan, err)
 	}
 
-	output.Reset()
-	startArgs := []string{
+	// Organization roster the chained Plan generation's Structured Output
+	// schema needs (ADR-0048's Organization-scoped required_role enum) --
+	// added only now, after the read-only preview's own no-mutation proof
+	// above.
+	employeeDirectory := filepath.Join(root, "社員")
+	if err := os.MkdirAll(employeeDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeCommandFile(t, filepath.Join(employeeDirectory, "田中 美咲.md"), "---\nid: PLAN-001\ndepartment: 企画部\nrole: Product Manager\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n")
+	before = commandVaultSnapshot(t, root)
+
+	unapprovedStartArgs := []string{
 		"interaction-start", "--vault", root, "--session-id", "SESSION-CLI-001", "--request", "Webアプリを作りたい",
 		"--request-sha256", plan.Session.RequestDigest, "--model", "Claude Sonnet 5", "--at", "2026-08-09T12:00:00Z",
-		"--command-id", "CMD-INTERACTION-CLI-START", "--approved",
-	}
-	if exit := run(context.Background(), startArgs, &output, commandDependencies{}); exit != 0 {
-		t.Fatalf("Interaction start exit=%d response=%s", exit, output.String())
+		"--command-id", "CMD-INTERACTION-CLI-START",
 	}
 	output.Reset()
+	if exit := run(context.Background(), unapprovedStartArgs, &output, commandDependencies{
+		lookupEnv:     func(string) (string, bool) { t.Fatal("unapproved start read Provider environment"); return "", false },
+		newHTTPClient: func(time.Duration) claude.HTTPDoer { t.Fatal("unapproved start constructed HTTP client"); return nil },
+	}); exit != 1 || !bytes.Contains(output.Bytes(), []byte(`"code":"APPROVAL_REQUIRED"`)) ||
+		!reflect.DeepEqual(before, commandVaultSnapshot(t, root)) {
+		t.Fatalf("unapproved start exit=%d response=%s", exit, output.String())
+	}
+
+	startArgs := append(unapprovedStartArgs, "--approved")
+	intentOutput, _ := json.Marshal(map[string]any{
+		"project_name": "Webアプリ案件", "objective": "依頼から成果物を完成させる", "summary": "CLI E2E",
+		"steps":         []map[string]any{{"kind": "write", "description": "要件をまとめる", "required_role": "Product Manager"}},
+		"ceo_questions": []string{},
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+		responseWriter.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(responseWriter).Encode(map[string]any{
+			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(intentOutput)}},
+			"usage": map[string]int{"input_tokens": 10, "output_tokens": 20},
+		})
+	}))
+	defer server.Close()
+	environment := map[string]string{"ANTHROPIC_API_KEY": "fake-key", "WORKCAIRN_CLAUDE_BASE_URL": server.URL}
+	providerDependencies := commandDependencies{
+		lookupEnv:     func(key string) (string, bool) { value, ok := environment[key]; return value, ok },
+		newHTTPClient: func(time.Duration) claude.HTTPDoer { return server.Client() },
+	}
+	output.Reset()
+	if exit := run(context.Background(), startArgs, &output, providerDependencies); exit != 0 {
+		t.Fatalf("Interaction start exit=%d response=%s", exit, output.String())
+	}
+	// ADR-0049: the CEO's "send request" approval is itself the approval for
+	// Plan generation -- interaction-next must show the resulting Plan
+	// approval state directly, never approve_plan_generation.
+	output.Reset()
 	if exit := run(context.Background(), []string{"interaction-next", "--vault", root, "--session-id", "SESSION-CLI-001"}, &output, commandDependencies{}); exit != 0 ||
-		!bytes.Contains(output.Bytes(), []byte(`"kind":"approve_plan_generation"`)) || !bytes.Contains(output.Bytes(), []byte(`"expected_version":1`)) {
+		!bytes.Contains(output.Bytes(), []byte(`"kind":"approve_plan_apply"`)) || bytes.Contains(output.Bytes(), []byte(`"approve_plan_generation"`)) {
 		t.Fatalf("Interaction next exit=%d response=%s", exit, output.String())
 	}
 
+	// The standalone interaction-plan-generate command is unchanged: it
+	// still independently requires its own approval before touching the
+	// Provider, regardless of the chained flow above.
 	environmentRead, httpConstructed := false, false
 	output.Reset()
 	exitCode = run(context.Background(), []string{
-		"interaction-plan-generate", "--vault", root, "--session-id", "SESSION-CLI-001", "--expected-version", "1",
+		"interaction-plan-generate", "--vault", root, "--session-id", "SESSION-CLI-001", "--expected-version", "2",
 		"--at", "2026-08-09T12:01:00Z", "--command-id", "CMD-INTERACTION-CLI-PLAN",
 	}, &output, commandDependencies{
 		lookupEnv:     func(string) (string, bool) { environmentRead = true; return "", false },
@@ -237,7 +293,7 @@ func writeCommandReadyInteraction(t *testing.T, root string, at time.Time) inter
 	}
 	withPlan, _ := record.RecordPlan(plan, at.Add(time.Minute))
 	_, digest, _ := withPlan.CurrentPlan()
-	ready, _ := withPlan.RecordApplied("PROJECT-001", "ToDoアプリ", digest, at.Add(2*time.Minute))
+	ready, _ := withPlan.RecordApplied("PROJECT-001", "ToDoアプリ", digest, "", at.Add(2*time.Minute))
 	store, _ := vault.NewInteractionStore(root)
 	if err := store.Create(context.Background(), record); err != nil {
 		t.Fatal(err)

@@ -176,6 +176,7 @@ func TestPublicBetaCommandAllowListExecutesOnlyFormalProductPath(t *testing.T) {
 		"interaction.answer",
 		"interaction.plan.apply",
 		"interaction.workflow.execute",
+		"interaction.plan.approve_and_execute",
 	}
 	backend := &fakeCommandBackend{result: map[string]string{"status": "ok"}}
 	handler, err := NewHandler(backend, backend)
@@ -420,9 +421,16 @@ func TestInteractionHistoryRemainsReadableAfterRuntimeRestart(t *testing.T) {
 		"session_id": plan.Session.SessionID, "request": plan.Session.Request,
 		"request_digest": plan.Session.RequestDigest, "model": plan.Session.Model, "current_time": plan.Session.CreatedAt,
 	})
+	// ADR-0049: interaction.start now chains directly into Plan generation,
+	// which fails cleanly (no Organization roster in this bare temporary
+	// Vault, so no network call is ever attempted) -- a partial failure,
+	// since the Session itself is still durably created. This test's own
+	// concern is that a restarted Process Executor can still read that
+	// Session, not that generation succeeds.
+	var recorded *workspaceprocess.RecordedCommandError
 	if _, err := first.Execute(context.Background(), Command{
 		Version: ContractVersion, CommandID: "CMD-FIRST-RUN-RESTART-001", Operation: "interaction.start", Approved: true, Payload: payload,
-	}); err != nil {
+	}); !errors.As(err, &recorded) || recorded.Code != "INTERACTION_PLAN_FAILED" || !recorded.Partial {
 		t.Fatal(err)
 	}
 
@@ -816,12 +824,19 @@ func TestInteractionPlanStartReplayAndReadOnlyInspectionHTTP(t *testing.T) {
 			"model": plan.Session.Model, "current_time": plan.Session.CreatedAt.Format(time.RFC3339),
 		},
 	}
+	// ADR-0049: interaction.start now chains directly into Plan generation.
+	// This executor has neither Provider config nor an Organization roster,
+	// so the chained generation fails cleanly (partial failure -- the
+	// Session itself is still durably created) rather than the pre-CP4
+	// clean 200. The replay proof below is unaffected: the second call must
+	// still return the exact same cached (failed) response, and the Session
+	// stays observable at its pre-generation state either way.
 	first := performCommand(t, handler, command)
-	if first.Code != http.StatusOK {
+	if first.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("start response = %d %s", first.Code, first.Body.String())
 	}
 	second := performCommand(t, handler, command)
-	if second.Code != http.StatusOK || second.Body.String() != first.Body.String() {
+	if second.Code != http.StatusUnprocessableEntity || second.Body.String() != first.Body.String() {
 		t.Fatalf("start replay = %d %s", second.Code, second.Body.String())
 	}
 	for _, path := range []string{"/v1/interactions", "/v1/interactions/SESSION-HTTP-001"} {
@@ -997,59 +1012,46 @@ func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(
 	planResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-plans", planRequest)
 	var startPlan workspaceprocess.InteractionStartPlan
 	decodeHTTPResult(t, planResponse, &startPlan)
+	// ADR-0049: interaction.start is itself the approval for semantic
+	// interpretation, clarification detection, and Plan generation -- no
+	// separate interaction.plan.generate command follows.
 	performSuccessfulCommand(t, handler, map[string]any{
 		"version": ContractVersion, "command_id": "CMD-MOBILE-START-001", "operation": "interaction.start", "approved": true,
 		"payload": map[string]any{"session_id": sessionID, "request": planRequest["request"], "request_digest": startPlan.Session.RequestDigest, "model": planRequest["model"], "current_time": base},
-	})
-
-	performSuccessfulCommand(t, handler, map[string]any{
-		"version": ContractVersion, "command_id": "CMD-MOBILE-PLAN-001", "operation": "interaction.plan.generate", "approved": true,
-		"payload": map[string]any{"session_id": sessionID, "expected_version": 1, "current_time": base.Add(time.Minute)},
 	})
 	next := inspectInteractionNextHTTP(t, handler, sessionID)
 	if next.Kind != interaction.NextAnswerClarifications || len(next.Questions) != 1 {
 		t.Fatalf("clarification next = %#v", next)
 	}
+	// ADR-0049: answering the clarification is itself the approval to
+	// re-attempt Plan generation -- no separate interaction.plan.generate
+	// command follows.
 	performSuccessfulCommand(t, handler, map[string]any{
 		"version": ContractVersion, "command_id": "CMD-MOBILE-ANSWER-001", "operation": "interaction.answer", "approved": true,
 		"payload": map[string]any{"session_id": sessionID, "expected_version": next.ExpectedVersion, "answers": []map[string]string{{"question": next.Questions[0], "answer": "はい、iPhoneを優先します"}}, "current_time": base.Add(2 * time.Minute)},
 	})
 	next = inspectInteractionNextHTTP(t, handler, sessionID)
-	performSuccessfulCommand(t, handler, map[string]any{
-		"version": ContractVersion, "command_id": "CMD-MOBILE-PLAN-002", "operation": "interaction.plan.generate", "approved": true,
-		"payload": map[string]any{"session_id": sessionID, "expected_version": next.ExpectedVersion, "current_time": base.Add(3 * time.Minute)},
-	})
-	next = inspectInteractionNextHTTP(t, handler, sessionID)
 	if next.Kind != interaction.NextApprovePlanApply || next.PlanDigest == "" {
 		t.Fatalf("plan apply next = %#v", next)
 	}
-	performSuccessfulCommand(t, handler, map[string]any{
-		"version": ContractVersion, "command_id": "CMD-MOBILE-APPLY-001", "operation": "interaction.plan.apply", "approved": true,
+	// ADR-0049: the single "この内容で進める" approval covers both canonical
+	// Plan apply and the Reviewed Workflow execution that follows -- no
+	// separate interaction-workflow-plans preview or interaction.workflow.execute
+	// command; Go derives the Reviewer, Autonomy Contract, and Task budget
+	// itself and continues the chain server-side. Async, matching how a
+	// long-running Workflow execution is dispatched today, so the client can
+	// disconnect mid-flight without losing daemon-side progress.
+	performAcceptedCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-APPROVE-AND-EXECUTE-001", "operation": "interaction.plan.approve_and_execute", "approved": true,
 		"payload": map[string]any{"session_id": sessionID, "expected_version": next.ExpectedVersion, "project_id": "PROJECT-MOBILE-001", "plan_digest": next.PlanDigest, "current_time": base.Add(4 * time.Minute)},
 	})
+	waitForCommandStateHTTP(t, handler, "CMD-MOBILE-APPROVE-AND-EXECUTE-001", commandledger.StateSucceeded)
 
 	organizationResponse := httptest.NewRecorder()
 	handler.ServeHTTP(organizationResponse, httptest.NewRequest(http.MethodGet, "/v1/organization", nil))
 	if organizationResponse.Code != http.StatusOK || !strings.Contains(organizationResponse.Body.String(), "QA-001") {
 		t.Fatalf("organization = %d %s", organizationResponse.Code, organizationResponse.Body.String())
 	}
-	next = inspectInteractionNextHTTP(t, handler, sessionID)
-	workflowTime := base.Add(5 * time.Minute)
-	workflowPlanResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-workflow-plans", map[string]any{
-		"version": InteractionContractVersion, "session_id": sessionID, "expected_version": next.ExpectedVersion,
-		"reviewer_id": "QA-001", "current_time": workflowTime, "max_tasks": 10,
-	})
-	var workflowPlan workspaceprocess.InteractionWorkflowPlan
-	decodeHTTPResult(t, workflowPlanResponse, &workflowPlan)
-	performAcceptedCommand(t, handler, map[string]any{
-		"version": ContractVersion, "command_id": "CMD-MOBILE-WORKFLOW-001", "operation": "interaction.workflow.execute", "approved": true,
-		"payload": map[string]any{
-			"session_id": sessionID, "expected_version": next.ExpectedVersion, "reviewer_id": "QA-001", "current_time": workflowTime,
-			"max_tasks": 10, "autonomy_contract": workflowPlan.Autonomy, "workflow_plan_digest": workflowPlan.WorkflowPlanDigest, "approval_reference": "mobile-e2e-approval",
-		},
-	})
-	waitForCommandStateHTTP(t, handler, "CMD-MOBILE-WORKFLOW-001", commandledger.StateSucceeded)
-
 	next = inspectInteractionNextHTTP(t, handler, sessionID)
 	if next.Kind != interaction.NextOptionalAction || !reflect.DeepEqual(next.EligibleTaskIDs, []string{"TASK-001"}) || providerCalls != len(providerOutputs) {
 		t.Fatalf("completed next = %#v providerCalls=%d", next, providerCalls)
@@ -1074,7 +1076,11 @@ func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(
 	handler.ServeHTTP(reportResponse, httptest.NewRequest(http.MethodGet, "/v1/interactions/"+sessionID+"/work-report", nil))
 	var report workspaceprocess.WorkReport
 	decodeHTTPResult(t, reportResponse, &report)
-	if report.Autonomy == nil || report.Autonomy.ExecutionLimit != 10 ||
+	// ExecutionLimit is now workspaceprocess's own defaultWorkflowMaxTasks
+	// (ADR-0049): interaction.plan.approve_and_execute never asks the CEO to
+	// pick a Task budget, so this reflects Go's own automatic default
+	// instead of a CEO-supplied max_tasks value.
+	if report.Autonomy == nil || report.Autonomy.ExecutionLimit != 20 ||
 		!reflect.DeepEqual(report.Autonomy.AllowedEmployeeIDs, []string{"PLAN-001", "QA-001"}) ||
 		!report.Proof.FullyVerified || report.Proof.VerifiedTasks != 1 || len(report.Proof.Tasks) != 1 ||
 		report.Proof.Tasks[0].MakerID != "PLAN-001" || report.Proof.Tasks[0].Review.ReviewerID != "QA-001" ||
@@ -1157,38 +1163,23 @@ func TestMobileInteractionHTTPFlowRequestChangesRevisionReReviewToCompletion(t *
 	planResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-plans", planRequest)
 	var startPlan workspaceprocess.InteractionStartPlan
 	decodeHTTPResult(t, planResponse, &startPlan)
+	// ADR-0049: interaction.start itself performs Plan generation; the
+	// single "この内容で進める" approval below covers both Plan apply and the
+	// Reviewed Workflow execution (including this Request Changes ->
+	// Revision -> re-Review branch) that follows.
 	performSuccessfulCommand(t, handler, map[string]any{
 		"version": ContractVersion, "command_id": "CMD-MOBILE-REV-START-001", "operation": "interaction.start", "approved": true,
 		"payload": map[string]any{"session_id": sessionID, "request": planRequest["request"], "request_digest": startPlan.Session.RequestDigest, "model": planRequest["model"], "current_time": base},
-	})
-	performSuccessfulCommand(t, handler, map[string]any{
-		"version": ContractVersion, "command_id": "CMD-MOBILE-REV-PLAN-001", "operation": "interaction.plan.generate", "approved": true,
-		"payload": map[string]any{"session_id": sessionID, "expected_version": 1, "current_time": base.Add(time.Minute)},
 	})
 	next := inspectInteractionNextHTTP(t, handler, sessionID)
 	if next.Kind != interaction.NextApprovePlanApply || next.PlanDigest == "" {
 		t.Fatalf("plan apply next = %#v", next)
 	}
-	performSuccessfulCommand(t, handler, map[string]any{
-		"version": ContractVersion, "command_id": "CMD-MOBILE-REV-APPLY-001", "operation": "interaction.plan.apply", "approved": true,
+	performAcceptedCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-REV-APPROVE-AND-EXECUTE-001", "operation": "interaction.plan.approve_and_execute", "approved": true,
 		"payload": map[string]any{"session_id": sessionID, "expected_version": next.ExpectedVersion, "project_id": "PROJECT-MOBILE-REV-001", "plan_digest": next.PlanDigest, "current_time": base.Add(2 * time.Minute)},
 	})
-	next = inspectInteractionNextHTTP(t, handler, sessionID)
-	workflowTime := base.Add(3 * time.Minute)
-	workflowPlanResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-workflow-plans", map[string]any{
-		"version": InteractionContractVersion, "session_id": sessionID, "expected_version": next.ExpectedVersion,
-		"reviewer_id": "QA-001", "current_time": workflowTime, "max_tasks": 10,
-	})
-	var workflowPlan workspaceprocess.InteractionWorkflowPlan
-	decodeHTTPResult(t, workflowPlanResponse, &workflowPlan)
-	performAcceptedCommand(t, handler, map[string]any{
-		"version": ContractVersion, "command_id": "CMD-MOBILE-REV-WORKFLOW-001", "operation": "interaction.workflow.execute", "approved": true,
-		"payload": map[string]any{
-			"session_id": sessionID, "expected_version": next.ExpectedVersion, "reviewer_id": "QA-001", "current_time": workflowTime,
-			"max_tasks": 10, "autonomy_contract": workflowPlan.Autonomy, "workflow_plan_digest": workflowPlan.WorkflowPlanDigest, "approval_reference": "mobile-e2e-revision-approval",
-		},
-	})
-	waitForCommandStateHTTP(t, handler, "CMD-MOBILE-REV-WORKFLOW-001", commandledger.StateSucceeded)
+	waitForCommandStateHTTP(t, handler, "CMD-MOBILE-REV-APPROVE-AND-EXECUTE-001", commandledger.StateSucceeded)
 
 	next = inspectInteractionNextHTTP(t, handler, sessionID)
 	if next.Kind != interaction.NextOptionalAction || providerCalls != len(providerOutputs) {
@@ -1291,40 +1282,27 @@ func TestMobileInteractionHTTPFlowStructuredReviewResponseViolationClassifiesOut
 		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-START-001", "operation": "interaction.start", "approved": true,
 		"payload": map[string]any{"session_id": sessionID, "request": planRequest["request"], "request_digest": startPlan.Session.RequestDigest, "model": planRequest["model"], "current_time": base},
 	})
-	performSuccessfulCommand(t, handler, map[string]any{
-		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-PLAN-001", "operation": "interaction.plan.generate", "approved": true,
-		"payload": map[string]any{"session_id": sessionID, "expected_version": 1, "current_time": base.Add(time.Minute)},
-	})
 	next := inspectInteractionNextHTTP(t, handler, sessionID)
 	if next.Kind != interaction.NextApprovePlanApply || next.PlanDigest == "" {
 		t.Fatalf("plan apply next = %#v", next)
 	}
-	performSuccessfulCommand(t, handler, map[string]any{
-		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-APPLY-001", "operation": "interaction.plan.apply", "approved": true,
+	// ADR-0049: the single approve_and_execute Command now owns both Plan
+	// apply and the Reviewed Workflow execution that fails below -- the
+	// Review child's failure.Envelope must still reach this SAME outer
+	// Command's own Ledger record unchanged, proving the propagation rule
+	// holds across the new chain the same way it already did for the
+	// standalone interaction.workflow.execute Command.
+	performAcceptedCommand(t, handler, map[string]any{
+		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-APPROVE-AND-EXECUTE-001", "operation": "interaction.plan.approve_and_execute", "approved": true,
 		"payload": map[string]any{"session_id": sessionID, "expected_version": next.ExpectedVersion, "project_id": "PROJECT-MOBILE-MALFORMED-001", "plan_digest": next.PlanDigest, "current_time": base.Add(2 * time.Minute)},
 	})
-	next = inspectInteractionNextHTTP(t, handler, sessionID)
-	workflowTime := base.Add(3 * time.Minute)
-	workflowPlanResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-workflow-plans", map[string]any{
-		"version": InteractionContractVersion, "session_id": sessionID, "expected_version": next.ExpectedVersion,
-		"reviewer_id": "QA-001", "current_time": workflowTime, "max_tasks": 10,
-	})
-	var workflowPlan workspaceprocess.InteractionWorkflowPlan
-	decodeHTTPResult(t, workflowPlanResponse, &workflowPlan)
-	performAcceptedCommand(t, handler, map[string]any{
-		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-WORKFLOW-001", "operation": "interaction.workflow.execute", "approved": true,
-		"payload": map[string]any{
-			"session_id": sessionID, "expected_version": next.ExpectedVersion, "reviewer_id": "QA-001", "current_time": workflowTime,
-			"max_tasks": 10, "autonomy_contract": workflowPlan.Autonomy, "workflow_plan_digest": workflowPlan.WorkflowPlanDigest, "approval_reference": "mobile-e2e-malformed-review",
-		},
-	})
-	waitForCommandStateHTTP(t, handler, "CMD-MOBILE-MALFORMED-WORKFLOW-001", commandledger.StatePartialFailure)
+	waitForCommandStateHTTP(t, handler, "CMD-MOBILE-MALFORMED-APPROVE-AND-EXECUTE-001", commandledger.StatePartialFailure)
 
 	if providerCalls != len(providerOutputs) {
 		t.Fatalf("providerCalls = %d, want %d", providerCalls, len(providerOutputs))
 	}
 	statusResponse := httptest.NewRecorder()
-	handler.ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/v1/commands/CMD-MOBILE-MALFORMED-WORKFLOW-001?scope=workspace", nil))
+	handler.ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/v1/commands/CMD-MOBILE-MALFORMED-APPROVE-AND-EXECUTE-001?scope=workspace", nil))
 	var record commandledger.Record
 	decodeHTTPResult(t, statusResponse, &record)
 	if record.State != commandledger.StatePartialFailure || record.Failure == nil ||
@@ -1418,20 +1396,18 @@ func TestMobileInteractionHTTPFlowSameRequestTwiceCreatesDistinctProjectsSafely(
 			"version": ContractVersion, "command_id": prefix + "-START", "operation": "interaction.start", "approved": true,
 			"payload": map[string]any{"session_id": sessionID, "request": planRequest["request"], "request_digest": startPlan.Session.RequestDigest, "model": planRequest["model"], "current_time": at},
 		})
-		performSuccessfulCommand(t, handler, map[string]any{
-			"version": ContractVersion, "command_id": prefix + "-PLAN", "operation": "interaction.plan.generate", "approved": true,
-			"payload": map[string]any{"session_id": sessionID, "expected_version": 1, "current_time": at.Add(time.Minute)},
-		})
 		next := inspectInteractionNextHTTP(t, handler, sessionID)
 		if next.Kind != interaction.NextApprovePlanApply || next.PlanDigest == "" {
 			t.Fatalf("run %d: plan apply next = %#v", run, next)
 		}
-		performSuccessfulCommand(t, handler, map[string]any{
-			"version": ContractVersion, "command_id": prefix + "-APPLY", "operation": "interaction.plan.apply", "approved": true,
+		// ADR-0049: the single approve_and_execute Command now owns both
+		// Plan apply and the Reviewed Workflow execution that follows.
+		performAcceptedCommand(t, handler, map[string]any{
+			"version": ContractVersion, "command_id": prefix + "-APPROVE-AND-EXECUTE", "operation": "interaction.plan.approve_and_execute", "approved": true,
 			"payload": map[string]any{"session_id": sessionID, "expected_version": next.ExpectedVersion, "project_id": fmt.Sprintf("PROJECT-DUPLICATE-%03d", run), "plan_digest": next.PlanDigest, "current_time": at.Add(2 * time.Minute)},
 		})
-		next = inspectInteractionNextHTTP(t, handler, sessionID)
-		appliedProjectID, appliedProjectName, ok := func() (string, string, bool) {
+		waitForCommandStateHTTP(t, handler, prefix+"-APPROVE-AND-EXECUTE", commandledger.StateSucceeded)
+		_, appliedProjectName, ok := func() (string, string, bool) {
 			resp := httptest.NewRecorder()
 			handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/v1/interactions/"+sessionID, nil))
 			var record interaction.Record
@@ -1441,22 +1417,6 @@ func TestMobileInteractionHTTPFlowSameRequestTwiceCreatesDistinctProjectsSafely(
 		if !ok {
 			t.Fatalf("run %d: Session has no applied Project", run)
 		}
-		workflowTime := at.Add(3 * time.Minute)
-		workflowPlanResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-workflow-plans", map[string]any{
-			"version": InteractionContractVersion, "session_id": sessionID, "expected_version": next.ExpectedVersion,
-			"reviewer_id": "QA-001", "current_time": workflowTime, "max_tasks": 10,
-		})
-		var workflowPlan workspaceprocess.InteractionWorkflowPlan
-		decodeHTTPResult(t, workflowPlanResponse, &workflowPlan)
-		performAcceptedCommand(t, handler, map[string]any{
-			"version": ContractVersion, "command_id": prefix + "-WORKFLOW", "operation": "interaction.workflow.execute", "approved": true,
-			"payload": map[string]any{
-				"session_id": sessionID, "expected_version": next.ExpectedVersion, "reviewer_id": "QA-001", "current_time": workflowTime,
-				"max_tasks": 10, "autonomy_contract": workflowPlan.Autonomy, "workflow_plan_digest": workflowPlan.WorkflowPlanDigest, "approval_reference": prefix + "-approval",
-			},
-		})
-		waitForCommandStateHTTP(t, handler, prefix+"-WORKFLOW", commandledger.StateSucceeded)
-		_ = appliedProjectID
 		return appliedProjectName
 	}
 
@@ -1548,23 +1508,24 @@ func TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand
 	planResponse := performJSONRequest(t, handler, http.MethodPost, "/v1/interaction-plans", planRequest)
 	var startPlan workspaceprocess.InteractionStartPlan
 	decodeHTTPResult(t, planResponse, &startPlan)
-	performSuccessfulCommand(t, handler, map[string]any{
+	// ADR-0049: interaction.start itself chains into Plan generation, so this
+	// malformed-Intent failure now happens during interaction.start's own
+	// Command execution -- forwarded from the interaction.plan.generate
+	// child's own classification, unchanged, onto interaction.start's
+	// outer Ledger record as a partial failure (the Session itself was
+	// still durably created).
+	startResponse := performCommand(t, handler, map[string]any{
 		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-PLAN-START", "operation": "interaction.start", "approved": true,
 		"payload": map[string]any{"session_id": sessionID, "request": planRequest["request"], "request_digest": startPlan.Session.RequestDigest, "model": planRequest["model"], "current_time": base},
 	})
-
-	generateResponse := performCommand(t, handler, map[string]any{
-		"version": ContractVersion, "command_id": "CMD-MOBILE-MALFORMED-PLAN-GENERATE", "operation": "interaction.plan.generate", "approved": true,
-		"payload": map[string]any{"session_id": sessionID, "expected_version": 1, "current_time": base.Add(time.Minute)},
-	})
 	var envelope Response
-	if err := json.Unmarshal(generateResponse.Body.Bytes(), &envelope); err != nil {
+	if err := json.Unmarshal(startResponse.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
 	if envelope.OK || envelope.Error == nil || envelope.Error.Code != "INTERACTION_PLAN_FAILED" || envelope.Error.Stage != "ceo_plan_intent" ||
-		envelope.Error.Details == nil || envelope.Error.Details.Parse == nil ||
+		!envelope.Error.RecoveryRequired || envelope.Error.Details == nil || envelope.Error.Details.Parse == nil ||
 		envelope.Error.Details.Parse.Field != "steps.required_role" {
-		t.Fatalf("plan generation response = %#v", envelope)
+		t.Fatalf("interaction.start response = %#v", envelope)
 	}
 	var syncResult workspaceprocess.InteractionPlanResult
 	if err := json.Unmarshal(envelope.Result, &syncResult); err != nil ||
@@ -1577,10 +1538,10 @@ func TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand
 	}
 
 	statusResponse := httptest.NewRecorder()
-	handler.ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/v1/commands/CMD-MOBILE-MALFORMED-PLAN-GENERATE?scope=workspace", nil))
+	handler.ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/v1/commands/CMD-MOBILE-MALFORMED-PLAN-START?scope=workspace", nil))
 	var record commandledger.Record
 	decodeHTTPResult(t, statusResponse, &record)
-	if record.State != commandledger.StateFailed || record.Failure == nil ||
+	if record.State != commandledger.StatePartialFailure || record.Failure == nil ||
 		record.Failure.Code != "INTERACTION_PLAN_FAILED" || record.Failure.Stage != "ceo_plan_intent" ||
 		record.Failure.Details == nil || record.Failure.Details.Parse == nil ||
 		record.Failure.Details.Parse.Field != "steps.required_role" {
@@ -1591,6 +1552,12 @@ func TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand
 		storedResult.ParseFailureReason != string(ceoplan.IntentParseMissingRequiredField) ||
 		storedResult.ParseFailureField != "steps.required_role" || storedResult.SessionCommitted {
 		t.Fatalf("stored parse failure reason = %#v, %v", storedResult, err)
+	}
+	// The Session itself is durably readable even though Plan generation
+	// failed -- proving this is a genuine partial failure, not a rollback.
+	stored, inspectErr := workspaceprocess.InspectInteraction(context.Background(), root, sessionID)
+	if inspectErr != nil || stored.State != interaction.StatePlanGenerationApprovalRequired || len(stored.Turns) != 0 {
+		t.Fatalf("session state after chained generation failure = %#v, %v", stored, inspectErr)
 	}
 }
 

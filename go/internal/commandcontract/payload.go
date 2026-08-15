@@ -160,7 +160,7 @@ func ValidatePayload(operation string, content json.RawMessage) error {
 			Answers         []interaction.Answer `json:"answers"`
 			CurrentTime     time.Time            `json:"current_time"`
 		}{}
-	case "interaction.plan.apply":
+	case "interaction.plan.apply", "interaction.plan.approve_and_execute":
 		target = &struct {
 			SessionID       string    `json:"session_id"`
 			ExpectedVersion uint64    `json:"expected_version"`
@@ -227,6 +227,7 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 		"interaction.plan.generate":            {"session_id"},
 		"interaction.answer":                   {"session_id"},
 		"interaction.plan.apply":               {"session_id", "project_id", "plan_digest"},
+		"interaction.plan.approve_and_execute": {"session_id", "project_id", "plan_digest"},
 		"interaction.workflow.execute":         {"session_id", "reviewer_id", "workflow_plan_digest"},
 		"interaction.action.wordpress.publish": {"session_id", "task_id", "target_id", "action_plan_digest"},
 	}
@@ -289,13 +290,13 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 			return ErrInvalidPayload
 		}
 	}
-	if operation == "interaction.plan.generate" || operation == "interaction.answer" || operation == "interaction.plan.apply" || operation == "interaction.workflow.execute" || operation == "interaction.action.wordpress.publish" {
+	if operation == "interaction.plan.generate" || operation == "interaction.answer" || operation == "interaction.plan.apply" || operation == "interaction.plan.approve_and_execute" || operation == "interaction.workflow.execute" || operation == "interaction.action.wordpress.publish" {
 		var expected uint64
 		if raw, ok := fields["expected_version"]; !ok || json.Unmarshal(raw, &expected) != nil || expected == 0 {
 			return ErrInvalidPayload
 		}
 	}
-	if operation == "interaction.plan.apply" {
+	if operation == "interaction.plan.apply" || operation == "interaction.plan.approve_and_execute" {
 		var digest string
 		if json.Unmarshal(fields["plan_digest"], &digest) != nil || interaction.ValidateDigest(digest) != nil {
 			return ErrInvalidPayload

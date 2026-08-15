@@ -167,9 +167,16 @@ func finishDurableCommandRecord(
 		return errors.Join(commandErr, &CommandLedgerCommitError{Err: err})
 	}
 	if commandErr != nil && ledgerFailure != nil {
-		return errors.Join(commandErr, &RecordedCommandError{
+		// This Command's own freshly recorded classification goes first:
+		// errors.As walks a Join tree depth-first and returns the first
+		// matching type it finds, so if commandErr already carries an older
+		// *RecordedCommandError from a child Command's own finish call
+		// (ADR-0049's chain continuations), putting it first would let
+		// errors.As silently return that stale inner classification instead
+		// of this Command's own.
+		return errors.Join(&RecordedCommandError{
 			Code: ledgerFailure.Code, Stage: ledgerFailure.Stage, Partial: partial, Envelope: ledgerFailure.Details,
-		})
+		}, commandErr)
 	}
 	return commandErr
 }

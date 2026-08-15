@@ -299,7 +299,11 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
 			return 1
 		}
-		result, err := workspaceprocess.ExecuteInteractionStart(ctx, input, true)
+		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
+		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
+		result, err := workspaceprocess.ExecuteInteractionStart(ctx, input, workspaceprocess.ClaudeProcessConfig{
+			APIKey: apiKey, BaseURL: baseURL,
+		}, dependencies.newHTTPClient(options.timeout), true)
 		if err != nil {
 			response := durableCommandFailureResponse(err, "INTERACTION_START_FAILED", "interaction_commit")
 			response.Error.SessionCommitted = result.SessionCommitted
@@ -341,10 +345,14 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			writeCommandResponse(output, failureResponse("INVALID_ARGUMENT", ""))
 			return 2
 		}
+		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
+		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
 		result, err := workspaceprocess.ExecuteInteractionAnswer(ctx, workspaceprocess.InteractionAnswerInput{
 			VaultRoot: options.vaultRoot, SessionID: options.sessionID, ExpectedVersion: options.expectedVersion,
 			Answers: answers, CurrentTime: currentTime, CommandID: options.commandID,
-		}, true)
+		}, workspaceprocess.ClaudeProcessConfig{
+			APIKey: apiKey, BaseURL: baseURL,
+		}, dependencies.newHTTPClient(options.timeout), true)
 		if err != nil {
 			response := durableCommandFailureResponse(err, "INTERACTION_ANSWER_FAILED", "interaction_answer_commit")
 			response.Error.SessionCommitted = result.SessionCommitted
@@ -365,6 +373,31 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		}, true)
 		if err != nil {
 			response := durableCommandFailureResponse(err, "INTERACTION_APPLY_FAILED", "interaction_plan_apply")
+			response.Error.SessionCommitted = result.SessionCommitted
+			response.Error.ProjectCommitted = result.Apply.Project != nil && result.Apply.Project.Committed
+			response.Error.TaskCommitCount = len(result.Apply.Tasks)
+			response.Error.DependenciesCommit = result.Apply.Dependencies != nil && result.Apply.Dependencies.Committed
+			writeCommandResponse(output, response)
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
+		return 0
+	}
+	if operation == "interaction-plan-approve-and-execute" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
+		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
+		result, err := workspaceprocess.ExecuteInteractionPlanApproveAndExecute(ctx, workspaceprocess.InteractionApplyInput{
+			VaultRoot: options.vaultRoot, SessionID: options.sessionID, ExpectedVersion: options.expectedVersion,
+			ProjectID: options.projectID, PlanDigest: options.planDigest, CurrentTime: currentTime, CommandID: options.commandID,
+		}, workspaceprocess.ClaudeProcessConfig{
+			APIKey: apiKey, BaseURL: baseURL,
+		}, dependencies.newHTTPClient(options.timeout), true)
+		if err != nil {
+			response := durableCommandFailureResponse(err, "INTERACTION_APPROVE_AND_EXECUTE_FAILED", "interaction_plan_apply")
 			response.Error.SessionCommitted = result.SessionCommitted
 			response.Error.ProjectCommitted = result.Apply.Project != nil && result.Apply.Project.Committed
 			response.Error.TaskCommitCount = len(result.Apply.Tasks)
@@ -1028,7 +1061,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	if operation == "interaction-start" {
 		required = append(required, options.requestDigest, options.commandID)
 	}
-	if operation == "interaction-inspect" || operation == "interaction-next" || operation == "interaction-plan-generate" || operation == "interaction-answer" || operation == "interaction-plan-apply" {
+	if operation == "interaction-inspect" || operation == "interaction-next" || operation == "interaction-plan-generate" || operation == "interaction-answer" || operation == "interaction-plan-apply" || operation == "interaction-plan-approve-and-execute" {
 		required = append(required, options.sessionID)
 	}
 	if operation == "interaction-workflow-plan" || operation == "interaction-workflow-execute" {
@@ -1049,7 +1082,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	if operation == "interaction-action-wordpress-publish" {
 		required = append(required, options.actionPlanDigest)
 	}
-	if operation == "interaction-plan-generate" || operation == "interaction-answer" || operation == "interaction-plan-apply" {
+	if operation == "interaction-plan-generate" || operation == "interaction-answer" || operation == "interaction-plan-apply" || operation == "interaction-plan-approve-and-execute" {
 		if options.expectedVersion == 0 {
 			return commandOptions{}, errors.New("expected Interaction Version is required")
 		}
@@ -1058,7 +1091,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	if operation == "interaction-answer" && len(options.answerJSONs) == 0 {
 		return commandOptions{}, errors.New("Interaction answers are required")
 	}
-	if operation == "interaction-plan-apply" {
+	if operation == "interaction-plan-apply" || operation == "interaction-plan-approve-and-execute" {
 		required = append(required, options.projectID, options.planDigest)
 	}
 	if operation == "ceo-plan-apply-plan" || operation == "ceo-plan-apply" {
@@ -1116,7 +1149,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish":
+	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish":
 		return true
 	default:
 		return false

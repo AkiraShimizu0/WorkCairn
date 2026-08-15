@@ -94,6 +94,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0046: CEO Intent Contractを最小化する](adr/ADR-0046-ceo-intent-contract-minimization.md)
 - [ADR-0047: Read-only Conversation Projection — Typed Facts, No Fabricated Speaker](adr/ADR-0047-read-only-conversation-projection.md)
 - [ADR-0048: Organization-scoped Required Role Enum — Short-term Bridge toward Capability-based Assignment](adr/ADR-0048-organization-scoped-required-role-enum.md)
+- [ADR-0049: Go-owned Durable Chained Approval for Plan Apply and Reviewed Workflow Execution](adr/ADR-0049-go-owned-durable-chained-approval.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント

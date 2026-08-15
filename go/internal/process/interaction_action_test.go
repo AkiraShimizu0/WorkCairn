@@ -131,7 +131,7 @@ func writeCompletedActionSession(t *testing.T, root, sessionID string, at time.T
 	}
 	withPlan, _ := record.RecordPlan(plan, at.Add(time.Minute))
 	_, planDigest, _ := withPlan.CurrentPlan()
-	ready, _ := withPlan.RecordApplied("PROJECT-001", "記事案件", planDigest, at.Add(2*time.Minute))
+	ready, _ := withPlan.RecordApplied("PROJECT-001", "記事案件", planDigest, "", at.Add(2*time.Minute))
 	workflowDigest, _ := commandledger.RequestDigest(map[string]any{"status": "completed", "task_id": "TASK-001"})
 	completed, err := ready.RecordWorkflow(interaction.WorkflowEvidence{
 		SchemaVersion: 1, CommandID: "CMD-SEED-WORKFLOW", WorkflowCommandID: "CMD-SEED-WORKFLOW-CHILD",

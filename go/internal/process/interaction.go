@@ -39,11 +39,6 @@ type InteractionStartPlan struct {
 	ApprovalRequired bool               `json:"approval_required"`
 }
 
-type InteractionMutationResult struct {
-	Session          interaction.Record `json:"session"`
-	SessionCommitted bool               `json:"session_committed"`
-}
-
 type InteractionPlanResult struct {
 	Session          interaction.Record    `json:"session"`
 	SessionCommitted bool                  `json:"session_committed"`
@@ -98,13 +93,33 @@ func PlanInteractionStart(ctx context.Context, input InteractionStartInput) (Int
 	}, nil
 }
 
-func ExecuteInteractionStart(ctx context.Context, input InteractionStartInput, approved bool) (InteractionMutationResult, error) {
+// ExecuteInteractionStart creates the Interaction Session and then, within
+// the same durable Command execution, chains directly into Plan generation
+// (ADR-0049). The CEO's "send request" action is itself the approval for
+// semantic interpretation, clarification detection, and Plan generation --
+// Go expresses that as one Go-owned chain rather than parking the session at
+// plan_generation_approval_required for a second human approval. Plan
+// generation still runs as its own deterministic child Command with its own
+// Ledger record (commandledger.DeriveChildCommandID), so its own outcome
+// stays independently inspectable exactly like every other durable step.
+func ExecuteInteractionStart(
+	ctx context.Context,
+	input InteractionStartInput,
+	provider ClaudeProcessConfig,
+	httpClient claude.HTTPDoer,
+	approved bool,
+) (InteractionPlanResult, error) {
 	if !approved {
-		return InteractionMutationResult{}, ErrInteractionApprovalRequired
+		return InteractionPlanResult{}, ErrInteractionApprovalRequired
+	}
+	var err error
+	provider, err = resolveClaudeProcessConfig(provider)
+	if err != nil {
+		return InteractionPlanResult{}, err
 	}
 	candidate, err := interaction.New(input.SessionID, input.Request, input.Model, input.CurrentTime)
 	if err != nil || candidate.RequestDigest != strings.TrimSpace(input.RequestDigest) || commandledger.ValidateCommandID(input.CommandID) != nil {
-		return InteractionMutationResult{}, ErrInteractionPrecondition
+		return InteractionPlanResult{}, ErrInteractionPrecondition
 	}
 	claim, err := claimWorkspaceCommand(ctx, input.VaultRoot, input.CommandID, "interaction.start", candidate.SessionID, struct {
 		SessionID     string    `json:"session_id"`
@@ -113,9 +128,9 @@ func ExecuteInteractionStart(ctx context.Context, input InteractionStartInput, a
 		CurrentTime   time.Time `json:"current_time"`
 	}{candidate.SessionID, candidate.RequestDigest, candidate.Model, candidate.CreatedAt})
 	if err != nil {
-		return InteractionMutationResult{}, err
+		return InteractionPlanResult{}, err
 	}
-	if replayed, ok, replayErr := replayDurableCommand[InteractionMutationResult](claim); ok {
+	if replayed, ok, replayErr := replayDurableCommand[InteractionPlanResult](claim); ok {
 		return replayed, replayErr
 	}
 	plan, planErr := PlanInteractionStart(ctx, input)
@@ -123,17 +138,32 @@ func ExecuteInteractionStart(ctx context.Context, input InteractionStartInput, a
 		if planErr == nil {
 			planErr = fmt.Errorf("Interaction start preflight failed: %s", strings.Join(plan.BlockingReasons, ","))
 		}
-		result := InteractionMutationResult{Session: candidate}
+		result := InteractionPlanResult{Session: candidate}
 		return result, finishDurableCommand(ctx, claim, result, planErr, "INTERACTION_START_FAILED", "interaction_preflight", false)
 	}
 	interactionService, err := newInteractionService(input.VaultRoot)
 	if err != nil {
-		result := InteractionMutationResult{Session: candidate}
+		result := InteractionPlanResult{Session: candidate}
 		return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_START_FAILED", "interaction_composition", false)
 	}
 	commit, commitErr := interactionService.Create(ctx, candidate)
-	result := InteractionMutationResult{Session: commit.Record, SessionCommitted: commit.Committed}
-	return result, finishDurableCommand(ctx, claim, result, commitErr, "INTERACTION_START_FAILED", "interaction_commit", commit.Committed)
+	if commitErr != nil {
+		result := InteractionPlanResult{Session: commit.Record, SessionCommitted: commit.Committed}
+		return result, finishDurableCommand(ctx, claim, result, commitErr, "INTERACTION_START_FAILED", "interaction_commit", commit.Committed)
+	}
+	childCommandID, err := commandledger.DeriveChildCommandID(input.CommandID, "interaction.plan.generate:"+candidate.SessionID)
+	if err != nil {
+		result := InteractionPlanResult{Session: commit.Record, SessionCommitted: commit.Committed}
+		return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_START_FAILED", "command_identity", true)
+	}
+	generationResult, generationErr := executeInteractionPlanGenerationCommand(
+		ctx, input.VaultRoot, candidate.SessionID, commit.Record.Version, input.CurrentTime, childCommandID, provider, httpClient,
+	)
+	if generationErr != nil {
+		envelope := chainedPlanGenerationEnvelope(generationErr, "INTERACTION_START_FAILED", "interaction_plan_generation")
+		return generationResult, finishDurableCommandWithEnvelope(ctx, claim, generationResult, generationErr, envelope, true)
+	}
+	return generationResult, finishDurableCommand(ctx, claim, generationResult, nil, "", "", false)
 }
 
 type InteractionPlanGenerationInput struct {
@@ -164,25 +194,47 @@ func ExecuteInteractionPlanGeneration(
 		commandledger.ValidateCommandID(input.CommandID) != nil {
 		return InteractionPlanResult{}, ErrInteractionPrecondition
 	}
-	claim, err := claimWorkspaceCommand(ctx, input.VaultRoot, input.CommandID, "interaction.plan.generate", input.SessionID, struct {
+	return executeInteractionPlanGenerationCommand(
+		ctx, input.VaultRoot, input.SessionID, input.ExpectedVersion, input.CurrentTime, input.CommandID, provider, httpClient,
+	)
+}
+
+// executeInteractionPlanGenerationCommand is the durable core shared by the
+// standalone interaction.plan.generate command and the Go-owned
+// interaction.start/interaction.answer chain continuations (ADR-0049). The
+// caller supplies commandID explicitly: the CEO-approved ID for the
+// standalone command, or a deterministic DeriveChildCommandID value when
+// this runs as a chained child -- either way it claims and finishes its own
+// real Command Ledger record, never a bare function call hidden inside the
+// caller's own claim.
+func executeInteractionPlanGenerationCommand(
+	ctx context.Context,
+	vaultRoot, sessionID string,
+	expectedVersion uint64,
+	currentTime time.Time,
+	commandID string,
+	provider ClaudeProcessConfig,
+	httpClient claude.HTTPDoer,
+) (InteractionPlanResult, error) {
+	claim, err := claimWorkspaceCommand(ctx, vaultRoot, commandID, "interaction.plan.generate", sessionID, struct {
 		SessionID       string    `json:"session_id"`
 		ExpectedVersion uint64    `json:"expected_version"`
 		CurrentTime     time.Time `json:"current_time"`
 		ProviderModel   string    `json:"provider_model,omitempty"`
 		MaxTokens       int       `json:"max_tokens,omitempty"`
-	}{input.SessionID, input.ExpectedVersion, input.CurrentTime, strings.TrimSpace(provider.ProviderModel), provider.MaxTokens})
+	}{sessionID, expectedVersion, currentTime, strings.TrimSpace(provider.ProviderModel), provider.MaxTokens})
 	if err != nil {
 		return InteractionPlanResult{}, err
 	}
 	if replayed, ok, replayErr := replayDurableCommand[InteractionPlanResult](claim); ok {
 		return replayed, replayErr
 	}
-	interactionService, err := newInteractionService(input.VaultRoot)
+	interactionService, err := newInteractionService(vaultRoot)
 	if err != nil {
 		return finishInteractionPlan(ctx, claim, InteractionPlanResult{}, err, "interaction_composition", false)
 	}
-	record, err := interactionService.Get(ctx, input.SessionID)
-	if err != nil || record.Version != input.ExpectedVersion || record.State != interaction.StatePlanGenerationApprovalRequired {
+	record, err := interactionService.Get(ctx, sessionID)
+	if err != nil || record.Version != expectedVersion || record.State != interaction.StatePlanGenerationApprovalRequired {
 		if err == nil {
 			err = ErrInteractionPrecondition
 		}
@@ -193,7 +245,7 @@ func ExecuteInteractionPlanGeneration(
 		return finishInteractionPlan(ctx, claim, InteractionPlanResult{Session: record}, err, "interaction_preflight", false)
 	}
 	generation, generationErr := GenerateCEOPlan(ctx, CEOPlanGenerationInput{
-		VaultRoot: input.VaultRoot, Request: request, Model: record.Model, Approved: true,
+		VaultRoot: vaultRoot, Request: request, Model: record.Model, Approved: true,
 		SessionID: record.SessionID, RequestDigest: record.RequestDigest,
 	}, provider, httpClient)
 	if generationErr != nil {
@@ -204,13 +256,39 @@ func ExecuteInteractionPlanGeneration(
 		}
 		return finishInteractionPlan(ctx, claim, result, generationErr, interactionPlanGenerationStage(generationErr), false)
 	}
-	next, err := record.RecordPlan(generation.Plan, input.CurrentTime)
+	next, err := record.RecordPlan(generation.Plan, currentTime)
 	if err != nil {
 		return finishInteractionPlan(ctx, claim, InteractionPlanResult{Session: record, Generation: generation}, err, "interaction_plan_validation", true)
 	}
 	commit, commitErr := interactionService.Update(ctx, next, record.Version)
 	result := InteractionPlanResult{Session: commit.Record, SessionCommitted: commit.Committed, Generation: generation}
 	return finishInteractionPlan(ctx, claim, result, commitErr, interactionPlanCommitStage(commitErr), commitErr != nil)
+}
+
+// chainedPlanGenerationEnvelope extracts the already-classified
+// failure.Envelope a chained interaction.plan.generate child recorded on
+// its own Ledger entry, forwarding it verbatim (never reclassifying) onto
+// the outer interaction.start/interaction.answer Command that triggered it.
+// The fallback only fires when the child never reached its own finish call
+// at all (e.g. the child claim itself failed before any Ledger write) --
+// residual, but still fail-closed rather than silently dropping the outer
+// Command's own failure classification.
+func chainedPlanGenerationEnvelope(err error, outerCode, outerStage string) *failure.Envelope {
+	var recorded *RecordedCommandError
+	if errors.As(err, &recorded) && recorded.Envelope != nil {
+		return recorded.Envelope
+	}
+	envelope := failure.New(outerCode, outerStage)
+	envelope.Partial, envelope.RecoveryRequired = true, true
+	if errors.As(err, &recorded) {
+		if strings.TrimSpace(recorded.Code) != "" {
+			envelope.Code = recorded.Code
+		}
+		if strings.TrimSpace(recorded.Stage) != "" {
+			envelope.Stage = recorded.Stage
+		}
+	}
+	return &envelope
 }
 
 func interactionPlanCommitStage(err error) string {
@@ -332,14 +410,33 @@ type InteractionAnswerInput struct {
 	CommandID       string
 }
 
-func ExecuteInteractionAnswer(ctx context.Context, input InteractionAnswerInput, approved bool) (InteractionMutationResult, error) {
+// ExecuteInteractionAnswer records the CEO's clarification answers and then,
+// within the same durable Command execution, chains directly back into Plan
+// generation with those answers folded into the canonical PlanningRequest
+// (ADR-0049). Answering is itself the approval to re-attempt generation --
+// Go does not park the session at plan_generation_approval_required for a
+// second human approval. Plan generation still runs as its own deterministic
+// child Command with its own Ledger record, exactly like the
+// interaction.start chain.
+func ExecuteInteractionAnswer(
+	ctx context.Context,
+	input InteractionAnswerInput,
+	provider ClaudeProcessConfig,
+	httpClient claude.HTTPDoer,
+	approved bool,
+) (InteractionPlanResult, error) {
 	if !approved {
-		return InteractionMutationResult{}, ErrInteractionApprovalRequired
+		return InteractionPlanResult{}, ErrInteractionApprovalRequired
+	}
+	var err error
+	provider, err = resolveClaudeProcessConfig(provider)
+	if err != nil {
+		return InteractionPlanResult{}, err
 	}
 	input.SessionID = strings.TrimSpace(input.SessionID)
 	if interaction.ValidateSessionID(input.SessionID) != nil || input.ExpectedVersion == 0 || input.CurrentTime.IsZero() || len(input.Answers) == 0 ||
 		commandledger.ValidateCommandID(input.CommandID) != nil {
-		return InteractionMutationResult{}, ErrInteractionPrecondition
+		return InteractionPlanResult{}, ErrInteractionPrecondition
 	}
 	claim, err := claimWorkspaceCommand(ctx, input.VaultRoot, input.CommandID, "interaction.answer", input.SessionID, struct {
 		SessionID       string               `json:"session_id"`
@@ -348,33 +445,47 @@ func ExecuteInteractionAnswer(ctx context.Context, input InteractionAnswerInput,
 		CurrentTime     time.Time            `json:"current_time"`
 	}{input.SessionID, input.ExpectedVersion, input.Answers, input.CurrentTime})
 	if err != nil {
-		return InteractionMutationResult{}, err
+		return InteractionPlanResult{}, err
 	}
-	if replayed, ok, replayErr := replayDurableCommand[InteractionMutationResult](claim); ok {
+	if replayed, ok, replayErr := replayDurableCommand[InteractionPlanResult](claim); ok {
 		return replayed, replayErr
 	}
 	interactionService, err := newInteractionService(input.VaultRoot)
 	if err != nil {
-		return finishInteractionMutation(ctx, claim, InteractionMutationResult{}, err, "interaction_composition", false)
+		result := InteractionPlanResult{}
+		return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_FAILED", "interaction_composition", false)
 	}
 	record, err := interactionService.Get(ctx, input.SessionID)
 	if err != nil || record.Version != input.ExpectedVersion {
 		if err == nil {
 			err = ErrInteractionPrecondition
 		}
-		return finishInteractionMutation(ctx, claim, InteractionMutationResult{Session: record}, err, "interaction_preflight", false)
+		result := InteractionPlanResult{Session: record}
+		return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_FAILED", "interaction_preflight", false)
 	}
 	next, err := record.RecordAnswers(input.Answers, input.CurrentTime)
 	if err != nil {
-		return finishInteractionMutation(ctx, claim, InteractionMutationResult{Session: record}, err, "interaction_answer_validation", false)
+		result := InteractionPlanResult{Session: record}
+		return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_FAILED", "interaction_answer_validation", false)
 	}
 	commit, commitErr := interactionService.Update(ctx, next, record.Version)
-	result := InteractionMutationResult{Session: commit.Record, SessionCommitted: commit.Committed}
-	return finishInteractionMutation(ctx, claim, result, commitErr, "interaction_answer_commit", commit.Committed)
-}
-
-func finishInteractionMutation(ctx context.Context, claim durableCommandClaim, result InteractionMutationResult, err error, stage string, partial bool) (InteractionMutationResult, error) {
-	return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_FAILED", stage, partial)
+	if commitErr != nil {
+		result := InteractionPlanResult{Session: commit.Record, SessionCommitted: commit.Committed}
+		return result, finishDurableCommand(ctx, claim, result, commitErr, "INTERACTION_FAILED", "interaction_answer_commit", commit.Committed)
+	}
+	childCommandID, err := commandledger.DeriveChildCommandID(input.CommandID, "interaction.plan.generate:"+input.SessionID)
+	if err != nil {
+		result := InteractionPlanResult{Session: commit.Record, SessionCommitted: commit.Committed}
+		return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_FAILED", "command_identity", true)
+	}
+	generationResult, generationErr := executeInteractionPlanGenerationCommand(
+		ctx, input.VaultRoot, input.SessionID, commit.Record.Version, input.CurrentTime, childCommandID, provider, httpClient,
+	)
+	if generationErr != nil {
+		envelope := chainedPlanGenerationEnvelope(generationErr, "INTERACTION_FAILED", "interaction_plan_generation")
+		return generationResult, finishDurableCommandWithEnvelope(ctx, claim, generationResult, generationErr, envelope, true)
+	}
+	return generationResult, finishDurableCommand(ctx, claim, generationResult, nil, "", "", false)
 }
 
 type InteractionApplyInput struct {
@@ -435,7 +546,12 @@ func ExecuteInteractionPlanApply(ctx context.Context, input InteractionApplyInpu
 		code, stage := ceoApplyCommandFailure(applyErr)
 		return result, finishDurableCommand(ctx, claim, result, applyErr, code, stage, ceoApplyPartiallyCommitted(applyResult))
 	}
-	next, err := record.RecordApplied(input.ProjectID, applyResult.ProjectName, digest, input.CurrentTime)
+	// Standalone interaction.plan.apply always records an empty
+	// pre-authorization: Workflow execution for this Turn still needs its
+	// own separate interaction.workflow.execute approval, exactly as before
+	// ADR-0049. Only the interaction.plan.approve_and_execute chain records
+	// a non-empty Command ID here.
+	next, err := record.RecordApplied(input.ProjectID, applyResult.ProjectName, digest, "", input.CurrentTime)
 	if err != nil {
 		return finishInteractionApply(ctx, claim, result, err, "interaction_state_validation", true)
 	}

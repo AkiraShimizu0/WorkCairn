@@ -27,6 +27,15 @@ var (
 
 const interactionWorkflowReviewerRole = "QA Engineer"
 
+// defaultWorkflowMaxTasks is the Task execution budget the Go-owned
+// interaction.plan.approve_and_execute chain (ADR-0049) uses automatically,
+// since that flow never asks the CEO to pick a number. It matches the value
+// the existing Web UI has always hardcoded for every CEO Workflow approval
+// (web/app.js prepareWorkflowApproval), so this is not a new policy -- it
+// formalizes the one that already governed every Public Beta Workflow
+// execution before this checkpoint.
+const defaultWorkflowMaxTasks = 20
+
 type InteractionWorkflowPlanStage string
 
 const (
@@ -214,56 +223,105 @@ func ExecuteInteractionWorkflow(
 			"INTERACTION_WORKFLOW_FAILED", "interaction_workflow_plan", false,
 		)
 	}
-	workflowCommandID, err := commandledger.DeriveChildCommandID(input.CommandID, "workflow.reviewed.execute:"+input.SessionID)
+	result, envelope, chainErr := runInteractionWorkflowChain(
+		ctx, input.VaultRoot, currentPlan, input.ExpectedVersion, input.MaxTasks, input.CurrentTime,
+		input.CommandID, input.ApprovalReference, "INTERACTION_WORKFLOW_FAILED", provider, httpClient, input.EventObservers,
+	)
+	if chainErr != nil {
+		return result, finishDurableCommandWithEnvelope(ctx, claim, result, chainErr, envelope, true)
+	}
+	return result, finishDurableCommand(ctx, claim, result, nil, "", "", false)
+}
+
+// runInteractionWorkflowChain executes the Reviewed Workflow as a
+// deterministic child of parentCommandID and folds the result back into the
+// Interaction Session. It is the shared core behind both the standalone
+// interaction.workflow.execute command (which claims its own outer Command
+// first, verifies the CEO-approved WorkflowPlanDigest/ReviewerID, then calls
+// this) and the interaction.plan.approve_and_execute chain continuation
+// (ADR-0049), which calls this immediately after Plan apply succeeds using
+// its own outer Command ID -- no second CEO approval, but still with a real
+// child Command Ledger record via ExecuteReviewedWorkflow's own claim.
+//
+// It never claims its own outer Ledger record; the caller's own claim owns
+// that. On any failure it returns a ready-to-use failure.Envelope: a
+// genuine Reviewed Workflow execution failure always forwards the child's
+// own classification untouched (never reclassified), while a structural
+// failure (evidence construction, session commit, ...) falls back to
+// genericFailureCode under the caller's own outer stage naming.
+func runInteractionWorkflowChain(
+	ctx context.Context,
+	vaultRoot string,
+	currentPlan InteractionWorkflowPlan,
+	expectedVersion uint64,
+	maxTasks int,
+	currentTime time.Time,
+	parentCommandID, approvalReference, genericFailureCode string,
+	provider ClaudeProcessConfig,
+	httpClient claude.HTTPDoer,
+	eventObservers []event.Observer,
+) (InteractionWorkflowResult, *failure.Envelope, error) {
+	workflowCommandID, err := commandledger.DeriveChildCommandID(parentCommandID, "workflow.reviewed.execute:"+currentPlan.SessionID)
 	if err != nil {
-		return InteractionWorkflowResult{}, finishDurableCommand(ctx, claim, InteractionWorkflowResult{}, err, "INTERACTION_WORKFLOW_FAILED", "command_identity", false)
+		envelope := failure.New(genericFailureCode, "command_identity")
+		envelope.Partial, envelope.RecoveryRequired = true, true
+		return InteractionWorkflowResult{}, &envelope, err
 	}
 	workflowResult, workflowErr := ExecuteReviewedWorkflow(ctx, ExecuteReviewedWorkflowInput{
 		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
 			WorkflowPlanInput: WorkflowPlanInput{
-				VaultRoot: input.VaultRoot, ProjectID: currentPlan.ProjectID, ProjectName: currentPlan.ProjectName, CurrentTime: input.CurrentTime,
+				VaultRoot: vaultRoot, ProjectID: currentPlan.ProjectID, ProjectName: currentPlan.ProjectName, CurrentTime: currentTime,
 			},
 			ReviewerID: currentPlan.ReviewerID,
 		},
-		Approved: true, ApprovalReference: input.ApprovalReference, CommandID: workflowCommandID,
-		MaxTasks: input.MaxTasks, EventObservers: input.EventObservers,
+		Approved: true, ApprovalReference: approvalReference, CommandID: workflowCommandID,
+		MaxTasks: maxTasks, EventObservers: eventObservers,
 	}, provider, httpClient)
 	result := InteractionWorkflowResult{WorkflowCommandID: workflowCommandID, Workflow: workflowResult}
-	evidence, evidenceErr := interactionWorkflowEvidence(input, currentPlan, workflowCommandID, workflowResult, workflowErr)
+	evidence, evidenceErr := interactionWorkflowEvidence(parentCommandID, maxTasks, currentPlan, workflowCommandID, workflowResult, workflowErr)
 	if evidenceErr != nil {
 		combined := errors.Join(workflowErr, evidenceErr)
-		return result, finishDurableCommand(ctx, claim, result, combined, "INTERACTION_WORKFLOW_FAILED", "interaction_workflow_evidence", true)
+		envelope := failure.New(genericFailureCode, "interaction_workflow_evidence")
+		envelope.Partial, envelope.RecoveryRequired = true, true
+		return result, &envelope, combined
 	}
-	interactionService, err := newInteractionService(input.VaultRoot)
+	interactionService, err := newInteractionService(vaultRoot)
 	if err != nil {
 		combined := errors.Join(workflowErr, err)
-		return result, finishDurableCommand(ctx, claim, result, combined, "INTERACTION_WORKFLOW_FAILED", "interaction_composition", true)
+		envelope := failure.New(genericFailureCode, "interaction_composition")
+		envelope.Partial, envelope.RecoveryRequired = true, true
+		return result, &envelope, combined
 	}
-	record, err := interactionService.Get(ctx, input.SessionID)
+	record, err := interactionService.Get(ctx, currentPlan.SessionID)
 	result.Session = record
-	if err != nil || record.Version != input.ExpectedVersion || record.State != interaction.StateReadyToExecute {
+	if err != nil || record.Version != expectedVersion || record.State != interaction.StateReadyToExecute {
 		if err == nil {
 			err = ErrInteractionWorkflowPrecondition
 		}
 		combined := errors.Join(workflowErr, err)
-		return result, finishDurableCommand(ctx, claim, result, combined, "INTERACTION_WORKFLOW_FAILED", "interaction_workflow_session_preflight", true)
+		envelope := failure.New(genericFailureCode, "interaction_workflow_session_preflight")
+		envelope.Partial, envelope.RecoveryRequired = true, true
+		return result, &envelope, combined
 	}
-	next, err := record.RecordWorkflow(evidence, input.CurrentTime)
+	next, err := record.RecordWorkflow(evidence, currentTime)
 	if err != nil {
 		combined := errors.Join(workflowErr, err)
-		return result, finishDurableCommand(ctx, claim, result, combined, "INTERACTION_WORKFLOW_FAILED", "interaction_workflow_state", true)
+		envelope := failure.New(genericFailureCode, "interaction_workflow_state")
+		envelope.Partial, envelope.RecoveryRequired = true, true
+		return result, &envelope, combined
 	}
 	commit, commitErr := interactionService.Update(ctx, next, record.Version)
 	result.Session, result.SessionCommitted = commit.Record, commit.Committed
 	if commitErr != nil {
 		combined := errors.Join(workflowErr, commitErr)
-		return result, finishDurableCommand(ctx, claim, result, combined, "INTERACTION_WORKFLOW_FAILED", "interaction_workflow_session_commit", true)
+		envelope := failure.New(genericFailureCode, "interaction_workflow_session_commit")
+		envelope.Partial, envelope.RecoveryRequired = true, true
+		return result, &envelope, combined
 	}
 	if workflowErr != nil {
-		envelope := workflowFailure(workflowResult, workflowErr)
-		return result, finishDurableCommandWithEnvelope(ctx, claim, result, workflowErr, envelope, true)
+		return result, workflowFailure(workflowResult, workflowErr), workflowErr
 	}
-	return result, finishDurableCommand(ctx, claim, result, nil, "", "", false)
+	return result, nil, nil
 }
 
 func interactionWorkflowPlanDigest(plan InteractionWorkflowPlan) (string, error) {
@@ -286,7 +344,8 @@ func interactionWorkflowPlanDigest(plan InteractionWorkflowPlan) (string, error)
 }
 
 func interactionWorkflowEvidence(
-	input ExecuteInteractionWorkflowInput,
+	commandID string,
+	maxTasks int,
 	plan InteractionWorkflowPlan,
 	workflowCommandID string,
 	result service.ReviewedWorkflowRunResult,
@@ -307,9 +366,9 @@ func interactionWorkflowEvidence(
 		}
 	}
 	evidence := interaction.WorkflowEvidence{
-		SchemaVersion: 1, CommandID: input.CommandID, WorkflowCommandID: workflowCommandID,
+		SchemaVersion: 1, CommandID: commandID, WorkflowCommandID: workflowCommandID,
 		ProjectID: plan.ProjectID, ProjectName: plan.ProjectName, ReviewerID: plan.ReviewerID,
-		MaxTasks: input.MaxTasks, Autonomy: pointerToAutonomy(plan.Autonomy), Status: status, ResultDigest: digest,
+		MaxTasks: maxTasks, Autonomy: pointerToAutonomy(plan.Autonomy), Status: status, ResultDigest: digest,
 		Tasks: make([]interaction.WorkflowTaskEvidence, 0, len(result.Tasks)),
 	}
 	for _, current := range result.Tasks {

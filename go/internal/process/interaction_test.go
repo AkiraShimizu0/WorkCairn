@@ -24,26 +24,19 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 )
 
+// TestInteractionClarificationPlanApprovalAndApplyE2E covers the ADR-0049
+// request-submit chain: ExecuteInteractionStart itself performs semantic
+// interpretation and clarification detection (no separate
+// plan_generation_approval_required approval is ever observed), and
+// ExecuteInteractionAnswer itself re-attempts Plan generation with the
+// answers folded in (again, no separate approval). Plan apply stays a
+// separate, explicit approval in this test -- the merged
+// interaction.plan.approve_and_execute chain is covered by dedicated tests
+// in interaction_approve_and_execute_test.go.
 func TestInteractionClarificationPlanApprovalAndApplyE2E(t *testing.T) {
 	fixture := loadCEOPlanFixture(t)
 	root := ceoPlanVault(t, fixture.Employees)
 	at := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	startInput := InteractionStartInput{
-		VaultRoot: root, SessionID: "SESSION-001", Request: fixture.Request,
-		Model: "Claude Sonnet 5", CurrentTime: at, CommandID: "CMD-INTERACTION-START-001",
-	}
-	startPlan, err := PlanInteractionStart(context.Background(), startInput)
-	if err != nil || !startPlan.Executable || !startPlan.ApprovalRequired {
-		t.Fatalf("start plan = %#v, %v", startPlan, err)
-	}
-	startInput.RequestDigest = startPlan.Session.RequestDigest
-	if _, err := ExecuteInteractionStart(context.Background(), startInput, false); !errors.Is(err, ErrInteractionApprovalRequired) {
-		t.Fatalf("unapproved start error = %v", err)
-	}
-	started, err := ExecuteInteractionStart(context.Background(), startInput, true)
-	if err != nil || !started.SessionCommitted || started.Session.State != interaction.StatePlanGenerationApprovalRequired {
-		t.Fatalf("start = %#v, %v", started, err)
-	}
 
 	// Intent-shaped mock Provider output: both steps resolve uniquely
 	// against fixture.Employees (Product Manager -> PLAN-001, Backend
@@ -78,33 +71,44 @@ func TestInteractionClarificationPlanApprovalAndApplyE2E(t *testing.T) {
 		})
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
 	})
-	generationInput := InteractionPlanGenerationInput{
-		VaultRoot: root, SessionID: startInput.SessionID, ExpectedVersion: 1,
-		CurrentTime: at.Add(time.Minute), CommandID: "CMD-INTERACTION-PLAN-001",
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}
+
+	startInput := InteractionStartInput{
+		VaultRoot: root, SessionID: "SESSION-001", Request: fixture.Request,
+		Model: "Claude Sonnet 5", CurrentTime: at, CommandID: "CMD-INTERACTION-START-001",
 	}
-	if _, err := ExecuteInteractionPlanGeneration(context.Background(), generationInput, ClaudeProcessConfig{}, client, false); !errors.Is(err, ErrInteractionApprovalRequired) || providerCalls != 0 {
-		t.Fatalf("unapproved generation error=%v calls=%d", err, providerCalls)
+	startPlan, err := PlanInteractionStart(context.Background(), startInput)
+	if err != nil || !startPlan.Executable || !startPlan.ApprovalRequired {
+		t.Fatalf("start plan = %#v, %v", startPlan, err)
 	}
-	generated, err := ExecuteInteractionPlanGeneration(context.Background(), generationInput, ClaudeProcessConfig{
-		APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid",
-	}, client, true)
-	if err != nil || generated.Session.State != interaction.StateClarificationRequired || providerCalls != 1 {
-		t.Fatalf("generation = %#v, %v calls=%d", generated, err, providerCalls)
+	startInput.RequestDigest = startPlan.Session.RequestDigest
+	if _, err := ExecuteInteractionStart(context.Background(), startInput, provider, client, false); !errors.Is(err, ErrInteractionApprovalRequired) || providerCalls != 0 {
+		t.Fatalf("unapproved start error = %v calls=%d", err, providerCalls)
 	}
-	replayedGeneration, err := ExecuteInteractionPlanGeneration(context.Background(), generationInput, ClaudeProcessConfig{
-		APIKey: "different-secret", ProviderModel: "claude-test", BaseURL: "https://other-provider.invalid",
-	}, client, true)
-	if err != nil || !reflect.DeepEqual(generated, replayedGeneration) || providerCalls != 1 {
-		t.Fatalf("generation replay = %#v, %v calls=%d", replayedGeneration, err, providerCalls)
+	// ADR-0049: sending the request is itself the approval for semantic
+	// interpretation, clarification detection, and Plan generation -- one
+	// outer Command produces a session already at clarification_required,
+	// with Plan generation's own deterministic child Command Ledger record
+	// alongside it. No plan_generation_approval_required step is observed.
+	started, err := ExecuteInteractionStart(context.Background(), startInput, provider, client, true)
+	if err != nil || !started.SessionCommitted || started.Session.State != interaction.StateClarificationRequired || providerCalls != 1 {
+		t.Fatalf("start = %#v, %v calls=%d", started, err, providerCalls)
 	}
-	if _, err := ExecuteInteractionPlanGeneration(context.Background(), generationInput, ClaudeProcessConfig{
-		APIKey: "fake", ProviderModel: "different-provider-model", BaseURL: "https://provider.invalid",
-	}, client, true); !errors.Is(err, commandledger.ErrRequestConflict) || providerCalls != 1 {
-		t.Fatalf("generation provider conflict error=%v calls=%d", err, providerCalls)
+	generateChildID, err := commandledger.DeriveChildCommandID(startInput.CommandID, "interaction.plan.generate:"+startInput.SessionID)
+	if err != nil {
+		t.Fatal(err)
 	}
+	ledger, err := vault.NewWorkspaceCommandLedgerStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generateChildRecord, getErr := ledger.Get(context.Background(), generateChildID); getErr != nil || generateChildRecord.State != commandledger.StateSucceeded {
+		t.Fatalf("interaction.plan.generate child Ledger record = %#v, %v", generateChildRecord, getErr)
+	}
+
 	_, blockedApplyErr := ExecuteInteractionPlanApply(context.Background(), InteractionApplyInput{
-		VaultRoot: root, SessionID: startInput.SessionID, ExpectedVersion: generated.Session.Version,
-		ProjectID: "PROJECT-001", PlanDigest: generated.Session.Turns[0].PlanDigest,
+		VaultRoot: root, SessionID: startInput.SessionID, ExpectedVersion: started.Session.Version,
+		ProjectID: "PROJECT-001", PlanDigest: started.Session.Turns[0].PlanDigest,
 		CurrentTime: at.Add(2 * time.Minute), CommandID: "CMD-INTERACTION-APPLY-BLOCKED",
 	}, true)
 	if !errors.Is(blockedApplyErr, ErrInteractionPrecondition) {
@@ -114,32 +118,39 @@ func TestInteractionClarificationPlanApprovalAndApplyE2E(t *testing.T) {
 		t.Fatalf("unanswered apply changed Project: %v", err)
 	}
 
+	// ADR-0049: answering the CEO's clarification question is itself the
+	// approval to re-attempt Plan generation with the answer folded in --
+	// one outer Command produces a session already at
+	// plan_approval_required. No second plan_generation_approval_required
+	// step is observed.
 	answered, err := ExecuteInteractionAnswer(context.Background(), InteractionAnswerInput{
-		VaultRoot: root, SessionID: startInput.SessionID, ExpectedVersion: generated.Session.Version,
+		VaultRoot: root, SessionID: startInput.SessionID, ExpectedVersion: started.Session.Version,
 		Answers:     []interaction.Answer{{Question: fixture.ExpectedPlan.CEOQuestions[0], Answer: "はい、Webブラウザのみです"}},
 		CurrentTime: at.Add(3 * time.Minute), CommandID: "CMD-INTERACTION-ANSWER-001",
-	}, true)
-	if err != nil || answered.Session.State != interaction.StatePlanGenerationApprovalRequired {
-		t.Fatalf("answer = %#v, %v", answered, err)
+	}, provider, client, true)
+	if err != nil || answered.Session.State != interaction.StatePlanApprovalRequired || providerCalls != 2 {
+		t.Fatalf("answer = %#v, %v calls=%d", answered, err, providerCalls)
 	}
-	generationInput.ExpectedVersion = answered.Session.Version
-	generationInput.CurrentTime = at.Add(4 * time.Minute)
-	generationInput.CommandID = "CMD-INTERACTION-PLAN-002"
-	regenerated, err := ExecuteInteractionPlanGeneration(context.Background(), generationInput, ClaudeProcessConfig{
-		APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid",
-	}, client, true)
-	if err != nil || regenerated.Session.State != interaction.StatePlanApprovalRequired || providerCalls != 2 {
-		t.Fatalf("regeneration = %#v, %v calls=%d", regenerated, err, providerCalls)
-	}
-	_, planDigest, _ := regenerated.Session.CurrentPlan()
+
+	_, planDigest, _ := answered.Session.CurrentPlan()
 	applyInput := InteractionApplyInput{
-		VaultRoot: root, SessionID: startInput.SessionID, ExpectedVersion: regenerated.Session.Version,
+		VaultRoot: root, SessionID: startInput.SessionID, ExpectedVersion: answered.Session.Version,
 		ProjectID: "PROJECT-001", PlanDigest: planDigest, CurrentTime: at.Add(5 * time.Minute),
 		CommandID: "CMD-INTERACTION-APPLY-001",
 	}
 	applied, err := ExecuteInteractionPlanApply(context.Background(), applyInput, true)
 	if err != nil || applied.Session.State != interaction.StateReadyToExecute || !applied.SessionCommitted || applied.Apply.Status != "applied" {
 		t.Fatalf("apply = %#v, %v", applied, err)
+	}
+	// Standalone interaction.plan.apply never pre-authorizes Workflow
+	// execution -- Next() must still ask for a fresh interaction.workflow.execute
+	// approval for a session that reached ReadyToExecute this way.
+	if _, ok := applied.Session.PendingWorkflowPreAuthorization(); ok {
+		t.Fatalf("standalone plan.apply must not pre-authorize Workflow execution: %#v", applied.Session)
+	}
+	next, err := applied.Session.Next()
+	if err != nil || next.Kind != interaction.NextApproveWorkflow || next.Operation != "interaction.workflow.execute" || !next.ApprovalRequired {
+		t.Fatalf("standalone apply Next() = %#v, %v", next, err)
 	}
 	beforeReplay := organizationProcessSnapshot(t, root)
 	replayed, err := ExecuteInteractionPlanApply(context.Background(), applyInput, true)
@@ -233,7 +244,10 @@ func TestInteractionStartRejectsStaleApprovalDigestBeforeClaim(t *testing.T) {
 		VaultRoot: root, SessionID: "SESSION-001", Request: "依頼", RequestDigest: "sha256:stale",
 		Model: "Claude Sonnet 5", CurrentTime: at, CommandID: "CMD-INTERACTION-START-001",
 	}
-	if _, err := ExecuteInteractionStart(context.Background(), input, true); !errors.Is(err, ErrInteractionPrecondition) {
+	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("Provider must not be called")
+	})
+	if _, err := ExecuteInteractionStart(context.Background(), input, ClaudeProcessConfig{}, client, true); !errors.Is(err, ErrInteractionPrecondition) {
 		t.Fatalf("stale digest error = %v", err)
 	}
 	store, _ := newInteractionService(root)
@@ -246,7 +260,13 @@ func TestInteractionStartRejectsStaleApprovalDigestBeforeClaim(t *testing.T) {
 	}
 }
 
-func TestInteractionPlanRecordsProviderConfigurationRequiredWithoutProviderCall(t *testing.T) {
+// TestInteractionStartChainRecordsProviderConfigurationRequiredAsPartialFailure
+// covers ADR-0049's failure-forwarding rule for the request-submit chain: a
+// child interaction.plan.generate failure that happens with the Provider
+// never called (missing credential) is forwarded onto the outer
+// interaction.start Command as a partial failure (the Session itself was
+// still durably created), never masked as a clean rejection.
+func TestInteractionStartChainRecordsProviderConfigurationRequiredAsPartialFailure(t *testing.T) {
 	fixture := loadCEOPlanFixture(t)
 	root := ceoPlanVault(t, fixture.Employees)
 	at := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
@@ -259,29 +279,31 @@ func TestInteractionPlanRecordsProviderConfigurationRequiredWithoutProviderCall(
 		t.Fatal(err)
 	}
 	start.RequestDigest = plan.Session.RequestDigest
-	if _, err := ExecuteInteractionStart(context.Background(), start, true); err != nil {
-		t.Fatal(err)
-	}
 	providerCalled := false
 	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
 		providerCalled = true
 		return nil, errors.New("Provider must not be called")
 	})
-	_, err = ExecuteInteractionPlanGeneration(context.Background(), InteractionPlanGenerationInput{
-		VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: 1,
-		CurrentTime: at.Add(time.Minute), CommandID: "CMD-PROVIDER-SETUP-PLAN",
-	}, ClaudeProcessConfig{}, client, true)
+	_, err = ExecuteInteractionStart(context.Background(), start, ClaudeProcessConfig{}, client, true)
 	var recorded *RecordedCommandError
-	if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_CONFIGURATION_REQUIRED" || recorded.Stage != "provider_configuration" || recorded.Partial || providerCalled {
-		t.Fatalf("provider setup failure = %#v, %v, called=%t", recorded, err, providerCalled)
+	if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_CONFIGURATION_REQUIRED" || !recorded.Partial || providerCalled {
+		t.Fatalf("provider setup failure = %v, called=%t", err, providerCalled)
 	}
 	ledger, ledgerErr := vault.NewWorkspaceCommandLedgerStore(root)
 	if ledgerErr != nil {
 		t.Fatal(ledgerErr)
 	}
-	record, ledgerErr := ledger.Get(context.Background(), "CMD-PROVIDER-SETUP-PLAN")
-	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil || record.Failure.Code != "PROVIDER_CONFIGURATION_REQUIRED" {
+	record, ledgerErr := ledger.Get(context.Background(), "CMD-PROVIDER-SETUP-START")
+	if ledgerErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil || record.Failure.Code != "PROVIDER_CONFIGURATION_REQUIRED" {
 		t.Fatalf("provider setup Ledger = %#v, %v", record, ledgerErr)
+	}
+	// The Session itself was still durably created (the "partial" half of
+	// this partial failure) even though the chained Plan generation never
+	// committed a Turn -- confirmed independently via the Vault, not just
+	// the in-process result.
+	stored, inspectErr := InspectInteraction(context.Background(), root, start.SessionID)
+	if inspectErr != nil || stored.State != interaction.StatePlanGenerationApprovalRequired || len(stored.Turns) != 0 {
+		t.Fatalf("session state after failed chained generation = %#v, %v", stored, inspectErr)
 	}
 }
 
@@ -298,9 +320,6 @@ func TestInteractionPlanRecordsRedactedTypedProviderFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	start.RequestDigest = plan.Session.RequestDigest
-	if _, err := ExecuteInteractionStart(context.Background(), start, true); err != nil {
-		t.Fatal(err)
-	}
 	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
 		header := make(http.Header)
 		header.Set("request-id", "req_auth_safe")
@@ -309,18 +328,15 @@ func TestInteractionPlanRecordsRedactedTypedProviderFailure(t *testing.T) {
 			Body: io.NopCloser(strings.NewReader(`{"type":"error","error":{"type":"authentication_error","message":"must not be stored"}}`)),
 		}, nil
 	})
-	result, err := ExecuteInteractionPlanGeneration(context.Background(), InteractionPlanGenerationInput{
-		VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: 1,
-		CurrentTime: at.Add(time.Minute), CommandID: "CMD-PROVIDER-AUTH-PLAN",
-	}, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
+	result, err := ExecuteInteractionStart(context.Background(), start, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
 	var recorded *RecordedCommandError
-	if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_AUTHENTICATION_REQUIRED" || result.ProviderFailure == nil ||
+	if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_AUTHENTICATION_REQUIRED" || !recorded.Partial || result.ProviderFailure == nil ||
 		result.ProviderFailure.Category != "authentication_required" || result.ProviderFailure.HTTPStatus != http.StatusUnauthorized ||
 		result.ProviderFailure.ProviderType != "authentication_error" || result.ProviderFailure.RequestID != "req_auth_safe" {
 		t.Fatalf("typed Provider failure = %#v, %#v, %v", recorded, result.ProviderFailure, err)
 	}
 	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
-	record, ledgerErr := ledger.Get(context.Background(), "CMD-PROVIDER-AUTH-PLAN")
+	record, ledgerErr := ledger.Get(context.Background(), "CMD-PROVIDER-AUTH-START")
 	var stored InteractionPlanResult
 	decodeErr := json.Unmarshal(record.Result, &stored)
 	if ledgerErr != nil || record.Failure == nil || record.Failure.Code != "PROVIDER_AUTHENTICATION_REQUIRED" ||
@@ -362,25 +378,18 @@ func TestInteractionPlanPersistsSanitizedTransportSubcategoryInFailureEnvelope(t
 				t.Fatal(err)
 			}
 			start.RequestDigest = plan.Session.RequestDigest
-			if _, err := ExecuteInteractionStart(context.Background(), start, true); err != nil {
-				t.Fatal(err)
-			}
 			client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) { return nil, test.transport })
-			planCommandID := "CMD-PROVIDER-" + identifier + "-PLAN"
-			result, err := ExecuteInteractionPlanGeneration(context.Background(), InteractionPlanGenerationInput{
-				VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: 1,
-				CurrentTime: at.Add(time.Minute), CommandID: planCommandID,
-			}, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
+			result, err := ExecuteInteractionStart(context.Background(), start, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
 			var recorded *RecordedCommandError
 			if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_UNAVAILABLE" || recorded.Stage != "ceo_plan_runner" ||
 				recorded.Envelope == nil || recorded.Envelope.Substage != string(test.want) ||
 				recorded.Envelope.Provider == nil || recorded.Envelope.Provider.Subcategory != string(test.want) ||
 				result.ProviderFailure == nil || result.ProviderFailure.TransportCategory != string(test.want) ||
-				result.ProviderFailure.HTTPStatus != 0 || result.ProviderFailure.RequestID != "" || result.SessionCommitted {
+				result.ProviderFailure.HTTPStatus != 0 || result.ProviderFailure.RequestID != "" {
 				t.Fatalf("transport failure = %#v, result=%#v, err=%v", recorded, result, err)
 			}
 			ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
-			record, ledgerErr := ledger.Get(context.Background(), planCommandID)
+			record, ledgerErr := ledger.Get(context.Background(), start.CommandID)
 			encoded, _ := json.Marshal(record)
 			if ledgerErr != nil || record.Failure == nil || record.Failure.Details == nil ||
 				record.Failure.Details.Substage != string(test.want) ||
@@ -404,9 +413,6 @@ func TestInteractionPlanRecordsSafeParserSubstageWithoutCommittingPlan(t *testin
 		t.Fatal(err)
 	}
 	start.RequestDigest = plan.Session.RequestDigest
-	if _, err := ExecuteInteractionStart(context.Background(), start, true); err != nil {
-		t.Fatal(err)
-	}
 	providerCalls := 0
 	intentMissingRole := `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"D"}],"ceo_questions":[]}`
 	providerResponse, _ := json.Marshal(map[string]any{
@@ -417,23 +423,25 @@ func TestInteractionPlanRecordsSafeParserSubstageWithoutCommittingPlan(t *testin
 		providerCalls++
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
 	})
-	result, err := ExecuteInteractionPlanGeneration(context.Background(), InteractionPlanGenerationInput{
-		VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: 1,
-		CurrentTime: at.Add(time.Minute), CommandID: "CMD-PLAN-PARSER-GENERATE",
-	}, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
+	result, err := ExecuteInteractionStart(context.Background(), start, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
 	var recorded *RecordedCommandError
 	if !errors.As(err, &recorded) || recorded.Code != "INTERACTION_PLAN_FAILED" || recorded.Stage != "ceo_plan_intent" ||
-		recorded.Partial || recorded.Envelope == nil || recorded.Envelope.Parse == nil ||
+		!recorded.Partial || recorded.Envelope == nil || recorded.Envelope.Parse == nil ||
 		recorded.Envelope.Parse.Field != "steps.required_role" || providerCalls != 1 ||
-		result.ProviderFailure != nil || result.SessionCommitted ||
+		result.ProviderFailure != nil ||
 		result.ParseFailureReason != string(ceoplan.IntentParseMissingRequiredField) ||
 		result.ParseFailureField != "steps.required_role" {
 		t.Fatalf("parser failure = %#v, result=%#v, calls=%d, err=%v", recorded, result, providerCalls, err)
 	}
 	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
-	record, ledgerErr := ledger.Get(context.Background(), "CMD-PLAN-PARSER-GENERATE")
-	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil ||
-		record.Failure.Stage != "ceo_plan_intent" || record.Failure.Details == nil ||
+	// The outer interaction.start Command's own forwarded classification
+	// mirrors the child interaction.plan.generate Command's exact code/stage
+	// (INTERACTION_PLAN_FAILED/ceo_plan_intent), never a generic
+	// INTERACTION_START_FAILED placeholder -- ADR-0049's no-reclassification
+	// rule applies to this chain exactly like the approve_and_execute one.
+	record, ledgerErr := ledger.Get(context.Background(), "CMD-PLAN-PARSER-START")
+	if ledgerErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
+		record.Failure.Code != "INTERACTION_PLAN_FAILED" || record.Failure.Stage != "ceo_plan_intent" || record.Failure.Details == nil ||
 		record.Failure.Details.Parse == nil || record.Failure.Details.Parse.Reason != string(ceoplan.IntentParseMissingRequiredField) ||
 		record.Failure.Details.Parse.Field != "steps.required_role" {
 		t.Fatalf("parser failure Ledger = %#v, %v", record, ledgerErr)
@@ -460,9 +468,6 @@ func TestInteractionProviderSuccessThenSessionCASConflictIsPartialFailure(t *tes
 	}
 	startPlan, _ := PlanInteractionStart(context.Background(), start)
 	start.RequestDigest = startPlan.Session.RequestDigest
-	if _, err := ExecuteInteractionStart(context.Background(), start, true); err != nil {
-		t.Fatal(err)
-	}
 	intentOutput, _ := json.Marshal(map[string]any{
 		"project_name": fixture.ExpectedPlan.ProjectName, "objective": fixture.ExpectedPlan.Objective,
 		"summary": fixture.ExpectedPlan.Summary,
@@ -487,13 +492,10 @@ func TestInteractionProviderSuccessThenSessionCASConflictIsPartialFailure(t *tes
 		}
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
 	})
-	result, err := ExecuteInteractionPlanGeneration(context.Background(), InteractionPlanGenerationInput{
-		VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: 1,
-		CurrentTime: at.Add(time.Minute), CommandID: "CMD-INTERACTION-PARTIAL-PLAN",
-	}, ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}, client, true)
+	result, err := ExecuteInteractionStart(context.Background(), start, ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}, client, true)
 	var recorded *RecordedCommandError
 	if !errors.As(err, &recorded) || !recorded.Partial || recorded.Code != "INTERACTION_PLAN_FAILED" ||
-		recorded.Stage != "interaction_plan_commit_cas" || result.SessionCommitted || result.Generation.Plan.ProjectName != fixture.ExpectedPlan.ProjectName {
+		recorded.Stage != "interaction_plan_commit_cas" || result.Generation.Plan.ProjectName != fixture.ExpectedPlan.ProjectName {
 		t.Fatalf("partial generation = %#v, %v", result, err)
 	}
 	stored, _ := InspectInteraction(context.Background(), root, start.SessionID)
@@ -502,7 +504,7 @@ func TestInteractionProviderSuccessThenSessionCASConflictIsPartialFailure(t *tes
 		t.Fatalf("conflicting Session was overwritten: %#v", stored)
 	}
 	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
-	record, getErr := ledger.Get(context.Background(), "CMD-INTERACTION-PARTIAL-PLAN")
+	record, getErr := ledger.Get(context.Background(), "CMD-INTERACTION-PARTIAL-START")
 	if getErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
 		record.Failure.Code != "INTERACTION_PLAN_FAILED" || record.Failure.Stage != "interaction_plan_commit_cas" {
 		t.Fatalf("Ledger = %#v, %v", record, getErr)

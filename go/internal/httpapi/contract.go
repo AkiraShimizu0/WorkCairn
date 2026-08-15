@@ -54,12 +54,20 @@ var (
 // HTTP product edge is narrowed here. Unknown and operator-only operations are
 // denied before they can reach an Executor.
 var publicBetaCommandOperations = map[string]struct{}{
-	"workspace.setup":              {},
-	"interaction.start":            {},
-	"interaction.plan.generate":    {},
-	"interaction.answer":           {},
-	"interaction.plan.apply":       {},
-	"interaction.workflow.execute": {},
+	"workspace.setup":           {},
+	"interaction.start":         {},
+	"interaction.plan.generate": {},
+	"interaction.answer":        {},
+	// interaction.plan.apply and interaction.workflow.execute are kept
+	// allow-listed for operator/Recovery parity (ADR-0049 section 16) even
+	// though the normal product path now uses only
+	// interaction.plan.approve_and_execute below -- Record.Next() no longer
+	// points a normal session at either standalone operation, but a human
+	// resuming a session stuck mid-chain after a daemon crash still needs
+	// interaction.workflow.execute to be directly callable.
+	"interaction.plan.apply":               {},
+	"interaction.workflow.execute":         {},
+	"interaction.plan.approve_and_execute": {},
 }
 
 func publicBetaCommandAllowed(operation string) bool {

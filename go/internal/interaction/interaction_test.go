@@ -24,7 +24,7 @@ func TestSessionRequiresClarificationBeforePlanApproval(t *testing.T) {
 	if err != nil || withPlan.State != StateClarificationRequired || withPlan.Version != 2 {
 		t.Fatalf("RecordPlan() = %#v, %v", withPlan, err)
 	}
-	if _, err := withPlan.RecordApplied("PROJECT-001", plan.ProjectName, withPlan.Turns[0].PlanDigest, at.Add(2*time.Minute)); !errors.Is(err, ErrInvalidState) {
+	if _, err := withPlan.RecordApplied("PROJECT-001", plan.ProjectName, withPlan.Turns[0].PlanDigest, "", at.Add(2*time.Minute)); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("unanswered plan apply error = %v", err)
 	}
 	answered, err := withPlan.RecordAnswers([]Answer{{Question: plan.CEOQuestions[0], Answer: "はい"}}, at.Add(2*time.Minute))
@@ -41,7 +41,7 @@ func TestSessionRequiresClarificationBeforePlanApproval(t *testing.T) {
 		t.Fatalf("second RecordPlan() = %#v, %v", readyForApproval, err)
 	}
 	_, digest, _ := readyForApproval.CurrentPlan()
-	applied, err := readyForApproval.RecordApplied("PROJECT-001", finalPlan.ProjectName, digest, at.Add(4*time.Minute))
+	applied, err := readyForApproval.RecordApplied("PROJECT-001", finalPlan.ProjectName, digest, "", at.Add(4*time.Minute))
 	if err != nil || applied.State != StateReadyToExecute || applied.Version != 5 || applied.Validate() != nil {
 		t.Fatalf("RecordApplied() = %#v, %v", applied, err)
 	}
@@ -57,14 +57,102 @@ func TestSessionRejectsStaleDigestIncompleteAnswersAndHistoryRewrite(t *testing.
 	cleanPlan := interactionTestPlan([]string{})
 	record, _ = New("SESSION-002", "依頼", "Claude Sonnet 5", at)
 	withPlan, _ = record.RecordPlan(cleanPlan, at.Add(time.Minute))
-	if _, err := withPlan.RecordApplied("PROJECT-001", cleanPlan.ProjectName, "sha256:"+strings.Repeat("0", 64), at.Add(2*time.Minute)); !errors.Is(err, ErrInvalidState) {
+	if _, err := withPlan.RecordApplied("PROJECT-001", cleanPlan.ProjectName, "sha256:"+strings.Repeat("0", 64), "", at.Add(2*time.Minute)); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("stale digest error = %v", err)
 	}
-	next, _ := withPlan.RecordApplied("PROJECT-001", cleanPlan.ProjectName, withPlan.Turns[0].PlanDigest, at.Add(2*time.Minute))
+	next, _ := withPlan.RecordApplied("PROJECT-001", cleanPlan.ProjectName, withPlan.Turns[0].PlanDigest, "", at.Add(2*time.Minute))
 	rewritten := next.Clone()
 	rewritten.Turns[0].At = rewritten.Turns[0].At.Add(time.Second)
 	if err := ValidateTransition(withPlan, rewritten, withPlan.Version); !errors.Is(err, ErrVersionConflict) {
 		t.Fatalf("history rewrite error = %v", err)
+	}
+}
+
+// TestNextPointsPlanApprovalAtApproveAndExecute locks ADR-0049's core
+// mechanism: the CEO's single "この内容で進める" approval is expressed as
+// Record.Next() itself naming the merged operation, not a UI-level
+// substitution -- any well-behaved client that reads next.operation
+// dynamically (rather than hardcoding "interaction.plan.apply") is
+// automatically routed onto the new chain.
+func TestNextPointsPlanApprovalAtApproveAndExecute(t *testing.T) {
+	at := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	record, _ := New("SESSION-001", "依頼", "Claude Sonnet 5", at)
+	plan := interactionTestPlan([]string{})
+	withPlan, err := record.RecordPlan(plan, at.Add(time.Minute))
+	if err != nil || withPlan.State != StatePlanApprovalRequired {
+		t.Fatalf("RecordPlan() = %#v, %v", withPlan, err)
+	}
+	next, err := withPlan.Next()
+	if err != nil || next.Kind != NextApprovePlanApply || next.Operation != "interaction.plan.approve_and_execute" || !next.ApprovalRequired {
+		t.Fatalf("Next() at plan_approval_required = %#v, %v", next, err)
+	}
+}
+
+// TestPendingWorkflowPreAuthorizationDrivesNextWithoutSecondApproval covers
+// tests 4-6 of the CP4 review: a TurnPlanApplied Turn carrying a
+// pre-authorized Workflow Command ID (as ExecuteInteractionPlanApproveAndExecute
+// itself records) leaves Next() pointing at that same Command for
+// inspection, never asking for a fresh interaction.workflow.execute
+// approval -- and the reverse case, the standalone interaction.plan.apply
+// path (empty pre-authorization), keeps the pre-CP4 behavior of a fresh
+// approval requirement unchanged.
+func TestPendingWorkflowPreAuthorizationDrivesNextWithoutSecondApproval(t *testing.T) {
+	at := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	plan := interactionTestPlan([]string{})
+
+	record, _ := New("SESSION-PREAUTH-001", "依頼", "Claude Sonnet 5", at)
+	withPlan, err := record.RecordPlan(plan, at.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, digest, _ := withPlan.CurrentPlan()
+	preAuthorized, err := withPlan.RecordApplied("PROJECT-001", plan.ProjectName, digest, "CMD-OUTER-APPROVE-AND-EXECUTE", at.Add(2*time.Minute))
+	if err != nil || preAuthorized.State != StateReadyToExecute {
+		t.Fatalf("pre-authorized RecordApplied() = %#v, %v", preAuthorized, err)
+	}
+	pendingCommandID, ok := preAuthorized.PendingWorkflowPreAuthorization()
+	if !ok || pendingCommandID != "CMD-OUTER-APPROVE-AND-EXECUTE" {
+		t.Fatalf("PendingWorkflowPreAuthorization() = %q, %t", pendingCommandID, ok)
+	}
+	next, err := preAuthorized.Next()
+	if err != nil || next.Kind != NextInspectWorkflow || next.ApprovalRequired || next.Operation != "" ||
+		len(next.Commands) != 1 || next.Commands[0].Scope != "workspace" || next.Commands[0].CommandID != "CMD-OUTER-APPROVE-AND-EXECUTE" {
+		t.Fatalf("Next() with pending pre-authorization = %#v, %v", next, err)
+	}
+
+	standaloneRecord, _ := New("SESSION-PREAUTH-002", "依頼", "Claude Sonnet 5", at)
+	standaloneWithPlan, err := standaloneRecord.RecordPlan(plan, at.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, standaloneDigest, _ := standaloneWithPlan.CurrentPlan()
+	standaloneApplied, err := standaloneWithPlan.RecordApplied("PROJECT-002", plan.ProjectName, standaloneDigest, "", at.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := standaloneApplied.PendingWorkflowPreAuthorization(); ok {
+		t.Fatalf("standalone plan.apply must not report a pending pre-authorization: %#v", standaloneApplied)
+	}
+	standaloneNext, err := standaloneApplied.Next()
+	if err != nil || standaloneNext.Kind != NextApproveWorkflow || standaloneNext.Operation != "interaction.workflow.execute" || !standaloneNext.ApprovalRequired {
+		t.Fatalf("standalone Next() after plan.apply = %#v, %v", standaloneNext, err)
+	}
+}
+
+// TestRecordAppliedRejectsMalformedPreAuthorizationCommandID confirms the
+// pre-authorization marker is validated exactly like every other durable
+// Command ID reference in this package, not accepted as an opaque string.
+func TestRecordAppliedRejectsMalformedPreAuthorizationCommandID(t *testing.T) {
+	at := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	record, _ := New("SESSION-001", "依頼", "Claude Sonnet 5", at)
+	plan := interactionTestPlan([]string{})
+	withPlan, err := record.RecordPlan(plan, at.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, digest, _ := withPlan.CurrentPlan()
+	if _, err := withPlan.RecordApplied("PROJECT-001", plan.ProjectName, digest, "not a valid command id", at.Add(2*time.Minute)); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("malformed pre-authorization Command ID error = %v", err)
 	}
 }
 
@@ -195,7 +283,7 @@ func interactionReadyRecord(t *testing.T, at time.Time) Record {
 	record, _ := New("SESSION-WORKFLOW", "依頼", "Claude Sonnet 5", at)
 	withPlan, _ := record.RecordPlan(interactionTestPlan([]string{}), at.Add(time.Minute))
 	_, digest, _ := withPlan.CurrentPlan()
-	ready, err := withPlan.RecordApplied("PROJECT-001", "案件", digest, at.Add(2*time.Minute))
+	ready, err := withPlan.RecordApplied("PROJECT-001", "案件", digest, "", at.Add(2*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}

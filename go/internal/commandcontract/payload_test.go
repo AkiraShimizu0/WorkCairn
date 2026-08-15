@@ -57,6 +57,7 @@ func TestInteractionPayloadsAreStrictAndNotSchedulable(t *testing.T) {
 		"interaction.plan.generate":            `{"session_id":"SESSION-001","expected_version":1,"current_time":"2026-08-10T09:30:00+09:00"}`,
 		"interaction.answer":                   `{"session_id":"SESSION-001","expected_version":2,"answers":[{"question":"Q","answer":"A"}],"current_time":"2026-08-10T09:30:00+09:00"}`,
 		"interaction.plan.apply":               `{"session_id":"SESSION-001","expected_version":3,"project_id":"PROJECT-001","plan_digest":"` + digest + `","current_time":"2026-08-10T09:30:00+09:00"}`,
+		"interaction.plan.approve_and_execute": `{"session_id":"SESSION-001","expected_version":3,"project_id":"PROJECT-001","plan_digest":"` + digest + `","current_time":"2026-08-10T09:30:00+09:00"}`,
 		"interaction.workflow.execute":         `{"session_id":"SESSION-001","expected_version":4,"reviewer_id":"QA-001","current_time":"2026-08-10T09:30:00+09:00","max_tasks":10,"autonomy_contract":{"schema_version":"workcairn-autonomy.v1","task_execution":"delegated","review":"required","revision":"delegated","external_publish":"separate_approval","spending":"forbidden","allowed_employee_ids":["PLAN-001","QA-001"],"allowed_models":["Claude Sonnet 5"],"execution_limit":10},"workflow_plan_digest":"` + digest + `"}`,
 		"interaction.action.wordpress.publish": `{"session_id":"SESSION-001","expected_version":5,"task_id":"TASK-001","target_id":"site-main","current_time":"2026-08-10T09:30:00+09:00","action_plan_digest":"` + digest + `"}`,
 	}

@@ -565,7 +565,7 @@ func writeReadyInteractionSessionForPlan(t *testing.T, root, sessionID string, a
 	}
 	withPlan, _ := record.RecordPlan(plan, at.Add(time.Minute))
 	_, digest, _ := withPlan.CurrentPlan()
-	ready, _ := withPlan.RecordApplied("PROJECT-001", "ToDoアプリ", digest, at.Add(2*time.Minute))
+	ready, _ := withPlan.RecordApplied("PROJECT-001", "ToDoアプリ", digest, "", at.Add(2*time.Minute))
 	store, err := vault.NewInteractionStore(root)
 	if err != nil {
 		t.Fatal(err)

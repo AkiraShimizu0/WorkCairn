@@ -433,7 +433,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		return workspaceprocess.ExecuteInteractionStart(ctx, workspaceprocess.InteractionStartInput{
 			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, Request: payload.Request,
 			RequestDigest: payload.RequestDigest, Model: payload.Model, CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
-		}, true)
+		}, executor.providerConfig(), executor.httpClient, true)
 	case "interaction.plan.generate":
 		var payload interactionPlanGenerationPayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -451,7 +451,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		return workspaceprocess.ExecuteInteractionAnswer(ctx, workspaceprocess.InteractionAnswerInput{
 			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
 			Answers: payload.Answers, CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
-		}, true)
+		}, executor.providerConfig(), executor.httpClient, true)
 	case "interaction.plan.apply":
 		var payload interactionPlanApplyPayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -462,6 +462,16 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 			ProjectID: payload.ProjectID, PlanDigest: payload.PlanDigest, CurrentTime: payload.CurrentTime,
 			CommandID: command.CommandID, EventObservers: executor.observers,
 		}, true)
+	case "interaction.plan.approve_and_execute":
+		var payload interactionPlanApplyPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteInteractionPlanApproveAndExecute(ctx, workspaceprocess.InteractionApplyInput{
+			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
+			ProjectID: payload.ProjectID, PlanDigest: payload.PlanDigest, CurrentTime: payload.CurrentTime,
+			CommandID: command.CommandID, EventObservers: executor.observers,
+		}, executor.providerConfig(), executor.httpClient, true)
 	case "interaction.workflow.execute":
 		var payload interactionWorkflowExecutePayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
