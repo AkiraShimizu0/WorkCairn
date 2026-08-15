@@ -194,6 +194,7 @@ func ExecuteInteractionPlanGeneration(
 	}
 	generation, generationErr := GenerateCEOPlan(ctx, CEOPlanGenerationInput{
 		VaultRoot: input.VaultRoot, Request: request, Model: record.Model, Approved: true,
+		SessionID: record.SessionID, RequestDigest: record.RequestDigest,
 	}, provider, httpClient)
 	if generationErr != nil {
 		result := InteractionPlanResult{

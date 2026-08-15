@@ -36,10 +36,6 @@ func TestParseIntentAcceptsValidContentAndRejectsMalformedShapes(t *testing.T) {
 		// with the canonical layer's defensive check but is not reachable
 		// through this exact input shape.
 		{"not an object", `["P"]`, IntentParseJSONDecodeFailed, ""},
-		{"missing project_name", `{"objective":"O","summary":"S","steps":[{"kind":"write","description":"D","required_role":"R"}],"ceo_questions":[]}`, IntentParseMissingRequiredField, "project_name"},
-		{"empty objective", `{"project_name":"P","objective":"","summary":"S","steps":[{"kind":"write","description":"D","required_role":"R"}],"ceo_questions":[]}`, IntentParseMissingRequiredField, "objective"},
-		{"whitespace objective", `{"project_name":"P","objective":"   ","summary":"S","steps":[{"kind":"write","description":"D","required_role":"R"}],"ceo_questions":[]}`, IntentParseMissingRequiredField, "objective"},
-		{"missing summary", `{"project_name":"P","objective":"O","steps":[{"kind":"write","description":"D","required_role":"R"}],"ceo_questions":[]}`, IntentParseMissingRequiredField, "summary"},
 		{"missing steps", `{"project_name":"P","objective":"O","summary":"S","ceo_questions":[]}`, IntentParseMissingRequiredField, "steps"},
 		{"empty steps", `{"project_name":"P","objective":"O","summary":"S","steps":[],"ceo_questions":[]}`, IntentParseMissingRequiredField, "steps"},
 		{"step missing kind", `{"project_name":"P","objective":"O","summary":"S","steps":[{"description":"D","required_role":"R"}],"ceo_questions":[]}`, IntentParseMissingRequiredField, "steps.kind"},
@@ -66,6 +62,101 @@ func TestParseIntentAcceptsValidContentAndRejectsMalformedShapes(t *testing.T) {
 			}
 			if err == nil || !errors.Is(err, ErrInvalidIntent) {
 				t.Fatalf("err does not wrap ErrInvalidIntent: %v", err)
+			}
+		})
+	}
+}
+
+// TestParseIntentAcceptsBlankOptionalMetadataFields locks ADR-0046:
+// project_name/objective/summary are optional at the parse boundary — an
+// absent key or a blank/whitespace-only string is allowed. ParseIntent
+// must succeed and simply carry through whatever trimmed (possibly empty)
+// value each field decoded to — NormalizeIntent, not ParseIntent, is
+// responsible for canonical fallbacks. "Optional" is not "any shape
+// accepted": an explicit JSON null or a non-string value is rejected,
+// see TestParseIntentRejectsExplicitNullOrWrongTypeForOptionalMetadataFields.
+func TestParseIntentAcceptsBlankOptionalMetadataFields(t *testing.T) {
+	validSteps := `"steps":[{"kind":"write","description":"D","required_role":"R"}],"ceo_questions":[]`
+	tests := []struct {
+		name    string
+		content string
+		want    Intent
+	}{
+		{
+			"objective missing", `{"project_name":"P","summary":"S",` + validSteps + `}`,
+			Intent{ProjectName: "P", Objective: "", Summary: "S"},
+		},
+		{
+			"objective empty", `{"project_name":"P","objective":"","summary":"S",` + validSteps + `}`,
+			Intent{ProjectName: "P", Objective: "", Summary: "S"},
+		},
+		{
+			"objective whitespace-only", `{"project_name":"P","objective":"   ","summary":"S",` + validSteps + `}`,
+			Intent{ProjectName: "P", Objective: "", Summary: "S"},
+		},
+		{
+			"summary missing", `{"project_name":"P","objective":"O",` + validSteps + `}`,
+			Intent{ProjectName: "P", Objective: "O", Summary: ""},
+		},
+		{
+			"summary empty", `{"project_name":"P","objective":"O","summary":"",` + validSteps + `}`,
+			Intent{ProjectName: "P", Objective: "O", Summary: ""},
+		},
+		{
+			"project_name missing", `{"objective":"O","summary":"S",` + validSteps + `}`,
+			Intent{ProjectName: "", Objective: "O", Summary: "S"},
+		},
+		{
+			"all three blank", `{` + validSteps + `}`,
+			Intent{ProjectName: "", Objective: "", Summary: ""},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			intent, err := ParseIntent(test.content)
+			if err != nil {
+				t.Fatalf("ParseIntent(%q) = %v, want success", test.content, err)
+			}
+			if intent.ProjectName != test.want.ProjectName || intent.Objective != test.want.Objective || intent.Summary != test.want.Summary {
+				t.Fatalf("intent = %#v, want ProjectName/Objective/Summary = %#v", intent, test.want)
+			}
+			if len(intent.Steps) != 1 || intent.Steps[0].Kind != IntentStepWrite {
+				t.Fatalf("steps unexpectedly affected: %#v", intent.Steps)
+			}
+		})
+	}
+}
+
+// TestParseIntentRejectsExplicitNullOrWrongTypeForOptionalMetadataFields
+// locks the other half of ADR-0046's optional-metadata contract: "the
+// Provider need not supply project_name/objective/summary" is not "the
+// Provider may supply any JSON shape for them." An absent key is fine
+// (see TestParseIntentAcceptsBlankOptionalMetadataFields); an explicit
+// JSON null, or any non-string type, is a type violation and must be
+// rejected the same way steps[].required_role's null already is.
+func TestParseIntentRejectsExplicitNullOrWrongTypeForOptionalMetadataFields(t *testing.T) {
+	validSteps := `"steps":[{"kind":"write","description":"D","required_role":"R"}],"ceo_questions":[]`
+	tests := []struct {
+		name    string
+		content string
+		field   string
+	}{
+		{"objective explicit null", `{"project_name":"P","objective":null,"summary":"S",` + validSteps + `}`, "objective"},
+		{"objective number", `{"project_name":"P","objective":42,"summary":"S",` + validSteps + `}`, "objective"},
+		{"objective object", `{"project_name":"P","objective":{},"summary":"S",` + validSteps + `}`, "objective"},
+		{"objective array", `{"project_name":"P","objective":[],"summary":"S",` + validSteps + `}`, "objective"},
+		{"objective bool", `{"project_name":"P","objective":true,"summary":"S",` + validSteps + `}`, "objective"},
+		{"summary explicit null", `{"project_name":"P","objective":"O","summary":null,` + validSteps + `}`, "summary"},
+		{"summary number", `{"project_name":"P","objective":"O","summary":42,` + validSteps + `}`, "summary"},
+		{"project_name explicit null", `{"project_name":null,"objective":"O","summary":"S",` + validSteps + `}`, "project_name"},
+		{"project_name number", `{"project_name":42,"objective":"O","summary":"S",` + validSteps + `}`, "project_name"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ParseIntent(test.content)
+			var parseErr *IntentParseError
+			if !errors.As(err, &parseErr) || parseErr.Reason != IntentParseJSONDecodeFailed || parseErr.Field != test.field {
+				t.Fatalf("ParseIntent(%q) err = %v, want IntentParseJSONDecodeFailed/%s", test.content, err, test.field)
 			}
 		})
 	}

@@ -1,6 +1,8 @@
 package ceoplan
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +11,25 @@ import (
 )
 
 var ErrAssignmentUnresolved = errors.New("CEO plan intent assignment could not be resolved")
+
+// IntentContext carries the minimal, already-persisted deterministic
+// Interaction Session identity NormalizeIntent needs to derive safe
+// fallbacks for optional Intent fields (ADR-0046). It never carries the
+// full interaction.Session/Record, Provider content, or credentials —
+// only the three stable, already-durable values a fallback may read from.
+type IntentContext struct {
+	// Request is the CEO's own already-persisted natural-language request
+	// (interaction.Record.PlanningRequest(), i.e. the original request plus
+	// any confirmed clarification answers). Used verbatim, trimmed, as the
+	// Objective fallback — never a guess, never an LLM re-summary.
+	Request string
+	// SessionID and RequestDigest are the Interaction Session's own stable,
+	// already-persisted identifiers. Used only to derive a deterministic,
+	// replay-safe ProjectName fallback. Never combined with wall-clock
+	// time, randomness, or a Provider call.
+	SessionID     string
+	RequestDigest string
+}
 
 // NormalizationFailureReason is a sanitized, non-identifying classification
 // of why Go could not deterministically turn an Intent into a Canonical
@@ -49,11 +70,14 @@ func newNormalizationError(reason NormalizationFailureReason, err error) *Normal
 // Plan from a small LLM Intent. It owns everything the LLM no longer
 // decides: Task identity (via the reused NormalizeCandidate/proposal
 // numbering), Employee assignment (via the existing
-// organization.ResolveTaskAssignment policy), dependency ordering, and the
-// required_departments/assigned_existing_employees defaults — then hands
-// the assembled candidate to the existing, unmodified NormalizeCandidate
-// for final canonical validation. No business rule is duplicated here.
-func NormalizeIntent(intent Intent, employees []organization.Identity) (Plan, error) {
+// organization.ResolveTaskAssignment policy), dependency ordering, the
+// required_departments/assigned_existing_employees defaults, and — since
+// ADR-0046 — canonical fallbacks for Objective/ProjectName when the LLM
+// left them blank, sourced only from context (never a guess, never a new
+// Provider call) — then hands the assembled candidate to the existing,
+// unmodified NormalizeCandidate for final canonical validation. No
+// business rule is duplicated here.
+func NormalizeIntent(intent Intent, employees []organization.Identity, context IntentContext) (Plan, error) {
 	// Validate the Organization roster once, up front, via the same check
 	// NormalizeCandidate performs — fail fast on malformed employee data
 	// (duplicate/empty ID or role) instead of misclassifying it as a
@@ -126,7 +150,9 @@ func NormalizeIntent(intent Intent, employees []organization.Identity) (Plan, er
 	}
 
 	candidate := candidatePlan{
-		ProjectName: intent.ProjectName, Objective: intent.Objective, Summary: intent.Summary,
+		ProjectName:               canonicalProjectName(intent.ProjectName, context),
+		Objective:                 canonicalObjective(intent.Objective, context),
+		Summary:                   strings.TrimSpace(intent.Summary),
 		RequiredDepartments:       departments,
 		RequiredRoles:             []string{}, // NormalizeCandidate auto-collects this from tasks
 		AssignedExistingEmployees: assignedEmployees,
@@ -135,6 +161,36 @@ func NormalizeIntent(intent Intent, employees []organization.Identity) (Plan, er
 		CEOQuestions:              intent.CEOQuestions,
 	}
 	return NormalizeCandidate(candidate, employees)
+}
+
+// canonicalObjective returns the LLM-supplied objective, trimmed, or —
+// when the LLM left it blank — context.Request, the caller-supplied
+// canonical planning input (ADR-0046; in production this is
+// interaction.Record.PlanningRequest(), not a raw Session.Request). This
+// is not a guess: it reuses information Go already holds as canonical
+// fact, never a re-summary or a fixed placeholder.
+func canonicalObjective(objective string, context IntentContext) string {
+	if trimmed := strings.TrimSpace(objective); trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(context.Request)
+}
+
+// canonicalProjectName returns the LLM-supplied project name, trimmed, or
+// — when the LLM left it blank — a deterministic fallback derived only
+// from the Interaction Session's own stable, already-persisted identity
+// (ADR-0046). No wall-clock time, no randomness, no Provider call: the
+// same SessionID/RequestDigest always produces the same fallback, so
+// Command Ledger replay stays consistent. The result is handed to the
+// existing project name collision/auto-disambiguation policy unchanged —
+// this is not a separate collision policy.
+func canonicalProjectName(projectName string, context IntentContext) string {
+	if trimmed := strings.TrimSpace(projectName); trimmed != "" {
+		return trimmed
+	}
+	seed := strings.TrimSpace(context.SessionID) + ":" + strings.TrimSpace(context.RequestDigest)
+	sum := sha256.Sum256([]byte(seed))
+	return "依頼-" + hex.EncodeToString(sum[:])[:8]
 }
 
 // kindPreferredRoles lists Organization Role titles Go may try after an exact

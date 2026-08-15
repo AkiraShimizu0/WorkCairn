@@ -26,6 +26,13 @@ type CEOPlanGenerationInput struct {
 	Request   string
 	Model     string
 	Approved  bool
+	// SessionID and RequestDigest are the Interaction Session's own
+	// already-persisted identifiers (ADR-0046), threaded through to
+	// ceoplan.NormalizeIntent's deterministic ProjectName fallback. They
+	// never appear in any external Command payload — this is an internal
+	// Go call chain, not part of the JSON Contract.
+	SessionID     string
+	RequestDigest string
 }
 
 func GenerateCEOPlan(ctx context.Context, input CEOPlanGenerationInput, provider ClaudeProcessConfig, httpClient claude.HTTPDoer) (service.CEOPlanResult, error) {
@@ -56,7 +63,10 @@ func GenerateCEOPlan(ctx context.Context, input CEOPlanGenerationInput, provider
 	if err != nil {
 		return service.CEOPlanResult{}, err
 	}
-	return planService.Generate(ctx, service.CEOPlanInput{Request: input.Request, Employees: inventory.Employees, Model: input.Model})
+	return planService.Generate(ctx, service.CEOPlanInput{
+		Request: input.Request, Employees: inventory.Employees, Model: input.Model,
+		SessionID: input.SessionID, RequestDigest: input.RequestDigest,
+	})
 }
 
 type CEOPlanApplyInput struct {

@@ -80,7 +80,7 @@
             }
           }
         },
-        "required": ["project_name", "objective", "summary", "steps", "ceo_questions"],
+        "required": ["steps", "ceo_questions"],
         "additionalProperties": false
       }
     }

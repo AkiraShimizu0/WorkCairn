@@ -85,13 +85,22 @@ type IntentStep struct {
 // Intent is the small, provider-neutral contract the LLM returns instead of
 // a full Canonical CEO Plan. See NormalizeIntent for how it becomes one.
 type Intent struct {
-	// ProjectName is a display-only proposal. Storage/directory identity is
-	// resolved later, at apply time, by the existing project collision
-	// policy — unrelated to and unaffected by this contract.
-	ProjectName string       `json:"project_name"`
-	Objective   string       `json:"objective"`
-	Summary     string       `json:"summary"`
-	Steps       []IntentStep `json:"steps"`
+	// ProjectName is a display-only proposal, optional (ADR-0046):
+	// NormalizeIntent derives a deterministic fallback from Session
+	// identity when blank. Storage/directory identity is resolved later,
+	// at apply time, by the existing project collision policy — unrelated
+	// to and unaffected by this contract.
+	ProjectName string `json:"project_name,omitempty"`
+	// Objective is optional (ADR-0046): NormalizeIntent falls back to the
+	// CEO's own already-persisted request text when blank — never a guess,
+	// never a re-generated summary.
+	Objective string `json:"objective,omitempty"`
+	// Summary is optional (ADR-0046) and may remain blank all the way to
+	// the Canonical Plan, matching planDescription()'s existing tolerance.
+	// Never auto-generated. Retained as a possible future deletion
+	// candidate from the Intent contract entirely.
+	Summary string       `json:"summary,omitempty"`
+	Steps   []IntentStep `json:"steps"`
 	// CEOQuestions carries genuine ambiguity only the LLM can identify from
 	// the request itself (not assignment ambiguity, which NormalizeIntent
 	// resolves deterministically). Same field, same downstream Interaction
@@ -106,9 +115,16 @@ type candidateIntentStep struct {
 }
 
 type candidateIntent struct {
-	ProjectName  string                `json:"project_name"`
-	Objective    string                `json:"objective"`
-	Summary      string                `json:"summary"`
+	// ProjectName/Objective/Summary are json.RawMessage, not string,
+	// specifically so ParseIntent can distinguish an absent key (allowed —
+	// ADR-0046 optional metadata) from an explicit JSON null (rejected — a
+	// type violation, not an absence). Deferring their decode also means
+	// any other non-string JSON value (object/array/number/bool) surfaces
+	// as an ordinary decode-type error at the same point, exactly as it
+	// already does for RequiredRole below.
+	ProjectName  json.RawMessage       `json:"project_name"`
+	Objective    json.RawMessage       `json:"objective"`
+	Summary      json.RawMessage       `json:"summary"`
 	Steps        []candidateIntentStep `json:"steps"`
 	CEOQuestions []string              `json:"ceo_questions"`
 }
@@ -136,18 +152,28 @@ func ParseIntent(content string) (Intent, error) {
 		return Intent{}, newIntentParseError(IntentParseObjectRequired, fmt.Errorf("%w: object required", ErrInvalidIntent))
 	}
 
-	projectName := strings.TrimSpace(candidate.ProjectName)
-	objective := strings.TrimSpace(candidate.Objective)
-	summary := strings.TrimSpace(candidate.Summary)
-	if projectName == "" {
-		return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "project_name", fmt.Errorf("%w: project_name", ErrInvalidIntent))
+	// project_name/objective/summary are optional metadata: Go derives a
+	// canonical value for each in NormalizeIntent when the LLM omits or
+	// blanks one (see ADR-0046). Only steps/ceo_questions are genuine LLM
+	// semantic output and stay strictly required below. "Optional" means
+	// the key may be absent or a blank string — it does not mean any JSON
+	// shape is accepted, so an explicit null or a non-string value is
+	// still rejected rather than silently tolerated.
+	projectNameRaw, err := decodeOptionalIntentField(candidate.ProjectName)
+	if err != nil {
+		return Intent{}, newIntentFieldParseError(IntentParseJSONDecodeFailed, "project_name", fmt.Errorf("%w: project_name", ErrInvalidIntent))
 	}
-	if objective == "" {
-		return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "objective", fmt.Errorf("%w: objective", ErrInvalidIntent))
+	objectiveRaw, err := decodeOptionalIntentField(candidate.Objective)
+	if err != nil {
+		return Intent{}, newIntentFieldParseError(IntentParseJSONDecodeFailed, "objective", fmt.Errorf("%w: objective", ErrInvalidIntent))
 	}
-	if summary == "" {
-		return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "summary", fmt.Errorf("%w: summary", ErrInvalidIntent))
+	summaryRaw, err := decodeOptionalIntentField(candidate.Summary)
+	if err != nil {
+		return Intent{}, newIntentFieldParseError(IntentParseJSONDecodeFailed, "summary", fmt.Errorf("%w: summary", ErrInvalidIntent))
 	}
+	projectName := strings.TrimSpace(projectNameRaw)
+	objective := strings.TrimSpace(objectiveRaw)
+	summary := strings.TrimSpace(summaryRaw)
 	if len(candidate.Steps) == 0 {
 		return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "steps", fmt.Errorf("%w: steps", ErrInvalidIntent))
 	}
@@ -198,6 +224,28 @@ func canonicalIntentStepKind(value IntentStepKind) (IntentStepKind, bool) {
 		}
 	}
 	return "", false
+}
+
+// decodeOptionalIntentField decodes one of the three optional metadata
+// fields (project_name/objective/summary): an absent key is allowed and
+// yields "" (NormalizeIntent derives a canonical fallback later, per
+// ADR-0046). Any JSON string value is allowed regardless of blankness.
+// An explicit JSON null, or any non-string type, is rejected — the
+// optional relaxation means "the Provider need not supply a value," not
+// "the Provider may violate the field's type." Mirrors
+// decodeIntentRequiredRole's established null-rejection pattern.
+func decodeOptionalIntentField(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return "", ErrInvalidIntent
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", ErrInvalidIntent
+	}
+	return value, nil
 }
 
 func decodeIntentRequiredRole(raw json.RawMessage) (string, bool, error) {

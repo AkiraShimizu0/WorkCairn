@@ -47,6 +47,14 @@ type CEOPlanInput struct {
 	Request   string
 	Employees []organization.Identity
 	Model     string
+	// SessionID and RequestDigest are the Interaction Session's own stable,
+	// already-persisted identifiers (ADR-0046), threaded through only to
+	// build ceoplan.IntentContext for NormalizeIntent's deterministic
+	// ProjectName fallback. Optional: callers outside the Interaction flow
+	// (if any) may leave them empty, in which case NormalizeIntent's
+	// fallback degrades to an empty-seed hash rather than failing.
+	SessionID     string
+	RequestDigest string
 }
 
 type CEOPlanResult struct {
@@ -98,7 +106,9 @@ func (service *CEOPlanService) Generate(ctx context.Context, input CEOPlanInput)
 	if err != nil {
 		return CEOPlanResult{}, &CEOPlanError{Stage: CEOPlanIntentStage, Err: err}
 	}
-	plan, err := ceoplan.NormalizeIntent(intent, input.Employees)
+	plan, err := ceoplan.NormalizeIntent(intent, input.Employees, ceoplan.IntentContext{
+		Request: input.Request, SessionID: input.SessionID, RequestDigest: input.RequestDigest,
+	})
 	if err != nil {
 		stage := CEOPlanParserStage
 		var normalizationErr *ceoplan.NormalizationError

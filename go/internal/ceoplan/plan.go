@@ -135,10 +135,10 @@ func NormalizeCandidate(candidate candidatePlan, employees []organization.Identi
 	if err != nil {
 		return Plan{}, newParseError(ParseFailureMissingRequiredField, err)
 	}
-	summary, err := requiredText(candidate.Summary, "summary")
-	if err != nil {
-		return Plan{}, newParseError(ParseFailureMissingRequiredField, err)
-	}
+	// summary is optional (ADR-0046): planDescription() already tolerates
+	// a blank summary (falls back to objective alone), so the canonical
+	// shape validation must not reject it here either.
+	summary := strings.TrimSpace(candidate.Summary)
 	departments, err := requiredStringList(candidate.RequiredDepartments, "required_departments")
 	if err != nil {
 		return Plan{}, newParseError(ParseFailureMissingRequiredField, err)

@@ -91,6 +91,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0043: actual daemonとChromium／WebKitによるPublic Beta Browser Acceptance Gate](adr/ADR-0043-public-beta-browser-acceptance-gate.md)
 - [ADR-0044: macOS Keychain永続化をnative helperへ移す](adr/ADR-0044-native-macos-keychain-persistence.md)
 - [ADR-0045: bounded Provider request timeoutをRuntime compositionで一本化する](adr/ADR-0045-bounded-provider-request-timeout-policy.md)
+- [ADR-0046: CEO Intent Contractを最小化する](adr/ADR-0046-ceo-intent-contract-minimization.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント

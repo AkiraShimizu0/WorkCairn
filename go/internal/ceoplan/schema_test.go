@@ -29,8 +29,12 @@ func TestIntentJSONSchemaShape(t *testing.T) {
 	if len(properties) != len(wantTopLevel) {
 		t.Fatalf("schema has %d top-level properties, want %d: %#v", len(properties), len(wantTopLevel), properties)
 	}
-	if required, ok := schema["required"].([]string); !ok || !equalStringSlices(required, wantTopLevel) {
-		t.Fatalf("required = %#v", schema["required"])
+	// ADR-0046: project_name/objective/summary are declared (Providers that
+	// supply them must still satisfy their type) but no longer required —
+	// only steps/ceo_questions demand genuine LLM semantic understanding.
+	wantRequired := []string{"steps", "ceo_questions"}
+	if required, ok := schema["required"].([]string); !ok || !equalStringSlices(required, wantRequired) {
+		t.Fatalf("required = %#v, want %#v", schema["required"], wantRequired)
 	}
 	for _, field := range []string{"project_name", "objective", "summary"} {
 		fieldSchema := properties[field].(map[string]any)

@@ -41,6 +41,27 @@ func TestCEOPlanCanonicalContractMatchesMigrationFixture(t *testing.T) {
 	}
 }
 
+// TestNormalizeCandidateAllowsBlankSummary locks ADR-0046's relaxation at
+// the shared canonical layer (used by both ParseRunnerOutput and
+// NormalizeIntent): a missing/blank summary must not fail the canonical
+// shape check, matching planDescription()'s existing tolerance for an
+// empty Plan.Summary. objective/project_name remain strictly required at
+// this layer (NormalizeIntent is responsible for supplying a non-blank
+// value before reaching here).
+func TestNormalizeCandidateAllowsBlankSummary(t *testing.T) {
+	fixture := loadGenerationFixture(t)
+	var candidate map[string]any
+	if err := json.Unmarshal(fixture.RunnerOutput, &candidate); err != nil {
+		t.Fatal(err)
+	}
+	delete(candidate, "summary")
+	encoded, _ := json.Marshal(candidate)
+	plan, err := ParseRunnerOutput(string(encoded), fixture.Employees)
+	if err != nil || plan.Summary != "" {
+		t.Fatalf("plan=%#v err=%v, want success with empty Summary", plan, err)
+	}
+}
+
 func TestCEOPlanRejectsUnknownAssigneeAndDependencyCycle(t *testing.T) {
 	fixture := loadGenerationFixture(t)
 	var candidate map[string]any
@@ -207,7 +228,7 @@ func TestCEOPlanIntentPromptExampleIsValidAndContractIsExplicit(t *testing.T) {
 	if intent.ProjectName == "" || intent.Objective == "" || intent.Summary == "" || len(intent.Steps) == 0 {
 		t.Fatalf("Prompt example parsed unexpectedly: %#v", intent)
 	}
-	plan, err := NormalizeIntent(intent, employees)
+	plan, err := NormalizeIntent(intent, employees, IntentContext{})
 	if err != nil || plan.ProjectName == "" || len(plan.ProposedTasks) == 0 {
 		t.Fatalf("Prompt example does not normalize against its own roster: %#v, %v", plan, err)
 	}

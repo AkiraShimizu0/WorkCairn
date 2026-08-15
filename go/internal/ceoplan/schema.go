@@ -46,7 +46,12 @@ func IntentJSONSchema() map[string]any {
 				"type": "array", "items": intentString("A genuine CEO clarification question. Must contain a non-whitespace character."),
 			},
 		},
-		"required":             []string{"project_name", "objective", "summary", "steps", "ceo_questions"},
+		// project_name/objective/summary stay declared in properties (a
+		// Provider that supplies them must still satisfy their type), but
+		// are no longer required: Go can deterministically derive all
+		// three when the LLM omits them (see NormalizeIntent). Only
+		// steps/ceo_questions require genuine LLM semantic understanding.
+		"required":             []string{"steps", "ceo_questions"},
 		"additionalProperties": false,
 	}
 }
