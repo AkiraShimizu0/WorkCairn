@@ -353,8 +353,17 @@ func (record Record) Validate() error {
 }
 
 func (record Record) RecordPlan(plan ceoplan.Plan, at time.Time) (Record, error) {
-	if record.Validate() != nil || record.State != StatePlanGenerationApprovalRequired || at.IsZero() || validatePlanShape(plan) != nil {
+	if record.Validate() != nil || record.State != StatePlanGenerationApprovalRequired || at.IsZero() {
 		return Record{}, ErrInvalidState
+	}
+	// validatePlanShape's own error (a *PlanValidationError, sanitized
+	// reason/field/task-index only) is returned directly here, not
+	// collapsed into the bare ErrInvalidState above -- this is the one
+	// call site whose error actually reaches the CEO via the
+	// interaction_plan_validation stage, so it is the one place this
+	// diagnostic detail is worth preserving.
+	if err := validatePlanShape(plan); err != nil {
+		return Record{}, err
 	}
 	digest, err := DigestPlan(plan)
 	if err != nil {
@@ -670,18 +679,95 @@ func requestDigest(sessionID, request, model string, createdAt time.Time) (strin
 	}{sessionID, request, model, createdAt})
 }
 
-func validatePlanShape(plan ceoplan.Plan) error {
-	if !plan.PlanOnly || strings.TrimSpace(plan.ProjectName) == "" || strings.TrimSpace(plan.Objective) == "" ||
-		strings.TrimSpace(plan.Summary) == "" || plan.RequiredDepartments == nil || plan.RequiredRoles == nil ||
-		plan.AssignedExistingEmployees == nil || plan.MissingRoles == nil || plan.ProposedTasks == nil || len(plan.ProposedTasks) == 0 ||
-		plan.Risks == nil || plan.CEOQuestions == nil {
-		return ErrInvalidSession
+// PlanValidationFailureReason is a sanitized, non-identifying
+// classification of why validatePlanShape rejected an already-Normalized
+// canonical ceoplan.Plan. It never carries raw Plan content.
+type PlanValidationFailureReason string
+
+const (
+	PlanValidationMissingRequiredField    PlanValidationFailureReason = "missing_required_field"
+	PlanValidationInvalidProposalSequence PlanValidationFailureReason = "invalid_proposal_sequence"
+)
+
+// PlanValidationError pairs ErrInvalidSession with a sanitized
+// PlanValidationFailureReason, following the same pattern as
+// ceoplan.ParseError/IntentParseError. Field is a sanitized contract field
+// identifier (e.g. "proposed_tasks.title") and never carries an array
+// index, a field value, or raw Plan content -- TaskIndex carries the
+// index separately, set only when Field is itself scoped to one
+// ProposedTask.
+type PlanValidationError struct {
+	Reason    PlanValidationFailureReason
+	Field     string
+	TaskIndex *int
+	err       error
+}
+
+func (validationErr *PlanValidationError) Error() string { return validationErr.err.Error() }
+func (validationErr *PlanValidationError) Unwrap() error { return validationErr.err }
+
+func newPlanValidationError(reason PlanValidationFailureReason, field string, taskIndex *int) *PlanValidationError {
+	return &PlanValidationError{
+		Reason: reason, Field: field, TaskIndex: taskIndex,
+		err: fmt.Errorf("%w: %s", ErrInvalidSession, field),
+	}
+}
+
+// classifyPlanShapeFailure is validatePlanShape's single source of truth
+// for both the pass/fail decision and the sanitized diagnostic explaining
+// a failure -- there is no separate, duplicated condition list to drift
+// out of sync. Check order matches the shape this package has always
+// validated in, so which failure is reported first for a Plan violating
+// multiple rules simultaneously is unchanged from before this diagnostic
+// existed.
+//
+// Summary is deliberately not checked here: ADR-0046 made ceoplan's own
+// NormalizeCandidate accept a blank Summary (the LLM may legitimately omit
+// it, with no Go-owned fallback), and this package's shape check must
+// accept exactly what ceoplan already declared valid rather than
+// re-imposing a stricter, unsynced rule of its own.
+func classifyPlanShapeFailure(plan ceoplan.Plan) *PlanValidationError {
+	switch {
+	case !plan.PlanOnly:
+		return newPlanValidationError(PlanValidationMissingRequiredField, "plan_only", nil)
+	case strings.TrimSpace(plan.ProjectName) == "":
+		return newPlanValidationError(PlanValidationMissingRequiredField, "project_name", nil)
+	case strings.TrimSpace(plan.Objective) == "":
+		return newPlanValidationError(PlanValidationMissingRequiredField, "objective", nil)
+	case plan.RequiredDepartments == nil:
+		return newPlanValidationError(PlanValidationMissingRequiredField, "required_departments", nil)
+	case plan.RequiredRoles == nil:
+		return newPlanValidationError(PlanValidationMissingRequiredField, "required_roles", nil)
+	case plan.AssignedExistingEmployees == nil:
+		return newPlanValidationError(PlanValidationMissingRequiredField, "assigned_existing_employees", nil)
+	case plan.MissingRoles == nil:
+		return newPlanValidationError(PlanValidationMissingRequiredField, "missing_roles", nil)
+	case plan.ProposedTasks == nil || len(plan.ProposedTasks) == 0:
+		return newPlanValidationError(PlanValidationMissingRequiredField, "proposed_tasks", nil)
+	case plan.Risks == nil:
+		return newPlanValidationError(PlanValidationMissingRequiredField, "risks", nil)
+	case plan.CEOQuestions == nil:
+		return newPlanValidationError(PlanValidationMissingRequiredField, "ceo_questions", nil)
 	}
 	for index, task := range plan.ProposedTasks {
-		if task.ProposalID != fmt.Sprintf("PROPOSED-%03d", index+1) || strings.TrimSpace(task.Title) == "" ||
-			strings.TrimSpace(task.Rationale) == "" || task.DependencyIDs == nil {
-			return ErrInvalidSession
+		taskIndex := index
+		switch {
+		case task.ProposalID != fmt.Sprintf("PROPOSED-%03d", index+1):
+			return newPlanValidationError(PlanValidationInvalidProposalSequence, "proposed_tasks.proposal_id", &taskIndex)
+		case strings.TrimSpace(task.Title) == "":
+			return newPlanValidationError(PlanValidationMissingRequiredField, "proposed_tasks.title", &taskIndex)
+		case strings.TrimSpace(task.Rationale) == "":
+			return newPlanValidationError(PlanValidationMissingRequiredField, "proposed_tasks.rationale", &taskIndex)
+		case task.DependencyIDs == nil:
+			return newPlanValidationError(PlanValidationMissingRequiredField, "proposed_tasks.dependency_ids", &taskIndex)
 		}
+	}
+	return nil
+}
+
+func validatePlanShape(plan ceoplan.Plan) error {
+	if err := classifyPlanShapeFailure(plan); err != nil {
+		return err
 	}
 	return nil
 }

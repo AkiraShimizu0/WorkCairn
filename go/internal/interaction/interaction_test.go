@@ -68,6 +68,93 @@ func TestSessionRejectsStaleDigestIncompleteAnswersAndHistoryRewrite(t *testing.
 	}
 }
 
+// TestRecordPlanAcceptsBlankSummaryPerADR0046 is the CMD-B0BFC132
+// investigation's regression: RecordPlan's own validatePlanShape
+// previously rejected a blank Summary with the bare ErrInvalidState
+// sentinel (surfacing as INTERACTION_PLAN_FAILED/interaction_plan_validation
+// with no diagnostic detail), directly contradicting ceoplan.NormalizeCandidate,
+// which ADR-0046 already made tolerant of a blank Summary (see
+// ceoplan/plan_test.go's own regression for that side). This is the fix:
+// interaction's own shape check must accept exactly what ceoplan already
+// declared valid.
+func TestRecordPlanAcceptsBlankSummaryPerADR0046(t *testing.T) {
+	at := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	record, _ := New("SESSION-BLANK-SUMMARY", "依頼", "Claude Sonnet 5", at)
+	plan := interactionTestPlan([]string{})
+	plan.Summary = ""
+	withPlan, err := record.RecordPlan(plan, at.Add(time.Minute))
+	if err != nil || withPlan.State != StatePlanApprovalRequired {
+		t.Fatalf("RecordPlan() with blank Summary = %#v, %v, want success per ADR-0046", withPlan, err)
+	}
+}
+
+// TestRecordPlanRejectsMalformedShapeWithSanitizedDiagnostic locks the
+// CMD-B0BFC132 investigation's diagnostic addition: every remaining
+// validatePlanShape rule still rejects a malformed canonical Plan (no
+// rule was relaxed beyond the Summary fix above), and now does so with a
+// typed, sanitized *PlanValidationError (Reason/Field/TaskIndex) instead
+// of the bare, undiagnosable ErrInvalidState the interaction_plan_validation
+// stage previously carried. None of these rules ever changes Plan content —
+// each subtest starts from a known-valid Plan and breaks exactly one field.
+func TestRecordPlanRejectsMalformedShapeWithSanitizedDiagnostic(t *testing.T) {
+	at := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	intPtr := func(value int) *int { return &value }
+
+	for _, test := range []struct {
+		name      string
+		mutate    func(ceoplan.Plan) ceoplan.Plan
+		reason    PlanValidationFailureReason
+		field     string
+		taskIndex *int
+	}{
+		{"plan_only false", func(plan ceoplan.Plan) ceoplan.Plan { plan.PlanOnly = false; return plan }, PlanValidationMissingRequiredField, "plan_only", nil},
+		{"blank project_name", func(plan ceoplan.Plan) ceoplan.Plan { plan.ProjectName = "   "; return plan }, PlanValidationMissingRequiredField, "project_name", nil},
+		{"blank objective", func(plan ceoplan.Plan) ceoplan.Plan { plan.Objective = ""; return plan }, PlanValidationMissingRequiredField, "objective", nil},
+		{"nil required_departments", func(plan ceoplan.Plan) ceoplan.Plan { plan.RequiredDepartments = nil; return plan }, PlanValidationMissingRequiredField, "required_departments", nil},
+		{"nil required_roles", func(plan ceoplan.Plan) ceoplan.Plan { plan.RequiredRoles = nil; return plan }, PlanValidationMissingRequiredField, "required_roles", nil},
+		{"nil assigned_existing_employees", func(plan ceoplan.Plan) ceoplan.Plan { plan.AssignedExistingEmployees = nil; return plan }, PlanValidationMissingRequiredField, "assigned_existing_employees", nil},
+		{"nil missing_roles", func(plan ceoplan.Plan) ceoplan.Plan { plan.MissingRoles = nil; return plan }, PlanValidationMissingRequiredField, "missing_roles", nil},
+		{"empty proposed_tasks", func(plan ceoplan.Plan) ceoplan.Plan { plan.ProposedTasks = []ceoplan.ProposedTask{}; return plan }, PlanValidationMissingRequiredField, "proposed_tasks", nil},
+		{"nil risks", func(plan ceoplan.Plan) ceoplan.Plan { plan.Risks = nil; return plan }, PlanValidationMissingRequiredField, "risks", nil},
+		{"nil ceo_questions", func(plan ceoplan.Plan) ceoplan.Plan { plan.CEOQuestions = nil; return plan }, PlanValidationMissingRequiredField, "ceo_questions", nil},
+		{
+			"duplicate proposal id (second task out of sequence)",
+			func(plan ceoplan.Plan) ceoplan.Plan {
+				assignee := "PLAN-002"
+				plan.ProposedTasks = append(plan.ProposedTasks, ceoplan.ProposedTask{
+					ProposalID: "PROPOSED-001", Title: "second", Rationale: "second reason",
+					AssigneeID: &assignee, DependencyIDs: []string{"PROPOSED-001"},
+				})
+				return plan
+			},
+			PlanValidationInvalidProposalSequence, "proposed_tasks.proposal_id", intPtr(1),
+		},
+		{"task blank title", func(plan ceoplan.Plan) ceoplan.Plan { plan.ProposedTasks[0].Title = "   "; return plan }, PlanValidationMissingRequiredField, "proposed_tasks.title", intPtr(0)},
+		{"task blank rationale", func(plan ceoplan.Plan) ceoplan.Plan { plan.ProposedTasks[0].Rationale = ""; return plan }, PlanValidationMissingRequiredField, "proposed_tasks.rationale", intPtr(0)},
+		{"task nil dependency_ids", func(plan ceoplan.Plan) ceoplan.Plan { plan.ProposedTasks[0].DependencyIDs = nil; return plan }, PlanValidationMissingRequiredField, "proposed_tasks.dependency_ids", intPtr(0)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			record, _ := New("SESSION-SHAPE-TEST", "依頼", "Claude Sonnet 5", at)
+			plan := test.mutate(interactionTestPlan([]string{}))
+			_, err := record.RecordPlan(plan, at.Add(time.Minute))
+			var validationErr *PlanValidationError
+			if !errors.As(err, &validationErr) {
+				t.Fatalf("err = %v, want *PlanValidationError", err)
+			}
+			if validationErr.Reason != test.reason || validationErr.Field != test.field {
+				t.Fatalf("reason/field = %q/%q, want %q/%q", validationErr.Reason, validationErr.Field, test.reason, test.field)
+			}
+			if (validationErr.TaskIndex == nil) != (test.taskIndex == nil) ||
+				(validationErr.TaskIndex != nil && *validationErr.TaskIndex != *test.taskIndex) {
+				t.Fatalf("TaskIndex = %v, want %v", validationErr.TaskIndex, test.taskIndex)
+			}
+			if !errors.Is(err, ErrInvalidSession) {
+				t.Fatalf("err does not wrap ErrInvalidSession: %v", err)
+			}
+		})
+	}
+}
+
 // TestNextPointsPlanApprovalAtApproveAndExecute locks ADR-0049's core
 // mechanism: the CEO's single "この内容で進める" approval is expressed as
 // Record.Next() itself naming the merged operation, not a UI-level

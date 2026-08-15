@@ -88,6 +88,38 @@ func TestEnvelopeValidateAcceptsStructuredOutputFieldShape(t *testing.T) {
 	}
 }
 
+// TestEnvelopeValidateAcceptsProposedTaskIndex locks the CMD-B0BFC132
+// diagnostic addition: a non-negative ProposedTaskIndex alongside a Field
+// scoped to one task (e.g. "proposed_tasks.title") is a well-formed,
+// content-blind diagnostic.
+func TestEnvelopeValidateAcceptsProposedTaskIndex(t *testing.T) {
+	envelope := New("INTERACTION_PLAN_FAILED", "interaction_plan_validation")
+	taskIndex := 0
+	envelope.Parse = &ParseDiagnostic{
+		Domain: "interaction_plan_validation", Reason: "missing_required_field", Field: "proposed_tasks.title",
+		ProposedTaskIndex: &taskIndex,
+	}
+	if err := envelope.Validate(); err != nil {
+		t.Fatalf("Envelope with well-formed ProposedTaskIndex rejected: %v", err)
+	}
+}
+
+// TestEnvelopeValidateRejectsNegativeProposedTaskIndex confirms a
+// negative index -- which could never be a genuine ProposedTasks
+// position -- is rejected as structurally unsafe, the same way an unsafe
+// StructuredOutputFieldShape key is.
+func TestEnvelopeValidateRejectsNegativeProposedTaskIndex(t *testing.T) {
+	envelope := New("INTERACTION_PLAN_FAILED", "interaction_plan_validation")
+	taskIndex := -1
+	envelope.Parse = &ParseDiagnostic{
+		Domain: "interaction_plan_validation", Reason: "missing_required_field", Field: "proposed_tasks.title",
+		ProposedTaskIndex: &taskIndex,
+	}
+	if err := envelope.Validate(); err == nil {
+		t.Fatal("Parse with a negative ProposedTaskIndex accepted")
+	}
+}
+
 // TestEnvelopeValidateAcceptsStructuredOutputPresenceValuesRegardlessOfBool
 // confirms Validate() never rejects an Envelope on the basis of what a
 // presence value actually is -- true and false are both legitimate,

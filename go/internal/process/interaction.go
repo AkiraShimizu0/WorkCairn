@@ -57,6 +57,19 @@ type InteractionPlanResult struct {
 	// failure when key presence alone cannot -- e.g. steps[].description
 	// present but blank, whitespace-only, or null.
 	ParseFieldShape map[string]failure.StructuredOutputFieldShape `json:"parse_field_shape,omitempty"`
+	// PlanValidationReason is set only when RecordPlan rejected an
+	// already-Normalized canonical Plan (stage interaction_plan_validation).
+	// A sanitized interaction.PlanValidationFailureReason value, never raw
+	// Plan content.
+	PlanValidationReason string `json:"plan_validation_reason,omitempty"`
+	// PlanValidationField is the optional sanitized Plan contract field
+	// that failed validation (e.g. "proposed_tasks.title"). Never an array
+	// index or raw Plan content.
+	PlanValidationField string `json:"plan_validation_field,omitempty"`
+	// PlanValidationTaskIndex is the optional 0-based ProposedTasks index
+	// PlanValidationField is scoped to. A structural position only, never
+	// a Task ID or task content.
+	PlanValidationTaskIndex *int `json:"plan_validation_task_index,omitempty"`
 }
 
 // ProviderFailure is redacted diagnostic evidence derived from a typed
@@ -265,7 +278,13 @@ func executeInteractionPlanGenerationCommand(
 	}
 	next, err := record.RecordPlan(generation.Plan, currentTime)
 	if err != nil {
-		return finishInteractionPlan(ctx, claim, InteractionPlanResult{Session: record, Generation: generation}, err, "interaction_plan_validation", true)
+		result := InteractionPlanResult{
+			Session: record, Generation: generation,
+			PlanValidationReason:    interactionPlanValidationReason(err),
+			PlanValidationField:     interactionPlanValidationField(err),
+			PlanValidationTaskIndex: interactionPlanValidationTaskIndex(err),
+		}
+		return finishInteractionPlan(ctx, claim, result, err, "interaction_plan_validation", true)
 	}
 	commit, commitErr := interactionService.Update(ctx, next, record.Version)
 	result := InteractionPlanResult{Session: commit.Record, SessionCommitted: commit.Committed, Generation: generation}
@@ -359,6 +378,35 @@ func ceoPlanParseFailureFieldShape(err error) map[string]failure.StructuredOutpu
 	return nil
 }
 
+// interactionPlanValidationReason/Field/TaskIndex extract the sanitized
+// diagnostic RecordPlan's own *interaction.PlanValidationError already
+// carries (see interaction.classifyPlanShapeFailure) -- never computed
+// here, never derived from raw Plan content. They return zero values for
+// every other failure kind.
+func interactionPlanValidationReason(err error) string {
+	var validationErr *interaction.PlanValidationError
+	if errors.As(err, &validationErr) {
+		return string(validationErr.Reason)
+	}
+	return ""
+}
+
+func interactionPlanValidationField(err error) string {
+	var validationErr *interaction.PlanValidationError
+	if errors.As(err, &validationErr) {
+		return validationErr.Field
+	}
+	return ""
+}
+
+func interactionPlanValidationTaskIndex(err error) *int {
+	var validationErr *interaction.PlanValidationError
+	if errors.As(err, &validationErr) {
+		return validationErr.TaskIndex
+	}
+	return nil
+}
+
 func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, result InteractionPlanResult, err error, stage string, partial bool) (InteractionPlanResult, error) {
 	code := "INTERACTION_PLAN_FAILED"
 	if errors.Is(err, claude.ErrInvalidConfig) {
@@ -374,6 +422,16 @@ func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, resul
 		envelope.Parse = &failure.ParseDiagnostic{
 			Domain: "ceo_plan_intent", Reason: result.ParseFailureReason, Field: result.ParseFailureField,
 			StructuredOutputFieldShape: result.ParseFieldShape,
+		}
+		return result, finishDurableCommandWithEnvelope(ctx, claim, result, err, &envelope, partial)
+	}
+	if err != nil && stage == "interaction_plan_validation" && result.PlanValidationReason != "" {
+		envelope := failure.New(code, stage)
+		envelope.Partial = partial
+		envelope.RecoveryRequired = partial
+		envelope.Parse = &failure.ParseDiagnostic{
+			Domain: "interaction_plan_validation", Reason: result.PlanValidationReason, Field: result.PlanValidationField,
+			ProposedTaskIndex: result.PlanValidationTaskIndex,
 		}
 		return result, finishDurableCommandWithEnvelope(ctx, claim, result, err, &envelope, partial)
 	}

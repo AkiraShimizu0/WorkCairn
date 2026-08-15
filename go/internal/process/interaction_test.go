@@ -512,6 +512,91 @@ func TestInteractionPlanRecordsStepDescriptionShapeForMissingRequiredFieldFailur
 	}
 }
 
+// TestInteractionPlanEndToEndAcceptsProviderResponseOmittingSummary is the
+// CMD-B0BFC132 investigation's end-to-end regression: a real Mock Provider
+// response that omits summary (ADR-0046 makes this legitimate at ceoplan's
+// layer) must now reach interaction.RecordPlan successfully instead of
+// failing INTERACTION_PLAN_FAILED/interaction_plan_validation with no
+// diagnostic -- through the real Adapter, Service, ParseIntent,
+// NormalizeIntent, and RecordPlan, not a mocked intermediate value.
+func TestInteractionPlanEndToEndAcceptsProviderResponseOmittingSummary(t *testing.T) {
+	fixture := loadCEOPlanFixture(t)
+	root := ceoPlanVault(t, fixture.Employees)
+	at := time.Date(2026, 8, 16, 13, 0, 0, 0, time.UTC)
+	start := InteractionStartInput{
+		VaultRoot: root, SessionID: "SESSION-PLAN-BLANK-SUMMARY", Request: fixture.Request,
+		Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-PLAN-BLANK-SUMMARY-START",
+	}
+	plan, err := PlanInteractionStart(context.Background(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.RequestDigest = plan.Session.RequestDigest
+	intentNoSummary := `{"project_name":"P","objective":"O","steps":[{"kind":"write","description":"D","required_role":"Product Manager"}],"ceo_questions":[]}`
+	providerResponse, _ := json.Marshal(map[string]any{
+		"model": "claude-sonnet-5", "content": []map[string]string{{"type": "text", "text": intentNoSummary}},
+		"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+	})
+	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
+	})
+	result, err := ExecuteInteractionStart(context.Background(), start, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
+	if err != nil || result.Generation.Plan.Summary != "" || !result.SessionCommitted {
+		t.Fatalf("ExecuteInteractionStart() with blank Summary = %#v, %v, want success", result, err)
+	}
+}
+
+// TestInteractionPlanValidationDiagnosticExtractionMirrorsCEOPlanIntentPattern
+// locks the diagnostic side of the CMD-B0BFC132 fix for every
+// validatePlanShape rule other than the Summary fix above: this class is
+// defense-in-depth in the current architecture (ceoplan.NormalizeCandidate
+// already guarantees a well-formed Plan reaches RecordPlan, so a
+// Provider-driven end-to-end reproduction is not possible -- see the
+// Summary case above for the one rule that was reachable), but if it were
+// ever reached again, interactionPlanValidationReason/Field/TaskIndex must
+// still extract *interaction.PlanValidationError's sanitized diagnostic
+// correctly for finishInteractionPlan's envelope construction, exactly
+// mirroring the already end-to-end-proven ceoPlanParseFailureReason/Field
+// pattern for the sibling ceo_plan_intent stage.
+func TestInteractionPlanValidationDiagnosticExtractionMirrorsCEOPlanIntentPattern(t *testing.T) {
+	at := time.Date(2026, 8, 16, 13, 0, 0, 0, time.UTC)
+	record, err := interaction.New("SESSION-SHAPE-EXTRACT", "依頼", "workcairn-auto", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := interactionTestPlanForProcessPackage()
+	plan.ProposedTasks[0].Title = ""
+	_, recordErr := record.RecordPlan(plan, at.Add(time.Minute))
+
+	if reason := interactionPlanValidationReason(recordErr); reason != string(interaction.PlanValidationMissingRequiredField) {
+		t.Fatalf("interactionPlanValidationReason() = %q, want %q", reason, interaction.PlanValidationMissingRequiredField)
+	}
+	if field := interactionPlanValidationField(recordErr); field != "proposed_tasks.title" {
+		t.Fatalf("interactionPlanValidationField() = %q, want %q", field, "proposed_tasks.title")
+	}
+	gotIndex := interactionPlanValidationTaskIndex(recordErr)
+	if gotIndex == nil || *gotIndex != 0 {
+		t.Fatalf("interactionPlanValidationTaskIndex() = %v, want 0", gotIndex)
+	}
+	if reason := interactionPlanValidationReason(errors.New("unrelated")); reason != "" {
+		t.Fatalf("interactionPlanValidationReason(unrelated) = %q, want empty", reason)
+	}
+}
+
+func interactionTestPlanForProcessPackage() ceoplan.Plan {
+	assignee := "PLAN-001"
+	return ceoplan.Plan{
+		ProjectName: "案件", Objective: "目的", Summary: "概要",
+		RequiredDepartments: []string{"企画部"}, RequiredRoles: []string{"Planner"},
+		AssignedExistingEmployees: []string{assignee}, MissingRoles: []string{},
+		ProposedTasks: []ceoplan.ProposedTask{{
+			ProposalID: "PROPOSED-001", Title: "計画する", AssigneeID: &assignee,
+			DependencyIDs: []string{}, Rationale: "必要なため",
+		}},
+		Risks: []string{}, CEOQuestions: []string{}, PlanOnly: true,
+	}
+}
+
 func TestInteractionProviderSuccessThenSessionCASConflictIsPartialFailure(t *testing.T) {
 	fixture := loadCEOPlanFixture(t)
 	root := ceoPlanVault(t, fixture.Employees)

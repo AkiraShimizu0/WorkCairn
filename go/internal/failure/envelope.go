@@ -99,6 +99,13 @@ type ParseDiagnostic struct {
 	// and whether a string value is non-blank after TrimSpace — never a
 	// field's value, length, hash, or raw JSON.
 	StructuredOutputFieldShape map[string]StructuredOutputFieldShape `json:"structured_output_field_shape,omitempty"`
+	// ProposedTaskIndex is an optional, sanitized 0-based index into a
+	// canonical Plan's ProposedTasks, set only when Field is itself scoped
+	// to one task (e.g. "proposed_tasks.title"). It is a structural
+	// position only -- never a Task ID, title, or other task content --
+	// deliberately kept separate from Field, which must never carry an
+	// array index (see Field's own doc comment).
+	ProposedTaskIndex *int `json:"proposed_task_index,omitempty"`
 }
 
 // StructuredOutputFieldShape is a content-blind diagnostic for one
@@ -155,6 +162,9 @@ func (envelope Envelope) Validate() error {
 	if envelope.Parse != nil {
 		if !canonicalText(envelope.Parse.Domain) || !canonicalText(envelope.Parse.Reason) ||
 			(envelope.Parse.Field != "" && !canonicalText(envelope.Parse.Field)) {
+			return ErrInvalidEnvelope
+		}
+		if envelope.Parse.ProposedTaskIndex != nil && *envelope.Parse.ProposedTaskIndex < 0 {
 			return ErrInvalidEnvelope
 		}
 		for key := range envelope.Parse.StructuredOutputPresence {
