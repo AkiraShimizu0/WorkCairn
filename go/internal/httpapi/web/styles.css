@@ -743,12 +743,13 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
     box-shadow: none;
   }
   .employee-status-section {
-    flex: 0 0 45%;
+    flex: 0 0 58%;
     min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
   }
+  .employee-office-visual,
   .employee-status-list {
     flex: 1 1 auto;
     min-height: 0;
@@ -756,7 +757,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
     margin-top: 10px;
   }
   .company-feed-section {
-    flex: 1 1 55%;
+    flex: 1 1 42%;
     min-height: 0;
     display: flex;
     flex-direction: column;
@@ -1930,6 +1931,153 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 .employee-card.with-ceo .status-dot { background: #c45c3e; }
 
 .employee-card.completed .status-dot { background: var(--muted); opacity: .65; }
+
+.msg-company-fact {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+.msg-company-fact-body {
+  max-width: 92%;
+  padding: 6px 12px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.03);
+  text-align: center;
+}
+
+.msg-company-fact-copy {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.msg-company-fact-time {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.msg-directed .msg-mention {
+  margin: 0 0 6px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.msg-clarification {
+  max-width: 88%;
+  padding: 2px 0 2px 2px;
+}
+
+.msg-clarification-label {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.msg-body-clarification {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.msg-plan-pending .msg-body { padding-top: 4px; }
+
+.office-floor { display: grid; gap: 14px; }
+.office-zone {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,.82), rgba(248,250,247,.92));
+}
+.office-zone-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.office-zone-label {
+  color: var(--stone);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.office-zone-count {
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(0,0,0,.04);
+  font-size: 10px;
+  font-weight: 700;
+}
+.office-zone-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.office-character {
+  position: relative;
+  min-height: 118px;
+  padding: 12px;
+  border-radius: 16px;
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.office-character:hover,
+.office-character.attention {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(22, 35, 29, 0.08);
+}
+.office-character.attention::after {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c45c3e;
+  content: "";
+  animation: attention-pulse 1.6s ease-in-out infinite;
+}
+.employee-avatar.avatar-v0 { background: linear-gradient(145deg, #dce9ff, #b8cff5); }
+.employee-avatar.avatar-v1 { background: linear-gradient(145deg, #dff5ea, #b7dcc8); }
+.employee-avatar.avatar-v2 { background: linear-gradient(145deg, #f7ead6, #e4c89a); }
+.employee-avatar.avatar-v3 { background: linear-gradient(145deg, #efe3ff, #cdb6ef); }
+.employee-avatar.avatar-v4 { background: linear-gradient(145deg, #ffe3e8, #efb6c0); }
+.employee-avatar.avatar-v5 { background: linear-gradient(145deg, #e6eef0, #bcc8cc); }
+.employee-card.working .employee-avatar::after,
+.employee-card.reviewing .employee-avatar::after,
+.employee-card.revising .employee-avatar::after {
+  animation: working-pulse 1.4s ease-in-out infinite;
+}
+.status-glyph {
+  width: 14px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+}
+.employee-card.working .status-glyph { color: var(--blue); }
+.employee-card.reviewing .status-glyph { color: var(--green-dark); }
+.employee-card.revising .status-glyph { color: var(--amber); }
+.employee-card.with-ceo .status-glyph { color: #c45c3e; }
+
+@keyframes working-pulse {
+  0%, 100% { transform: scale(1); opacity: .85; }
+  50% { transform: scale(1.03); opacity: 1; }
+}
+@keyframes attention-pulse {
+  0%, 100% { transform: scale(1); opacity: .55; }
+  50% { transform: scale(1.25); opacity: 1; }
+}
 
 .inline-actions { margin-top: 10px; }
 

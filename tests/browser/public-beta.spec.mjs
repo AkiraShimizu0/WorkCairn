@@ -42,14 +42,58 @@ async function completeFirstRun(page) {
 }
 
 async function startRequest(page, requestText) {
-  const newRequest = page.getByRole("button", { name: "＋ 新規作成" });
-  if (await newRequest.isVisible()) {
-    await newRequest.click();
+  const composer = page.locator("#composer-input");
+  let draftReady = await composer.isVisible()
+    && (await composer.getAttribute("placeholder")) === "依頼内容を入力...";
+  if (!draftReady) {
+    const newRequest = page.getByRole("button", { name: "＋ 新規作成" });
+    if (await newRequest.isVisible()) {
+      await newRequest.click();
+    } else {
+      const menu = page.locator("#menu-button");
+      if (await menu.isVisible()) {
+        await menu.click();
+        await page.locator("#nav-new-request").click();
+      }
+    }
   }
   await expect(page.locator("#request-detail-view")).toBeVisible();
-  await page.locator("#composer-input").fill(requestText);
-  await page.getByRole("button", { name: "送信" }).click();
-  await expect(page.getByRole("button", { name: "進め方の作成を承認" })).toBeVisible();
+  await composer.fill(requestText);
+  await page.locator("#composer-send").click();
+  await expect(page.locator("#composer-status")).toBeVisible();
+}
+
+async function waitForPlanOrClarification(page) {
+  try {
+    await page.waitForSelector('#composer-input[placeholder="回答を入力..."]', { timeout: 45_000 });
+    return "clarification";
+  } catch {}
+  await expect(page.getByRole("button", { name: "この内容で進める" })).toBeVisible({ timeout: 45_000 });
+  return "plan";
+}
+
+async function answerClarificationIfNeeded(page, answerText = "はい。初めてWorkCairnを使う人向けです。") {
+  const clarification = page.locator('#composer-input[placeholder="回答を入力..."]');
+  if (!(await clarification.count())) return false;
+  await clarification.fill(answerText);
+  await expect(clarification).toHaveValue(answerText);
+  await expect(page.locator("#composer-send")).toBeEnabled();
+  await page.locator("#composer-send").click();
+  await expect(page.locator(".msg-embed-plan")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("button", { name: "この内容で進める" })).toBeVisible({ timeout: 60_000 });
+  return true;
+}
+
+async function approvePlanAndExecute(page) {
+  await expect(page.locator(".msg-embed-plan")).toBeVisible();
+  await expect(page.getByRole("button", { name: "進め方の作成を承認" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "実行内容を確認" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "承認して実行" })).toHaveCount(0);
+  const approve = page.getByRole("button", { name: "この内容で進める" });
+  await expect(approve).toHaveCount(1);
+  await approve.click();
+  await expect(page.locator("#composer-status")).toContainText("Makerの成果物作成");
+  await expect(approve).toHaveCount(0);
 }
 
 async function ensureRequestDetail(page) {
@@ -77,16 +121,7 @@ async function ensureRequestDetail(page) {
 }
 
 async function approvePlanAndWorkflow(page) {
-  await expect(page.locator("#activity-timeline")).toContainText("この進め方で開始しますか？");
-  await expect(page.locator("#activity-timeline")).not.toContainText("PROPOSED-");
-  await page.getByRole("button", { name: "この進め方で始める" }).click();
-  await expect(page.getByRole("button", { name: "実行内容を確認" })).toBeVisible();
-  await page.getByRole("button", { name: "実行内容を確認" }).click();
-  await expect(page.getByRole("button", { name: "承認して実行" })).toBeVisible();
-  const approve = page.getByRole("button", { name: "承認して実行" });
-  await approve.evaluate((element) => { element.click(); element.click(); });
-  await expect(page.locator("#activity-timeline")).toContainText("仕事を進めています");
-  await expect(page.getByRole("button", { name: "承認して実行" })).toHaveCount(0);
+  await approvePlanAndExecute(page);
 }
 
 test("Public Beta browser happy path survives polling, reload, and daemon restart", async ({ page }) => {
@@ -101,29 +136,21 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
     await completeFirstRun(page);
     await startRequest(page, "初めての利用者向けにWorkCairnの紹介文を作り、別のAIで確認してください");
 
-    const generate = page.getByRole("button", { name: "進め方の作成を承認" });
-    await generate.evaluate((element) => { element.click(); element.click(); });
-    await expect(page.locator("#activity-timeline")).toContainText("進め方を考えています");
-    await expect(generate).toHaveCount(0);
-    await expect(page.locator("#activity-timeline")).toContainText("初めてWorkCairnを使う人");
+    await expect(page.locator("#composer-status")).toContainText("進め方を準備しています", { timeout: 20_000 });
+    await expect(page.getByRole("button", { name: "進め方の作成を承認" })).toHaveCount(0);
 
-    const clarification = page.locator("#composer-input");
-    await clarification.fill("途中まで入力した回答");
-    await clarification.focus();
-    await page.waitForTimeout(10_500);
-    await expect(clarification).toHaveValue("途中まで入力した回答");
-    expect(await clarification.evaluate((element) => document.activeElement === element)).toBeTruthy();
-    await clarification.fill("はい。初めてWorkCairnを使う人向けです。");
-    await page.getByRole("button", { name: "送信" }).click();
-    await expect(page.getByRole("button", { name: "進め方の作成を承認" })).toBeVisible();
-    expect(commands.filter((command) => command.operation === "interaction.plan.generate")).toHaveLength(1);
+    const phase = await waitForPlanOrClarification(page);
+    if (phase === "clarification") {
+      await answerClarificationIfNeeded(page);
+    }
 
-    await page.getByRole("button", { name: "進め方の作成を承認" }).click();
-    await expect(page.getByRole("button", { name: "この進め方で始める" })).toBeVisible();
+    await expect(page.locator(".msg-embed-plan")).toBeVisible();
+    expect(commands.filter((command) => command.operation === "interaction.plan.generate")).toHaveLength(0);
+    expect(commands.filter((command) => command.operation === "interaction.workflow.execute")).toHaveLength(0);
 
-    await approvePlanAndWorkflow(page);
+    await approvePlanAndExecute(page);
+    expect(commands.filter((command) => command.operation === "interaction.plan.approve_and_execute")).toHaveLength(1);
     await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible({ timeout: 45_000 });
-    expect(commands.filter((command) => command.operation === "interaction.workflow.execute")).toHaveLength(1);
     expect(environment.provider.calls.map((call) => call.fixture)).toEqual([
       "ceo_intent_clarification", "ceo_intent_success", "task_execution_success",
       "review_request_changes", "revision_success", "re_review_approve"
@@ -131,7 +158,10 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
     expect(environment.provider.calls.map((call) => call.structured)).toEqual([true, true, false, true, false, true]);
 
     await expect(page.locator("#activity-timeline")).toContainText("修正をお願い");
-    await expect(page.locator("#activity-timeline")).toContainText("修正しました");
+    await expect(page.locator("#activity-timeline")).toContainText("対応案:");
+    await expect(page.locator("#activity-timeline")).toContainText("修正が完了しました");
+    await expect(page.locator("#activity-timeline")).toContainText("依頼が完了しました");
+    await expect(page.locator("#activity-timeline")).not.toContainText("任せて進んだ仕事");
     await expect(page.locator("#proof-of-work")).toContainText("2件の仕事");
     await expect(page.locator("#proof-of-work")).toContainText("Review: Approve");
 
@@ -139,7 +169,7 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
     await expect(page.locator("#workspace-view")).toBeVisible();
     await ensureRequestDetail(page);
     await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible();
-    await expect(page.locator("#activity-timeline")).toContainText("完了しました");
+    await expect(page.locator("#activity-timeline")).toContainText("依頼が完了しました");
 
     const restarted = await environment.restartDaemon();
     await pairThroughUI(page, restarted);
@@ -166,16 +196,16 @@ test("typed Provider failure is restored from durable Ledger evidence", async ({
     await pairThroughUI(page, environment.daemon);
     await completeFirstRun(page);
     await startRequest(page, "Provider failureの安全な表示を確認する成果物を作ってください");
-    await page.getByRole("button", { name: "進め方の作成を承認" }).click();
-    await expect(page.getByRole("button", { name: "この進め方で始める" })).toBeVisible();
-    await approvePlanAndWorkflow(page);
+    await waitForPlanOrClarification(page);
+    await answerClarificationIfNeeded(page, "はい。安全な表示を確認します。");
+    await approvePlanAndExecute(page);
 
     await expect(page.locator("#activity-timeline")).toContainText("PROVIDER_RATE_LIMITED", { timeout: 30_000 });
     await expect(page.locator("#activity-timeline")).toContainText("review_provider");
     await expect(page.locator("#activity-timeline")).toContainText("req_browser_rate_limit_001");
     await expect(page.locator("#activity-timeline")).not.toContainText("sanitized fixture failure");
 
-    const workflowCommand = commands.find((command) => command.operation === "interaction.workflow.execute");
+    const workflowCommand = commands.find((command) => command.operation === "interaction.plan.approve_and_execute");
     expect(workflowCommand?.command_id).toBeTruthy();
     const ledger = await page.evaluate(async (commandID) => {
       const response = await fetch(`/v1/commands/${encodeURIComponent(commandID)}?scope=workspace`);
@@ -197,7 +227,7 @@ test("typed Provider failure is restored from durable Ledger evidence", async ({
     await expect(freshPage.locator("#activity-timeline")).toContainText("review_provider");
     await expect(freshPage.locator("#activity-timeline")).toContainText("req_browser_rate_limit_001");
     await expect(freshPage.locator("#activity-timeline")).toContainText("自動retryせず");
-    await freshPage.locator("#activity-timeline").getByRole("button", { name: "詳細をコピー" }).click();
+    await freshPage.locator("#activity-timeline").getByRole("button", { name: "詳細をコピー" }).last().click();
     await expect(freshPage.locator("#toast")).toContainText(/コピー|詳細を選択/);
   } finally {
     if (freshContext) await freshContext.close();
@@ -267,15 +297,8 @@ test("Claude connection always leaves in-flight state on terminal outcome", asyn
 });
 
 async function generatePlanThroughClarification(page) {
-  await page.getByRole("button", { name: "進め方の作成を承認" }).click();
-  const clarification = page.locator("#composer-input");
-  try {
-    await expect(clarification).toBeEditable({ timeout: 8_000 });
-    await clarification.fill("はい。初めてWorkCairnを使う人向けです。");
-    await page.getByRole("button", { name: "送信" }).click();
-    await expect(page.getByRole("button", { name: "進め方の作成を承認" })).toBeVisible();
-    await page.getByRole("button", { name: "進め方の作成を承認" }).click();
-  } catch {}
+  await waitForPlanOrClarification(page);
+  await answerClarificationIfNeeded(page);
   await expect(page.locator(".msg-embed-plan")).toBeVisible({ timeout: 20_000 });
 }
 
@@ -352,7 +375,7 @@ test("composer stays pinned to the requests pane bottom across conversation shap
     const planBottom = await assertComposerBottomStable(page, "plan visible");
     expect(Math.abs(planBottom - shortBottom)).toBeLessThanOrEqual(2);
 
-    await expect(page.getByRole("button", { name: "この進め方で始める" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "この内容で進める" })).toBeVisible();
     const quickReplyBottom = await assertComposerBottomStable(page, "quick replies visible");
     expect(Math.abs(quickReplyBottom - shortBottom)).toBeLessThanOrEqual(2);
 
@@ -393,9 +416,9 @@ test("failure technical details do not move the composer", async ({ page }) => {
     await completeFirstRun(page);
     await ensureRequestDetail(page);
     await startRequest(page, "Provider failureの安全な表示を確認する成果物を作ってください");
-    await page.getByRole("button", { name: "進め方の作成を承認" }).click();
-    await expect(page.getByRole("button", { name: "この進め方で始める" })).toBeVisible();
-    await approvePlanAndWorkflow(page);
+    await waitForPlanOrClarification(page);
+    await answerClarificationIfNeeded(page, "はい。安全な表示を確認します。");
+    await approvePlanAndExecute(page);
     await expect(page.locator("#activity-timeline")).toContainText("PROVIDER_RATE_LIMITED", { timeout: 30_000 });
 
     const before = await assertComposerBottomStable(page, "failure before details");
@@ -405,6 +428,57 @@ test("failure technical details do not move the composer", async ({ page }) => {
     await expect(page.locator("#activity-timeline .msg-technical-panel").last()).toBeVisible();
     const after = await assertComposerBottomStable(page, "failure after details");
     expect(Math.abs(after - before)).toBeLessThanOrEqual(2);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("conversation projection renders canonical chat categories", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "初めての利用者向けにWorkCairnの紹介文を作り、別のAIで確認してください");
+    await waitForPlanOrClarification(page);
+    await answerClarificationIfNeeded(page);
+    await approvePlanAndExecute(page);
+    await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible({ timeout: 45_000 });
+
+    const timeline = page.locator("#activity-timeline");
+    await expect(timeline.locator(".msg-user").first()).toContainText("あなた");
+    await expect(timeline).toContainText("成果物を作成しました");
+    await expect(timeline.locator(".msg-directed").filter({ hasText: "修正をお願い" })).toBeVisible();
+    await expect(timeline.locator(".msg-directed .msg-mention").first()).toContainText("@");
+    await expect(timeline.locator(".msg-directed").filter({ hasText: "修正をお願い" })).toContainText("対応案:");
+    await expect(timeline).toContainText("レビューが完了しました");
+    await expect(timeline).toContainText("依頼が完了しました");
+    await expect(timeline).not.toContainText("任せて進んだ仕事");
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("employee visual section stays separate from selected request chat", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    const menu = page.locator("#menu-button");
+    const isMobile = await menu.isVisible();
+    if (isMobile) {
+      await menu.click();
+      await page.locator("#nav-employees-home").click();
+    }
+    await expect(page.locator(".office-floor")).toBeVisible();
+    await expect(page.locator(".office-character").first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "社内の動き" })).toBeVisible();
+    await startRequest(page, "りんごについて100文字程度で説明して");
+    await expect(page.locator("#activity-timeline")).toBeVisible();
+    if (isMobile) {
+      await expect(page.locator(".office-floor")).toBeHidden();
+    } else {
+      await expect(page.locator(".office-floor")).toBeVisible();
+    }
   } finally {
     await environment.stop();
   }

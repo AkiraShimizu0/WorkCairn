@@ -73,6 +73,8 @@ const state = {
   evidence: new Map(),
   workReport: null,
   workReportError: null,
+  conversation: null,
+  conversationError: null,
   providerStatus: null,
   providerSetupError: null,
   workspaceStatus: null,
@@ -92,6 +94,7 @@ const state = {
   pendingAttentionTitle: "",
   workflowPlanPreview: null,
   clarificationDraft: null,
+  composerDraft: "",
 };
 
 class APIError extends Error {
@@ -356,6 +359,7 @@ function clearActionSurface() {
 
 function resetClarificationDraft() {
   state.clarificationDraft = null;
+  state.composerDraft = "";
 }
 
 function clarificationDraft(next) {
@@ -387,13 +391,13 @@ function employeeActivityStatusText(employee) {
 }
 
 function composerStatusText(next) {
-  if (state.lastError) return "確認が必要です";
+  if (state.lastError) return "判断が必要です";
   const pending = storedPendingCommand();
   if (pending) {
-    if (pending.operation === "interaction.workflow.execute") {
+    if (pending.operation === "interaction.plan.approve_and_execute" || pending.operation === "interaction.workflow.execute") {
       return "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。";
     }
-    if (pending.operation === "interaction.plan.generate") {
+    if (pending.operation === "interaction.start" || pending.operation === "interaction.plan.generate") {
       return "進め方を準備しています";
     }
     const copy = inFlightCopy(pending.operation);
@@ -414,13 +418,13 @@ function composerStatusText(next) {
     const total = next.questions.length;
     if (total <= 1) return "回答を入力してください";
     const draft = clarificationDraft(next);
-    return `質問 ${draft.index + 1} / ${total} に回答してください`;
+    return `質問 ${draft.index + 1} / ${total}`;
   }
-  if (next.kind === "approve_plan_generation") return "進め方の作成承認待ちです";
-  if (next.kind === "approve_plan_apply") return "進め方の承認待ちです";
+  if (next.kind === "approve_plan_generation") return "進め方を準備しています";
+  if (next.kind === "approve_plan_apply") return "進め方の確認待ちです";
   if (next.kind === "approve_workflow") return "実行承認待ちです";
   if (next.kind === "done" || next.kind === "optional_external_action_or_done") return "完了しました";
-  if (next.kind === "inspect_workflow_recovery" || next.kind === "inspect_action_recovery") return "確認が必要です";
+  if (next.kind === "inspect_workflow_recovery" || next.kind === "inspect_action_recovery") return "判断が必要です";
 
   const liaison = (state.companyActivity?.employees || []).find((employee) =>
     employee.is_liaison && employee.display_status === "社長と相談中",
@@ -454,6 +458,9 @@ function renderComposerState(next) {
   ui.composerSend.disabled = !capabilities.enabled;
   ui.threadComposer.dataset.mode = capabilities.mode;
   ui.threadComposer.classList.toggle("composer-idle", !capabilities.enabled);
+  if (capabilities.mode === "clarification" && state.composerDraft && !ui.composerInput.value) {
+    ui.composerInput.value = state.composerDraft;
+  }
 }
 
 function isThreadNearBottom() {
@@ -527,8 +534,10 @@ function setBackgroundWorking(active) {
 
 function inFlightCopy(operation) {
   switch (operation) {
+  case "interaction.start":
   case "interaction.plan.generate":
-    return { label: "進め方を考えています", title: "企画担当が進め方を考えています", message: "質問または進め方ができるまで、Macで処理を続けます。" };
+    return { label: "進め方を準備しています", title: "進め方を準備しています", message: "質問または進め方ができるまで、Macで処理を続けます。" };
+  case "interaction.plan.approve_and_execute":
   case "interaction.workflow.execute":
     return { label: "仕事を進めています", title: "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。", message: "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。" };
   default:
@@ -1148,17 +1157,22 @@ async function refreshCurrent(silent = false) {
     return;
   }
   try {
-    const [record, next, reportResult] = await Promise.all([
+    const [record, next, reportResult, conversationResult] = await Promise.all([
       requestJSON(`/v1/interactions/${encodeURIComponent(id)}`),
       requestJSON(`/v1/interactions/${encodeURIComponent(id)}/next`),
       requestJSON(`/v1/interactions/${encodeURIComponent(id)}/work-report`)
         .then((report) => ({ report }))
+        .catch((error) => ({ error })),
+      requestJSON(`/v1/interactions/${encodeURIComponent(id)}/conversation`)
+        .then((conversation) => ({ conversation }))
         .catch((error) => ({ error })),
     ]);
     state.record = record;
     state.next = next;
     state.workReport = reportResult.report || null;
     state.workReportError = reportResult.error || null;
+    state.conversation = conversationResult.conversation || null;
+    state.conversationError = conversationResult.error || null;
     restoreError(record);
     if (!state.lastError) await restoreDurableFailure(next);
     await loadTaskEvidenceDetails().catch(() => null);
@@ -1346,15 +1360,12 @@ function renderQuestions(next) {
 function submitClarificationAnswers(next, answers = null) {
   if (answers) {
     if (answers.some((entry) => !entry.answer)) return toast("回答を入力してください。");
-    executeNextCommand(next, {
+    return executeNextCommand(next, {
       session_id: next.session_id,
       expected_version: next.expected_version,
       answers,
       current_time: now(),
-    }, "回答を保存しています", "保存後に次の進め方の作成確認へ進みます。");
-    resetClarificationDraft();
-    ui.composerInput.value = "";
-    return;
+    }, "回答を保存しています", "回答後に進め方を準備します。");
   }
   const draft = clarificationDraft(next);
   const answer = ui.composerInput.value.trim();
@@ -1362,24 +1373,28 @@ function submitClarificationAnswers(next, answers = null) {
   const currentQuestion = next.questions[draft.index];
   draft.answers.push({ question: currentQuestion, answer });
   ui.composerInput.value = "";
+  state.composerDraft = "";
   if (draft.index + 1 < next.questions.length) {
     draft.index += 1;
     state.renderKey = "";
     state.timelineRenderKey = "";
     renderQuestions(next);
     renderComposerState(next);
-    return;
+    return Promise.resolve(false);
   }
-  executeNextCommand(next, {
+  return executeNextCommand(next, {
     session_id: next.session_id,
     expected_version: next.expected_version,
     answers: draft.answers,
     current_time: now(),
-  }, "回答を保存しています", "保存後に次の進め方の作成確認へ進みます。");
-  resetClarificationDraft();
+  }, "回答を保存しています", "回答後に進め方を準備します。").then((completed) => {
+    if (completed) resetClarificationDraft();
+    return completed;
+  });
 }
 
 function currentPlan() {
+  if (!state.record?.turns?.length) return null;
   for (let index = state.record.turns.length - 1; index >= 0; index--) {
     const turn = state.record.turns[index];
     if (turn.kind === "plan_generated" && turn.plan) return { plan: turn.plan, digest: turn.plan_digest };
@@ -1415,13 +1430,12 @@ function renderPlanApproval(next) {
   const identifier = localStorage.getItem(`workcairn.project.${state.record.session_id}`) || projectID();
   localStorage.setItem(`workcairn.project.${state.record.session_id}`, identifier);
   setQuickReplies([
-    button("この進め方で始める", "primary chip", () => {
+    button("この内容で進める", "primary chip", () => {
       executeNextCommand(next, {
         session_id: next.session_id, expected_version: next.expected_version,
         project_id: identifier, plan_digest: current.digest, current_time: now(),
-      }, "Projectを作成しています", "ProjectとTaskを安全な順序で保存しています。");
+      }, "仕事を開始しています", "Planの適用とReviewed WorkflowをMacで進めています。");
     }),
-    button("承認しない", "quiet chip", () => toast("Workspaceは変更されていません。")),
   ]);
   ui.activeCard.hidden = true;
   ui.activeCard.replaceChildren();
@@ -1546,36 +1560,6 @@ async function inspectCommands(references) {
 }
 
 function closeActionDialog() { if (ui.actionDialog.open) ui.actionDialog.close(); }
-
-function showApprovalSheet({ title, description, facts, technicalFacts = [], approveLabel, onApprove, approveKind = "primary", hideCancel = false }) {
-  const form = ui.actionForm;
-  form.replaceChildren(
-    node("div", { class: "sheet-handle" }),
-    node("div", { class: "sheet-heading" },
-      node("div", {}, node("p", { class: "eyebrow" }, "CONFIRMATION"), node("h2", {}, title)),
-      node("button", { class: "icon-button", type: "button", "aria-label": "閉じる", onclick: closeActionDialog }, "×"),
-    ),
-    node("p", { class: "supporting" }, description),
-    approvalFacts(facts),
-    technicalFacts.length ? node("details", { class: "technical-details" },
-      node("summary", {}, "技術的な詳細を見る"), approvalFacts(technicalFacts),
-    ) : null,
-    node("div", { class: "sheet-actions" },
-      hideCancel ? null : button("承認しない", "quiet", closeActionDialog),
-      button(approveLabel, approveKind, null, "submit"),
-    ),
-  );
-  form.onsubmit = async (event) => {
-    event.preventDefault();
-    closeActionDialog();
-    try {
-      await onApprove();
-    } catch (error) {
-      showError(error);
-    }
-  };
-  ui.actionDialog.showModal();
-}
 
 function approvalFacts(facts) {
   return node("div", { class: "approval-box" }, node("dl", {}, ...facts.map(([term, value]) =>
@@ -1774,55 +1758,240 @@ function reviewIssuesForTask(projectName, taskID) {
   return (latest.decision?.issues || []).map((issue) => issue.description).filter(Boolean);
 }
 
-function reviewMessageText(task, issues) {
-  if (task.verdict === "Approve") {
-    return task.targeted_revision
-      ? "再確認しました。\n問題ありません。"
-      : "内容を確認しました。\n問題ありません。";
-  }
-  const lines = ["修正をお願いします。"];
-  if (issues.length) lines.push("", ...issues);
-  return lines.join("\n");
+function actorRoleLabel(actorRef) {
+  if (!actorRef?.employee_id) return "";
+  const employee = (state.organization?.inventory?.employees || []).find((candidate) => candidate.id === actorRef.employee_id);
+  return employee?.role ? roleLabel(employee.role) : "";
 }
 
-function conversationNode(message) {
-  const side = message.side || "system";
-  const identity = message.identity || { name: message.speaker || "", role: message.role || "" };
-  const actions = inlineMessageActions(message);
+function failureEnvelopeFacts(envelope) {
+  if (!envelope) return [];
+  return parseDiagnosticsFacts({
+    code: envelope.code,
+    stage: envelope.stage,
+    substage: envelope.substage,
+    category: envelope.category,
+    http_status: envelope.provider?.http_status,
+    command_id: envelope.child_command_id,
+    request_id: envelope.provider?.request_id,
+    parse_failure_reason: envelope.parse?.reason,
+    parse_failure_field: envelope.parse?.field,
+    details: envelope,
+  });
+}
 
-  if (side === "system") {
-    const label = identity.name || message.speaker || "WorkCairn";
-    const timeLabel = message.at ? sessionTimeLabel(message.at) : "";
-    return node("article", { class: `msg msg-system${message.attention ? " attention" : ""}` },
+function companyFactText(entry) {
+  const subjectName = entry.subject?.name || entry.subject?.employee_id || "";
+  switch (entry.kind) {
+  case "task_assigned":
+    return entry.task_title ? `${subjectName}に${entry.task_title}を割り当てました。` : `${subjectName}に仕事を割り当てました。`;
+  case "deliverable_ready":
+    return `${subjectName}が成果物を作成しました。`;
+  case "review_approved":
+    return entry.review_summary
+      ? `${subjectName}のレビューが完了しました。\n\n${entry.review_summary}`
+      : `${subjectName}のレビューが完了しました。`;
+  case "revision_completed":
+    return `${subjectName}が修正しました。`;
+  case "task_completed":
+    return entry.task_title ? `${entry.task_title}が完了しました。` : "仕事が完了しました。";
+  case "request_completed":
+    return "依頼が完了しました。";
+  default:
+    return entry.task_title || "";
+  }
+}
+
+function directedCommunicationText(entry) {
+  if (entry.kind === "review_request_changes") {
+    const lines = ["修正をお願いします。"];
+    for (const issue of entry.review_issues || []) {
+      if (!issue.description) continue;
+      lines.push("");
+      lines.push(`・${issue.description}`);
+      if (issue.suggested_action) lines.push(`  対応案: ${issue.suggested_action}`);
+    }
+    return lines.join("\n");
+  }
+  if (entry.kind === "revision_completed") return "修正が完了しました。";
+  return "";
+}
+
+function conversationEntryNode(entry) {
+  if (entry.category === "ceo_message") {
+    return node("article", { class: "msg msg-user" },
+      node("div", { class: "msg-header" },
+        node("span", { class: "msg-name" }, "あなた"),
+        entry.at ? node("time", { class: "msg-time-inline" }, sessionTimeLabel(entry.at)) : null,
+      ),
+      node("div", { class: "msg-body msg-body-user" },
+        node("p", { class: "msg-text" }, entry.ceo_message_text || ""),
+      ),
+    );
+  }
+  if (entry.category === "directed_communication") {
+    const speakerName = entry.speaker?.name || entry.speaker?.employee_id || "";
+    const role = actorRoleLabel(entry.speaker);
+    const mention = entry.mention_allowed && entry.recipient?.name
+      ? node("p", { class: "msg-mention" }, `@${entry.recipient.name}`)
+      : null;
+    return node("article", { class: "msg msg-employee msg-directed" },
+      node("div", { class: "msg-header" },
+        node("span", { class: "msg-name" }, speakerName),
+        node("div", { class: "msg-meta" },
+          role ? node("span", { class: "msg-role" }, role) : null,
+          entry.at ? node("time", { class: "msg-time-inline" }, sessionTimeLabel(entry.at)) : null,
+        ),
+      ),
+      node("div", { class: "msg-body msg-body-employee" },
+        mention,
+        node("p", { class: "msg-text" }, directedCommunicationText(entry)),
+      ),
+    );
+  }
+  if (entry.category === "company_fact") {
+    const text = companyFactText(entry);
+    return node("article", { class: "msg msg-company-fact" },
+      node("div", { class: "msg-company-fact-body" },
+        text ? node("p", { class: "msg-company-fact-copy" }, text) : null,
+        entry.at ? node("time", { class: "msg-company-fact-time" }, sessionTimeLabel(entry.at)) : null,
+      ),
+    );
+  }
+  if (entry.category === "system" || entry.kind === "failure") {
+    const facts = failureEnvelopeFacts(entry.failure_details);
+    const guidance = interactionErrorGuidance(entry.failure_details?.code, entry.failure_details?.stage);
+    const actions = facts.length
+      ? inlineMessageActions({ detail: facts, onCopy: () => copySanitizedError({
+        code: entry.failure_details?.code,
+        stage: entry.failure_details?.stage,
+        substage: entry.failure_details?.substage,
+        category: entry.failure_details?.category,
+        http_status: entry.failure_details?.provider?.http_status,
+        command_id: entry.failure_details?.child_command_id,
+        request_id: entry.failure_details?.provider?.request_id,
+        parse_failure_reason: entry.failure_details?.parse?.reason,
+        parse_failure_field: entry.failure_details?.parse?.field,
+        details: entry.failure_details,
+      }) })
+      : null;
+    return node("article", { class: "msg msg-system msg-failure attention" },
       node("div", { class: "msg-system-rule", "aria-hidden": "true" }),
-      node("p", { class: "msg-system-copy" }, node("strong", {}, label)),
-      message.text || timeLabel ? node("div", { class: "msg-system-body" },
-        message.text ? node("p", { class: "msg-system-copy" }, message.text) : null,
-        timeLabel ? node("span", { class: "msg-system-time" }, ` · ${timeLabel}`) : null,
-        actions,
-      ) : actions,
+      node("p", { class: "msg-system-copy" }, `処理を完了できませんでした。\n\n${guidance} 自動retryせず、次の判断を待っています。`),
+      actions,
       node("div", { class: "msg-system-rule", "aria-hidden": "true" }),
     );
   }
+  return node("article", { class: "msg msg-system" },
+    node("p", { class: "msg-system-copy" }, entry.task_title || entry.kind || ""),
+  );
+}
 
-  const metaParts = [];
-  if (identity.role && side === "employee") metaParts.push(node("span", { class: "msg-role" }, identity.role));
-  if (message.at) metaParts.push(node("time", { class: "msg-time-inline" }, sessionTimeLabel(message.at)));
-
-  const headerChildren = [
-    node("span", { class: "msg-name" }, identity.name || message.speaker),
-    metaParts.length ? node("div", { class: "msg-meta" }, ...metaParts) : null,
-  ].filter(Boolean);
-  const bodyClass = side === "user" ? "msg-body msg-body-user" : "msg-body msg-body-employee";
-
-  return node("article", { class: `msg msg-${side}${message.liaison ? " msg-liaison" : ""}${message.attention ? " attention" : ""}` },
-    node("div", { class: "msg-header" }, ...headerChildren),
-    node("div", { class: `${bodyClass}${message.attention ? " attention" : ""}` },
-      ...(message.text ? [node("p", { class: "msg-text" }, message.text)] : []),
-      message.embed || null,
-      actions,
+function clarificationQuestionNode(question) {
+  return node("article", { class: "msg msg-clarification" },
+    node("p", { class: "msg-clarification-label" }, "確認"),
+    node("div", { class: "msg-body msg-body-clarification" },
+      node("p", { class: "msg-text" }, question),
     ),
   );
+}
+
+function planPendingNode(current) {
+  return node("article", { class: "msg msg-plan-pending" },
+    node("div", { class: "msg-body" }, planEmbedNode(current.plan)),
+  );
+}
+
+function pendingInteractionNodes() {
+  const next = state.next;
+  if (!next) return [];
+  const pending = storedPendingCommand();
+  if (pending) return [];
+  if (state.lastError) {
+    const hasConversationFailure = (state.conversation?.entries || []).some(
+      (entry) => entry.category === "system" && entry.kind === "failure",
+    );
+    if (hasConversationFailure) return [];
+    const guidance = interactionErrorGuidance(state.lastError.code, state.lastError.stage);
+    return [node("article", { class: "msg msg-system msg-failure attention" },
+      node("div", { class: "msg-system-rule", "aria-hidden": "true" }),
+      node("p", { class: "msg-system-copy" }, `${state.lastError.title || "処理を完了できませんでした。"}\n\n${guidance} 自動retryせず、次の判断を待っています。`),
+      inlineMessageActions({
+        detail: parseDiagnosticsFacts(state.lastError),
+        onCopy: () => copySanitizedError(state.lastError),
+      }),
+      node("div", { class: "msg-system-rule", "aria-hidden": "true" }),
+    )];
+  }
+  if (state.pendingAttentionTitle) {
+    return [node("article", { class: "msg msg-system attention" },
+      node("p", { class: "msg-system-copy" }, state.pendingAttentionTitle),
+    )];
+  }
+  switch (next.kind) {
+  case "approve_plan_generation":
+    if (!state.providerStatus?.configured) {
+      return [node("article", { class: "msg msg-system attention" },
+        node("p", { class: "msg-system-copy" }, "AIサービスへ接続してください。"),
+      )];
+    }
+    return [node("article", { class: "msg msg-system" },
+      node("p", { class: "msg-system-copy" }, "進め方を準備しています"),
+    )];
+  case "answer_clarifications": {
+    const draft = clarificationDraft(next);
+    const nodes = [];
+    for (const entry of draft.answers) {
+      nodes.push(node("article", { class: "msg msg-clarification answered" },
+        node("p", { class: "msg-clarification-label" }, "確認"),
+        node("div", { class: "msg-body msg-body-clarification" },
+          node("p", { class: "msg-text" }, entry.question),
+        ),
+      ));
+      nodes.push(node("article", { class: "msg msg-user" },
+        node("div", { class: "msg-header" }, node("span", { class: "msg-name" }, "あなた")),
+        node("div", { class: "msg-body msg-body-user" }, node("p", { class: "msg-text" }, entry.answer)),
+      ));
+    }
+    const current = next.questions[draft.index];
+    if (current) nodes.push(clarificationQuestionNode(current));
+    return nodes;
+  }
+  case "approve_plan_apply": {
+    const current = currentPlan();
+    return current ? [planPendingNode(current)] : [];
+  }
+  case "approve_workflow":
+    return [node("article", { class: "msg msg-system" },
+      node("p", { class: "msg-system-copy" }, "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。今回任せる仕事ステップの上限は20件です。"),
+    )];
+  default:
+    return [];
+  }
+}
+
+function conversationTimelineNodes() {
+  const nodes = (state.conversation?.entries || []).map((entry) => conversationEntryNode(entry));
+  nodes.push(...pendingInteractionNodes());
+  return nodes;
+}
+
+function timelineRenderKey() {
+  const entries = state.conversation?.entries || [];
+  const draft = state.next?.kind === "answer_clarifications" ? clarificationDraft(state.next) : null;
+  return JSON.stringify([
+    entries.map((entry) => [
+      entry.at, entry.category, entry.kind, entry.mention_allowed, entry.ceo_message_text,
+      entry.review_summary, entry.review_issues, entry.subject?.employee_id, entry.speaker?.employee_id,
+    ]),
+    state.next?.kind,
+    state.next?.expected_version,
+    storedPendingCommand()?.command_id || "",
+    state.lastError?.code || "",
+    draft ? [draft.index, draft.answers] : null,
+    currentPlan()?.digest || "",
+    state.pendingAttentionTitle || "",
+  ]);
 }
 
 function planEmbedNode(plan) {
@@ -1842,243 +2011,9 @@ function planEmbedNode(plan) {
   );
 }
 
-function deliverablePreviewText(proof) {
-  const workflow = [...(state.record?.turns || [])].reverse().find((turn) => turn.workflow)?.workflow;
-  if (!workflow || !proof?.task_id) return "";
-  const evidence = state.evidence.get(`${workflow.project_name}/${proof.task_id}`);
-  return truncatePreview(evidence?.deliverable?.content);
-}
-
-function deliverableEmbedNode(proof) {
-  if (!proof?.deliverable?.committed && !proof?.title) return null;
-  const previewText = deliverablePreviewText(proof) || "成果物を開いて本文を確認";
-  const preview = node("pre", { class: "deliverable-preview", hidden: true });
-  const panel = node("div", { class: "msg-deliverable-panel", hidden: true }, preview);
-  return node("div", { class: "msg-embed msg-embed-deliverable" },
-    node("div", { class: "msg-attach" },
-      node("p", { class: "msg-attach-label" }, "成果物"),
-      node("p", { class: "msg-attach-preview" }, previewText),
-      iconButton("成果物を見る", "⋯", async (event) => {
-        panel.hidden = !panel.hidden;
-        if (!panel.hidden) {
-          await loadTaskEvidenceDetails();
-          const workflow = [...(state.record?.turns || [])].reverse().find((turn) => turn.workflow)?.workflow;
-          const evidence = workflow ? state.evidence.get(`${workflow.project_name}/${proof.task_id}`) : null;
-          const body = evidence?.deliverable?.content || "";
-          preview.textContent = body || "（本文なし）";
-          const previewLabel = event.currentTarget.closest(".msg-attach")?.querySelector(".msg-attach-preview");
-          if (previewLabel) {
-            previewLabel.textContent = truncatePreview(body) || "成果物を開いて本文を確認";
-          }
-        }
-      }, "icon-button msg-more-toggle"),
-      panel,
-    ),
-  );
-}
-
-function evidenceSystemMessages() {
-  const messages = [];
-  const proof = state.workReport?.proof_of_work;
-  const workflow = [...(state.record?.turns || [])].reverse().find((turn) => turn.workflow)?.workflow;
-  const workflowCompleted = workflow?.status === "completed" && !workflow?.failure;
-  if (proof?.fully_verified && proof.tasks?.length && workflowCompleted) {
-    const lines = proof.tasks
-      .filter((task) => task.verified)
-      .map((task) => {
-        const title = task.title || task.task_id;
-        if (task.review?.verdict === "Approve") return `・${title}（QAレビュー完了）`;
-        return `・${title}`;
-      });
-    if (lines.length) {
-      messages.push(workcairnEvent(`以下の仕事が完了しました。\n\n${lines.join("\n")}`));
-    }
-  }
-  const contract = state.workReport?.autonomy_contract;
-  if (contract && workflow) {
-    const scopeLines = [
-      `・最大${contract.execution_limit}件の仕事ステップ`,
-      `・${contract.allowed_employee_ids.length}人のAI社員`,
-      "・成果物は別のReviewerが確認",
-    ];
-    messages.push(workcairnEvent(`今回はこの範囲を任せて進めました。\n\n${scopeLines.join("\n")}`));
-  }
-  const attention = state.workReport?.ceo_attention;
-  if (attention && (attention.delegated_steps > 0 || attention.company_steps > 0)) {
-    const lines = [];
-    if (attention.company_steps > 0) lines.push(`・会社が進めたstep: ${attention.company_steps}`);
-    if (attention.delegated_steps > 0) lines.push(`・呼ばずに進めたstep: ${attention.delegated_steps}`);
-    if (attention.clarification_questions > 0) lines.push(`・必要だった質問: ${attention.clarification_questions}`);
-    if (attention.approval_moments > 0) lines.push(`・重要な承認: ${attention.approval_moments}`);
-    if (lines.length) messages.push(workcairnEvent(`任せて進んだ仕事\n\n${lines.join("\n")}`));
-  }
-  return messages;
-}
-
-function pendingInteractionMessages() {
-  const next = state.next;
-  if (!next) return [];
-  const pending = storedPendingCommand();
-  if (pending) {
-    const copy = inFlightCopy(pending.operation);
-    return [liaisonMessage(copy.label, now(), {
-      detail: [["Command ID", pending.command_id || "確認中"]],
-    })];
-  }
-  if (state.lastError) {
-    const guidance = interactionErrorGuidance(state.lastError.code, state.lastError.stage);
-    return [liaisonMessage(`${state.lastError.title || "処理を完了できませんでした。"}\n\n${guidance} 自動retryせず、次の判断を待っています。`, state.lastError.at, {
-      attention: true,
-      detail: parseDiagnosticsFacts(state.lastError),
-      onCopy: () => copySanitizedError(state.lastError),
-    })];
-  }
-  if (state.pendingAttentionTitle) {
-    return [liaisonMessage(state.pendingAttentionTitle, null, { attention: true })];
-  }
-  switch (next.kind) {
-  case "approve_plan_generation": {
-    if (!state.providerStatus?.configured) {
-      return [liaisonMessage("AIサービスへ接続してください。", null, { attention: true })];
-    }
-    const hasAnswers = state.record?.turns?.some((turn) => turn.kind === "clarification_answered");
-    return [liaisonMessage(hasAnswers ? "回答をもとに進め方を作り直します。" : "仕事の進め方を作成します。")];
-  }
-  case "answer_clarifications": {
-    const draft = clarificationDraft(next);
-    const messages = [];
-    for (const entry of draft.answers) {
-      messages.push(liaisonMessage(entry.question));
-      messages.push({ side: "user", speaker: "あなた", text: entry.answer });
-    }
-    const current = next.questions[draft.index];
-    if (current) messages.push(liaisonMessage(current));
-    return messages;
-  }
-  case "approve_plan_apply": {
-    const current = currentPlan();
-    return [liaisonMessage("この進め方で開始しますか？", null, { embed: current ? planEmbedNode(current.plan) : null })];
-  }
-  case "approve_workflow":
-    if (state.workflowPlanPreview) {
-      const plan = state.workflowPlanPreview;
-      return [liaisonMessage("この内容で実行してよろしいですか？", null, {
-        detail: [
-          `Project: ${plan.project_name}`,
-          `Reviewer: ${plan.reviewer_name}`,
-          `Execution limit: ${plan.autonomy_contract.execution_limit}`,
-          `Project ID: ${plan.project_id}`,
-          `Reviewer ID: ${plan.reviewer_id}`,
-          `Plan digest: ${plan.workflow_plan_digest}`,
-        ].join("\n"),
-      })];
-    }
-    return [liaisonMessage("担当AIに仕事を開始させます。Reviewerの指摘があれば修正と再確認まで進めます。\n\nMakerとは別のQA Reviewerを、役割と許可範囲から自動選択します。今回任せる仕事ステップの上限は20件です。")];
-  case "inspect_workflow_recovery":
-    return [liaisonMessage("Workflowの確認が必要です", null, { attention: true })];
-  case "inspect_action_recovery":
-    return [liaisonMessage("外部公開の確認が必要です", null, { attention: true })];
-  default:
-    return [];
-  }
-}
-
-function conversationMessages() {
-  const record = state.record;
-  if (!record) return [];
-  const proofByTask = new Map((state.workReport?.proof_of_work?.tasks || []).map((task) => [task.task_id, task]));
-  const messages = [{
-    side: "user",
-    speaker: "あなた",
-    text: record.request,
-    at: record.created_at,
-  }];
-  for (let turnIndex = 0; turnIndex < (record.turns || []).length; turnIndex++) {
-    const turn = record.turns[turnIndex];
-    if (turn.kind === "clarification_answered" && turn.answers?.length) {
-      for (const answer of turn.answers) {
-        messages.push(liaisonMessage(answer.question, turn.at));
-        messages.push({ side: "user", speaker: "あなた", text: answer.answer, at: turn.at });
-      }
-    }
-    if (turn.kind === "plan_generated" && turn.plan) {
-      messages.push(liaisonMessage("進め方をまとめました。", turn.at, {
-        embed: planEmbedNode(turn.plan),
-        detail: [`Plan digest: ${turn.plan_digest}`, ...turn.plan.proposed_tasks.map((task, index) => `${index + 1}. ${planStepCopy(task, index).replace(/^\d+\. /, "")}`)].join("\n"),
-      }));
-    } else if (turn.kind === "plan_applied") {
-      const planTurn = [...record.turns.slice(0, turnIndex)].reverse().find((candidate) => candidate.kind === "plan_generated" && candidate.plan);
-      if (planTurn?.plan?.proposed_tasks?.length) {
-        const assignments = planTurn.plan.proposed_tasks.map((task) => {
-          const assignee = planTaskAssigneeIdentity(task);
-          return `${assignee.name}に${planTaskDisplayTitle(task)}`;
-        });
-        messages.push(liaisonMessage(`この内容で進めます。\n\n${assignments.join("\n")}`, turn.at, {
-          detail: `Project: ${turn.project_name}\nProject ID: ${turn.project_id}`,
-        }));
-      } else {
-        messages.push(workcairnEvent(`${turn.project_name}の準備が整いました。`, turn.at, {
-          detail: `Project: ${turn.project_name}\nProject ID: ${turn.project_id}`,
-        }));
-      }
-    } else if (turn.workflow) {
-      const projectName = turn.workflow.project_name || "";
-      const tasks = turn.workflow.tasks || [];
-      for (const task of tasks) {
-        const proof = proofByTask.get(task.task_id);
-        const maker = employeeIdentityByID(proof?.maker_id);
-        if (!task.targeted_revision && task.execution_command_id) {
-          messages.push(workcairnEvent(`${maker.name}が作業を開始しました。`, turn.at, {
-            detail: [`Task: ${task.task_id}`, task.execution_command_id ? `Execution Command: ${task.execution_command_id}` : ""].filter(Boolean).join("\n"),
-          }));
-        }
-        if (task.targeted_revision) {
-          messages.push(workcairnEvent(`${maker.name}が修正しました。`, turn.at, {
-            detail: task.revision_task_id ? `Revision Task: ${task.revision_task_id}` : "",
-          }));
-        }
-        if (task.verdict === "Request Changes") {
-          const issues = reviewIssuesForTask(projectName, task.task_id);
-          messages.push(liaisonMessage(
-            issues.length ? `レビューで修正をお願いされています。\n\n${issues.join("\n")}` : "レビューで修正をお願いされています。",
-            turn.at,
-            { attention: true, detail: [`Review: ${task.verdict}`, task.review_command_id ? `Review Command: ${task.review_command_id}` : ""].filter(Boolean).join("\n") },
-          ));
-        }
-      }
-      if (turn.workflow.status === "completed" && !turn.workflow.failure) {
-        const primaryTask = tasks.find((task) => !task.targeted_revision) || tasks[0];
-        const proof = primaryTask ? proofByTask.get(primaryTask.task_id) : null;
-        const reviewer = employeeIdentityByID(proof?.review?.reviewer_id);
-        const taskTitle = proof?.title || proof?.deliverable?.title || "原稿";
-        const reviewLine = reviewer.name !== "AI社員" ? `${reviewer.name}のレビューも完了しています。` : "レビューも完了しています。";
-        messages.push(liaisonMessage(`${taskTitle}が完成しました。\n${reviewLine}`, turn.at, {
-          embed: deliverableEmbedNode(proof),
-        }));
-        messages.push(liaisonMessage("完了しました。", turn.at));
-      }
-      if (turn.workflow.failure) {
-        messages.push(liaisonMessage("処理を完了できませんでした。", turn.at, {
-          attention: true,
-          detail: `${turn.workflow.failure.code} / ${turn.workflow.failure.stage}`,
-        }));
-      }
-    } else if (turn.action) {
-      messages.push(workcairnEvent(
-        turn.action.status === "published" ? "外部公開が完了しました。" : "外部Actionを停止しました。",
-        turn.at,
-        { attention: turn.action.status !== "published", detail: turn.action.command_id || "" },
-      ));
-    }
-  }
-  messages.push(...evidenceSystemMessages());
-  messages.push(...pendingInteractionMessages());
-  return messages;
-}
-
 function renderTimeline() {
-  const messages = conversationMessages();
-  const key = JSON.stringify(messages.map((message) => [message.side, message.speaker, message.text, message.at, message.attention]));
+  const nodes = conversationTimelineNodes();
+  const key = timelineRenderKey();
   const shouldFollow = state.forceScrollToBottom || state.threadNearBottom;
   if (state.timelineRenderKey === key) {
     if (state.forceScrollToBottom) {
@@ -2088,7 +2023,7 @@ function renderTimeline() {
     return;
   }
   state.timelineRenderKey = key;
-  ui.timeline.replaceChildren(...(messages.length ? messages.map(conversationNode) : [node("p", { class: "empty" }, "依頼すると、会社の動きがここに残ります。")]));
+  ui.timeline.replaceChildren(...(nodes.length ? nodes : [node("p", { class: "empty" }, "依頼すると、会社の動きがここに残ります。")]));
   if (shouldFollow) {
     requestAnimationFrame(() => {
       scrollThreadToBottom();
@@ -2262,27 +2197,77 @@ async function refreshEmployeesPane() {
   }
 }
 
+function avatarVariant(employeeID) {
+  let hash = 0;
+  const source = String(employeeID || "unknown");
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash << 5) - hash) + source.charCodeAt(index);
+    hash |= 0;
+  }
+  return Math.abs(hash) % 6;
+}
+
+function avatarNode(employeeID, statusClass = "") {
+  const variant = avatarVariant(employeeID);
+  return node("span", { class: `employee-avatar avatar-v${variant} ${statusClass}`.trim(), "aria-hidden": "true" });
+}
+
+function employeeStatusIcon(displayStatus) {
+  switch (displayStatus) {
+  case "作業中": return "✎";
+  case "レビュー中": return "✓";
+  case "修正中": return "↺";
+  case "社長と相談中": return "💬";
+  case "完了": return "◦";
+  default: return "•";
+  }
+}
+
 function renderEmployeesPane() {
   const employees = state.companyActivity?.employees || [];
   ui.teamCount.textContent = employees.length ? `${employees.length} people` : "";
   if (!employees.length) {
     ui.employeeGrid.replaceChildren(node("p", { class: "empty" }, "AI社員はまだ読み込まれていません。"));
   } else {
-    ui.employeeGrid.replaceChildren(...employees.map((employee) => {
-      const statusClass = employeeStatusClass(employee.display_status);
-      return node("article", { class: `employee-card ${statusClass}${employee.is_liaison ? " liaison" : ""}`.trim() },
-        node("span", { class: "employee-avatar", "aria-hidden": "true" }),
-        node("div", { class: "employee-name" },
-          node("strong", {}, employee.name || employee.id),
-          node("small", {}, `${employee.role || "役割未設定"} · ${employee.department || "所属未設定"}`),
-          node("span", { class: `employee-status ${statusClass}`.trim() },
-            node("span", { class: "status-dot", "aria-hidden": "true" }),
-            employee.display_status || "待機中",
+    const departments = new Map();
+    for (const employee of employees) {
+      const department = employee.department || "会社";
+      if (!departments.has(department)) departments.set(department, []);
+      departments.get(department).push(employee);
+    }
+    ui.employeeGrid.replaceChildren(
+      node("div", { class: "office-floor" },
+        ...[...departments.entries()].map(([department, members]) =>
+          node("section", { class: "office-zone" },
+            node("header", { class: "office-zone-heading" },
+              node("span", { class: "office-zone-label" }, department),
+              node("span", { class: "office-zone-count" }, `${members.length}`),
+            ),
+            node("div", { class: "office-zone-grid" },
+              ...members.map((employee) => {
+                const statusClass = employeeStatusClass(employee.display_status);
+                return node("article", {
+                  class: `employee-card office-character ${statusClass}${employee.is_liaison ? " liaison" : ""}${employee.ceo_attention ? " attention" : ""}`.trim(),
+                  title: employee.current_work_title || employee.display_status || "",
+                },
+                avatarNode(employee.id, statusClass),
+                node("div", { class: "employee-name" },
+                  node("strong", {}, employee.name || employee.id),
+                  node("small", {}, employee.role || "役割未設定"),
+                  node("span", { class: `employee-status ${statusClass}`.trim() },
+                    node("span", { class: "status-glyph", "aria-hidden": "true" }, employeeStatusIcon(employee.display_status)),
+                    node("span", { class: "status-dot", "aria-hidden": "true" }),
+                    employee.display_status || "待機中",
+                  ),
+                  employee.current_work_title ? node("p", { class: "employee-task" }, employee.current_work_title) : null,
+                ),
+                );
+              }),
+            ),
           ),
-          employee.current_work_title ? node("p", { class: "employee-task" }, employee.current_work_title) : null,
         ),
-      );
-    }));
+      ),
+    );
   }
   renderCompanyFeed();
 }
@@ -2564,6 +2549,13 @@ if (ui.threadJumpLatest) {
     renderTimeline();
   });
 }
+if (ui.composerInput) {
+  ui.composerInput.addEventListener("input", () => {
+    if (ui.threadComposer?.dataset.mode === "clarification") {
+      state.composerDraft = ui.composerInput.value;
+    }
+  });
+}
 if (ui.threadComposer) {
   ui.threadComposer.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2573,7 +2565,14 @@ if (ui.threadComposer) {
     }
     const next = state.next;
     if (!next || next.kind !== "answer_clarifications") return;
-    submitClarificationAnswers(next);
+    await submitClarificationAnswers(next);
+  });
+}
+if (ui.composerInput) {
+  ui.composerInput.addEventListener("input", () => {
+    if (ui.threadComposer?.dataset.mode === "clarification") {
+      state.composerDraft = ui.composerInput.value;
+    }
   });
 }
 document.querySelectorAll("[data-close-dialog]").forEach((control) => control.addEventListener("click", closeDialog));

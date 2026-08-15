@@ -300,7 +300,8 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 	for _, required := range []string{
 		`Prefer: "respond-async"`, "monitorAcceptedCommand", "?scope=workspace",
 		"依頼詳細へ表示します", "renderEmployeesPane", "isRequestDetailVisible", "const next = state.next",
-		"/work-report", "/v1/company-activity", "autonomy_contract", "renderProofOfWork", "renderCEOAttention",
+		"/work-report", "/v1/interactions/", "/conversation", "/v1/company-activity", "autonomy_contract", "renderProofOfWork", "renderCEOAttention",
+		"conversationEntryNode", "mention_allowed", "conversationTimelineNodes",
 		"cryptoAPI.getRandomValues", "BROWSER_SECURE_RANDOM_UNAVAILABLE",
 		`submitDraftRequest`, `openNewRequestDraft`, `isDraftRequestActive`, `state.draftRequest`,
 		`requestJSON("/v1/interaction-plans"`,
@@ -326,7 +327,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		`requestJSON("/v1/local-setup/claude"`, `requestJSON("/v1/local-setup/reveal-workspace"`, "会社を始める",
 		"state.commandInFlight", "同じ処理を実行中です", "window.isSecureContext", `document.execCommand("copy")`, "showManualCopy",
 		"選択内容をコピー", "parseDiagnosticsFacts", "Error code", "Stage", "Command ID", "Request ID",
-		"renderInFlight", "storedPendingCommand", "進め方を考えています", "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。",
+		"renderInFlight", "storedPendingCommand", "進め方を準備しています", "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。",
 		"この画面を閉じても処理はMacで続きます。",
 		"commandProviderFailure", "task?.execution?.provider_failure",
 		"restoreDurableFailure", "record.failure.details", "前回のCommandを完了できませんでした",
@@ -343,7 +344,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 	}
 	index := httptest.NewRecorder()
 	handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/", nil))
-	for _, required := range []string{"AI社員", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION", "AI Connections", "Automatic", "接続済みAIサービスから、WorkCairnが実行先を選びます", "この依頼の歩み", "依頼一覧へ戻る", "FIRST-RUN SETUP"} {
+	for _, required := range []string{"AI会社", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION", "AI Connections", "Automatic", "接続済みAIサービスから、WorkCairnが実行先を選びます", "この依頼の歩み", "依頼一覧へ戻る", "FIRST-RUN SETUP"} {
 		if !strings.Contains(index.Body.String(), required) {
 			t.Fatalf("mobile UI is missing Living Company Dashboard surface %q", required)
 		}
@@ -1211,6 +1212,73 @@ func TestMobileInteractionHTTPFlowRequestChangesRevisionReReviewToCompletion(t *
 	if revised.TaskID != "TASK-002" || revised.Review.Verdict != review.VerdictApprove {
 		t.Fatalf("revised Task proof = %#v", revised)
 	}
+
+	conversationResponse := httptest.NewRecorder()
+	providerCallsBeforeConversation := providerCalls
+	handler.ServeHTTP(conversationResponse, httptest.NewRequest(http.MethodGet, "/v1/interactions/"+sessionID+"/conversation", nil))
+	if conversationResponse.Code != http.StatusOK {
+		t.Fatalf("conversation = %d %s", conversationResponse.Code, conversationResponse.Body.String())
+	}
+	if providerCalls != providerCallsBeforeConversation {
+		t.Fatalf("conversation GET must not call Provider: before=%d after=%d", providerCallsBeforeConversation, providerCalls)
+	}
+	conversationBody := conversationResponse.Body.String()
+	if strings.Contains(conversationBody, "# 初回の成果物") || strings.Contains(conversationBody, "claude-mobile-test") {
+		t.Fatalf("conversation response leaked raw Provider content: %s", conversationBody)
+	}
+	var conversation workspaceprocess.ConversationInspection
+	decodeHTTPResult(t, conversationResponse, &conversation)
+	if conversation.Version != workspaceprocess.ConversationVersion || conversation.SessionID != sessionID || len(conversation.Entries) == 0 {
+		t.Fatalf("conversation inspection = %#v", conversation)
+	}
+	for index := 1; index < len(conversation.Entries); index++ {
+		if conversation.Entries[index].At.Before(conversation.Entries[index-1].At) {
+			t.Fatalf("conversation entries not ordered by At: %#v then %#v", conversation.Entries[index-1], conversation.Entries[index])
+		}
+	}
+	allowedCategories := map[workspaceprocess.ConversationCategory]bool{
+		workspaceprocess.CategoryCEOMessage:            true,
+		workspaceprocess.CategoryDirectedCommunication: true,
+		workspaceprocess.CategoryCompanyFact:           true,
+		workspaceprocess.CategorySystem:                true,
+	}
+	var (
+		hasCEOMessage  bool
+		hasCompanyFact bool
+		hasDirected    bool
+		requestChanges *workspaceprocess.ConversationEntryProjection
+	)
+	for index := range conversation.Entries {
+		entry := &conversation.Entries[index]
+		if !allowedCategories[entry.Category] {
+			t.Fatalf("unexpected conversation category at index %d: %#v", index, entry)
+		}
+		if entry.MentionAllowed != entry.ConversationEntry.MentionAllowed() {
+			t.Fatalf("mention_allowed mismatch at index %d: json=%v computed=%v entry=%#v", index, entry.MentionAllowed, entry.ConversationEntry.MentionAllowed(), entry)
+		}
+		switch entry.Category {
+		case workspaceprocess.CategoryCEOMessage:
+			hasCEOMessage = true
+			if entry.CEOMessageText == "" {
+				t.Fatalf("ceo_message missing text at index %d: %#v", index, entry)
+			}
+		case workspaceprocess.CategoryCompanyFact:
+			hasCompanyFact = true
+		case workspaceprocess.CategoryDirectedCommunication:
+			hasDirected = true
+		}
+		if entry.Kind == workspaceprocess.KindReviewRequestChanges && entry.Category == workspaceprocess.CategoryDirectedCommunication {
+			requestChanges = entry
+		}
+	}
+	if !hasCEOMessage || !hasCompanyFact || !hasDirected {
+		t.Fatalf("conversation missing canonical categories: ceo=%v company=%v directed=%v entries=%d", hasCEOMessage, hasCompanyFact, hasDirected, len(conversation.Entries))
+	}
+	if requestChanges == nil || !requestChanges.MentionAllowed || requestChanges.Speaker.EmployeeID != "QA-001" ||
+		requestChanges.Recipient.EmployeeID != "PLAN-001" || len(requestChanges.ReviewIssues) == 0 ||
+		requestChanges.ReviewIssues[0].Description == "" || requestChanges.ReviewIssues[0].SuggestedAction == "" {
+		t.Fatalf("request changes conversation entry = %#v", requestChanges)
+	}
 }
 
 // TestMobileInteractionHTTPFlowStructuredReviewResponseViolationClassifiesOuterCommand
@@ -1323,6 +1391,42 @@ func TestMobileInteractionHTTPFlowStructuredReviewResponseViolationClassifiesOut
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "プロジェクト", "iPhone依頼3", "Reviews", "TASK-001.review.json")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("canonical Review artifact should not exist after structured response failure: %v", statErr)
+	}
+
+	conversationResponse := httptest.NewRecorder()
+	providerCallsBeforeConversation := providerCalls
+	handler.ServeHTTP(conversationResponse, httptest.NewRequest(http.MethodGet, "/v1/interactions/"+sessionID+"/conversation", nil))
+	if conversationResponse.Code != http.StatusOK {
+		t.Fatalf("conversation = %d %s", conversationResponse.Code, conversationResponse.Body.String())
+	}
+	if providerCalls != providerCallsBeforeConversation {
+		t.Fatalf("conversation GET must not call Provider: before=%d after=%d", providerCallsBeforeConversation, providerCalls)
+	}
+	conversationBody := conversationResponse.Body.String()
+	if strings.Contains(conversationBody, "```json") || strings.Contains(conversationBody, "claude-mobile-test") {
+		t.Fatalf("conversation response leaked raw Provider content: %s", conversationBody)
+	}
+	var conversation workspaceprocess.ConversationInspection
+	decodeHTTPResult(t, conversationResponse, &conversation)
+	if conversation.Version != workspaceprocess.ConversationVersion || conversation.SessionID != sessionID || len(conversation.Entries) == 0 {
+		t.Fatalf("conversation inspection = %#v", conversation)
+	}
+	var failureEntry *workspaceprocess.ConversationEntryProjection
+	for index := range conversation.Entries {
+		entry := &conversation.Entries[index]
+		if entry.MentionAllowed != entry.ConversationEntry.MentionAllowed() {
+			t.Fatalf("mention_allowed mismatch at index %d: json=%v computed=%v entry=%#v", index, entry.MentionAllowed, entry.ConversationEntry.MentionAllowed(), entry)
+		}
+		if entry.Category == workspaceprocess.CategorySystem && entry.Kind == workspaceprocess.KindFailure {
+			failureEntry = entry
+		}
+	}
+	if failureEntry == nil || failureEntry.FailureDetails == nil ||
+		failureEntry.FailureDetails.Code != "PROVIDER_RESPONSE_INVALID" ||
+		failureEntry.FailureDetails.Stage != "review_provider" ||
+		failureEntry.FailureDetails.Provider == nil ||
+		failureEntry.FailureDetails.Provider.Category != "structured_output_invalid" {
+		t.Fatalf("sanitized failure conversation entry = %#v", failureEntry)
 	}
 }
 

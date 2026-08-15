@@ -634,6 +634,10 @@ func (executor *ProcessExecutor) InspectWorkReport(ctx context.Context, sessionI
 	return workspaceprocess.InspectWorkReport(ctx, executor.vaultRoot, sessionID)
 }
 
+func (executor *ProcessExecutor) InspectConversation(ctx context.Context, sessionID string) (workspaceprocess.ConversationInspection, error) {
+	return workspaceprocess.InspectConversationInspection(ctx, executor.vaultRoot, sessionID)
+}
+
 func (executor *ProcessExecutor) InspectCompanyActivity(ctx context.Context) (workspaceprocess.CompanyActivity, error) {
 	return workspaceprocess.InspectCompanyActivity(ctx, executor.vaultRoot)
 }
