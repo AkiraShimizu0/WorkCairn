@@ -329,16 +329,27 @@ function messageFactsFromDetail(detail) {
   });
 }
 
+// inlineMessageActions renders the single "ⓘ エラーの詳細" entry point a
+// failure message offers: toggling it reveals a panel with the sanitized
+// FailureEnvelope facts and, inside that same panel, the one
+// "診断情報をコピー" action -- so there is exactly one place to look for
+// error detail and exactly one thing to copy, never two competing controls.
 function inlineMessageActions(message) {
   const facts = messageFactsFromDetail(message.detail);
   if (!facts.length && !message.onCopy) return null;
   const panel = node("div", { class: "msg-technical-panel", hidden: true });
   if (facts.length) panel.append(approvalFacts(facts));
-  const toggle = iconButton("技術的な詳細", "ⓘ", () => { panel.hidden = !panel.hidden; }, "icon-button msg-info-toggle");
-  const copy = message.onCopy
-    ? iconButton("詳細をコピー", "⎘", message.onCopy, "icon-button msg-copy-toggle")
-    : null;
-  return node("div", { class: "msg-actions" }, toggle, copy, panel);
+  if (message.onCopy) {
+    panel.append(node("div", { class: "msg-technical-panel-actions" },
+      button("診断情報をコピー", "quiet chip", message.onCopy),
+    ));
+  }
+  const toggle = node("button", {
+    class: "icon-button msg-info-toggle msg-info-toggle-labeled",
+    type: "button",
+    onclick: () => { panel.hidden = !panel.hidden; },
+  }, "ⓘ エラーの詳細");
+  return node("div", { class: "msg-actions" }, toggle, panel);
 }
 
 function setQuickReplies(buttons = []) {
@@ -722,7 +733,7 @@ function showManualCopy(detail) {
       node("div", {}, node("p", { class: "eyebrow" }, "ERROR DETAILS"), node("h2", {}, "詳細を選択してコピー")),
       node("button", { class: "icon-button", type: "button", "aria-label": "閉じる", onclick: closeActionDialog }, "×"),
     ),
-    node("p", { class: "supporting" }, "自動コピーを利用できませんでした。下の安全な診断情報を長押ししてコピーしてください。"),
+    node("p", { class: "supporting" }, "自動コピーを利用できませんでした。下の診断情報を長押ししてコピーしてください。"),
     textarea,
     node("div", { class: "sheet-actions" },
       button("選択内容をコピー", "primary", retryCopy),
@@ -1350,9 +1361,7 @@ function renderProviderSetup() {
 function renderQuestions(next) {
   ui.activeCard.hidden = true;
   ui.activeCard.replaceChildren();
-  setQuickReplies([
-    button("後で回答する", "quiet chip", () => toast("質問は回答待ちのまま保存されています。")),
-  ]);
+  setQuickReplies([]);
   state.forceScrollToBottom = true;
   renderTimeline();
 }
@@ -1494,10 +1503,7 @@ function showCompletionHeading() {
 }
 
 function renderCompletion(next) {
-  setQuickReplies([
-    button("完了を確認", "primary chip", () => toast("この依頼は完了しています。")),
-    button("新しい仕事を依頼", "quiet chip", openRequestDialog),
-  ]);
+  setQuickReplies([]);
   showCompletionHeading();
   ui.activeCard.hidden = true;
   ui.activeCard.replaceChildren();
@@ -1506,8 +1512,7 @@ function renderCompletion(next) {
 }
 
 function renderDone() {
-  const action = [...state.record.turns].reverse().find((turn) => turn.action)?.action;
-  setQuickReplies([button("新しい仕事を依頼", "primary chip", openRequestDialog)]);
+  setQuickReplies([]);
   showCompletionHeading();
   ui.activeCard.hidden = true;
   ui.activeCard.replaceChildren();
@@ -1780,6 +1785,20 @@ function failureEnvelopeFacts(envelope) {
   });
 }
 
+// reviewIssueLines formats canonical review_issues[] (description/suggested_action
+// only) -- the sole source for Request Changes content. Never substitutes
+// an internal status, verdict, or error value when issues are absent.
+function reviewIssueLines(issues) {
+  const lines = [];
+  for (const issue of issues || []) {
+    if (!issue.description) continue;
+    lines.push("");
+    lines.push(`・${issue.description}`);
+    if (issue.suggested_action) lines.push(`  対応案: ${issue.suggested_action}`);
+  }
+  return lines;
+}
+
 function companyFactText(entry) {
   const subjectName = entry.subject?.name || entry.subject?.employee_id || "";
   switch (entry.kind) {
@@ -1788,9 +1807,18 @@ function companyFactText(entry) {
   case "deliverable_ready":
     return `${subjectName}が成果物を作成しました。`;
   case "review_approved":
+    // canonical review_summary only -- never an internal status/verdict/error
+    // value, and never guessed when the canonical summary is absent.
     return entry.review_summary
       ? `${subjectName}のレビューが完了しました。\n\n${entry.review_summary}`
       : `${subjectName}のレビューが完了しました。`;
+  case "review_request_changes": {
+    // Reached only when Reviewer/Maker are not both canonically confirmed
+    // (Directed Communication is not possible) -- still shows the real
+    // canonical review_issues content, never a bare fallback.
+    const lines = [`${subjectName}から修正を依頼されました。`, ...reviewIssueLines(entry.review_issues)];
+    return lines.join("\n");
+  }
   case "revision_completed":
     return `${subjectName}が修正しました。`;
   case "task_completed":
@@ -1804,14 +1832,7 @@ function companyFactText(entry) {
 
 function directedCommunicationText(entry) {
   if (entry.kind === "review_request_changes") {
-    const lines = ["修正をお願いします。"];
-    for (const issue of entry.review_issues || []) {
-      if (!issue.description) continue;
-      lines.push("");
-      lines.push(`・${issue.description}`);
-      if (issue.suggested_action) lines.push(`  対応案: ${issue.suggested_action}`);
-    }
-    return lines.join("\n");
+    return ["修正をお願いします。", ...reviewIssueLines(entry.review_issues)].join("\n");
   }
   if (entry.kind === "revision_completed") return "修正が完了しました。";
   return "";
@@ -1851,12 +1872,17 @@ function conversationEntryNode(entry) {
   }
   if (entry.category === "company_fact") {
     const text = companyFactText(entry);
+    const viewer = entry.kind === "deliverable_ready" ? deliverableViewerNode(entry) : null;
     return node("article", { class: "msg msg-company-fact" },
       node("div", { class: "msg-company-fact-body" },
         text ? node("p", { class: "msg-company-fact-copy" }, text) : null,
+        viewer,
         entry.at ? node("time", { class: "msg-company-fact-time" }, sessionTimeLabel(entry.at)) : null,
       ),
     );
+  }
+  if (entry.kind === "clarification_requested") {
+    return clarificationQuestionNode(entry);
   }
   if (entry.category === "system" || entry.kind === "failure") {
     const facts = failureEnvelopeFacts(entry.failure_details);
@@ -1882,17 +1908,83 @@ function conversationEntryNode(entry) {
       node("div", { class: "msg-system-rule", "aria-hidden": "true" }),
     );
   }
+  // Every known Category/Kind is handled above; this only guards against a
+  // future, not-yet-handled entry shape. It must never fall back to an
+  // internal enum value (entry.kind) as if it were message content.
   return node("article", { class: "msg msg-system" },
-    node("p", { class: "msg-system-copy" }, entry.task_title || entry.kind || ""),
+    node("p", { class: "msg-system-copy" }, entry.task_title || ""),
   );
 }
 
-function clarificationQuestionNode(question) {
-  return node("article", { class: "msg msg-clarification" },
-    node("p", { class: "msg-clarification-label" }, "確認"),
-    node("div", { class: "msg-body msg-body-clarification" },
-      node("p", { class: "msg-text" }, question),
+// clarificationQuestionNode renders WorkCairn's own already-committed
+// clarification question (ConversationEntry.question, ADR-0047/CP3+) --
+// never a UI-composed or locally-drafted string, so the question stays
+// visible in the timeline exactly as WorkCairn asked it, before and after
+// the CEO answers, and across reload/daemon restart.
+function clarificationQuestionNode(entry) {
+  return node("article", { class: "msg msg-system msg-clarification" },
+    node("div", { class: "msg-header" },
+      node("span", { class: "msg-name" }, "WorkCairn"),
+      entry.at ? node("time", { class: "msg-time-inline" }, sessionTimeLabel(entry.at)) : null,
     ),
+    node("div", { class: "msg-body msg-body-clarification" },
+      node("p", { class: "msg-text" }, entry.question || ""),
+    ),
+  );
+}
+
+// appliedProjectName reads the Project name the Session's own canonical
+// plan_applied Turn already committed -- never guessed, never derived from
+// a ConversationEntry (which deliberately does not repeat it per Task/entry).
+function appliedProjectName() {
+  const applied = [...(state.record?.turns || [])].reverse().find((turn) => turn.kind === "plan_applied");
+  return applied?.project_name || "";
+}
+
+// deliverableViewerNode reuses the existing read-only
+// /v1/projects/{project}/tasks/{task}/evidence projection (the same one
+// the request-detail side panel already fetches into state.evidence) to
+// let the CEO open a completed Deliverable directly from the "成果物を作成
+// しました" message -- never composing or caching a copy of the Deliverable
+// body itself; the canonical Deliverable stays the source of truth.
+function deliverableViewerNode(entry) {
+  const projectName = appliedProjectName();
+  if (!projectName || !entry.task_id) return null;
+  const panel = node("div", { class: "msg-deliverable-panel", hidden: true });
+  const toggle = node("button", {
+    class: "icon-button msg-deliverable-toggle",
+    type: "button",
+    onclick: async () => {
+      const opening = panel.hidden;
+      panel.hidden = !panel.hidden;
+      if (opening) await fillDeliverablePanel(panel, projectName, entry.task_id);
+    },
+  }, "成果物を見る");
+  return node("div", { class: "msg-actions" }, toggle, panel);
+}
+
+// Always re-fetches from the canonical evidence endpoint on every open --
+// a Task's Deliverable can change across a Request Changes -> Revision
+// cycle, so a value cached from an earlier point in the same session must
+// never be shown as if it were still current. state.evidence is still
+// updated so the existing request-detail side panel can reuse the fresh
+// copy, but this viewer never trusts what it finds there.
+async function fillDeliverablePanel(panel, projectName, taskId) {
+  const key = `${projectName}/${taskId}`;
+  panel.replaceChildren(node("p", { class: "supporting" }, "成果物を確認しています…"));
+  let evidence;
+  try {
+    evidence = await requestJSON(`/v1/projects/${encodeURIComponent(projectName)}/tasks/${encodeURIComponent(taskId)}/evidence`);
+    state.evidence.set(key, evidence);
+  } catch (error) {
+    panel.replaceChildren(node("p", { class: "warning" }, `成果物を取得できませんでした: ${error.message}`));
+    return;
+  }
+  const deliverable = evidence.deliverable;
+  panel.replaceChildren(
+    deliverable
+      ? node("pre", { class: "deliverable-preview" }, deliverable.content || "（本文なし）")
+      : node("p", { class: "supporting" }, "成果物はまだcommitされていません。"),
   );
 }
 
@@ -1938,25 +2030,14 @@ function pendingInteractionNodes() {
     return [node("article", { class: "msg msg-system" },
       node("p", { class: "msg-system-copy" }, "進め方を準備しています"),
     )];
-  case "answer_clarifications": {
-    const draft = clarificationDraft(next);
-    const nodes = [];
-    for (const entry of draft.answers) {
-      nodes.push(node("article", { class: "msg msg-clarification answered" },
-        node("p", { class: "msg-clarification-label" }, "確認"),
-        node("div", { class: "msg-body msg-body-clarification" },
-          node("p", { class: "msg-text" }, entry.question),
-        ),
-      ));
-      nodes.push(node("article", { class: "msg msg-user" },
-        node("div", { class: "msg-header" }, node("span", { class: "msg-name" }, "あなた")),
-        node("div", { class: "msg-body msg-body-user" }, node("p", { class: "msg-text" }, entry.answer)),
-      ));
-    }
-    const current = next.questions[draft.index];
-    if (current) nodes.push(clarificationQuestionNode(current));
-    return nodes;
-  }
+  case "answer_clarifications":
+    // The question itself is already visible via the canonical
+    // ConversationEntry (clarification_requested, projected from the
+    // committed Plan) rendered in conversationTimelineNodes() above -- this
+    // must never re-derive or duplicate that text from local draft state.
+    // The composer's own placeholder ("回答を入力...") is enough guidance for
+    // which question is currently being answered.
+    return [];
   case "approve_plan_apply": {
     const current = currentPlan();
     return current ? [planPendingNode(current)] : [];
@@ -1983,6 +2064,7 @@ function timelineRenderKey() {
     entries.map((entry) => [
       entry.at, entry.category, entry.kind, entry.mention_allowed, entry.ceo_message_text,
       entry.review_summary, entry.review_issues, entry.subject?.employee_id, entry.speaker?.employee_id,
+      entry.question, entry.task_id,
     ]),
     state.next?.kind,
     state.next?.expected_version,
@@ -2513,10 +2595,6 @@ async function submitDraftRequest() {
   }
 }
 submitDraftRequest.inFlight = false;
-
-function openRequestDialog() {
-  openNewRequestDraft();
-}
 
 function closeDialog(event) {
   const dialog = event.currentTarget.closest("dialog");

@@ -49,6 +49,7 @@ type ConversationKind string
 
 const (
 	KindCEORequest             ConversationKind = "ceo_request"
+	KindClarificationRequested ConversationKind = "clarification_requested"
 	KindCEOClarificationAnswer ConversationKind = "ceo_clarification_answer"
 	KindTaskAssigned           ConversationKind = "task_assigned"
 	KindDeliverableReady       ConversationKind = "deliverable_ready"
@@ -104,12 +105,27 @@ type ConversationEntry struct {
 	Audience  Audience  `json:"audience"`
 
 	TaskTitle string `json:"task_title,omitempty"`
+	// TaskID is the canonical Task identifier this entry's fact belongs to
+	// (set only for the per-Task facts InspectTaskEvidence already reads:
+	// deliverable_ready, review_request_changes, review_approved,
+	// revision_completed, task_completed). A UI combines it with the
+	// Session's already-applied Project name to reuse the existing
+	// read-only /v1/projects/{project}/tasks/{task}/evidence projection --
+	// this package never inlines Deliverable content itself.
+	TaskID string `json:"task_id,omitempty"`
 
 	ReviewVerdict review.Verdict `json:"review_verdict,omitempty"`
 	ReviewIssues  []review.Issue `json:"review_issues,omitempty"`
 	ReviewSummary string         `json:"review_summary,omitempty"`
 
 	DeliverableReference string `json:"deliverable_reference,omitempty"`
+
+	// Question is WorkCairn's own already-persisted clarification question
+	// text (one of the CEO Plan Intent's CEOQuestions, committed as part of
+	// the canonical Plan) -- set only for CategorySystem/KindClarificationRequested.
+	// It is never composed or paraphrased here; it is the Provider's
+	// original question text as canonically committed to the Plan.
+	Question string `json:"question,omitempty"`
 
 	// FailureDetails is the existing sanitized failure.Envelope, forwarded
 	// unchanged from Command Ledger evidence (ADR-0041) — never
@@ -165,6 +181,8 @@ func InspectConversation(ctx context.Context, vaultRoot, sessionID string) ([]Co
 
 	for turnIndex, turn := range record.Turns {
 		switch turn.Kind {
+		case interaction.TurnPlanGenerated:
+			entries = append(entries, clarificationRequestedEntries(turn)...)
 		case interaction.TurnClarificationAnswered:
 			entries = append(entries, clarificationAnswerEntries(turn)...)
 		case interaction.TurnPlanApplied:
@@ -215,6 +233,31 @@ func ceoRequestEntry(record interaction.Record) ConversationEntry {
 		At: record.CreatedAt, Category: CategoryCEOMessage, Kind: KindCEORequest,
 		Audience: AudienceCompany, CEOMessageText: strings.TrimSpace(record.Request),
 	}
+}
+
+// clarificationRequestedEntries projects the CEO Plan Intent's own
+// CEOQuestions -- already canonically committed as part of this
+// TurnPlanGenerated Turn -- as one entry per question, so a question the
+// CEO has not yet answered (or has already answered) stays visible in the
+// Conversation Projection exactly as WorkCairn originally asked it. This
+// package composes none of the question text: it is the Provider's own
+// already-persisted string, never paraphrased or re-derived.
+func clarificationRequestedEntries(turn interaction.Turn) []ConversationEntry {
+	if turn.Plan == nil {
+		return nil
+	}
+	entries := make([]ConversationEntry, 0, len(turn.Plan.CEOQuestions))
+	for _, question := range turn.Plan.CEOQuestions {
+		text := strings.TrimSpace(question)
+		if text == "" {
+			continue
+		}
+		entries = append(entries, ConversationEntry{
+			At: turn.At, Category: CategorySystem, Kind: KindClarificationRequested,
+			Audience: AudienceCEO, Question: text,
+		})
+	}
+	return entries
 }
 
 func clarificationAnswerEntries(turn interaction.Turn) []ConversationEntry {
@@ -273,13 +316,13 @@ func workflowTaskConversationEntries(at time.Time, workflowTask interaction.Work
 	if evidence.Deliverable != nil {
 		entries = append(entries, ConversationEntry{
 			At: at, Category: CategoryCompanyFact, Kind: KindDeliverableReady,
-			Subject: makerRef, Audience: AudienceCompany, TaskTitle: title,
+			Subject: makerRef, Audience: AudienceCompany, TaskTitle: title, TaskID: workflowTask.TaskID,
 			DeliverableReference: evidence.Deliverable.RelativePath,
 		})
 	}
 
 	if workflowTask.TargetedRevision {
-		entry := ConversationEntry{At: at, Kind: KindRevisionCompleted, Audience: AudienceEmployee, TaskTitle: title}
+		entry := ConversationEntry{At: at, Kind: KindRevisionCompleted, Audience: AudienceEmployee, TaskTitle: title, TaskID: workflowTask.TaskID}
 		if makerRef != nil && reviewerRef != nil {
 			entry.Category = CategoryDirectedCommunication
 			entry.Speaker = makerRef
@@ -292,7 +335,7 @@ func workflowTaskConversationEntries(at time.Time, workflowTask interaction.Work
 	}
 
 	if workflowTask.Verdict != "" {
-		reviewEntry := ConversationEntry{At: at, TaskTitle: title, ReviewVerdict: workflowTask.Verdict, Audience: AudienceEmployee}
+		reviewEntry := ConversationEntry{At: at, TaskTitle: title, TaskID: workflowTask.TaskID, ReviewVerdict: workflowTask.Verdict, Audience: AudienceEmployee}
 		if decision := latestReviewDecision(evidence.Reviews); decision != nil {
 			reviewEntry.ReviewIssues = decision.Issues
 			reviewEntry.ReviewSummary = decision.Summary
@@ -321,7 +364,7 @@ func workflowTaskConversationEntries(at time.Time, workflowTask interaction.Work
 	if evidence.Task.Status == task.StatusCompleted {
 		entries = append(entries, ConversationEntry{
 			At: at, Category: CategoryCompanyFact, Kind: KindTaskCompleted,
-			Subject: makerRef, Audience: AudienceCompany, TaskTitle: title,
+			Subject: makerRef, Audience: AudienceCompany, TaskTitle: title, TaskID: workflowTask.TaskID,
 		})
 	}
 	return entries

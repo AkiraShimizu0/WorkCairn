@@ -141,7 +141,15 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
 
     const phase = await waitForPlanOrClarification(page);
     if (phase === "clarification") {
-      await answerClarificationIfNeeded(page);
+      await expect(page.getByRole("button", { name: "後で回答する" })).toHaveCount(0);
+      const clarificationAnswer = "はい。初めてWorkCairnを使う人向けです。";
+      await answerClarificationIfNeeded(page, clarificationAnswer);
+      // The question WorkCairn actually asked must stay visible after the
+      // CEO's own answer is recorded -- both are canonical Conversation
+      // Projection entries (ADR-0047/CP3+), never a UI-local fabrication or
+      // a one-sided echo of only the answer.
+      await expect(page.locator("#activity-timeline")).toContainText("読者は初めてWorkCairnを使う人ですか");
+      await expect(page.locator("#activity-timeline")).toContainText(clarificationAnswer);
     }
 
     await expect(page.locator(".msg-embed-plan")).toBeVisible();
@@ -165,17 +173,44 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
     await expect(page.locator("#proof-of-work")).toContainText("2件の仕事");
     await expect(page.locator("#proof-of-work")).toContainText("Review: Approve");
 
+    // review approved must show the canonical review_summary text, never
+    // an internal status/error value as the message body.
+    await expect(page.locator("#activity-timeline")).toContainText("利用開始の案内が追加され、要件を満たしています。");
+    const companyFactTexts = await page.locator("#activity-timeline .msg-company-fact-copy").allTextContents();
+    for (const text of companyFactTexts) {
+      expect(text.trim()).not.toMatch(/^error$/i);
+    }
+
+    // The completion screen offers no quick-reply buttons -- the sole
+    // entry point for a new request is the request list's own "＋ 新規作成".
+    await expect(page.getByRole("button", { name: "完了を確認" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "新しい仕事を依頼" })).toHaveCount(0);
+
+    // The completed Deliverable is reachable directly from its own
+    // "成果物を作成しました" message via the existing read-only Task
+    // evidence projection -- not a UI-composed copy of the Deliverable.
+    const deliverableToggle = page.locator("#activity-timeline").getByRole("button", { name: "成果物を見る" }).first();
+    await expect(deliverableToggle).toBeVisible();
+    await deliverableToggle.click();
+    await expect(page.locator("#activity-timeline .deliverable-preview").first()).toContainText("WorkCairn紹介文");
+
     await page.reload();
     await expect(page.locator("#workspace-view")).toBeVisible();
     await ensureRequestDetail(page);
     await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible();
     await expect(page.locator("#activity-timeline")).toContainText("依頼が完了しました");
+    await expect(page.locator("#activity-timeline")).toContainText("読者は初めてWorkCairnを使う人ですか");
+    await expect(page.locator("#activity-timeline")).toContainText("はい。初めてWorkCairnを使う人向けです。");
+    await expect(page.getByRole("button", { name: "完了を確認" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "新しい仕事を依頼" })).toHaveCount(0);
 
     const restarted = await environment.restartDaemon();
     await pairThroughUI(page, restarted);
     await ensureRequestDetail(page);
     await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible();
     await expect(page.locator("#proof-of-work")).toContainText("2件の仕事");
+    await expect(page.locator("#activity-timeline")).toContainText("読者は初めてWorkCairnを使う人ですか");
+    await expect(page.locator("#activity-timeline")).toContainText("はい。初めてWorkCairnを使う人向けです。");
     expect(await pathExists(join(environment.vaultRoot, "プロジェクト", "Browser Acceptance Project", "Deliverables", "TASK-001.md"))).toBeTruthy();
     expect(await pathExists(join(environment.vaultRoot, "プロジェクト", "Browser Acceptance Project", "Reviews", "TASK-001.review.json"))).toBeTruthy();
     expect(await pathExists(join(environment.vaultRoot, "プロジェクト", "Browser Acceptance Project", "Revisions", "TASK-002.revision.md"))).toBeTruthy();
@@ -227,7 +262,11 @@ test("typed Provider failure is restored from durable Ledger evidence", async ({
     await expect(freshPage.locator("#activity-timeline")).toContainText("review_provider");
     await expect(freshPage.locator("#activity-timeline")).toContainText("req_browser_rate_limit_001");
     await expect(freshPage.locator("#activity-timeline")).toContainText("自動retryせず");
-    await freshPage.locator("#activity-timeline").getByRole("button", { name: "詳細をコピー" }).last().click();
+    const detailsToggle = freshPage.locator("#activity-timeline").getByRole("button", { name: "ⓘ エラーの詳細" }).last();
+    await detailsToggle.click();
+    const copyButton = freshPage.locator("#activity-timeline").getByRole("button", { name: "診断情報をコピー" }).last();
+    await expect(copyButton).toBeVisible();
+    await copyButton.click();
     await expect(freshPage.locator("#toast")).toContainText(/コピー|詳細を選択/);
   } finally {
     if (freshContext) await freshContext.close();
@@ -453,6 +492,33 @@ test("conversation projection renders canonical chat categories", async ({ page 
     await expect(timeline).toContainText("レビューが完了しました");
     await expect(timeline).toContainText("依頼が完了しました");
     await expect(timeline).not.toContainText("任せて進んだ仕事");
+
+    // Pins companyFactText()/directedCommunicationText()'s mapping from
+    // canonical review_summary/review_issues to rendered text (Public Beta
+    // Conversation UX Fix, item 2). These strings come from the
+    // browser_acceptance_v1 fixture's re_review_request_changes and
+    // re_review_approve scenarios, so this exercises the real app.js
+    // functions end-to-end in a real browser, not a mocked value.
+    await expect(timeline.locator(".msg-directed").filter({ hasText: "修正をお願い" })).toContainText(
+      "初めての利用者が次に何をすればよいかが不明確です。",
+    );
+    await expect(timeline.locator(".msg-directed").filter({ hasText: "修正をお願い" })).toContainText(
+      "最初の依頼を入力する案内を追記してください。",
+    );
+    await expect(timeline.locator(".msg-company-fact-copy").filter({ hasText: "レビューが完了しました" })).toContainText(
+      "利用開始の案内が追加され、要件を満たしています。",
+    );
+
+    const allMessageBodyTexts = await timeline
+      .locator(".msg-company-fact-copy, .msg-directed .msg-text")
+      .allTextContents();
+    for (const text of allMessageBodyTexts) {
+      const trimmed = text.trim();
+      expect(trimmed).not.toMatch(/^error$/i);
+      for (const rawKind of ["review_approved", "review_request_changes", "deliverable_ready", "task_completed", "revision_completed"]) {
+        expect(trimmed).not.toBe(rawKind);
+      }
+    }
   } finally {
     await environment.stop();
   }

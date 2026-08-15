@@ -1560,7 +1560,29 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   cursor: pointer;
 }
 
+.msg-info-toggle-labeled,
+.msg-deliverable-toggle {
+  width: auto;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .msg-technical-panel {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+}
+
+.msg-technical-panel-actions {
+  margin-top: 8px;
+}
+
+.msg-deliverable-panel {
   margin-top: 8px;
   padding: 8px 10px;
   border: 1px solid var(--line);

@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
@@ -48,6 +51,114 @@ func TestClarificationAnswerEntriesProjectOnlyConfirmedAnswers(t *testing.T) {
 		entries[0].CEOMessageText != "20代女性向け" || !entries[0].At.Equal(at) ||
 		entries[0].Speaker != nil || entries[0].Recipient != nil {
 		t.Fatalf("clarificationAnswerEntries() = %#v", entries)
+	}
+}
+
+// TestClarificationRequestedEntriesProjectAllQuestionsVerbatim locks the
+// Public Beta Conversation UX Fix's root-cause repair: InspectConversation
+// previously never projected the clarification question itself (only the
+// later answer), because its per-Turn switch had no case for
+// TurnPlanGenerated. clarificationRequestedEntries projects every
+// non-blank CEOQuestion from the already-committed canonical Plan verbatim
+// -- never composed or paraphrased -- and skips a blank one exactly like
+// clarificationAnswerEntries already skips a blank answer.
+func TestClarificationRequestedEntriesProjectAllQuestionsVerbatim(t *testing.T) {
+	at := time.Date(2026, time.August, 9, 9, 4, 0, 0, time.UTC)
+	plan := ceoplan.Plan{CEOQuestions: []string{"対象読者は既存顧客と新規顧客のどちらですか？", "   "}}
+	turn := interaction.Turn{Kind: interaction.TurnPlanGenerated, At: at, Plan: &plan}
+
+	entries := clarificationRequestedEntries(turn)
+	if len(entries) != 1 || entries[0].Category != CategorySystem || entries[0].Kind != KindClarificationRequested ||
+		entries[0].Question != "対象読者は既存顧客と新規顧客のどちらですか？" || !entries[0].At.Equal(at) ||
+		entries[0].Audience != AudienceCEO || entries[0].Speaker != nil || entries[0].Recipient != nil {
+		t.Fatalf("clarificationRequestedEntries() = %#v", entries)
+	}
+	if entries := clarificationRequestedEntries(interaction.Turn{Kind: interaction.TurnPlanGenerated, At: at, Plan: nil}); entries != nil {
+		t.Fatalf("clarificationRequestedEntries() with nil Plan = %#v, want nil", entries)
+	}
+}
+
+// TestInspectConversationKeepsBothClarificationQuestionAndAnswerAfterReload
+// is the read-only, Vault-backed regression lock for the same fix: a
+// Session that asked one clarification question and received the CEO's
+// confirmed answer must show both as separate entries, in the order
+// WorkCairn actually asked and the CEO actually answered -- and this must
+// survive a completely fresh InspectConversation call against the same
+// Vault (the read-only equivalent of a page reload or daemon restart,
+// since this package holds no in-process cache).
+func TestInspectConversationKeepsBothClarificationQuestionAndAnswerAfterReload(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "社員"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "プロジェクト"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, time.August, 9, 9, 0, 0, 0, time.UTC)
+	record, err := interaction.New("SESSION-CLARIFY-RELOAD-001", "りんごについて100文字程度で説明して", "Claude Sonnet 5", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withQuestion, err := record.RecordPlan(ceoplan.Plan{
+		ProjectName: "りんご説明文", Objective: "目的", Summary: "概要",
+		RequiredDepartments: []string{}, RequiredRoles: []string{}, AssignedExistingEmployees: []string{}, MissingRoles: []string{},
+		ProposedTasks: []ceoplan.ProposedTask{{ProposalID: "PROPOSED-001", Title: "説明文を作成する", DependencyIDs: []string{}, Rationale: "必要"}},
+		Risks:         []string{}, CEOQuestions: []string{"対象読者は既存顧客と新規顧客のどちらですか？"}, PlanOnly: true,
+	}, at.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	answered, err := withQuestion.RecordAnswers([]interaction.Answer{
+		{Question: "対象読者は既存顧客と新規顧客のどちらですか？", Answer: "新規顧客向けでお願いします。"},
+	}, at.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := vault.NewInteractionStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(context.Background(), withQuestion, record.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(context.Background(), answered, withQuestion.Version); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		entries, err := InspectConversation(context.Background(), root, "SESSION-CLARIFY-RELOAD-001")
+		if err != nil {
+			t.Fatal(err)
+		}
+		question := findKind(entries, KindClarificationRequested)
+		answer := findKind(entries, KindCEOClarificationAnswer)
+		if question == nil || answer == nil {
+			t.Fatalf("attempt %d: question or answer entry missing: %#v", attempt, entries)
+		}
+		if question.Question != "対象読者は既存顧客と新規顧客のどちらですか？" || question.Category != CategorySystem {
+			t.Fatalf("attempt %d: question entry = %#v", attempt, question)
+		}
+		if answer.CEOMessageText != "新規顧客向けでお願いします。" || answer.Category != CategoryCEOMessage {
+			t.Fatalf("attempt %d: answer entry = %#v", attempt, answer)
+		}
+		if question.At.After(answer.At) {
+			t.Fatalf("attempt %d: question must not sort after its own answer: question=%v answer=%v", attempt, question.At, answer.At)
+		}
+		questionIndex, answerIndex := -1, -1
+		for index, entry := range entries {
+			if entry.Kind == KindClarificationRequested {
+				questionIndex = index
+			}
+			if entry.Kind == KindCEOClarificationAnswer {
+				answerIndex = index
+			}
+		}
+		if questionIndex < 0 || answerIndex < 0 || questionIndex > answerIndex {
+			t.Fatalf("attempt %d: question entry (index %d) must precede its answer entry (index %d)", attempt, questionIndex, answerIndex)
+		}
 	}
 }
 
@@ -151,6 +262,13 @@ func TestWorkflowTaskConversationEntriesApprovedIsCompanyFact(t *testing.T) {
 		approved.Subject == nil || approved.Subject.EmployeeID != reviewer.ID {
 		t.Fatalf("approved entry = %#v", approved)
 	}
+	// Pins the exact canonical review_summary value that web/app.js's
+	// companyFactText() reads for the "review_approved" case -- this is the
+	// field a UI regression could silently swap for an internal status/kind
+	// value (Public Beta Conversation UX Fix, item 2).
+	if approved.ReviewSummary != "問題ありません。" {
+		t.Fatalf("review_summary not projected verbatim: got %q, want %q", approved.ReviewSummary, "問題ありません。")
+	}
 }
 
 // TestWorkflowTaskConversationEntriesUnknownSpeakerPreventsDirected locks
@@ -171,6 +289,15 @@ func TestWorkflowTaskConversationEntriesUnknownSpeakerPreventsDirected(t *testin
 	}
 	if entry.Category == CategoryDirectedCommunication || entry.MentionAllowed() || entry.Speaker != nil || entry.Recipient != nil {
 		t.Fatalf("Directed Communication fabricated despite unknown Speaker: %#v", entry)
+	}
+	// Falling back to Company Fact must still carry the real canonical
+	// issues/summary -- web/app.js's companyFactText() "review_request_changes"
+	// case renders exactly these fields, never a bare status/kind value
+	// (Public Beta Conversation UX Fix, item 2).
+	wantIssues := evidence.Reviews[0].Decision.Issues
+	if !reflect.DeepEqual(entry.ReviewIssues, wantIssues) || entry.ReviewSummary != evidence.Reviews[0].Decision.Summary {
+		t.Fatalf("review issues/summary not projected losslessly on Company Fact fallback: got issues=%#v summary=%q, want issues=%#v summary=%q",
+			entry.ReviewIssues, entry.ReviewSummary, wantIssues, evidence.Reviews[0].Decision.Summary)
 	}
 }
 
