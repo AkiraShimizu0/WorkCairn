@@ -176,7 +176,7 @@ func appendSessionFeed(feed *[]CompanyFeedEvent, session interaction.Record, emp
 					*feed = append(*feed, CompanyFeedEvent{
 						At: at, SessionID: session.SessionID,
 						ActorID: assignee.ID, ActorName: employeeDisplayName(assignee),
-						Label:   strings.TrimSpace(proposed.Title) + "の作成を開始",
+						Label: strings.TrimSpace(proposed.Title) + "の作成を開始",
 					})
 				}
 			}

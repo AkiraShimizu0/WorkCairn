@@ -538,9 +538,9 @@ func TestStructuredOutputFieldPresenceNeverGuessesOnMalformedContent(t *testing.
 func TestStructuredOutputFieldShapeReportsSummaryShapeWithoutContent(t *testing.T) {
 	schema := review.TypedDecisionJSONSchema()
 	tests := []struct {
-		name string
+		name    string
 		content string
-		want failure.StructuredOutputFieldShape
+		want    failure.StructuredOutputFieldShape
 	}{
 		{
 			"non-blank string",

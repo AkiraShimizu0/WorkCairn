@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/runner"
 	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
+	"github.com/AkiraShimizu0/workcairn/go/internal/runner"
 	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
@@ -223,9 +223,9 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 			InputTokens:  providerResponse.Usage.InputTokens,
 			OutputTokens: providerResponse.Usage.OutputTokens,
 		},
-		Duration:                 duration,
-		Metadata:                 cloneMetadata(request.Metadata),
-		StructuredOutputPresence: structuredPresence,
+		Duration:                   duration,
+		Metadata:                   cloneMetadata(request.Metadata),
+		StructuredOutputPresence:   structuredPresence,
 		StructuredOutputFieldShape: structuredFieldShape,
 	}
 	if err := result.Validate(); err != nil {

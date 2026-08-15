@@ -39,12 +39,12 @@ func (fake *capturingReviewRunner) Run(_ context.Context, request worker.RunRequ
 	}
 	inputTokens, outputTokens := 12, 8
 	return worker.RunResult{
-		Content:                  fake.content,
-		Runner:                   fake.Name(),
-		Model:                    request.Model,
-		Usage:                    worker.TokenUsage{InputTokens: &inputTokens, OutputTokens: &outputTokens},
-		Duration:                 10 * time.Millisecond,
-		Metadata:                 request.Metadata,
+		Content:                    fake.content,
+		Runner:                     fake.Name(),
+		Model:                      request.Model,
+		Usage:                      worker.TokenUsage{InputTokens: &inputTokens, OutputTokens: &outputTokens},
+		Duration:                   10 * time.Millisecond,
+		Metadata:                   request.Metadata,
 		StructuredOutputPresence:   fake.presence,
 		StructuredOutputFieldShape: fake.fieldShape,
 	}, nil
