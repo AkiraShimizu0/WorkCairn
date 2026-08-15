@@ -92,6 +92,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0044: macOS Keychain永続化をnative helperへ移す](adr/ADR-0044-native-macos-keychain-persistence.md)
 - [ADR-0045: bounded Provider request timeoutをRuntime compositionで一本化する](adr/ADR-0045-bounded-provider-request-timeout-policy.md)
 - [ADR-0046: CEO Intent Contractを最小化する](adr/ADR-0046-ceo-intent-contract-minimization.md)
+- [ADR-0047: Read-only Conversation Projection — Typed Facts, No Fabricated Speaker](adr/ADR-0047-read-only-conversation-projection.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
