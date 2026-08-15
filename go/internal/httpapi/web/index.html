@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f4f1e8">
+  <meta name="theme-color" content="#f4f1e8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121614" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="WorkCairn">
@@ -18,13 +19,13 @@
         <button id="menu-button" class="menu-button" type="button" hidden aria-label="メニューを開く" aria-controls="nav-drawer" aria-expanded="false">☰</button>
         <a class="brand" href="/" aria-label="WorkCairn ホーム">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span><strong>WorkCairn</strong><small>Your AI company</small></span>
+          <span><strong>WorkCairn</strong></span>
         </a>
       </div>
       <div class="topbar-actions">
         <span id="background-status" class="background-status" hidden><i aria-hidden="true"></i><span>会社が働いています</span></span>
         <span id="connection-status" class="status-dot">接続確認中</span>
-        <button id="settings-button" class="settings-button" type="button" hidden aria-label="Settingsを開く">Settings</button>
+        <button id="settings-button" class="settings-button icon-button" type="button" hidden aria-label="設定" title="設定"><span aria-hidden="true">⚙</span></button>
       </div>
     </header>
 
@@ -52,7 +53,7 @@
             <button id="nav-request-list" class="nav-link" type="button">依頼一覧</button>
             <button id="nav-new-request" class="nav-link" type="button">＋ 新規作成</button>
             <button id="nav-current-request" class="nav-link" type="button" hidden>選択中の依頼</button>
-            <button id="nav-settings" class="nav-link" type="button">Settings</button>
+            <button id="nav-settings" class="nav-link" type="button">設定</button>
           </div>
         </nav>
 
@@ -91,7 +92,7 @@
                     <p id="composer-status" class="composer-status" aria-live="polite"></p>
                     <div class="composer-input-row">
                       <textarea id="composer-input" name="message" rows="2" placeholder="メッセージを入力..." aria-label="メッセージを入力"></textarea>
-                      <button id="composer-send" class="button primary composer-send" type="submit" aria-label="送信">送信</button>
+                      <button id="composer-send" class="button primary composer-send" type="submit" aria-label="送信" title="送信"><span class="composer-send-icon" aria-hidden="true">↑</span></button>
                     </div>
                   </div>
                 </form>
@@ -117,7 +118,6 @@
             <section class="employee-status-section" aria-labelledby="employee-status-heading">
               <header class="pane-heading employee-status-heading">
                 <div>
-                  <p class="eyebrow">YOUR COMPANY</p>
                   <h1 id="employee-status-heading">AI会社の様子</h1>
                 </div>
                 <span id="team-count" class="count-chip"></span>

@@ -756,6 +756,21 @@ function isRequestDetailVisible() {
   return state.nav === "request_detail" && (Boolean(state.record) || isDraftRequestActive());
 }
 
+function syncRequestDetailNavigation() {
+  if (isDesktopLayout()) {
+    applyNavigationLayout();
+    return;
+  }
+  const sessionID = localStorage.getItem(STORAGE_SESSION);
+  const preferredNav = localStorage.getItem(STORAGE_NAV);
+  const shouldKeepDetail = isDraftRequestActive()
+    || (sessionID && state.record && preferredNav === "request_detail");
+  if (shouldKeepDetail && state.nav !== "request_detail") {
+    state.nav = "request_detail";
+    applyNavigationLayout();
+  }
+}
+
 function setNav(name, remember = true) {
   state.nav = name;
   if (remember) localStorage.setItem(STORAGE_NAV, name);
@@ -814,27 +829,21 @@ function showRequestList() {
 function showRequestDetail(sessionID = state.record?.session_id) {
   closeNavDrawer();
   if (isDraftRequestActive()) {
-    if (isDesktopLayout()) {
-      applyNavigationLayout();
-      renderDraftRequestDetail();
-    } else {
-      setNav("request_detail");
-    }
+    setNav("request_detail");
+    renderDraftRequestDetail();
     return;
   }
   if (sessionID && sessionID !== state.record?.session_id) {
     selectSession(sessionID);
     return;
   }
-  if (isDesktopLayout()) {
-    applyNavigationLayout();
-    if (state.record) {
-      state.renderKey = "";
-      renderRequestDetail();
-    }
-    return;
-  }
   setNav("request_detail");
+  if (state.record) {
+    state.renderKey = "";
+    renderRequestDetail();
+  } else {
+    applyNavigationLayout();
+  }
 }
 
 function showEmployeesHome() {
@@ -1189,6 +1198,7 @@ async function refreshCurrent(silent = false) {
     await loadTaskEvidenceDetails().catch(() => null);
     setConnected(true);
     renderRequestDetail();
+    syncRequestDetailNavigation();
     await loadSessions();
     await loadCompanyActivity().catch(() => null);
     renderEmployeesPane();
@@ -2230,6 +2240,7 @@ function renderRequestDetail() {
     return;
   }
   applyNavigationLayout();
+  syncRequestDetailNavigation();
   renderNext();
   renderDetails();
   renderTimeline();
@@ -2305,9 +2316,91 @@ function employeeStatusIcon(displayStatus) {
   }
 }
 
+function employeePoseClass(displayStatus) {
+  switch (displayStatus) {
+  case "作業中": return "pose-desk";
+  case "レビュー中": return "pose-review";
+  case "修正中": return "pose-revise";
+  case "社長と相談中": return "pose-consult";
+  case "完了": return "pose-done";
+  default: return "pose-idle";
+  }
+}
+
+function officeWorkerNode(employee, statusClass) {
+  const variant = avatarVariant(employee.id);
+  const poseClass = employeePoseClass(employee.display_status);
+  return node("div", { class: `office-worker ${poseClass} ${statusClass}`.trim(), "aria-hidden": "true" },
+    node("span", { class: `worker-figure avatar-v${variant}` },
+      node("span", { class: "worker-head" }),
+      node("span", { class: "worker-body" }),
+      node("span", { class: "worker-shadow" }),
+    ),
+    employee.display_status === "社長と相談中" || employee.ceo_attention
+      ? node("span", { class: "worker-speech-bubble" })
+      : null,
+  );
+}
+
+function officeSceneNode(employee) {
+  const status = employee.display_status || "待機中";
+  const statusClass = employeeStatusClass(status);
+  return node("div", { class: "office-booth-scene" },
+    node("div", { class: "office-props", "aria-hidden": "true" },
+      node("span", { class: "prop-floor" }),
+      node("span", { class: "prop-desk" }),
+      node("span", { class: "prop-monitor" }),
+      node("span", { class: "prop-chair" }),
+      node("span", { class: "prop-plant" }),
+      status === "レビュー中" ? node("span", { class: "prop-documents" }) : null,
+      status === "作業中" || status === "修正中" ? node("span", { class: "prop-coffee" }) : null,
+    ),
+    officeWorkerNode(employee, statusClass),
+  );
+}
+
+function employeeCompactRow(employee) {
+  const statusClass = employeeStatusClass(employee.display_status);
+  const variant = avatarVariant(employee.id);
+  return node("div", { class: "employee-compact-row" },
+    node("span", { class: `employee-compact-avatar avatar-v${variant} ${statusClass}`.trim(), "aria-hidden": "true" }),
+    node("div", { class: "employee-compact-copy" },
+      node("strong", {}, employee.name || employee.id),
+      node("small", {}, `${employee.department || "会社"} · ${employee.role || "役割未設定"}`),
+      node("span", { class: `employee-status ${statusClass}`.trim() },
+        node("span", { class: "status-glyph", "aria-hidden": "true" }, employeeStatusIcon(employee.display_status)),
+        node("span", { class: "status-dot", "aria-hidden": "true" }),
+        employee.display_status || "待機中",
+      ),
+      employee.current_work_title ? node("p", { class: "employee-task" }, employee.current_work_title) : null,
+    ),
+  );
+}
+
+function officeCharacterNode(employee) {
+  const statusClass = employeeStatusClass(employee.display_status);
+  return node("article", {
+    class: `employee-card office-character office-booth ${statusClass}${employee.is_liaison ? " liaison" : ""}${employee.ceo_attention ? " attention" : ""}`.trim(),
+    title: employee.current_work_title || employee.display_status || "",
+  },
+  employeeCompactRow(employee),
+  officeSceneNode(employee),
+  node("div", { class: "employee-card-copy" },
+    node("strong", {}, employee.name || employee.id),
+    node("small", {}, employee.role || "役割未設定"),
+    node("span", { class: `employee-status ${statusClass}`.trim() },
+      node("span", { class: "status-glyph", "aria-hidden": "true" }, employeeStatusIcon(employee.display_status)),
+      node("span", { class: "status-dot", "aria-hidden": "true" }),
+      employee.display_status || "待機中",
+    ),
+    employee.current_work_title ? node("p", { class: "employee-task" }, employee.current_work_title) : null,
+  ),
+  );
+}
+
 function renderEmployeesPane() {
   const employees = state.companyActivity?.employees || [];
-  ui.teamCount.textContent = employees.length ? `${employees.length} people` : "";
+  ui.teamCount.textContent = employees.length ? `${employees.length}人` : "";
   if (!employees.length) {
     ui.employeeGrid.replaceChildren(node("p", { class: "empty" }, "AI社員はまだ読み込まれていません。"));
   } else {
@@ -2326,25 +2419,7 @@ function renderEmployeesPane() {
               node("span", { class: "office-zone-count" }, `${members.length}`),
             ),
             node("div", { class: "office-zone-grid" },
-              ...members.map((employee) => {
-                const statusClass = employeeStatusClass(employee.display_status);
-                return node("article", {
-                  class: `employee-card office-character ${statusClass}${employee.is_liaison ? " liaison" : ""}${employee.ceo_attention ? " attention" : ""}`.trim(),
-                  title: employee.current_work_title || employee.display_status || "",
-                },
-                avatarNode(employee.id, statusClass),
-                node("div", { class: "employee-name" },
-                  node("strong", {}, employee.name || employee.id),
-                  node("small", {}, employee.role || "役割未設定"),
-                  node("span", { class: `employee-status ${statusClass}`.trim() },
-                    node("span", { class: "status-glyph", "aria-hidden": "true" }, employeeStatusIcon(employee.display_status)),
-                    node("span", { class: "status-dot", "aria-hidden": "true" }),
-                    employee.display_status || "待機中",
-                  ),
-                  employee.current_work_title ? node("p", { class: "employee-task" }, employee.current_work_title) : null,
-                ),
-                );
-              }),
+              ...members.map((employee) => officeCharacterNode(employee)),
             ),
           ),
         ),
@@ -2654,7 +2729,10 @@ if (ui.composerInput) {
   });
 }
 document.querySelectorAll("[data-close-dialog]").forEach((control) => control.addEventListener("click", closeDialog));
-window.matchMedia(DESKTOP_QUERY).addEventListener("change", () => applyNavigationLayout());
+window.matchMedia(DESKTOP_QUERY).addEventListener("change", () => {
+  syncRequestDetailNavigation();
+  applyNavigationLayout();
+});
 
 async function initialize() {
   try {

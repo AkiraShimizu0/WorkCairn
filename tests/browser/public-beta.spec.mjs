@@ -536,7 +536,7 @@ test("employee visual section stays separate from selected request chat", async 
       await page.locator("#nav-employees-home").click();
     }
     await expect(page.locator(".office-floor")).toBeVisible();
-    await expect(page.locator(".office-character").first()).toBeVisible();
+    await expect(page.locator(".office-booth").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "社内の動き" })).toBeVisible();
     await startRequest(page, "りんごについて100文字程度で説明して");
     await expect(page.locator("#activity-timeline")).toBeVisible();
@@ -545,6 +545,111 @@ test("employee visual section stays separate from selected request chat", async 
     } else {
       await expect(page.locator(".office-floor")).toBeVisible();
     }
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("UI refinement: composer, settings, branding, themes, and office visual", async ({ page }, testInfo) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  const isMobileProject = testInfo.project.name.includes("iphone");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await ensureRequestDetail(page);
+
+    await expect(page.locator("body")).not.toContainText("Your AI company");
+    await expect(page.locator("body")).not.toContainText("YOUR COMPANY");
+
+    const settings = page.getByRole("button", { name: "設定" });
+    await expect(settings).toBeVisible();
+    await settings.click();
+    await expect(page.locator("#settings-dialog")).toBeVisible();
+    await page.locator("#settings-dialog button[data-close-dialog]").first().click();
+    await expect(page.locator("#settings-dialog")).toBeHidden();
+
+    const composerResize = await page.locator("#composer-input").evaluate((element) => getComputedStyle(element).resize);
+    expect(composerResize).toBe("none");
+
+    const send = page.locator("#composer-send");
+    await expect(send).toHaveAttribute("aria-label", "送信");
+    await expect(send.locator(".composer-send-icon")).toHaveText("↑");
+
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(page.locator("#workspace-view")).toBeVisible();
+    await expect(page.locator(".thread-composer")).toBeVisible();
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(page.getByRole("button", { name: "送信" })).toBeEnabled();
+
+    if (isMobileProject) {
+      const menu = page.locator("#menu-button");
+      await menu.click();
+      await page.locator("#nav-employees-home").click();
+      await expect(page.getByRole("heading", { name: "AI会社の様子" })).toBeVisible();
+      await expect(page.locator(".employee-compact-row").first()).toBeVisible();
+      await expect(page.locator(".office-booth-scene").first()).toBeHidden();
+    } else {
+      await page.emulateMedia({ colorScheme: "light" });
+      await expect(page.locator("#workspace-view")).toBeVisible();
+      await expect(page.locator(".office-booth").first()).toBeVisible();
+      await expect(page.locator(".office-booth-scene").first()).toBeVisible();
+      await expect(page.locator(".office-worker").first()).toBeVisible();
+    }
+
+    if (!isMobileProject) {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.emulateMedia({ colorScheme: "light", reducedMotion: "no-preference" });
+      await page.waitForTimeout(200);
+      const menu = page.locator("#menu-button");
+      await expect(menu).toBeVisible();
+      await menu.click();
+      await page.locator("#nav-employees-home").click();
+      await expect(page.getByRole("heading", { name: "AI会社の様子" })).toBeVisible();
+      await expect(page.locator(".employee-compact-row").first()).toBeVisible();
+      await expect(page.locator(".office-booth-scene").first()).toBeHidden();
+    }
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("selected request detail persists through polling, completion, and failure", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "初めての利用者向けにWorkCairnの紹介文を作り、別のAIで確認してください");
+    await waitForPlanOrClarification(page);
+    await answerClarificationIfNeeded(page);
+    await approvePlanAndExecute(page);
+
+    await page.waitForTimeout(5500);
+    await expect(page.locator("#request-detail-view")).toBeVisible();
+    await expect(page.locator("#activity-timeline")).toBeVisible();
+
+    await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible({ timeout: 45_000 });
+    await expect(page.locator("#request-detail-view")).toBeVisible();
+    await expect(page.locator("#request-list-view")).toBeHidden();
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("selected request detail persists after provider failure", async ({ page }) => {
+  const environment = await startBrowserEnvironment("provider_failure");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "Provider failureの安全な表示を確認する成果物を作ってください");
+    await waitForPlanOrClarification(page);
+    await answerClarificationIfNeeded(page, "はい。安全な表示を確認します。");
+    await approvePlanAndExecute(page);
+    await expect(page.locator("#activity-timeline")).toContainText("PROVIDER_RATE_LIMITED", { timeout: 30_000 });
+
+    await page.waitForTimeout(5500);
+    await expect(page.locator("#request-detail-view")).toBeVisible();
+    await expect(page.locator("#activity-timeline")).toContainText("PROVIDER_RATE_LIMITED");
   } finally {
     await environment.stop();
   }
