@@ -22,6 +22,20 @@ func BuildPrompt(request string, employees []organization.Identity) (worker.Prom
 	if err != nil {
 		return worker.Prompt{}, err
 	}
+	// The same CanonicalRoleTitles(employees) the Structured Output schema
+	// constrains steps[].required_role to (ADR-0048) — computed here from
+	// the identical employees input, so the Prompt's own instruction and
+	// the schema's enum can never list a different vocabulary. When the
+	// roster contributes no usable Role titles, this degrades to the
+	// pre-existing generic instruction rather than failing BuildPrompt
+	// itself — the actual fail-closed stop for that case is
+	// ceoplan.IntentJSONSchema, called separately before any Provider call.
+	requiredRoleInstruction := `required_roleには、そのstepを担当するために必要なRoleを1つ指定してください。write・research・analyze・implementでは必須、"review"の場合だけ省略可能です。空文字列は禁止です。`
+	if allowedRoles := CanonicalRoleTitles(employees); len(allowedRoles) > 0 {
+		requiredRoleInstruction += "次のいずれか1つを、表記のまま正確に使用してください: " + strings.Join(allowedRoles, ", ") + "。"
+	} else {
+		requiredRoleInstruction += "既存社員一覧のRole表記に合わせてください。"
+	}
 	system := strings.Join([]string{
 		"あなたはWorkspace社のWorkspace Managerです。CEOの自然言語依頼を実行せずに、意味理解と作業方針の提案だけを行ってください。",
 		"Project、Task、社員を作成せず、Workflowも実行しないでください。",
@@ -42,7 +56,7 @@ func BuildPrompt(request string, employees []organization.Identity) (worker.Prom
 		"kind, description, required_role 以外のfieldは禁止です。kindとdescriptionは常に必須です。",
 		`kindは "write", "research", "analyze", "implement", "review" のいずれか1つの文字列にしてください。それ以外の値は使用しないでください。`,
 		"descriptionには、そのstepで何を行うかを具体的に記述してください。",
-		`required_roleには、そのstepを担当するために必要なRoleを1つ指定してください。write・research・analyze・implementでは必須、"review"の場合だけ省略可能です。空文字列は禁止です。既存社員一覧のRole表記に合わせてください。`,
+		requiredRoleInstruction,
 		"stepsの順序は、実施すべき順番のまま出力してください。依存関係IDは出力しないでください（WorkCairnが順序から構築します）。",
 		"担当する具体的な社員は出力しないでください（WorkCairnがrequired_roleと組織台帳から決定します）。",
 		"",

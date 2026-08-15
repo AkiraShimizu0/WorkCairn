@@ -91,10 +91,20 @@ func (service *CEOPlanService) Generate(ctx context.Context, input CEOPlanInput)
 	if err != nil {
 		return CEOPlanResult{}, &CEOPlanError{Stage: CEOPlanPromptStage, Err: err}
 	}
+	// The Structured Output schema's required_role enum is constrained to
+	// the current Organization roster's own canonical Role titles
+	// (ADR-0048) — a short-term bridge, never a hardcoded Starter
+	// Organization vocabulary. A roster with zero usable Role titles is a
+	// fail-closed stop here, before any Provider call, rather than a
+	// silent fallback to an unconstrained free-form schema.
+	schema, err := ceoplan.IntentJSONSchema(ceoplan.CanonicalRoleTitles(input.Employees))
+	if err != nil {
+		return CEOPlanResult{}, &CEOPlanError{Stage: CEOPlanPromptStage, Err: err}
+	}
 	result, err := service.runner.Run(ctx, worker.RunRequest{
 		Model: input.Model, SystemPrompt: prompt.System, UserPrompt: prompt.User,
 		Metadata:         map[string]string{"operation": "ceo_plan_generation"},
-		StructuredOutput: &worker.StructuredOutputContract{Schema: ceoplan.IntentJSONSchema()},
+		StructuredOutput: &worker.StructuredOutputContract{Schema: schema},
 	})
 	if err != nil {
 		return CEOPlanResult{}, &CEOPlanError{Stage: CEOPlanRunnerStage, Err: err}

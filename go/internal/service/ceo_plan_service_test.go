@@ -40,8 +40,12 @@ func TestCEOPlanServiceUsesProviderNeutralRunnerAndTypedParser(t *testing.T) {
 	if err != nil || result.Plan.ProjectName != "P" || result.Plan.ProposedTasks[0].AssigneeID == nil || *result.Plan.ProposedTasks[0].AssigneeID != "PLAN-001" || fake.request.UserPrompt != "計画する" || fake.request.Metadata["operation"] != "ceo_plan_generation" {
 		t.Fatalf("result=%#v request=%#v err=%v", result, fake.request, err)
 	}
+	wantSchema, err := ceoplan.IntentJSONSchema(ceoplan.CanonicalRoleTitles([]organization.Identity{{ID: "PLAN-001", Department: "企画部", Role: "Planner"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if fake.request.StructuredOutput == nil || fake.request.StructuredOutput.ContentField != "" ||
-		!reflect.DeepEqual(fake.request.StructuredOutput.Schema, ceoplan.IntentJSONSchema()) {
+		!reflect.DeepEqual(fake.request.StructuredOutput.Schema, wantSchema) {
 		t.Fatalf("Runner request did not carry the CEO Plan Intent Structured Output contract: %#v", fake.request.StructuredOutput)
 	}
 }

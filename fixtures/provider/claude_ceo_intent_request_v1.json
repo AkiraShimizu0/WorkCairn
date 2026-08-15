@@ -44,7 +44,8 @@
                     },
                     "required_role": {
                       "type": "string",
-                      "description": "The exact Organization role required for this step. Must contain a non-whitespace character when present."
+                      "description": "The exact Organization role required for this step.",
+                      "enum": ["Content Writer", "Product Manager", "QA Engineer"]
                     }
                   },
                   "required": ["kind", "description", "required_role"],
@@ -63,7 +64,8 @@
                     },
                     "required_role": {
                       "type": "string",
-                      "description": "The exact Organization role required for this step. Must contain a non-whitespace character when present."
+                      "description": "The exact Organization role required for this step.",
+                      "enum": ["Content Writer", "Product Manager", "QA Engineer"]
                     }
                   },
                   "required": ["kind", "description"],

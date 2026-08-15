@@ -311,8 +311,14 @@ func TestRunnerSerializesCEOIntentRequestFixture(t *testing.T) {
 		return jsonResponse(http.StatusOK, body, "req-ceo-intent"), nil
 	}))
 
+	// Fixed, deterministic Organization Role enum (ADR-0048) — matches the
+	// fixture file's steps[].required_role.enum exactly.
+	schema, err := ceoplan.IntentJSONSchema([]string{"Content Writer", "Product Manager", "QA Engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	request := validRunRequest()
-	request.StructuredOutput = &worker.StructuredOutputContract{Schema: ceoplan.IntentJSONSchema()}
+	request.StructuredOutput = &worker.StructuredOutputContract{Schema: schema}
 	if _, err := runner.Run(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -605,7 +611,10 @@ func TestStructuredOutputFieldPresenceReturnsNilForUndeclaredSchemaShape(t *test
 // Review-specific: it derives the same correct presence map from CEO
 // Intent's plain-object (non-anyOf) schema with zero Review-specific code.
 func TestStructuredOutputFieldPresenceIsGenericAcrossDomainSchemas(t *testing.T) {
-	schema := ceoplan.IntentJSONSchema()
+	schema, err := ceoplan.IntentJSONSchema([]string{"Content Writer", "Product Manager", "QA Engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	content := `{"project_name":"P","objective":"O","steps":[],"ceo_questions":[]}`
 	want := map[string]bool{"project_name": true, "objective": true, "summary": false, "steps": true, "ceo_questions": true}
 	if presence := structuredOutputFieldPresence(schema, content); !reflect.DeepEqual(presence, want) {
