@@ -95,6 +95,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0047: Read-only Conversation Projection — Typed Facts, No Fabricated Speaker](adr/ADR-0047-read-only-conversation-projection.md)
 - [ADR-0048: Organization-scoped Required Role Enum — Short-term Bridge toward Capability-based Assignment](adr/ADR-0048-organization-scoped-required-role-enum.md)
 - [ADR-0049: Go-owned Durable Chained Approval for Plan Apply and Reviewed Workflow Execution](adr/ADR-0049-go-owned-durable-chained-approval.md)
+- [ADR-0050: Interaction Archive Semantics — Visibility Metadata via Append-only Turn History, Not Physical Delete](adr/ADR-0050-interaction-archive-semantics.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント

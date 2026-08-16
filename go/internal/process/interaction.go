@@ -88,6 +88,15 @@ type InteractionApplyResult struct {
 	Apply            CEOPlanApplyResult `json:"apply"`
 }
 
+// InteractionArchiveResult is deliberately smaller than InteractionApplyResult:
+// interaction.archive/interaction.unarchive never call a child Command
+// (no Provider call, no Project/Task write), so there is no sub-result to
+// carry alongside the committed Session.
+type InteractionArchiveResult struct {
+	Session          interaction.Record `json:"session"`
+	SessionCommitted bool               `json:"session_committed"`
+}
+
 func PlanInteractionStart(ctx context.Context, input InteractionStartInput) (InteractionStartPlan, error) {
 	if ctx == nil {
 		return InteractionStartPlan{}, interaction.ErrInvalidSession
@@ -657,6 +666,87 @@ func finishInteractionApply(ctx context.Context, claim durableCommandClaim, resu
 
 func ceoApplyPartiallyCommitted(result CEOPlanApplyResult) bool {
 	return result.Project != nil || len(result.Tasks) > 0 || result.Dependencies != nil
+}
+
+type InteractionArchiveInput struct {
+	VaultRoot       string
+	SessionID       string
+	ExpectedVersion uint64
+	CurrentTime     time.Time
+	CommandID       string
+}
+
+// ExecuteInteractionArchive hides a Session from the active request list
+// by appending a durable TurnArchived Turn (interaction.RecordArchive).
+// It changes nothing about Project, Task, employee, company-activity,
+// Deliverable, Review, or Revision evidence, and never touches
+// Record.State -- archive is Turn-history visibility metadata only (see
+// TurnArchived's own doc comment in the interaction package).
+func ExecuteInteractionArchive(ctx context.Context, input InteractionArchiveInput, approved bool) (InteractionArchiveResult, error) {
+	if !approved {
+		return InteractionArchiveResult{}, ErrInteractionApprovalRequired
+	}
+	return executeInteractionArchiveToggle(ctx, input, "interaction.archive", "INTERACTION_ARCHIVE_FAILED", interaction.Record.RecordArchive)
+}
+
+// ExecuteInteractionUnarchive is ExecuteInteractionArchive's exact reverse
+// (interaction.RecordUnarchive).
+func ExecuteInteractionUnarchive(ctx context.Context, input InteractionArchiveInput, approved bool) (InteractionArchiveResult, error) {
+	if !approved {
+		return InteractionArchiveResult{}, ErrInteractionApprovalRequired
+	}
+	return executeInteractionArchiveToggle(ctx, input, "interaction.unarchive", "INTERACTION_UNARCHIVE_FAILED", interaction.Record.RecordUnarchive)
+}
+
+// executeInteractionArchiveToggle is the shared claim -> read -> CAS ->
+// append -> commit -> finish skeleton interaction.archive and
+// interaction.unarchive share -- they differ only in which Turn they
+// append and their own Command operation/failure code. Every failure path
+// here is a clean, non-partial rejection: unlike interaction.plan.apply
+// (which can partially commit a Project/Task before the final Interaction
+// Turn write fails), archiving never has a prior side effect that could
+// already be durably committed when the Turn append itself fails.
+func executeInteractionArchiveToggle(
+	ctx context.Context, input InteractionArchiveInput, operation, failureCode string,
+	recordTurn func(interaction.Record, time.Time) (interaction.Record, error),
+) (InteractionArchiveResult, error) {
+	input.SessionID = strings.TrimSpace(input.SessionID)
+	if interaction.ValidateSessionID(input.SessionID) != nil || input.ExpectedVersion == 0 || input.CurrentTime.IsZero() ||
+		commandledger.ValidateCommandID(input.CommandID) != nil {
+		return InteractionArchiveResult{}, ErrInteractionPrecondition
+	}
+	claim, err := claimWorkspaceCommand(ctx, input.VaultRoot, input.CommandID, operation, input.SessionID, struct {
+		SessionID       string    `json:"session_id"`
+		ExpectedVersion uint64    `json:"expected_version"`
+		CurrentTime     time.Time `json:"current_time"`
+	}{input.SessionID, input.ExpectedVersion, input.CurrentTime})
+	if err != nil {
+		return InteractionArchiveResult{}, err
+	}
+	if replayed, ok, replayErr := replayDurableCommand[InteractionArchiveResult](claim); ok {
+		return replayed, replayErr
+	}
+	interactionService, err := newInteractionService(input.VaultRoot)
+	if err != nil {
+		result := InteractionArchiveResult{}
+		return result, finishDurableCommand(ctx, claim, result, err, failureCode, "interaction_composition", false)
+	}
+	record, err := interactionService.Get(ctx, input.SessionID)
+	if err != nil || record.Version != input.ExpectedVersion {
+		if err == nil {
+			err = ErrInteractionPrecondition
+		}
+		result := InteractionArchiveResult{Session: record}
+		return result, finishDurableCommand(ctx, claim, result, err, failureCode, "interaction_preflight", false)
+	}
+	next, err := recordTurn(record, input.CurrentTime)
+	if err != nil {
+		result := InteractionArchiveResult{Session: record}
+		return result, finishDurableCommand(ctx, claim, result, err, failureCode, "interaction_state_validation", false)
+	}
+	commit, commitErr := interactionService.Update(ctx, next, record.Version)
+	result := InteractionArchiveResult{Session: commit.Record, SessionCommitted: commit.Committed}
+	return result, finishDurableCommand(ctx, claim, result, commitErr, failureCode, "interaction_state_commit", false)
 }
 
 func InspectInteraction(ctx context.Context, vaultRoot, sessionID string) (interaction.Record, error) {

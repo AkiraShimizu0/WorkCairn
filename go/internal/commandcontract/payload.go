@@ -188,6 +188,12 @@ func ValidatePayload(operation string, content json.RawMessage) error {
 			CurrentTime      time.Time `json:"current_time"`
 			ActionPlanDigest string    `json:"action_plan_digest"`
 		}{}
+	case "interaction.archive", "interaction.unarchive":
+		target = &struct {
+			SessionID       string    `json:"session_id"`
+			ExpectedVersion uint64    `json:"expected_version"`
+			CurrentTime     time.Time `json:"current_time"`
+		}{}
 	default:
 		return ErrInvalidPayload
 	}
@@ -230,6 +236,8 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 		"interaction.plan.approve_and_execute": {"session_id", "project_id", "plan_digest"},
 		"interaction.workflow.execute":         {"session_id", "reviewer_id", "workflow_plan_digest"},
 		"interaction.action.wordpress.publish": {"session_id", "task_id", "target_id", "action_plan_digest"},
+		"interaction.archive":                  {"session_id"},
+		"interaction.unarchive":                {"session_id"},
 	}
 	stringsRequired, supported := requiredStrings[operation]
 	if !supported {
@@ -290,7 +298,7 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 			return ErrInvalidPayload
 		}
 	}
-	if operation == "interaction.plan.generate" || operation == "interaction.answer" || operation == "interaction.plan.apply" || operation == "interaction.plan.approve_and_execute" || operation == "interaction.workflow.execute" || operation == "interaction.action.wordpress.publish" {
+	if operation == "interaction.plan.generate" || operation == "interaction.answer" || operation == "interaction.plan.apply" || operation == "interaction.plan.approve_and_execute" || operation == "interaction.workflow.execute" || operation == "interaction.action.wordpress.publish" || operation == "interaction.archive" || operation == "interaction.unarchive" {
 		var expected uint64
 		if raw, ok := fields["expected_version"]; !ok || json.Unmarshal(raw, &expected) != nil || expected == 0 {
 			return ErrInvalidPayload

@@ -320,6 +320,15 @@ type interactionAnswerPayload struct {
 	CurrentTime     time.Time            `json:"current_time"`
 }
 
+// interactionArchivePayload is shared by interaction.archive and
+// interaction.unarchive: neither carries a reason or free text, matching
+// TurnArchived/TurnUnarchived's own minimal (kind, at) shape.
+type interactionArchivePayload struct {
+	SessionID       string    `json:"session_id"`
+	ExpectedVersion uint64    `json:"expected_version"`
+	CurrentTime     time.Time `json:"current_time"`
+}
+
 type interactionPlanApplyPayload struct {
 	SessionID       string    `json:"session_id"`
 	ExpectedVersion uint64    `json:"expected_version"`
@@ -485,6 +494,24 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 			WorkflowPlanDigest: payload.WorkflowPlanDigest, ApprovalReference: payload.ApprovalReference,
 			CommandID: command.CommandID, EventObservers: executor.observers,
 		}, executor.providerConfig(), executor.httpClient, true)
+	case "interaction.archive":
+		var payload interactionArchivePayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteInteractionArchive(ctx, workspaceprocess.InteractionArchiveInput{
+			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
+			CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
+		}, true)
+	case "interaction.unarchive":
+		var payload interactionArchivePayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteInteractionUnarchive(ctx, workspaceprocess.InteractionArchiveInput{
+			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
+			CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
+		}, true)
 	case "interaction.action.wordpress.publish":
 		var payload interactionActionExecutePayload
 		if err := decodePayload(command.Payload, &payload); err != nil {

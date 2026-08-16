@@ -68,6 +68,13 @@ var publicBetaCommandOperations = map[string]struct{}{
 	"interaction.plan.apply":               {},
 	"interaction.workflow.execute":         {},
 	"interaction.plan.approve_and_execute": {},
+	// interaction.archive/interaction.unarchive only toggle the Session's
+	// active-request-list visibility (a new TurnArchived/TurnUnarchived
+	// Turn) -- they never touch Project, Task, Review, Revision, or
+	// Deliverable evidence, so they are safe to allow-list identically to
+	// every other interaction.* write.
+	"interaction.archive":   {},
+	"interaction.unarchive": {},
 }
 
 func publicBetaCommandAllowed(operation string) bool {

@@ -488,13 +488,83 @@ func (handler *Handler) planInteraction(response http.ResponseWriter, request *h
 	writeCommandResponse(response, http.StatusOK, Response{Version: InteractionContractVersion, OK: true, Result: encoded})
 }
 
+// interactionRecordView adds the read-model-only Archived field (derived
+// from interaction.Record.IsArchived(), never stored on the Domain type
+// itself) to the canonical Record's own JSON shape. Struct embedding keeps
+// every existing Record field at the same top level, so an existing client
+// decoding this response as interaction.Record is unaffected; "archived"
+// is a purely additive field. The canonical source of archived-ness
+// remains the Record's own Turn history -- this view is computed fresh at
+// response time, never stored.
+type interactionRecordView struct {
+	interaction.Record
+	Archived bool `json:"archived"`
+}
+
+func newInteractionRecordView(record interaction.Record) interactionRecordView {
+	return interactionRecordView{Record: record, Archived: record.IsArchived()}
+}
+
+// archivedFilter selects which Sessions GET /v1/interactions returns.
+// Absent or "false" (the default) excludes archived Sessions, matching
+// the endpoint's existing behavior before archive existed -- an existing
+// client that has never heard of archive keeps seeing exactly what it saw
+// before.
+type archivedFilter string
+
+const (
+	archivedFilterActiveOnly archivedFilter = "false"
+	archivedFilterOnly       archivedFilter = "true"
+	archivedFilterAll        archivedFilter = "all"
+)
+
+var errInvalidArchivedFilter = errors.New("invalid archived query parameter")
+
+func parseArchivedFilter(raw string) (archivedFilter, error) {
+	switch strings.TrimSpace(raw) {
+	case "":
+		return archivedFilterActiveOnly, nil
+	case string(archivedFilterActiveOnly):
+		return archivedFilterActiveOnly, nil
+	case string(archivedFilterOnly):
+		return archivedFilterOnly, nil
+	case string(archivedFilterAll):
+		return archivedFilterAll, nil
+	default:
+		return "", errInvalidArchivedFilter
+	}
+}
+
+func (filter archivedFilter) includes(archived bool) bool {
+	switch filter {
+	case archivedFilterOnly:
+		return archived
+	case archivedFilterAll:
+		return true
+	default:
+		return !archived
+	}
+}
+
 func (handler *Handler) inspectInteractions(response http.ResponseWriter, request *http.Request) {
+	filter, err := parseArchivedFilter(request.URL.Query().Get("archived"))
+	if err != nil {
+		writeCommandResponse(response, http.StatusBadRequest, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "INVALID_QUERY_PARAMETER"}})
+		return
+	}
 	records, err := handler.interactionInspector.InspectInteractions(request.Context())
 	if err != nil {
 		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "INTERACTION_INSPECTION_FAILED", RecoveryRequired: true}})
 		return
 	}
-	encoded, err := json.Marshal(records)
+	views := make([]interactionRecordView, 0, len(records))
+	for _, record := range records {
+		view := newInteractionRecordView(record)
+		if filter.includes(view.Archived) {
+			views = append(views, view)
+		}
+	}
+	encoded, err := json.Marshal(views)
 	if err != nil {
 		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
 		return
@@ -514,7 +584,7 @@ func (handler *Handler) inspectInteraction(response http.ResponseWriter, request
 		writeCommandResponse(response, status, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: code, RecoveryRequired: status == http.StatusInternalServerError}})
 		return
 	}
-	encoded, err := json.Marshal(record)
+	encoded, err := json.Marshal(newInteractionRecordView(record))
 	if err != nil {
 		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
 		return

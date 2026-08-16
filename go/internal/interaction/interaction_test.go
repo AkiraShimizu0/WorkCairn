@@ -461,6 +461,178 @@ func TestNextActionProjectionGuidesApprovalCompletionAndRecovery(t *testing.T) {
 	}
 }
 
+// TestRecordArchiveHidesSessionWithoutTouchingWorkflowState is the core
+// archive regression: archiving mid-clarification must append exactly one
+// TurnArchived Turn, leave every prior Turn byte-identical, and leave
+// Record.State (StateClarificationRequired here) completely untouched --
+// archive is visibility metadata, not a workflow state (see TurnArchived's
+// doc comment).
+func TestRecordArchiveHidesSessionWithoutTouchingWorkflowState(t *testing.T) {
+	at := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	record, _ := New("SESSION-ARCHIVE", "依頼", "Claude Sonnet 5", at)
+	withPlan, _ := record.RecordPlan(interactionTestPlan([]string{"Q1"}), at.Add(time.Minute))
+	if withPlan.IsArchived() {
+		t.Fatalf("fresh session IsArchived() = true, want false")
+	}
+	archived, err := withPlan.RecordArchive(at.Add(2 * time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archived.State != StateClarificationRequired {
+		t.Fatalf("archive changed State to %v, want unchanged %v", archived.State, StateClarificationRequired)
+	}
+	if !archived.IsArchived() {
+		t.Fatalf("IsArchived() = false after RecordArchive")
+	}
+	if archived.Version != withPlan.Version+1 || len(archived.Turns) != len(withPlan.Turns)+1 {
+		t.Fatalf("archive Turn was not a single append: version %d->%d, turns %d->%d",
+			withPlan.Version, archived.Version, len(withPlan.Turns), len(archived.Turns))
+	}
+	previousJSON, _ := json.Marshal(withPlan.Turns)
+	prefixJSON, _ := json.Marshal(archived.Turns[:len(withPlan.Turns)])
+	if string(previousJSON) != string(prefixJSON) {
+		t.Fatalf("previous Turns mutated by RecordArchive: before=%s after=%s", previousJSON, prefixJSON)
+	}
+	newTurn := archived.Turns[len(archived.Turns)-1]
+	if newTurn.Kind != TurnArchived || !newTurn.At.Equal(at.Add(2*time.Minute)) {
+		t.Fatalf("appended Turn = %#v, want Kind=TurnArchived At=%v", newTurn, at.Add(2*time.Minute))
+	}
+}
+
+// TestRecordUnarchiveReversesArchiveAndOrderingRepeats confirms archive and
+// unarchive can alternate repeatedly and IsArchived() always reflects only
+// the most recent of the two Kinds -- never a stored field.
+func TestRecordUnarchiveReversesArchiveAndOrderingRepeats(t *testing.T) {
+	at := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	record, _ := New("SESSION-UNARCHIVE", "依頼", "Claude Sonnet 5", at)
+	archived, err := record.RecordArchive(at.Add(time.Minute))
+	if err != nil || !archived.IsArchived() {
+		t.Fatalf("RecordArchive() = %#v, %v", archived, err)
+	}
+	unarchived, err := archived.RecordUnarchive(at.Add(2 * time.Minute))
+	if err != nil || unarchived.IsArchived() {
+		t.Fatalf("RecordUnarchive() = %#v, %v", unarchived, err)
+	}
+	if unarchived.State != record.State {
+		t.Fatalf("unarchive changed State to %v, want unchanged %v", unarchived.State, record.State)
+	}
+	archivedAgain, err := unarchived.RecordArchive(at.Add(3 * time.Minute))
+	if err != nil || !archivedAgain.IsArchived() {
+		t.Fatalf("second RecordArchive() = %#v, %v", archivedAgain, err)
+	}
+	if len(archivedAgain.Turns) != 3 {
+		t.Fatalf("archive/unarchive/archive produced %d Turns, want 3", len(archivedAgain.Turns))
+	}
+}
+
+// TestIsArchivedIgnoresUnrelatedTurnsAndNeverArchivedDefaultsFalse confirms
+// IsArchived() scans only for TurnArchived/TurnUnarchived and that a Session
+// with neither Kind anywhere in its history defaults to false.
+func TestIsArchivedIgnoresUnrelatedTurnsAndNeverArchivedDefaultsFalse(t *testing.T) {
+	at := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	record, _ := New("SESSION-NEVER-ARCHIVED", "依頼", "Claude Sonnet 5", at)
+	withPlan, _ := record.RecordPlan(interactionTestPlan([]string{}), at.Add(time.Minute))
+	if withPlan.IsArchived() {
+		t.Fatalf("session with only a plan Turn IsArchived() = true, want false")
+	}
+	ready := interactionReadyRecord(t, at)
+	if ready.IsArchived() {
+		t.Fatalf("ready session with no archive Turns IsArchived() = true, want false")
+	}
+	archived, err := ready.RecordArchive(at.Add(3 * time.Minute))
+	if err != nil || !archived.IsArchived() {
+		t.Fatalf("RecordArchive() on ready session = %#v, %v", archived, err)
+	}
+	if archived.State != StateReadyToExecute {
+		t.Fatalf("archive changed State to %v, want unchanged %v", archived.State, StateReadyToExecute)
+	}
+}
+
+// TestRecordArchiveRejectsAlreadyArchivedAndUnarchiveRejectsAlreadyActive
+// covers the already-archived/already-active idempotency decision: neither
+// method is a no-op success on repeat, matching every other RecordX
+// method's existing precondition-gated design (see RecordArchive's doc
+// comment). Cross-request idempotency for a genuinely repeated Command is
+// the Command Ledger's job, exercised separately at the Process layer.
+func TestRecordArchiveRejectsAlreadyArchivedAndUnarchiveRejectsAlreadyActive(t *testing.T) {
+	at := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	record, _ := New("SESSION-ALREADY", "依頼", "Claude Sonnet 5", at)
+	if _, err := record.RecordUnarchive(at.Add(time.Minute)); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("unarchive of never-archived session error = %v, want ErrInvalidState", err)
+	}
+	archived, err := record.RecordArchive(at.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := archived.RecordArchive(at.Add(2 * time.Minute)); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("re-archive of already-archived session error = %v, want ErrInvalidState", err)
+	}
+	unarchived, err := archived.RecordUnarchive(at.Add(2 * time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unarchived.RecordUnarchive(at.Add(3 * time.Minute)); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("re-unarchive of already-active session error = %v, want ErrInvalidState", err)
+	}
+}
+
+// TestValidateRejectsMalformedArchiveHistory confirms Validate() itself
+// (not just the RecordArchive/RecordUnarchive preconditions) rejects a
+// hand-constructed Turn history where TurnArchived/TurnUnarchived do not
+// strictly alternate, or carry evidence from an unrelated Turn Kind --
+// guarding against a corrupted or hand-edited Vault file, not just the
+// in-process API.
+func TestValidateRejectsMalformedArchiveHistory(t *testing.T) {
+	at := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	record, _ := New("SESSION-MALFORMED", "依頼", "Claude Sonnet 5", at)
+	doubleArchived := record.Clone()
+	doubleArchived.Turns = append(doubleArchived.Turns,
+		Turn{Kind: TurnArchived, At: at.Add(time.Minute)},
+		Turn{Kind: TurnArchived, At: at.Add(2 * time.Minute)})
+	doubleArchived.Version += 2
+	if err := doubleArchived.Validate(); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("double TurnArchived Validate() = %v, want ErrInvalidSession", err)
+	}
+	unarchiveWithoutArchive := record.Clone()
+	unarchiveWithoutArchive.Turns = append(unarchiveWithoutArchive.Turns, Turn{Kind: TurnUnarchived, At: at.Add(time.Minute)})
+	unarchiveWithoutArchive.Version++
+	if err := unarchiveWithoutArchive.Validate(); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("TurnUnarchived without prior archive Validate() = %v, want ErrInvalidSession", err)
+	}
+	archiveWithPlanEvidence := record.Clone()
+	digest := "sha256:" + strings.Repeat("0", 64)
+	archiveWithPlanEvidence.Turns = append(archiveWithPlanEvidence.Turns, Turn{Kind: TurnArchived, At: at.Add(time.Minute), PlanDigest: digest})
+	archiveWithPlanEvidence.Version++
+	if err := archiveWithPlanEvidence.Validate(); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("TurnArchived carrying PlanDigest Validate() = %v, want ErrInvalidSession", err)
+	}
+}
+
+// TestValidateTransitionAppliesSameCASSemanticsToArchive confirms archive
+// Turns are subject to the exact same optimistic-concurrency (stale
+// expected_version) and append-only (no history rewrite) guards as every
+// other Turn kind -- no archive-specific CAS path exists.
+func TestValidateTransitionAppliesSameCASSemanticsToArchive(t *testing.T) {
+	at := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	record, _ := New("SESSION-CAS", "依頼", "Claude Sonnet 5", at)
+	withPlan, _ := record.RecordPlan(interactionTestPlan([]string{}), at.Add(time.Minute))
+	archived, err := withPlan.RecordArchive(at.Add(2 * time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateTransition(withPlan, archived, withPlan.Version); err != nil {
+		t.Fatalf("correct expected_version ValidateTransition() = %v, want nil", err)
+	}
+	if err := ValidateTransition(withPlan, archived, withPlan.Version+1); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("stale expected_version ValidateTransition() = %v, want ErrVersionConflict", err)
+	}
+	rewritten := archived.Clone()
+	rewritten.Turns[0].At = rewritten.Turns[0].At.Add(time.Second)
+	if err := ValidateTransition(withPlan, rewritten, withPlan.Version); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("rewritten prior Turn ValidateTransition() = %v, want ErrVersionConflict", err)
+	}
+}
+
 func interactionReadyRecord(t *testing.T, at time.Time) Record {
 	t.Helper()
 	record, _ := New("SESSION-WORKFLOW", "依頼", "Claude Sonnet 5", at)

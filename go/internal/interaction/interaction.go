@@ -59,6 +59,18 @@ const (
 	TurnPlanApplied           TurnKind = "plan_applied"
 	TurnWorkflowRecorded      TurnKind = "workflow_recorded"
 	TurnActionRecorded        TurnKind = "action_recorded"
+	// TurnArchived and TurnUnarchived record a CEO's visibility decision
+	// for this Session -- "hide from the active request list" and its
+	// reverse. They are deliberately orthogonal to every other Turn Kind
+	// above: they carry no Plan/Answers/Workflow/Action evidence, never
+	// gate on or change Record.State (see Validate()'s own case for these
+	// two Kinds), and can be appended regardless of which workflow state
+	// the Session is currently in. archived-ness itself is never stored
+	// as a field -- it is always derived from the most recent of these
+	// two Turn Kinds (see IsArchived()), so the append-only Turn history
+	// remains the single source of truth.
+	TurnArchived   TurnKind = "archived"
+	TurnUnarchived TurnKind = "unarchived"
 )
 
 type ActionStatus string
@@ -286,6 +298,11 @@ func (record Record) Validate() error {
 	answeredCount := 0
 	activeProjectID, activeProjectName := "", ""
 	var latestWorkflow *WorkflowEvidence
+	// archived tracks visibility independently of state (see TurnArchived's
+	// own doc comment): it is validated for correct alternation here
+	// (archive only from active, unarchive only from archived) but never
+	// participates in the workflow state machine below.
+	archived := false
 	for _, turn := range record.Turns {
 		if turn.At.IsZero() || turn.At.Before(lastAt) {
 			return ErrInvalidSession
@@ -354,6 +371,20 @@ func (record Record) Validate() error {
 			} else {
 				state = StateActionAttentionRequired
 			}
+		case TurnArchived:
+			if archived || turn.Plan != nil || turn.PlanDigest != "" || len(turn.Answers) != 0 ||
+				turn.ProjectID != "" || turn.ProjectName != "" || turn.PreAuthorizedWorkflowCommandID != "" ||
+				turn.Workflow != nil || turn.Action != nil {
+				return ErrInvalidSession
+			}
+			archived = true
+		case TurnUnarchived:
+			if !archived || turn.Plan != nil || turn.PlanDigest != "" || len(turn.Answers) != 0 ||
+				turn.ProjectID != "" || turn.ProjectName != "" || turn.PreAuthorizedWorkflowCommandID != "" ||
+				turn.Workflow != nil || turn.Action != nil {
+				return ErrInvalidSession
+			}
+			archived = false
 		default:
 			return ErrInvalidSession
 		}
@@ -536,6 +567,41 @@ func (record Record) RecordAction(evidence ActionEvidence, at time.Time) (Record
 	return next, next.Validate()
 }
 
+// RecordArchive durably hides this Session from the active request list by
+// appending a TurnArchived Turn. It never touches Record.State: archiving a
+// Session that is mid-clarification, awaiting approval, or already
+// completed all work identically -- only the append-only Turn history
+// changes. Rejected (ErrInvalidState) when the Session is already
+// archived, matching every other Record-mutation method's existing
+// precondition-gated design (RecordPlan/RecordAnswers/RecordApplied all
+// reject when the Session is not in the exact state they expect) rather
+// than introducing a new idempotent-success shape unique to this method.
+// Cross-request idempotency for a genuinely repeated archive request is
+// the Command Ledger's job (same Command ID replays the cached result
+// without ever reaching this method a second time), not this method's.
+func (record Record) RecordArchive(at time.Time) (Record, error) {
+	if record.Validate() != nil || at.IsZero() || record.IsArchived() {
+		return Record{}, ErrInvalidState
+	}
+	next := record.Clone()
+	next.Turns = append(next.Turns, Turn{Kind: TurnArchived, At: at})
+	next.Version++
+	return next, next.Validate()
+}
+
+// RecordUnarchive is RecordArchive's exact reverse: it appends a
+// TurnUnarchived Turn and is rejected when the Session is not currently
+// archived, for the same reasons documented on RecordArchive.
+func (record Record) RecordUnarchive(at time.Time) (Record, error) {
+	if record.Validate() != nil || at.IsZero() || !record.IsArchived() {
+		return Record{}, ErrInvalidState
+	}
+	next := record.Clone()
+	next.Turns = append(next.Turns, Turn{Kind: TurnUnarchived, At: at})
+	next.Version++
+	return next, next.Validate()
+}
+
 func (record Record) CurrentPlan() (ceoplan.Plan, string, bool) {
 	for index := len(record.Turns) - 1; index >= 0; index-- {
 		if record.Turns[index].Kind == TurnPlanGenerated && record.Turns[index].Plan != nil {
@@ -552,6 +618,28 @@ func (record Record) AppliedProject() (string, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+// IsArchived is the sole source of truth for whether this Session is
+// currently hidden from the active request list. It never reads a stored
+// boolean field -- archived-ness is not persisted as state at all -- it
+// deterministically scans backward for the most recent TurnArchived or
+// TurnUnarchived Turn and reports which one it was. No Turns of either
+// Kind means never archived. This is safe to call on any Record that has
+// already passed Validate() (which itself confirms the two Kinds
+// alternate correctly), including read-model use after a fresh reload or
+// daemon restart, since the append-only Turn history is the only thing
+// this method depends on.
+func (record Record) IsArchived() bool {
+	for index := len(record.Turns) - 1; index >= 0; index-- {
+		switch record.Turns[index].Kind {
+		case TurnArchived:
+			return true
+		case TurnUnarchived:
+			return false
+		}
+	}
+	return false
 }
 
 func (record Record) LatestWorkflow() (WorkflowEvidence, bool) {
