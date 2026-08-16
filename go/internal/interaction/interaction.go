@@ -277,6 +277,13 @@ func (record Record) Validate() error {
 	lastAt := record.CreatedAt
 	var activePlan *ceoplan.Plan
 	activeDigest := ""
+	// answeredCount tracks how many of activePlan.CEOQuestions (in order)
+	// already have a durable answer, across one or more
+	// TurnClarificationAnswered Turns since activePlan was generated. It
+	// resets to 0 every time a new TurnPlanGenerated Turn is processed, so
+	// a Plan regeneration's own (possibly different) CEOQuestions are
+	// never confused with a prior round's progress.
+	answeredCount := 0
 	activeProjectID, activeProjectName := "", ""
 	var latestWorkflow *WorkflowEvidence
 	for _, turn := range record.Turns {
@@ -296,16 +303,21 @@ func (record Record) Validate() error {
 			}
 			plan := clonePlan(*turn.Plan)
 			activePlan, activeDigest = &plan, digest
+			answeredCount = 0
 			state = StatePlanApprovalRequired
 			if len(plan.CEOQuestions) > 0 {
 				state = StateClarificationRequired
 			}
 		case TurnClarificationAnswered:
 			if state != StateClarificationRequired || turn.Plan != nil || turn.PlanDigest != activeDigest ||
-				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || turn.Action != nil || activePlan == nil || validateAnswers(activePlan.CEOQuestions, turn.Answers) != nil {
+				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || turn.Action != nil || activePlan == nil ||
+				validateIncrementalAnswers(activePlan.CEOQuestions, answeredCount, turn.Answers) != nil {
 				return ErrInvalidSession
 			}
-			state = StatePlanGenerationApprovalRequired
+			answeredCount += len(turn.Answers)
+			if answeredCount == len(activePlan.CEOQuestions) {
+				state = StatePlanGenerationApprovalRequired
+			}
 		case TurnPlanApplied:
 			if state != StatePlanApprovalRequired || turn.Plan != nil || len(turn.Answers) != 0 ||
 				turn.PlanDigest != activeDigest || strings.TrimSpace(turn.ProjectID) == "" || turn.ProjectID != strings.TrimSpace(turn.ProjectID) ||
@@ -380,18 +392,60 @@ func (record Record) RecordPlan(plan ceoplan.Plan, at time.Time) (Record, error)
 	return next, next.Validate()
 }
 
+// RecordAnswers durably commits one batch of clarification answers as its
+// own append-only Turn. The batch may cover as few as a single question --
+// it is not required to complete every remaining CEOQuestion in one call
+// (see validateIncrementalAnswers) -- so a CEO answering questions one at
+// a time gets each answer committed the moment it is sent, never held in
+// memory pending a later batch submit. State advances to
+// StatePlanGenerationApprovalRequired only once every CEOQuestion has a
+// recorded answer; otherwise it stays StateClarificationRequired so
+// Next() can name the single next unanswered question.
 func (record Record) RecordAnswers(answers []Answer, at time.Time) (Record, error) {
 	plan, digest, ok := record.CurrentPlan()
-	if record.Validate() != nil || record.State != StateClarificationRequired || !ok || at.IsZero() || validateAnswers(plan.CEOQuestions, answers) != nil {
+	answeredCount := record.answeredCountSinceCurrentPlan()
+	if record.Validate() != nil || record.State != StateClarificationRequired || !ok || at.IsZero() ||
+		validateIncrementalAnswers(plan.CEOQuestions, answeredCount, answers) != nil {
 		return Record{}, ErrInvalidState
+	}
+	trimmed := make([]Answer, len(answers))
+	for index, answer := range answers {
+		trimmed[index] = Answer{Question: answer.Question, Answer: strings.TrimSpace(answer.Answer)}
 	}
 	next := record.Clone()
 	next.Turns = append(next.Turns, Turn{
-		Kind: TurnClarificationAnswered, At: at, PlanDigest: digest, Answers: orderAnswers(plan.CEOQuestions, answers),
+		Kind: TurnClarificationAnswered, At: at, PlanDigest: digest, Answers: trimmed,
 	})
 	next.Version++
-	next.State = StatePlanGenerationApprovalRequired
+	next.State = StateClarificationRequired
+	if answeredCount+len(answers) == len(plan.CEOQuestions) {
+		next.State = StatePlanGenerationApprovalRequired
+	}
 	return next, next.Validate()
+}
+
+// answeredCountSinceCurrentPlan returns how many of CurrentPlan's
+// CEOQuestions (in order) already have a durable answer, by summing the
+// Answers of every TurnClarificationAnswered Turn recorded since the most
+// recent TurnPlanGenerated Turn. Zero when no Plan has been generated yet.
+func (record Record) answeredCountSinceCurrentPlan() int {
+	planIndex := -1
+	for index := len(record.Turns) - 1; index >= 0; index-- {
+		if record.Turns[index].Kind == TurnPlanGenerated && record.Turns[index].Plan != nil {
+			planIndex = index
+			break
+		}
+	}
+	if planIndex == -1 {
+		return 0
+	}
+	count := 0
+	for index := planIndex + 1; index < len(record.Turns); index++ {
+		if record.Turns[index].Kind == TurnClarificationAnswered {
+			count += len(record.Turns[index].Answers)
+		}
+	}
+	return count
 }
 
 // RecordApplied appends the canonical Plan-apply outcome as a durable Turn.
@@ -530,7 +584,14 @@ func (record Record) Next() (NextAction, error) {
 		}
 		next.Kind, next.Operation, next.ApprovalRequired = NextAnswerClarifications, "interaction.answer", true
 		next.RequiredFields = []string{"answers", "command_id", "current_time"}
-		next.Questions = cloneStrings(plan.CEOQuestions)
+		// Questions names only the single next unanswered CEOQuestion, not
+		// the full original list: answers are recorded one durable Turn
+		// at a time (RecordAnswers), in order, so this is always the exact
+		// next one a client should ask and submit.
+		answeredCount := record.answeredCountSinceCurrentPlan()
+		if answeredCount < len(plan.CEOQuestions) {
+			next.Questions = []string{plan.CEOQuestions[answeredCount]}
+		}
 	case StatePlanApprovalRequired:
 		plan, digest, ok := record.CurrentPlan()
 		if !ok {
@@ -772,16 +833,22 @@ func validatePlanShape(plan ceoplan.Plan) error {
 	return nil
 }
 
-func validateAnswers(questions []string, answers []Answer) error {
-	if len(questions) == 0 || len(answers) != len(questions) || ValidateAnswerPayload(answers) != nil {
+// validateIncrementalAnswers checks one durable batch of clarification
+// answers against the questions still unanswered as of answeredCount
+// (how many of questions[], in order, already have a prior recorded
+// answer). A batch may answer as few as one question -- it no longer
+// needs to cover every remaining question in a single call -- but must
+// still be a contiguous, in-order continuation starting exactly at
+// questions[answeredCount]: this is what lets Next() and the Conversation
+// Projection always name a single, unambiguous "next question" from
+// canonical evidence alone, with no reordering or gap-filling.
+func validateIncrementalAnswers(questions []string, answeredCount int, answers []Answer) error {
+	if len(questions) == 0 || answeredCount < 0 || answeredCount >= len(questions) ||
+		len(answers) == 0 || answeredCount+len(answers) > len(questions) || ValidateAnswerPayload(answers) != nil {
 		return ErrInvalidSession
 	}
-	seen := make(map[string]bool, len(answers))
-	for _, answer := range answers {
-		seen[answer.Question] = true
-	}
-	for _, question := range questions {
-		if !seen[question] {
+	for index, answer := range answers {
+		if answer.Question != questions[answeredCount+index] {
 			return ErrInvalidSession
 		}
 	}
@@ -877,18 +944,6 @@ func validateActionEvidence(evidence ActionEvidence, projectID, projectName stri
 		}
 	}
 	return nil
-}
-
-func orderAnswers(questions []string, answers []Answer) []Answer {
-	byQuestion := make(map[string]string, len(answers))
-	for _, answer := range answers {
-		byQuestion[answer.Question] = strings.TrimSpace(answer.Answer)
-	}
-	ordered := make([]Answer, 0, len(questions))
-	for _, question := range questions {
-		ordered = append(ordered, Answer{Question: question, Answer: byQuestion[question]})
-	}
-	return ordered
 }
 
 func cloneAnswers(answers []Answer) []Answer {

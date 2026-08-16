@@ -597,6 +597,134 @@ func interactionTestPlanForProcessPackage() ceoplan.Plan {
 	}
 }
 
+// TestInteractionAnswerCommitsIncrementallyWithoutExtraProviderCallsAndCorrectOrder
+// is the end-to-end regression for the WorkCairn clarification UX
+// semantic gap: three CEOQuestions, answered one at a time through the
+// real interaction.answer Command chain (real Adapter, Service,
+// ParseIntent, RecordAnswers, Command Ledger -- not mocked
+// intermediates), must each commit durably and immediately, with Plan
+// generation (a real Provider call) invoked exactly once, only after the
+// third and final answer -- never once per answered question. It also
+// locks stale expected_version rejection, Command Ledger replay of an
+// already-recorded answer, and the resulting Conversation Projection
+// order (Q1,A1,Q2,A2,Q3,A3).
+func TestInteractionAnswerCommitsIncrementallyWithoutExtraProviderCallsAndCorrectOrder(t *testing.T) {
+	fixture := loadCEOPlanFixture(t)
+	root := ceoPlanVault(t, fixture.Employees)
+	at := time.Date(2026, 8, 16, 14, 0, 0, 0, time.UTC)
+	start := InteractionStartInput{
+		VaultRoot: root, SessionID: "SESSION-CLARIFY-INCREMENTAL", Request: fixture.Request,
+		Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-CLARIFY-START",
+	}
+	startPlan, err := PlanInteractionStart(context.Background(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.RequestDigest = startPlan.Session.RequestDigest
+
+	intentWithQuestions := `{"project_name":"P","objective":"O","steps":[{"kind":"write","description":"D","required_role":"Product Manager"}],"ceo_questions":["Q1","Q2","Q3"]}`
+	intentFinal := `{"project_name":"P","objective":"O","steps":[{"kind":"write","description":"D","required_role":"Product Manager"}],"ceo_questions":[]}`
+	providerCalls := 0
+	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
+		providerCalls++
+		content := intentWithQuestions
+		if providerCalls > 1 {
+			content = intentFinal
+		}
+		body, _ := json.Marshal(map[string]any{
+			"model": "claude-sonnet-5", "content": []map[string]string{{"type": "text", "text": content}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(body))}, nil
+	})
+	config := ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}
+
+	result, err := ExecuteInteractionStart(context.Background(), start, config, client, true)
+	if err != nil || result.Session.State != interaction.StateClarificationRequired || providerCalls != 1 {
+		t.Fatalf("ExecuteInteractionStart() = %#v, %v, providerCalls=%d", result, err, providerCalls)
+	}
+	next, err := result.Session.Next()
+	if err != nil || len(next.Questions) != 1 || next.Questions[0] != "Q1" {
+		t.Fatalf("Next() after start = %#v, %v, want only [Q1]", next, err)
+	}
+
+	answerInput := func(answer interaction.Answer, expectedVersion uint64, commandID string) InteractionAnswerInput {
+		return InteractionAnswerInput{
+			VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: expectedVersion,
+			Answers: []interaction.Answer{answer}, CurrentTime: at.Add(time.Minute), CommandID: commandID,
+		}
+	}
+
+	// Q1 -> durable immediately, no additional Provider call, still
+	// clarification_required.
+	q1Result, err := ExecuteInteractionAnswer(context.Background(), answerInput(interaction.Answer{Question: "Q1", Answer: "A1"}, result.Session.Version, "CMD-CLARIFY-Q1"), config, client, true)
+	if err != nil || q1Result.Session.State != interaction.StateClarificationRequired || providerCalls != 1 {
+		t.Fatalf("answer Q1 = %#v, %v, providerCalls=%d, want no extra Provider call", q1Result, err, providerCalls)
+	}
+	next, err = q1Result.Session.Next()
+	if err != nil || len(next.Questions) != 1 || next.Questions[0] != "Q2" {
+		t.Fatalf("Next() after Q1 = %#v, %v, want only [Q2]", next, err)
+	}
+
+	// Stale expected_version (still the pre-Q1 version) on Q2 is rejected,
+	// and triggers no Provider call.
+	if _, err := ExecuteInteractionAnswer(context.Background(), answerInput(interaction.Answer{Question: "Q2", Answer: "A2"}, result.Session.Version, "CMD-CLARIFY-Q2-STALE"), config, client, true); err == nil {
+		t.Fatal("stale expected_version accepted")
+	}
+	if providerCalls != 1 {
+		t.Fatalf("stale expected_version triggered a Provider call: providerCalls=%d", providerCalls)
+	}
+
+	// Duplicate/replay: re-submitting Q1's exact Command ID replays the
+	// cached outcome (existing Command Ledger idempotency) instead of
+	// re-executing -- must not add a second Turn or a second Provider call.
+	replayResult, err := ExecuteInteractionAnswer(context.Background(), answerInput(interaction.Answer{Question: "Q1", Answer: "A1"}, result.Session.Version, "CMD-CLARIFY-Q1"), config, client, true)
+	if err != nil || replayResult.Session.Version != q1Result.Session.Version || providerCalls != 1 {
+		t.Fatalf("replay of CMD-CLARIFY-Q1 = %#v, %v, providerCalls=%d", replayResult, err, providerCalls)
+	}
+
+	// Q2 -> durable, no additional Provider call.
+	q2Result, err := ExecuteInteractionAnswer(context.Background(), answerInput(interaction.Answer{Question: "Q2", Answer: "A2"}, q1Result.Session.Version, "CMD-CLARIFY-Q2"), config, client, true)
+	if err != nil || q2Result.Session.State != interaction.StateClarificationRequired || providerCalls != 1 {
+		t.Fatalf("answer Q2 = %#v, %v, providerCalls=%d", q2Result, err, providerCalls)
+	}
+	next, err = q2Result.Session.Next()
+	if err != nil || len(next.Questions) != 1 || next.Questions[0] != "Q3" {
+		t.Fatalf("Next() after Q2 = %#v, %v, want only [Q3]", next, err)
+	}
+
+	// Q3 (final) -> exactly one additional Provider call: Plan
+	// regeneration, chained per ADR-0049 only now that clarification is
+	// complete.
+	q3Result, err := ExecuteInteractionAnswer(context.Background(), answerInput(interaction.Answer{Question: "Q3", Answer: "A3"}, q2Result.Session.Version, "CMD-CLARIFY-Q3"), config, client, true)
+	if err != nil || providerCalls != 2 {
+		t.Fatalf("answer Q3 (final) = %#v, %v, providerCalls=%d, want exactly 2", q3Result, err, providerCalls)
+	}
+	if q3Result.Session.State == interaction.StateClarificationRequired {
+		t.Fatalf("final state still clarification_required = %#v, want clarification to have completed", q3Result.Session)
+	}
+
+	// Conversation order: Q1,A1,Q2,A2,Q3,A3 -- never every question up
+	// front followed by every answer.
+	entries, err := InspectConversation(context.Background(), root, start.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sequence []string
+	for _, entry := range entries {
+		switch entry.Kind {
+		case KindClarificationRequested:
+			sequence = append(sequence, "Q:"+entry.Question)
+		case KindCEOClarificationAnswer:
+			sequence = append(sequence, "A:"+entry.CEOMessageText)
+		}
+	}
+	want := []string{"Q:Q1", "A:A1", "Q:Q2", "A:A2", "Q:Q3", "A:A3"}
+	if !reflect.DeepEqual(sequence, want) {
+		t.Fatalf("conversation clarification sequence = %#v, want %#v", sequence, want)
+	}
+}
+
 func TestInteractionProviderSuccessThenSessionCASConflictIsPartialFailure(t *testing.T) {
 	fixture := loadCEOPlanFixture(t)
 	root := ceoPlanVault(t, fixture.Employees)

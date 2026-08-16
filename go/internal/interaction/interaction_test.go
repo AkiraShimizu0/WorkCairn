@@ -51,8 +51,16 @@ func TestSessionRejectsStaleDigestIncompleteAnswersAndHistoryRewrite(t *testing.
 	at := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	record, _ := New("SESSION-001", "依頼", "Claude Sonnet 5", at)
 	withPlan, _ := record.RecordPlan(interactionTestPlan([]string{"Q1", "Q2"}), at.Add(time.Minute))
-	if _, err := withPlan.RecordAnswers([]Answer{{Question: "Q1", Answer: "A1"}}, at.Add(2*time.Minute)); !errors.Is(err, ErrInvalidState) {
-		t.Fatalf("incomplete answers error = %v", err)
+	// Answering only Q1 out of Q1/Q2 is durable, incremental progress, not
+	// an error: this is the whole point of the incremental clarification
+	// state machine (see TestRecordAnswersCommitsEachAnswerIncrementally).
+	// Submitting Q2's answer out of order, or before Q1, is still rejected.
+	partial, err := withPlan.RecordAnswers([]Answer{{Question: "Q1", Answer: "A1"}}, at.Add(2*time.Minute))
+	if err != nil || partial.State != StateClarificationRequired {
+		t.Fatalf("partial answer = %#v, %v, want success staying StateClarificationRequired", partial, err)
+	}
+	if _, err := withPlan.RecordAnswers([]Answer{{Question: "Q2", Answer: "A2"}}, at.Add(2*time.Minute)); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("out-of-order answer error = %v", err)
 	}
 	cleanPlan := interactionTestPlan([]string{})
 	record, _ = New("SESSION-002", "依頼", "Claude Sonnet 5", at)
@@ -65,6 +73,89 @@ func TestSessionRejectsStaleDigestIncompleteAnswersAndHistoryRewrite(t *testing.
 	rewritten.Turns[0].At = rewritten.Turns[0].At.Add(time.Second)
 	if err := ValidateTransition(withPlan, rewritten, withPlan.Version); !errors.Is(err, ErrVersionConflict) {
 		t.Fatalf("history rewrite error = %v", err)
+	}
+}
+
+// TestRecordAnswersCommitsEachAnswerIncrementally is the core regression
+// for the clarification incremental-commit semantic gap: three
+// CEOQuestions, answered one at a time, must each become their own
+// durable Turn immediately -- reload/restart-safe -- with Next() naming
+// only the single next unanswered question at every step, and state
+// advancing to StatePlanGenerationApprovalRequired only once the third
+// (final) answer lands. Out-of-order and duplicate submissions are
+// rejected throughout.
+func TestRecordAnswersCommitsEachAnswerIncrementally(t *testing.T) {
+	at := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	record, _ := New("SESSION-INCREMENTAL", "依頼", "Claude Sonnet 5", at)
+	withPlan, err := record.RecordPlan(interactionTestPlan([]string{"Q1", "Q2", "Q3"}), at.Add(time.Minute))
+	if err != nil || withPlan.State != StateClarificationRequired {
+		t.Fatalf("RecordPlan() = %#v, %v", withPlan, err)
+	}
+	next, err := withPlan.Next()
+	if err != nil || next.Operation != "interaction.answer" || !next.ApprovalRequired ||
+		len(next.Questions) != 1 || next.Questions[0] != "Q1" {
+		t.Fatalf("Next() before any answer = %#v, %v, want operation interaction.answer with only [Q1]", next, err)
+	}
+
+	// Q1 -> its own durable Turn, immediately -- Next() now names only Q2.
+	afterQ1, err := withPlan.RecordAnswers([]Answer{{Question: "Q1", Answer: "A1"}}, at.Add(2*time.Minute))
+	if err != nil || afterQ1.State != StateClarificationRequired || afterQ1.Version != withPlan.Version+1 ||
+		len(afterQ1.Turns) != len(withPlan.Turns)+1 {
+		t.Fatalf("RecordAnswers(Q1) = %#v, %v", afterQ1, err)
+	}
+	q1Turn := afterQ1.Turns[len(afterQ1.Turns)-1]
+	if q1Turn.Kind != TurnClarificationAnswered || len(q1Turn.Answers) != 1 ||
+		q1Turn.Answers[0].Question != "Q1" || q1Turn.Answers[0].Answer != "A1" {
+		t.Fatalf("Q1 Turn = %#v", q1Turn)
+	}
+	next, err = afterQ1.Next()
+	if err != nil || len(next.Questions) != 1 || next.Questions[0] != "Q2" {
+		t.Fatalf("Next() after Q1 = %#v, %v, want only [Q2]", next, err)
+	}
+	// "Reload" is exactly Validate() replaying the whole Turn history from
+	// scratch -- the same thing a fresh Vault read (InspectInteraction)
+	// does. A partial clarification history (2 of 3 answered) must be a
+	// valid, replayable Record on its own.
+	if err := afterQ1.Validate(); err != nil {
+		t.Fatalf("afterQ1.Validate() = %v, want the partial clarification history to replay cleanly", err)
+	}
+
+	// Q2 -> its own durable Turn -- Next() now names only Q3.
+	afterQ2, err := afterQ1.RecordAnswers([]Answer{{Question: "Q2", Answer: "A2"}}, at.Add(3*time.Minute))
+	if err != nil || afterQ2.State != StateClarificationRequired || len(afterQ2.Turns) != len(afterQ1.Turns)+1 {
+		t.Fatalf("RecordAnswers(Q2) = %#v, %v", afterQ2, err)
+	}
+	next, err = afterQ2.Next()
+	if err != nil || len(next.Questions) != 1 || next.Questions[0] != "Q3" {
+		t.Fatalf("Next() after Q2 = %#v, %v, want only [Q3]", next, err)
+	}
+	if err := afterQ2.Validate(); err != nil {
+		t.Fatalf("afterQ2.Validate() = %v", err)
+	}
+
+	// Q3 (final) -> state advances to Plan generation approval, and only now.
+	afterQ3, err := afterQ2.RecordAnswers([]Answer{{Question: "Q3", Answer: "A3"}}, at.Add(4*time.Minute))
+	if err != nil || afterQ3.State != StatePlanGenerationApprovalRequired || len(afterQ3.Turns) != len(afterQ2.Turns)+1 {
+		t.Fatalf("RecordAnswers(Q3) = %#v, %v, want StatePlanGenerationApprovalRequired", afterQ3, err)
+	}
+	if err := afterQ3.Validate(); err != nil {
+		t.Fatalf("afterQ3.Validate() = %v", err)
+	}
+	planningRequest, err := afterQ3.PlanningRequest()
+	if err != nil || !strings.Contains(planningRequest, `"answer":"A1"`) ||
+		!strings.Contains(planningRequest, `"answer":"A2"`) || !strings.Contains(planningRequest, `"answer":"A3"`) {
+		t.Fatalf("PlanningRequest() = %q, %v, want all three answers folded in", planningRequest, err)
+	}
+
+	// Out-of-order and duplicate submissions are rejected at every stage.
+	if _, err := withPlan.RecordAnswers([]Answer{{Question: "Q2", Answer: "skip"}}, at.Add(5*time.Minute)); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("answering Q2 before Q1 error = %v", err)
+	}
+	if _, err := afterQ1.RecordAnswers([]Answer{{Question: "Q1", Answer: "duplicate"}}, at.Add(5*time.Minute)); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("re-answering already-answered Q1 error = %v", err)
+	}
+	if _, err := afterQ3.RecordAnswers([]Answer{{Question: "Q3", Answer: "again"}}, at.Add(5*time.Minute)); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("answering after clarification already complete error = %v", err)
 	}
 }
 
@@ -273,9 +364,14 @@ func TestAnswersAreCanonicalizedAndPreserveUnicodeSpecialCharacters(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Answers must now be submitted in the same order as CEOQuestions
+	// (validateIncrementalAnswers requires a contiguous, in-order
+	// continuation) -- this is what lets Next() and the Conversation
+	// Projection always name a single unambiguous next question, so this
+	// is no longer reordered on the CEOQuestions' behalf.
 	answered, err := withPlan.RecordAnswers([]Answer{
-		{Question: "質問二", Answer: "回答二\n改行"},
 		{Question: "Q1 | #", Answer: "A1 | # 😀"},
+		{Question: "質問二", Answer: "回答二\n改行"},
 	}, at.Add(2*time.Minute))
 	if err != nil {
 		t.Fatal(err)

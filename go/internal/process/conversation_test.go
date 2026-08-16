@@ -46,7 +46,7 @@ func TestClarificationAnswerEntriesProjectOnlyConfirmedAnswers(t *testing.T) {
 			{Question: "予算は？", Answer: "   "},
 		},
 	}
-	entries := clarificationAnswerEntries(turn)
+	entries := clarificationAnswerEntries([]interaction.Turn{turn}, 0)
 	if len(entries) != 1 || entries[0].Category != CategoryCEOMessage || entries[0].Kind != KindCEOClarificationAnswer ||
 		entries[0].CEOMessageText != "20代女性向け" || !entries[0].At.Equal(at) ||
 		entries[0].Speaker != nil || entries[0].Recipient != nil {
@@ -54,17 +54,17 @@ func TestClarificationAnswerEntriesProjectOnlyConfirmedAnswers(t *testing.T) {
 	}
 }
 
-// TestClarificationRequestedEntriesProjectAllQuestionsVerbatim locks the
-// Public Beta Conversation UX Fix's root-cause repair: InspectConversation
-// previously never projected the clarification question itself (only the
-// later answer), because its per-Turn switch had no case for
-// TurnPlanGenerated. clarificationRequestedEntries projects every
-// non-blank CEOQuestion from the already-committed canonical Plan verbatim
-// -- never composed or paraphrased -- and skips a blank one exactly like
-// clarificationAnswerEntries already skips a blank answer.
-func TestClarificationRequestedEntriesProjectAllQuestionsVerbatim(t *testing.T) {
+// TestClarificationRequestedEntriesProjectsOnlyFirstQuestionVerbatim locks
+// the incremental clarification design (WorkCairn clarification UX
+// semantic gap fix): TurnPlanGenerated only ever reveals CEOQuestions[0]
+// -- every later question is revealed by clarificationAnswerEntries, one
+// at a time, exactly when interaction.RecordAnswers durably records the
+// answer before it -- so the Conversation Projection never shows every
+// question up front. The revealed question is always the Provider's own
+// already-persisted string, never composed or paraphrased.
+func TestClarificationRequestedEntriesProjectsOnlyFirstQuestionVerbatim(t *testing.T) {
 	at := time.Date(2026, time.August, 9, 9, 4, 0, 0, time.UTC)
-	plan := ceoplan.Plan{CEOQuestions: []string{"対象読者は既存顧客と新規顧客のどちらですか？", "   "}}
+	plan := ceoplan.Plan{CEOQuestions: []string{"対象読者は既存顧客と新規顧客のどちらですか？", "予算感を教えてください"}}
 	turn := interaction.Turn{Kind: interaction.TurnPlanGenerated, At: at, Plan: &plan}
 
 	entries := clarificationRequestedEntries(turn)
@@ -75,6 +75,10 @@ func TestClarificationRequestedEntriesProjectAllQuestionsVerbatim(t *testing.T) 
 	}
 	if entries := clarificationRequestedEntries(interaction.Turn{Kind: interaction.TurnPlanGenerated, At: at, Plan: nil}); entries != nil {
 		t.Fatalf("clarificationRequestedEntries() with nil Plan = %#v, want nil", entries)
+	}
+	blankFirst := ceoplan.Plan{CEOQuestions: []string{"   ", "実質2問目"}}
+	if entries := clarificationRequestedEntries(interaction.Turn{Kind: interaction.TurnPlanGenerated, At: at, Plan: &blankFirst}); entries != nil {
+		t.Fatalf("clarificationRequestedEntries() with blank CEOQuestions[0] = %#v, want nil (never falls through to a later question)", entries)
 	}
 }
 

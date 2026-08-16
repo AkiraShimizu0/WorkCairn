@@ -184,7 +184,7 @@ func InspectConversation(ctx context.Context, vaultRoot, sessionID string) ([]Co
 		case interaction.TurnPlanGenerated:
 			entries = append(entries, clarificationRequestedEntries(turn)...)
 		case interaction.TurnClarificationAnswered:
-			entries = append(entries, clarificationAnswerEntries(turn)...)
+			entries = append(entries, clarificationAnswerEntries(record.Turns, turnIndex)...)
 		case interaction.TurnPlanApplied:
 			if planTurn := latestPlanBefore(record.Turns, turnIndex); planTurn != nil && planTurn.Plan != nil {
 				entries = append(entries, taskAssignedEntries(turn, *planTurn.Plan, employeesByID)...)
@@ -235,33 +235,41 @@ func ceoRequestEntry(record interaction.Record) ConversationEntry {
 	}
 }
 
-// clarificationRequestedEntries projects the CEO Plan Intent's own
-// CEOQuestions -- already canonically committed as part of this
-// TurnPlanGenerated Turn -- as one entry per question, so a question the
-// CEO has not yet answered (or has already answered) stays visible in the
-// Conversation Projection exactly as WorkCairn originally asked it. This
-// package composes none of the question text: it is the Provider's own
-// already-persisted string, never paraphrased or re-derived.
+// clarificationRequestedEntries projects only the first of the CEO Plan
+// Intent's own CEOQuestions -- already canonically committed as part of
+// this TurnPlanGenerated Turn -- as a system entry. Every later question
+// is revealed by clarificationAnswerEntries, one at a time, exactly when
+// the question before it durably has an answer (interaction.RecordAnswers
+// commits answers incrementally, in CEOQuestions order): this is what
+// produces Q1,A1,Q2,A2,... instead of every question up front followed by
+// every answer. This package composes none of the question text: it is
+// the Provider's own already-persisted string, never paraphrased or
+// re-derived.
 func clarificationRequestedEntries(turn interaction.Turn) []ConversationEntry {
-	if turn.Plan == nil {
+	if turn.Plan == nil || len(turn.Plan.CEOQuestions) == 0 {
 		return nil
 	}
-	entries := make([]ConversationEntry, 0, len(turn.Plan.CEOQuestions))
-	for _, question := range turn.Plan.CEOQuestions {
-		text := strings.TrimSpace(question)
-		if text == "" {
-			continue
-		}
-		entries = append(entries, ConversationEntry{
-			At: turn.At, Category: CategorySystem, Kind: KindClarificationRequested,
-			Audience: AudienceCEO, Question: text,
-		})
+	first := strings.TrimSpace(turn.Plan.CEOQuestions[0])
+	if first == "" {
+		return nil
 	}
-	return entries
+	return []ConversationEntry{{
+		At: turn.At, Category: CategorySystem, Kind: KindClarificationRequested,
+		Audience: AudienceCEO, Question: first,
+	}}
 }
 
-func clarificationAnswerEntries(turn interaction.Turn) []ConversationEntry {
-	entries := make([]ConversationEntry, 0, len(turn.Answers))
+// clarificationAnswerEntries projects one TurnClarificationAnswered
+// Turn's answers, then -- if this batch did not durably complete every
+// CEOQuestion of the active Plan -- appends the single next unanswered
+// question at the same instant, so it sorts immediately after the answer
+// that revealed it. The active Plan and how many of its CEOQuestions
+// already had an answer strictly before this Turn are both derived from
+// canonical Turn history (record.Turns), never from a client-supplied or
+// interpolated question/answer pairing.
+func clarificationAnswerEntries(turns []interaction.Turn, turnIndex int) []ConversationEntry {
+	turn := turns[turnIndex]
+	entries := make([]ConversationEntry, 0, len(turn.Answers)+1)
 	for _, answer := range turn.Answers {
 		text := strings.TrimSpace(answer.Answer)
 		if text == "" {
@@ -271,6 +279,33 @@ func clarificationAnswerEntries(turn interaction.Turn) []ConversationEntry {
 			At: turn.At, Category: CategoryCEOMessage, Kind: KindCEOClarificationAnswer,
 			Audience: AudienceCompany, CEOMessageText: text,
 		})
+	}
+	planIndex := -1
+	for index := turnIndex - 1; index >= 0; index-- {
+		if turns[index].Kind == interaction.TurnPlanGenerated && turns[index].Plan != nil {
+			planIndex = index
+			break
+		}
+	}
+	if planIndex == -1 {
+		return entries
+	}
+	answeredThrough := 0
+	for index := planIndex + 1; index < turnIndex; index++ {
+		if turns[index].Kind == interaction.TurnClarificationAnswered {
+			answeredThrough += len(turns[index].Answers)
+		}
+	}
+	answeredThrough += len(turn.Answers)
+	questions := turns[planIndex].Plan.CEOQuestions
+	if answeredThrough < len(questions) {
+		next := strings.TrimSpace(questions[answeredThrough])
+		if next != "" {
+			entries = append(entries, ConversationEntry{
+				At: turn.At, Category: CategorySystem, Kind: KindClarificationRequested,
+				Audience: AudienceCEO, Question: next,
+			})
+		}
 	}
 	return entries
 }

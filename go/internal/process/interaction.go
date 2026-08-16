@@ -552,6 +552,18 @@ func ExecuteInteractionAnswer(
 		result := InteractionPlanResult{Session: commit.Record, SessionCommitted: commit.Committed}
 		return result, finishDurableCommand(ctx, claim, result, commitErr, "INTERACTION_FAILED", "interaction_answer_commit", commit.Committed)
 	}
+	if commit.Record.State != interaction.StatePlanGenerationApprovalRequired {
+		// This batch of answers durably committed (RecordAnswers may
+		// accept fewer than every remaining CEOQuestion -- see its own
+		// doc comment), but at least one CEOQuestion is still unanswered,
+		// so the Session stays at StateClarificationRequired. Chaining
+		// into Plan generation is only correct once every CEOQuestion has
+		// a recorded answer; doing it here would call the Provider once
+		// per answered question instead of once per completed
+		// clarification round.
+		result := InteractionPlanResult{Session: commit.Record, SessionCommitted: commit.Committed}
+		return result, finishDurableCommand(ctx, claim, result, nil, "", "", false)
+	}
 	childCommandID, err := commandledger.DeriveChildCommandID(input.CommandID, "interaction.plan.generate:"+input.SessionID)
 	if err != nil {
 		result := InteractionPlanResult{Session: commit.Record, SessionCommitted: commit.Committed}
