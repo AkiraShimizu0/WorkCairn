@@ -215,6 +215,20 @@ function truncatePreview(value, max = 120) {
   return `${normalized.slice(0, max - 1)}…`;
 }
 
+function clearSessionPresentationState() {
+  state.conversation = null;
+  state.conversationError = null;
+  state.evidence = new Map();
+  state.workReport = null;
+  state.workReportError = null;
+  state.detailRenderKey = "";
+  state.timelineRenderKey = "";
+  state.renderKey = "";
+  state.pendingAttentionTitle = "";
+  state.workflowPlanPreview = null;
+  state.composerDraft = "";
+}
+
 function isDraftRequestActive() {
   return Boolean(state.draftRequest);
 }
@@ -643,7 +657,16 @@ function structuredFieldsSummary(presence) {
   return keys.map((key) => `${key}: ${presence[key] ? "present" : "missing"}`).join(", ");
 }
 
-function structuredFieldShapeSummary(shapes, field) {
+function formatStructuredFieldShapeEntry(shape) {
+  if (!shape || typeof shape !== "object") return "";
+  if (!shape.present) return "missing";
+  const parts = ["present"];
+  if (shape.json_type) parts.push(shape.json_type);
+  if (typeof shape.non_blank === "boolean") parts.push(shape.non_blank ? "non_blank" : "blank");
+  return parts.join(", ");
+}
+
+function structuredFieldShapeExactSummary(shapes, field) {
   const shape = shapes?.[field];
   if (!shape || typeof shape !== "object") return "";
   const parts = [`present: ${shape.present ? "yes" : "no"}`];
@@ -652,12 +675,45 @@ function structuredFieldShapeSummary(shapes, field) {
   return parts.join(", ");
 }
 
+function structuredStepDescriptionShapeLines(shapes) {
+  if (!shapes || typeof shapes !== "object") return [];
+  const prefix = "steps.";
+  const suffix = ".description";
+  return Object.keys(shapes)
+    .map((key) => {
+      if (!key.startsWith(prefix) || !key.endsWith(suffix)) return null;
+      const indexPart = key.slice(prefix.length, key.length - suffix.length);
+      if (!/^\d+$/.test(indexPart)) return null;
+      const summary = formatStructuredFieldShapeEntry(shapes[key]);
+      return summary ? { index: Number(indexPart), line: `- ${key}: ${summary}` } : null;
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.line);
+}
+
+function structuredFieldShapeSummary(shapes, field) {
+  if (field === "steps.description") {
+    const lines = structuredStepDescriptionShapeLines(shapes);
+    return lines.length ? lines.join("\n") : "";
+  }
+  return structuredFieldShapeExactSummary(shapes, field);
+}
+
+function structuredFieldShapeFacts(shapes, field) {
+  if (field === "steps.description") {
+    const lines = structuredStepDescriptionShapeLines(shapes);
+    return lines.length ? [["Structured field shapes", lines.join("\n")]] : [];
+  }
+  const summary = structuredFieldShapeExactSummary(shapes, field);
+  return summary ? [[`${field} shape`, summary]] : [];
+}
+
 function parseDiagnosticsFacts(error) {
   const parse = error.details?.parse;
   const structuredFields = structuredFieldsSummary(parse?.structured_output_presence);
   const parseFailureReason = error.parse_failure_reason || parse?.reason || "—";
   const parseField = parse?.field || error.parse_failure_field || "—";
-  const fieldShape = structuredFieldShapeSummary(parse?.structured_output_field_shape, parseField);
   return [
     ["Error code", error.code],
     ["Stage", error.stage || "—"],
@@ -669,7 +725,7 @@ function parseDiagnosticsFacts(error) {
     ["Parse reason", parseFailureReason],
     ["Parse field", parseField],
     ...(structuredFields ? [["Structured fields", structuredFields]] : []),
-    ...(fieldShape ? [[`${parseField} shape`, fieldShape]] : []),
+    ...structuredFieldShapeFacts(parse?.structured_output_field_shape, parseField),
   ];
 }
 
@@ -785,11 +841,12 @@ function applyNavigationLayout() {
   const showDetail = Boolean(state.record) || isDraftRequestActive();
   ui.menuButton.hidden = desktop;
   ui.requestsPane.classList.toggle("mobile-visible", desktop || state.nav === "request_list" || state.nav === "request_detail" || isDraftRequestActive());
+  ui.requestsPane.classList.toggle("has-detail", desktop && showDetail);
   ui.employeesPane.classList.toggle("mobile-hidden", !desktop && state.nav !== "employees_home");
   ui.requestListView.classList.toggle("mobile-hidden", !desktop && state.nav !== "request_list");
-  ui.requestDetailView.hidden = desktop ? !showDetail : state.nav !== "request_detail" || !showDetail;
-  ui.requestDetailView.classList.toggle("mobile-hidden", ui.requestDetailView.hidden);
-  ui.requestListView.hidden = desktop ? showDetail : state.nav !== "request_list";
+  ui.requestDetailView.hidden = !showDetail;
+  ui.requestDetailView.classList.toggle("mobile-hidden", !desktop && (state.nav !== "request_detail" || !showDetail));
+  ui.requestListView.hidden = !desktop && state.nav !== "request_list";
   ui.requestListView.classList.toggle("mobile-hidden", ui.requestListView.hidden);
   setBackgroundWorking(Boolean(storedPendingCommand()) && !isRequestDetailVisible());
 }
@@ -1168,6 +1225,7 @@ async function selectSession(id, options = {}) {
 }
 
 async function refreshCurrent(silent = false) {
+  if (isDraftRequestActive()) return;
   const id = localStorage.getItem(STORAGE_SESSION);
   if (!id) {
     renderEmpty();
@@ -1210,8 +1268,7 @@ function renderEmpty() {
   clearActionSurface();
   renderComposerState(null);
   if (isDraftRequestActive()) {
-    ui.activeCard.hidden = true;
-    renderTimeline();
+    renderDraftRequestDetail();
     return;
   }
   ui.activeCard.hidden = false;
@@ -2091,6 +2148,13 @@ function planEmbedNode(plan) {
 }
 
 function renderTimeline() {
+  if (isDraftRequestActive()) {
+    const key = "draft-empty";
+    if (state.timelineRenderKey === key) return;
+    state.timelineRenderKey = key;
+    ui.timeline.replaceChildren(node("p", { class: "empty" }, "依頼内容を入力してください。"));
+    return;
+  }
   const nodes = conversationTimelineNodes();
   const key = timelineRenderKey();
   const shouldFollow = state.forceScrollToBottom || state.threadNearBottom;
@@ -2194,17 +2258,22 @@ function taskEvidenceBlock(evidence) {
 }
 
 async function loadTaskEvidenceDetails() {
+  const sessionID = state.record?.session_id;
+  if (!sessionID || isDraftRequestActive()) return;
   const workflow = [...(state.record?.turns || [])].reverse().find((turn) => turn.workflow)?.workflow;
   if (!workflow) return;
   const missing = workflow.tasks.filter((task) => !state.evidence.has(`${workflow.project_name}/${task.task_id}`));
   if (!missing.length) return;
   try {
     const results = await Promise.all(missing.map((task) => requestJSON(`/v1/projects/${encodeURIComponent(workflow.project_name)}/tasks/${encodeURIComponent(task.task_id)}/evidence`)));
+    if (state.record?.session_id !== sessionID || isDraftRequestActive()) return;
     results.forEach((evidence, index) => state.evidence.set(`${workflow.project_name}/${missing[index].task_id}`, evidence));
     renderDetails();
     renderRequestDetail();
   } catch (error) {
-    toast(`成果物の詳細を取得できませんでした: ${error.message}`);
+    if (state.record?.session_id === sessionID && !isDraftRequestActive()) {
+      toast(`成果物の詳細を取得できませんでした: ${error.message}`);
+    }
   }
 }
 
@@ -2243,9 +2312,16 @@ function renderDraftRequestDetail() {
   );
   clearActionSurface();
   ui.activeCard.hidden = true;
-  ui.timeline.replaceChildren();
+  ui.activeCard.replaceChildren();
+  ui.timeline.replaceChildren(node("p", { class: "empty" }, "依頼内容を入力してください。"));
+  state.timelineRenderKey = "draft-empty";
   ui.detailsPanel.hidden = true;
   ui.details.replaceChildren();
+  ui.composerInput.value = "";
+  state.composerDraft = "";
+  renderAutonomy();
+  renderProofOfWork();
+  renderCEOAttention();
   applyNavigationLayout();
   renderComposerState(null);
 }
@@ -2314,14 +2390,165 @@ function employeePoseClass(displayStatus) {
   }
 }
 
+function characterZoneClass(employee, index) {
+  switch (employee.display_status) {
+  case "レビュー中": return "zone-review";
+  case "社長と相談中": return "zone-consult";
+  case "作業中":
+  case "修正中":
+  case "完了":
+    return `zone-desk-${index}`;
+  default:
+    return `zone-walk-${index}`;
+  }
+}
+
+function officeRoomSvgNode() {
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("class", "office-room-svg");
+  svg.setAttribute("viewBox", "0 0 400 240");
+  svg.setAttribute("aria-hidden", "true");
+
+  const defs = document.createElementNS(svgNS, "defs");
+  const wallGrad = document.createElementNS(svgNS, "linearGradient");
+  wallGrad.setAttribute("id", "room-wall");
+  wallGrad.setAttribute("x1", "0");
+  wallGrad.setAttribute("y1", "0");
+  wallGrad.setAttribute("x2", "0");
+  wallGrad.setAttribute("y2", "1");
+  for (const [offset, color] of [["0%", "var(--room-wall-top, #eef3ef)"], ["100%", "var(--room-wall-bottom, #dfe8e1)"]]) {
+    const stop = document.createElementNS(svgNS, "stop");
+    stop.setAttribute("offset", offset);
+    stop.setAttribute("stop-color", color);
+    wallGrad.append(stop);
+  }
+  const floorGrad = document.createElementNS(svgNS, "linearGradient");
+  floorGrad.setAttribute("id", "room-floor");
+  floorGrad.setAttribute("x1", "0");
+  floorGrad.setAttribute("y1", "0");
+  floorGrad.setAttribute("x2", "0");
+  floorGrad.setAttribute("y2", "1");
+  for (const [offset, color] of [["0%", "var(--room-floor-top, #d8e0da)"], ["100%", "var(--room-floor-bottom, #c8d2cb)"]]) {
+    const stop = document.createElementNS(svgNS, "stop");
+    stop.setAttribute("offset", offset);
+    stop.setAttribute("stop-color", color);
+    floorGrad.append(stop);
+  }
+  defs.append(wallGrad, floorGrad);
+  svg.append(defs);
+
+  const wall = document.createElementNS(svgNS, "rect");
+  wall.setAttribute("class", "room-wall");
+  wall.setAttribute("x", "0");
+  wall.setAttribute("y", "0");
+  wall.setAttribute("width", "400");
+  wall.setAttribute("height", "170");
+  wall.setAttribute("fill", "url(#room-wall)");
+  const floor = document.createElementNS(svgNS, "rect");
+  floor.setAttribute("class", "room-floor");
+  floor.setAttribute("x", "0");
+  floor.setAttribute("y", "170");
+  floor.setAttribute("width", "400");
+  floor.setAttribute("height", "70");
+  floor.setAttribute("fill", "url(#room-floor)");
+  svg.append(wall, floor);
+
+  const addRect = (className, attrs) => {
+    const rect = document.createElementNS(svgNS, "rect");
+    rect.setAttribute("class", className);
+    for (const [key, value] of Object.entries(attrs)) rect.setAttribute(key, String(value));
+    svg.append(rect);
+    return rect;
+  };
+  addRect("room-window", { x: 288, y: 28, width: 72, height: 48, rx: 4 });
+  addRect("room-whiteboard", { x: 156, y: 34, width: 88, height: 52, rx: 4 });
+  const line = document.createElementNS(svgNS, "line");
+  line.setAttribute("class", "room-board-line");
+  line.setAttribute("x1", "168");
+  line.setAttribute("y1", "50");
+  line.setAttribute("x2", "228");
+  line.setAttribute("y2", "50");
+  svg.append(line);
+  addRect("room-desk room-desk-left", { x: 44, y: 148, width: 72, height: 10, rx: 3 });
+  addRect("room-monitor room-monitor-left", { x: 68, y: 124, width: 24, height: 18, rx: 2 });
+  addRect("room-chair room-chair-left", { x: 72, y: 158, width: 16, height: 10, rx: 3 });
+  addRect("room-desk room-desk-center", { x: 164, y: 148, width: 72, height: 10, rx: 3 });
+  addRect("room-monitor room-monitor-center", { x: 188, y: 124, width: 24, height: 18, rx: 2 });
+  addRect("room-chair room-chair-center", { x: 192, y: 158, width: 16, height: 10, rx: 3 });
+  addRect("room-desk room-desk-review", { x: 284, y: 148, width: 72, height: 10, rx: 3 });
+  addRect("room-monitor room-monitor-review", { x: 308, y: 124, width: 24, height: 18, rx: 2 });
+  addRect("room-chair room-chair-review", { x: 312, y: 158, width: 16, height: 10, rx: 3 });
+  addRect("room-doc-stack", { x: 332, y: 132, width: 18, height: 14, rx: 2 });
+  addRect("room-coffee", { x: 248, y: 176, width: 10, height: 12, rx: 2 });
+
+  const pot = document.createElementNS(svgNS, "circle");
+  pot.setAttribute("class", "room-plant-pot");
+  pot.setAttribute("cx", "36");
+  pot.setAttribute("cy", "182");
+  pot.setAttribute("r", "8");
+  addRect("room-plant-stem", { x: 34, y: 166, width: 4, height: 12, rx: 2 });
+  const leafA = document.createElementNS(svgNS, "circle");
+  leafA.setAttribute("class", "room-plant-leaf");
+  leafA.setAttribute("cx", "32");
+  leafA.setAttribute("cy", "162");
+  leafA.setAttribute("r", "6");
+  const leafB = document.createElementNS(svgNS, "circle");
+  leafB.setAttribute("class", "room-plant-leaf");
+  leafB.setAttribute("cx", "40");
+  leafB.setAttribute("cy", "160");
+  leafB.setAttribute("r", "5");
+  svg.append(pot, leafA, leafB);
+
+  return node("div", { class: "office-room-scene", "aria-hidden": "true" }, svg);
+}
+
+function roomCharacterNode(employee, index) {
+  const variant = avatarVariant(employee.id);
+  const statusClass = employeeStatusClass(employee.display_status);
+  const poseClass = employeePoseClass(employee.display_status);
+  const zoneClass = characterZoneClass(employee, index);
+  return node("div", {
+    class: `room-character avatar-v${variant} ${statusClass} ${poseClass} ${zoneClass}${employee.is_liaison ? " liaison" : ""}${employee.ceo_attention ? " attention" : ""}`.trim(),
+    title: employee.current_work_title || employee.display_status || "",
+  },
+  node("div", { class: "room-character-figure", "aria-hidden": "true" },
+    node("span", { class: "char-hair" }),
+    node("span", { class: "char-head" }),
+    node("span", { class: "char-torso" }),
+    node("span", { class: "char-arm char-arm-left" }),
+    node("span", { class: "char-arm char-arm-right" }),
+    node("span", { class: "char-leg char-leg-left" }),
+    node("span", { class: "char-leg char-leg-right" }),
+  ),
+  node("span", { class: "char-shadow", "aria-hidden": "true" }),
+  employee.display_status === "社長と相談中" || employee.ceo_attention
+    ? node("span", { class: "char-speech-bubble", "aria-hidden": "true" })
+    : null,
+  );
+}
+
+function roomCharacterLabel(employee) {
+  const statusClass = employeeStatusClass(employee.display_status);
+  return node("div", { class: "room-character-label" },
+    node("strong", {}, employee.name || employee.id),
+    node("small", {}, `${employee.role || "役割未設定"} · ${employee.display_status || "待機中"}`),
+    node("span", { class: `employee-status ${statusClass}`.trim() },
+      node("span", { class: "status-glyph", "aria-hidden": "true" }, employeeStatusIcon(employee.display_status)),
+      employee.display_status || "待機中",
+    ),
+    employee.current_work_title ? node("p", { class: "employee-task" }, employee.current_work_title) : null,
+  );
+}
+
 function employeeCompactRow(employee) {
   const statusClass = employeeStatusClass(employee.display_status);
   const variant = avatarVariant(employee.id);
   return node("div", { class: "employee-compact-row" },
     node("span", { class: `employee-compact-avatar avatar-v${variant} ${statusClass}`.trim(), "aria-hidden": "true" },
-      node("span", { class: "worker-hair" }),
-      node("span", { class: "worker-head" }),
-      node("span", { class: "worker-body" }),
+      node("span", { class: "char-hair" }),
+      node("span", { class: "char-head" }),
+      node("span", { class: "char-torso" }),
     ),
     node("div", { class: "employee-compact-copy" },
       node("strong", {}, employee.name || employee.id),
@@ -2336,51 +2563,6 @@ function employeeCompactRow(employee) {
   );
 }
 
-function sharedOfficeStationNode(employee, slotIndex, slotCount) {
-  const statusClass = employeeStatusClass(employee.display_status);
-  const poseClass = employeePoseClass(employee.display_status);
-  const variant = avatarVariant(employee.id);
-  const slotClass = slotCount <= 1 ? "slot-center" : slotIndex === 0 ? "slot-left" : slotIndex === slotCount - 1 ? "slot-right" : "slot-center";
-  return node("article", {
-    class: `shared-office-station ${slotClass} ${statusClass}${employee.is_liaison ? " liaison" : ""}${employee.ceo_attention ? " attention" : ""}`.trim(),
-    title: employee.current_work_title || employee.display_status || "",
-  },
-  node("div", { class: "station-scene", "aria-hidden": "true" },
-    node("span", { class: "station-desk" }),
-    node("span", { class: "station-monitor" }),
-    node("span", { class: "station-chair" }),
-    officeWorkerNode(employee, statusClass, poseClass, variant),
-  ),
-  node("div", { class: "station-copy" },
-    node("strong", {}, employee.name || employee.id),
-    node("small", {}, employee.role || "役割未設定"),
-    node("span", { class: `employee-status ${statusClass}`.trim() },
-      node("span", { class: "status-glyph", "aria-hidden": "true" }, employeeStatusIcon(employee.display_status)),
-      node("span", { class: "status-dot", "aria-hidden": "true" }),
-      employee.display_status || "待機中",
-    ),
-    employee.current_work_title ? node("p", { class: "employee-task" }, employee.current_work_title) : null,
-  ),
-  employeeCompactRow(employee),
-  );
-}
-
-function officeWorkerNode(employee, statusClass, poseClass = null, variant = null) {
-  const resolvedVariant = variant ?? avatarVariant(employee.id);
-  const resolvedPose = poseClass ?? employeePoseClass(employee.display_status);
-  return node("div", { class: `office-worker ${resolvedPose} ${statusClass}`.trim(), "aria-hidden": "true" },
-    node("span", { class: `worker-figure avatar-v${resolvedVariant}` },
-      node("span", { class: "worker-hair" }),
-      node("span", { class: "worker-head" }),
-      node("span", { class: "worker-body" }),
-      node("span", { class: "worker-shadow" }),
-    ),
-    employee.display_status === "社長と相談中" || employee.ceo_attention
-      ? node("span", { class: "worker-speech-bubble" })
-      : null,
-  );
-}
-
 function renderEmployeesPane() {
   const employees = state.companyActivity?.employees || [];
   ui.teamCount.textContent = employees.length ? `${employees.length}人` : "";
@@ -2388,16 +2570,16 @@ function renderEmployeesPane() {
     ui.employeeGrid.replaceChildren(node("p", { class: "empty" }, "AI社員はまだ読み込まれていません。"));
   } else {
     ui.employeeGrid.replaceChildren(
-      node("div", { class: "shared-office" },
-        node("div", { class: "shared-office-backdrop", "aria-hidden": "true" },
-          node("span", { class: "office-prop office-prop-plant" }),
-          node("span", { class: "office-prop office-prop-whiteboard" }),
-          node("span", { class: "office-prop office-prop-coffee" }),
-          node("span", { class: "office-prop office-prop-document" }),
-          node("span", { class: "shared-office-floor" }),
+      node("div", { class: "office-room" },
+        officeRoomSvgNode(),
+        node("div", { class: "office-room-characters", "aria-hidden": "true" },
+          ...employees.map((employee, index) => roomCharacterNode(employee, index)),
         ),
-        node("div", { class: "shared-office-stations" },
-          ...employees.map((employee, index) => sharedOfficeStationNode(employee, index, employees.length)),
+        node("div", { class: "office-room-labels" },
+          ...employees.map((employee) => roomCharacterLabel(employee)),
+        ),
+        node("div", { class: "office-room-compact" },
+          ...employees.map((employee) => employeeCompactRow(employee)),
         ),
       ),
     );
@@ -2592,22 +2774,14 @@ function openNewRequestDraft() {
   state.draftRequest = { sessionID: sessionID(), text: "" };
   state.record = null;
   state.next = null;
-  state.workReport = null;
-  state.workReportError = null;
   state.lastError = null;
-  state.renderKey = "";
-  state.timelineRenderKey = "";
+  clearSessionPresentationState();
   state.pendingStart = null;
   localStorage.removeItem(STORAGE_SESSION);
-  ui.composerInput.value = "";
   clearActionSurface();
-  if (isDesktopLayout()) {
-    applyNavigationLayout();
-    renderDraftRequestDetail();
-  } else {
-    setNav("request_detail");
-    renderDraftRequestDetail();
-  }
+  ui.composerInput.value = "";
+  setNav("request_detail");
+  renderDraftRequestDetail();
 }
 
 async function submitDraftRequest() {
@@ -2638,6 +2812,10 @@ async function submitDraftRequest() {
       showRequestDetail(input.session_id);
     } else {
       applyNavigationLayout();
+      if (state.lastError) {
+        renderTimeline();
+        renderComposerState(state.next);
+      }
     }
   } catch (error) {
     showError(error, "依頼内容を確認できませんでした");
@@ -2725,6 +2903,7 @@ async function initialize() {
 
 setInterval(async () => {
   if (!state.busy && !ui.actionDialog.open && !ui.requestDialog.open && !ui.setupDialog.open && document.visibilityState === "visible") {
+    if (isDraftRequestActive()) return;
     if (state.record) await refreshCurrent(true);
     else {
       try {

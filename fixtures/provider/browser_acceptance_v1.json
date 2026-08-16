@@ -98,6 +98,15 @@
         "headers": {"content-type": "application/json", "request-id": "req_browser_rate_limit_001"},
         "body": {"type": "error", "error": {"type": "rate_limit_error", "message": "sanitized fixture failure"}}
       }
+    ],
+    "ceo_plan_steps_description_failure": [
+      {
+        "name": "ceo_intent_bad_step_descriptions",
+        "delay_ms": 300,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_steps_shape_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Steps Shape Gate\",\"objective\":\"steps.description shape diagnosticを確認する\",\"summary\":\"Browser Gate用\",\"steps\":[{\"kind\":\"write\",\"description\":\"\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"required_role\":\"QA Engineer\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 14, "output_tokens": 28}}
+      }
     ]
   }
 }

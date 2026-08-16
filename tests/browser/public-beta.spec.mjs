@@ -2,6 +2,18 @@ import { expect, test } from "@playwright/test";
 import { join } from "node:path";
 import { pathExists, startBrowserEnvironment } from "./support/harness.mjs";
 
+async function openNewRequestFromUI(page) {
+  const listButton = page.locator("#new-request-button");
+  if (await listButton.isVisible()) {
+    await listButton.click();
+    return;
+  }
+  const menu = page.locator("#menu-button");
+  await expect(menu).toBeVisible();
+  await menu.click();
+  await page.locator("#nav-new-request").click();
+}
+
 async function pairThroughUI(page, daemon) {
   let forcedRemoteStatus = false;
   const statusRoute = async (route) => {
@@ -534,16 +546,18 @@ test("employee visual section stays separate from selected request chat", async 
     if (isMobile) {
       await menu.click();
       await page.locator("#nav-employees-home").click();
+      await expect(page.locator(".employee-compact-row").first()).toBeVisible();
+    } else {
+      await expect(page.locator(".office-room")).toBeVisible();
+      await expect(page.locator(".room-character").first()).toBeVisible();
     }
-    await expect(page.locator(".shared-office")).toBeVisible();
-    await expect(page.locator(".shared-office-station").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "社内の動き" })).toBeVisible();
     await startRequest(page, "りんごについて100文字程度で説明して");
     await expect(page.locator("#activity-timeline")).toBeVisible();
     if (isMobile) {
-      await expect(page.locator(".shared-office-stations")).toBeHidden();
+      await expect(page.locator(".office-room-characters")).toBeHidden();
     } else {
-      await expect(page.locator(".shared-office")).toBeVisible();
+      await expect(page.locator(".office-room")).toBeVisible();
     }
   } finally {
     await environment.stop();
@@ -588,13 +602,13 @@ test("UI refinement: composer, settings, branding, themes, and office visual", a
       await page.locator("#nav-employees-home").click();
       await expect(page.getByRole("heading", { name: "AI会社の様子" })).toBeVisible();
       await expect(page.locator(".employee-compact-row").first()).toBeVisible();
-      await expect(page.locator(".station-scene").first()).toBeHidden();
+      await expect(page.locator(".office-room-characters").first()).toBeHidden();
     } else {
       await page.emulateMedia({ colorScheme: "light" });
       await expect(page.locator("#workspace-view")).toBeVisible();
-      await expect(page.locator(".shared-office-station").first()).toBeVisible();
-      await expect(page.locator(".station-scene").first()).toBeVisible();
-      await expect(page.locator(".office-worker").first()).toBeVisible();
+      await expect(page.locator(".office-room").first()).toBeVisible();
+      await expect(page.locator(".office-room-scene").first()).toBeVisible();
+      await expect(page.locator(".room-character").first()).toBeVisible();
     }
 
     if (!isMobileProject) {
@@ -607,7 +621,7 @@ test("UI refinement: composer, settings, branding, themes, and office visual", a
       await page.locator("#nav-employees-home").click();
       await expect(page.getByRole("heading", { name: "AI会社の様子" })).toBeVisible();
       await expect(page.locator(".employee-compact-row").first()).toBeVisible();
-      await expect(page.locator(".station-scene").first()).toBeHidden();
+      await expect(page.locator(".office-room-characters").first()).toBeHidden();
     }
   } finally {
     await environment.stop();
@@ -667,10 +681,10 @@ test("UI refinement round 2: composer, sequential clarifications, shared office"
     await expect(timeline.getByText(q1)).toHaveCount(1);
 
     if (!isMobileProject) {
-      await expect(page.locator(".shared-office")).toHaveCount(1);
+      await expect(page.locator(".office-room")).toHaveCount(1);
       await expect(page.locator(".office-zone")).toHaveCount(0);
-      await expect(page.locator(".shared-office-station")).toHaveCount(3);
-      await expect(page.locator(".office-worker.pose-idle").first()).toBeVisible();
+      await expect(page.locator(".room-character")).toHaveCount(3);
+      await expect(page.locator(".room-character.pose-idle").first()).toBeVisible();
 
       const layoutRatio = await page.locator(".workspace-layout").evaluate((element) => {
         const columns = getComputedStyle(element).gridTemplateColumns.split(" ");
@@ -678,14 +692,14 @@ test("UI refinement round 2: composer, sequential clarifications, shared office"
         const right = parseFloat(columns[1]);
         return right / (left + right);
       });
-      expect(layoutRatio).toBeGreaterThan(0.58);
+      expect(layoutRatio).toBeGreaterThan(0.62);
 
       await page.emulateMedia({ colorScheme: "light" });
-      const workerTone = await page.locator(".worker-body").first().evaluate((element) => getComputedStyle(element).backgroundColor);
+      const workerTone = await page.locator(".char-torso").first().evaluate((element) => getComputedStyle(element).backgroundColor);
       expect(workerTone).not.toBe("rgba(0, 0, 0, 0)");
 
       await page.emulateMedia({ colorScheme: "dark" });
-      const darkWorkerTone = await page.locator(".worker-head").first().evaluate((element) => getComputedStyle(element).backgroundColor);
+      const darkWorkerTone = await page.locator(".char-head").first().evaluate((element) => getComputedStyle(element).backgroundColor);
       expect(darkWorkerTone).not.toBe("rgba(0, 0, 0, 0)");
     } else {
       await expect(page.locator(".employee-compact-row")).toHaveCount(3);
@@ -714,7 +728,13 @@ test("selected request detail persists through polling, completion, and failure"
 
     await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible({ timeout: 45_000 });
     await expect(page.locator("#request-detail-view")).toBeVisible();
-    await expect(page.locator("#request-list-view")).toBeHidden();
+    const isMobile = await page.locator("#menu-button").isVisible();
+    if (isMobile) {
+      await expect(page.locator("#request-list-view")).toBeHidden();
+    } else {
+      await expect(page.locator("#request-list-view")).toBeVisible();
+      await expect(page.locator(".requests-pane")).toHaveClass(/has-detail/);
+    }
   } finally {
     await environment.stop();
   }
@@ -831,6 +851,125 @@ test("clarification answers commit incrementally: durable per-answer Turns, relo
       .map((text) => expectedOrder.findIndex((needle) => text.includes(needle)))
       .filter((index) => index !== -1);
     expect(observedOrder).toEqual([0, 1, 2, 3, 4, 5]);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("new request draft opens empty without flashing prior session content", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  const sessionAText = "session A flash gate用の依頼です";
+  const sessionBText = "session B flash gate用の新しい依頼です";
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, sessionAText);
+    await expect(page.locator(".thread-title")).toContainText("session A flash gate");
+    await expect(page.locator("#activity-timeline")).toContainText(sessionAText);
+
+    await openNewRequestFromUI(page);
+    await expect(page.locator(".thread-title")).toContainText("新しい依頼");
+    await expect(page.locator("#activity-timeline")).not.toContainText(sessionAText);
+    await expect(page.locator("#activity-timeline")).toContainText("依頼内容を入力してください");
+    await expect(page.locator("#composer-input")).toHaveValue("");
+    await expect(page.locator("#composer-input")).toHaveAttribute("placeholder", "依頼内容を入力...");
+
+    await page.waitForTimeout(5500);
+    await expect(page.locator(".thread-title")).toContainText("新しい依頼");
+    await expect(page.locator("#activity-timeline")).not.toContainText(sessionAText);
+
+    await page.locator("#composer-input").fill(sessionBText);
+    await page.locator("#composer-send").click();
+    await expect(page.locator("#activity-timeline")).toContainText(sessionBText, { timeout: 45_000 });
+    await expect(page.locator(".thread-title")).toContainText("session B flash gate");
+    await expect(page.locator("#activity-timeline")).not.toContainText(sessionAText);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("office room visual: single room, characters, poses, themes, and mobile fallback", async ({ page }, testInfo) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  const isMobileProject = testInfo.project.name.includes("iphone");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    if (isMobileProject) {
+      const menu = page.locator("#menu-button");
+      await menu.click();
+      await page.locator("#nav-employees-home").click();
+      await expect(page.locator(".office-room-compact .employee-compact-row")).toHaveCount(3);
+      await expect(page.locator(".office-room-characters").first()).toBeHidden();
+      return;
+    }
+
+    await expect(page.locator(".office-room")).toHaveCount(1);
+    await expect(page.locator(".office-zone")).toHaveCount(0);
+    await expect(page.locator(".office-room-svg")).toHaveCount(1);
+    await expect(page.locator(".room-character")).toHaveCount(3);
+    await expect(page.locator(".room-character .char-head").first()).toBeVisible();
+    await expect(page.locator(".room-character .char-leg-left").first()).toBeVisible();
+    await expect(page.locator(".room-character.pose-idle").first()).toBeVisible();
+
+    await page.emulateMedia({ colorScheme: "dark" });
+    const darkHead = await page.locator(".char-head").first().evaluate((element) => getComputedStyle(element).backgroundColor);
+    expect(darkHead).not.toBe("rgba(0, 0, 0, 0)");
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(page.locator(".room-character").first()).toBeVisible();
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("steps.description failure lists indexed structured field shapes in diagnostics", async ({ page }) => {
+  const environment = await startBrowserEnvironment("ceo_plan_steps_description_failure");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await page.evaluate(() => {
+      window.__lastCopied = "";
+      if (navigator.clipboard?.writeText) {
+        const original = navigator.clipboard.writeText.bind(navigator.clipboard);
+        navigator.clipboard.writeText = async (text) => {
+          window.__lastCopied = text;
+          return original(text);
+        };
+      }
+    });
+    await startRequest(page, "steps.description shape diagnostic gate用の依頼です");
+    const isMobile = await page.locator("#menu-button").isVisible();
+    if (isMobile) {
+      const menu = page.locator("#menu-button");
+      await menu.click();
+      await page.locator("#nav-request-list").click();
+    }
+    const sessionButton = page.getByRole("button", { name: /steps.description shape diagnostic gate用の依頼です/ });
+    await expect(sessionButton).toBeVisible({ timeout: 45_000 });
+    await sessionButton.click();
+    await expect(page.locator("#activity-timeline").getByRole("button", { name: "ⓘ エラーの詳細" })).toBeVisible({ timeout: 15_000 });
+
+    const detailsToggle = page.locator("#activity-timeline").getByRole("button", { name: "ⓘ エラーの詳細" }).last();
+    await detailsToggle.click();
+    const panel = page.locator("#activity-timeline .msg-technical-panel").last();
+    await expect(panel).toContainText("Structured field shapes");
+    await expect(panel).toContainText("steps.0.description");
+    await expect(panel).toContainText("steps.1.description");
+    await expect(panel).toContainText("present, string, blank");
+    await expect(panel).toContainText("missing");
+    const panelText = await panel.innerText();
+    expect(panelText.indexOf("steps.0.description")).toBeLessThan(panelText.indexOf("steps.1.description"));
+    await expect(panel).not.toContainText("Steps Shape Gate");
+    await expect(panel).not.toContainText("required_role");
+
+    const copyButton = page.locator("#activity-timeline").getByRole("button", { name: "診断情報をコピー" }).last();
+    await copyButton.click();
+    const copied = await page.evaluate(() => window.__lastCopied || "");
+    expect(copied).toContain("steps.0.description");
+    expect(copied).toContain("steps.1.description");
+    expect(copied.indexOf("steps.0.description")).toBeLessThan(copied.indexOf("steps.1.description"));
+    expect(copied).not.toContain("Steps Shape Gate");
+    expect(copied).not.toContain("required_role");
   } finally {
     await environment.stop();
   }
