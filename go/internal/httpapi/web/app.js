@@ -93,7 +93,6 @@ const state = {
   forceScrollToBottom: false,
   pendingAttentionTitle: "",
   workflowPlanPreview: null,
-  clarificationDraft: null,
   composerDraft: "",
 };
 
@@ -266,6 +265,12 @@ function sessionListPresentation(record) {
   }
 }
 
+function sessionListMeta(record, presentation) {
+  const time = record.updated_at || record.created_at;
+  const timeLabel = time ? sessionTimeLabel(time) : "";
+  return timeLabel ? `${presentation.label} · ${timeLabel}` : presentation.label;
+}
+
 function sessionIconNode(icon) {
   const labels = { attention: "対応待ち", working: "作業中", complete: "完了", warning: "失敗" };
   return node("span", { class: `session-icon session-icon-${icon}`, "aria-label": labels[icon] || icon },
@@ -369,16 +374,7 @@ function clearActionSurface() {
 }
 
 function resetClarificationDraft() {
-  state.clarificationDraft = null;
   state.composerDraft = "";
-}
-
-function clarificationDraft(next) {
-  const key = JSON.stringify([next.session_id, next.expected_version, next.questions]);
-  if (!state.clarificationDraft || state.clarificationDraft.key !== key) {
-    state.clarificationDraft = { key, answers: [], index: 0 };
-  }
-  return state.clarificationDraft;
 }
 
 function activeEmployeeStatuses() {
@@ -426,10 +422,11 @@ function composerStatusText(next) {
   }
 
   if (next.kind === "answer_clarifications") {
-    const total = next.questions.length;
-    if (total <= 1) return "回答を入力してください";
-    const draft = clarificationDraft(next);
-    return `質問 ${draft.index + 1} / ${total}`;
+    // next.questions always names exactly the single next unanswered
+    // CEOQuestion (interaction.RecordAnswers commits one durable Turn per
+    // answer, in order) -- there is no multi-question progress to track
+    // locally.
+    return next.questions[0] || "確認の質問";
   }
   if (next.kind === "approve_plan_generation") return "進め方を準備しています";
   if (next.kind === "approve_plan_apply") return "進め方の確認待ちです";
@@ -1248,7 +1245,7 @@ function renderSessions() {
         sessionIconNode(presentation.icon),
         node("span", { class: "session-copy" },
           node("span", { class: "session-title" }, requestTitleText(record.request)),
-          node("span", { class: "session-meta" }, presentation.label),
+          node("span", { class: "session-meta" }, sessionListMeta(record, presentation)),
         ),
         );
       }),
@@ -1376,40 +1373,27 @@ function renderQuestions(next) {
   renderTimeline();
 }
 
-function submitClarificationAnswers(next, answers = null) {
-  if (answers) {
-    if (answers.some((entry) => !entry.answer)) return toast("回答を入力してください。");
-    return executeNextCommand(next, {
-      session_id: next.session_id,
-      expected_version: next.expected_version,
-      answers,
-      current_time: now(),
-    }, "回答を保存しています", "回答後に進め方を準備します。");
-  }
-  const draft = clarificationDraft(next);
+// submitClarificationAnswers durably commits exactly the single question
+// currently displayed (next.questions[0]) the moment the CEO sends it --
+// it never accumulates answers in local state waiting for a later batch
+// submit. interaction.RecordAnswers records this one answer as its own
+// append-only Turn immediately, so it survives reload and daemon restart
+// even if the CEO never answers the next question. Go alone decides
+// whether that leaves more questions pending (next.kind stays
+// "answer_clarifications") or clarification is complete (Plan generation
+// runs, chained server-side).
+function submitClarificationAnswers(next) {
   const answer = ui.composerInput.value.trim();
   if (!answer) return toast("回答を入力してください。");
-  const currentQuestion = next.questions[draft.index];
-  draft.answers.push({ question: currentQuestion, answer });
+  const currentQuestion = next.questions[0];
   ui.composerInput.value = "";
   state.composerDraft = "";
-  if (draft.index + 1 < next.questions.length) {
-    draft.index += 1;
-    state.renderKey = "";
-    state.timelineRenderKey = "";
-    renderQuestions(next);
-    renderComposerState(next);
-    return Promise.resolve(false);
-  }
   return executeNextCommand(next, {
     session_id: next.session_id,
     expected_version: next.expected_version,
-    answers: draft.answers,
+    answers: [{ question: currentQuestion, answer }],
     current_time: now(),
-  }, "回答を保存しています", "回答後に進め方を準備します。").then((completed) => {
-    if (completed) resetClarificationDraft();
-    return completed;
-  });
+  }, "回答を保存しています", "回答後に進め方を準備します。");
 }
 
 function currentPlan() {
@@ -2037,16 +2021,13 @@ function pendingInteractionNodes() {
         node("p", { class: "msg-system-copy" }, "AIサービスへ接続してください。"),
       )];
     }
-    return [node("article", { class: "msg msg-system" },
-      node("p", { class: "msg-system-copy" }, "進め方を準備しています"),
-    )];
+    // Composer status already carries the single-line state copy.
+    return [];
   case "answer_clarifications":
-    // The question itself is already visible via the canonical
-    // ConversationEntry (clarification_requested, projected from the
-    // committed Plan) rendered in conversationTimelineNodes() above -- this
-    // must never re-derive or duplicate that text from local draft state.
-    // The composer's own placeholder ("回答を入力...") is enough guidance for
-    // which question is currently being answered.
+    // The current unanswered question is already visible via the
+    // canonical ConversationEntry (clarification_requested) rendered in
+    // conversationTimelineNodes() -- composer status carries progress,
+    // placeholder stays a generic input hint.
     return [];
   case "approve_plan_apply": {
     const current = currentPlan();
@@ -2061,6 +2042,14 @@ function pendingInteractionNodes() {
   }
 }
 
+// conversationTimelineNodes renders canonical conversation entries
+// directly, with no client-side filtering or reconstruction: the
+// Conversation Projection itself (process.InspectConversation) now
+// reveals clarification questions one at a time, interleaved with their
+// answers, exactly as WorkCairn durably committed them (see
+// clarificationAnswerEntries in conversation.go) -- there is no "every
+// question up front" shape left for the UI to filter down from, and no
+// question/answer array the UI zips together to reconstruct history.
 function conversationTimelineNodes() {
   const nodes = (state.conversation?.entries || []).map((entry) => conversationEntryNode(entry));
   nodes.push(...pendingInteractionNodes());
@@ -2069,7 +2058,6 @@ function conversationTimelineNodes() {
 
 function timelineRenderKey() {
   const entries = state.conversation?.entries || [];
-  const draft = state.next?.kind === "answer_clarifications" ? clarificationDraft(state.next) : null;
   return JSON.stringify([
     entries.map((entry) => [
       entry.at, entry.category, entry.kind, entry.mention_allowed, entry.ceo_message_text,
@@ -2080,7 +2068,6 @@ function timelineRenderKey() {
     state.next?.expected_version,
     storedPendingCommand()?.command_id || "",
     state.lastError?.code || "",
-    draft ? [draft.index, draft.answers] : null,
     currentPlan()?.digest || "",
     state.pendingAttentionTitle || "",
   ]);
@@ -2327,43 +2314,15 @@ function employeePoseClass(displayStatus) {
   }
 }
 
-function officeWorkerNode(employee, statusClass) {
-  const variant = avatarVariant(employee.id);
-  const poseClass = employeePoseClass(employee.display_status);
-  return node("div", { class: `office-worker ${poseClass} ${statusClass}`.trim(), "aria-hidden": "true" },
-    node("span", { class: `worker-figure avatar-v${variant}` },
-      node("span", { class: "worker-head" }),
-      node("span", { class: "worker-body" }),
-      node("span", { class: "worker-shadow" }),
-    ),
-    employee.display_status === "社長と相談中" || employee.ceo_attention
-      ? node("span", { class: "worker-speech-bubble" })
-      : null,
-  );
-}
-
-function officeSceneNode(employee) {
-  const status = employee.display_status || "待機中";
-  const statusClass = employeeStatusClass(status);
-  return node("div", { class: "office-booth-scene" },
-    node("div", { class: "office-props", "aria-hidden": "true" },
-      node("span", { class: "prop-floor" }),
-      node("span", { class: "prop-desk" }),
-      node("span", { class: "prop-monitor" }),
-      node("span", { class: "prop-chair" }),
-      node("span", { class: "prop-plant" }),
-      status === "レビュー中" ? node("span", { class: "prop-documents" }) : null,
-      status === "作業中" || status === "修正中" ? node("span", { class: "prop-coffee" }) : null,
-    ),
-    officeWorkerNode(employee, statusClass),
-  );
-}
-
 function employeeCompactRow(employee) {
   const statusClass = employeeStatusClass(employee.display_status);
   const variant = avatarVariant(employee.id);
   return node("div", { class: "employee-compact-row" },
-    node("span", { class: `employee-compact-avatar avatar-v${variant} ${statusClass}`.trim(), "aria-hidden": "true" }),
+    node("span", { class: `employee-compact-avatar avatar-v${variant} ${statusClass}`.trim(), "aria-hidden": "true" },
+      node("span", { class: "worker-hair" }),
+      node("span", { class: "worker-head" }),
+      node("span", { class: "worker-body" }),
+    ),
     node("div", { class: "employee-compact-copy" },
       node("strong", {}, employee.name || employee.id),
       node("small", {}, `${employee.department || "会社"} · ${employee.role || "役割未設定"}`),
@@ -2377,15 +2336,22 @@ function employeeCompactRow(employee) {
   );
 }
 
-function officeCharacterNode(employee) {
+function sharedOfficeStationNode(employee, slotIndex, slotCount) {
   const statusClass = employeeStatusClass(employee.display_status);
+  const poseClass = employeePoseClass(employee.display_status);
+  const variant = avatarVariant(employee.id);
+  const slotClass = slotCount <= 1 ? "slot-center" : slotIndex === 0 ? "slot-left" : slotIndex === slotCount - 1 ? "slot-right" : "slot-center";
   return node("article", {
-    class: `employee-card office-character office-booth ${statusClass}${employee.is_liaison ? " liaison" : ""}${employee.ceo_attention ? " attention" : ""}`.trim(),
+    class: `shared-office-station ${slotClass} ${statusClass}${employee.is_liaison ? " liaison" : ""}${employee.ceo_attention ? " attention" : ""}`.trim(),
     title: employee.current_work_title || employee.display_status || "",
   },
-  employeeCompactRow(employee),
-  officeSceneNode(employee),
-  node("div", { class: "employee-card-copy" },
+  node("div", { class: "station-scene", "aria-hidden": "true" },
+    node("span", { class: "station-desk" }),
+    node("span", { class: "station-monitor" }),
+    node("span", { class: "station-chair" }),
+    officeWorkerNode(employee, statusClass, poseClass, variant),
+  ),
+  node("div", { class: "station-copy" },
     node("strong", {}, employee.name || employee.id),
     node("small", {}, employee.role || "役割未設定"),
     node("span", { class: `employee-status ${statusClass}`.trim() },
@@ -2395,6 +2361,23 @@ function officeCharacterNode(employee) {
     ),
     employee.current_work_title ? node("p", { class: "employee-task" }, employee.current_work_title) : null,
   ),
+  employeeCompactRow(employee),
+  );
+}
+
+function officeWorkerNode(employee, statusClass, poseClass = null, variant = null) {
+  const resolvedVariant = variant ?? avatarVariant(employee.id);
+  const resolvedPose = poseClass ?? employeePoseClass(employee.display_status);
+  return node("div", { class: `office-worker ${resolvedPose} ${statusClass}`.trim(), "aria-hidden": "true" },
+    node("span", { class: `worker-figure avatar-v${resolvedVariant}` },
+      node("span", { class: "worker-hair" }),
+      node("span", { class: "worker-head" }),
+      node("span", { class: "worker-body" }),
+      node("span", { class: "worker-shadow" }),
+    ),
+    employee.display_status === "社長と相談中" || employee.ceo_attention
+      ? node("span", { class: "worker-speech-bubble" })
+      : null,
   );
 }
 
@@ -2404,24 +2387,17 @@ function renderEmployeesPane() {
   if (!employees.length) {
     ui.employeeGrid.replaceChildren(node("p", { class: "empty" }, "AI社員はまだ読み込まれていません。"));
   } else {
-    const departments = new Map();
-    for (const employee of employees) {
-      const department = employee.department || "会社";
-      if (!departments.has(department)) departments.set(department, []);
-      departments.get(department).push(employee);
-    }
     ui.employeeGrid.replaceChildren(
-      node("div", { class: "office-floor" },
-        ...[...departments.entries()].map(([department, members]) =>
-          node("section", { class: "office-zone" },
-            node("header", { class: "office-zone-heading" },
-              node("span", { class: "office-zone-label" }, department),
-              node("span", { class: "office-zone-count" }, `${members.length}`),
-            ),
-            node("div", { class: "office-zone-grid" },
-              ...members.map((employee) => officeCharacterNode(employee)),
-            ),
-          ),
+      node("div", { class: "shared-office" },
+        node("div", { class: "shared-office-backdrop", "aria-hidden": "true" },
+          node("span", { class: "office-prop office-prop-plant" }),
+          node("span", { class: "office-prop office-prop-whiteboard" }),
+          node("span", { class: "office-prop office-prop-coffee" }),
+          node("span", { class: "office-prop office-prop-document" }),
+          node("span", { class: "shared-office-floor" }),
+        ),
+        node("div", { class: "shared-office-stations" },
+          ...employees.map((employee, index) => sharedOfficeStationNode(employee, index, employees.length)),
         ),
       ),
     );
@@ -2719,13 +2695,6 @@ if (ui.threadComposer) {
     const next = state.next;
     if (!next || next.kind !== "answer_clarifications") return;
     await submitClarificationAnswers(next);
-  });
-}
-if (ui.composerInput) {
-  ui.composerInput.addEventListener("input", () => {
-    if (ui.threadComposer?.dataset.mode === "clarification") {
-      state.composerDraft = ui.composerInput.value;
-    }
   });
 }
 document.querySelectorAll("[data-close-dialog]").forEach((control) => control.addEventListener("click", closeDialog));

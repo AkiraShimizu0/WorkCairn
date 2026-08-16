@@ -307,7 +307,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		`requestJSON("/v1/interaction-plans"`,
 		`showError(error, "依頼内容を確認できませんでした")`,
 		`prepareWorkflowApproval(next, 20)`,
-		"clarificationDraft", "resetClarificationDraft", "state.clarificationDraft",
+		"resetClarificationDraft", "answers: [{ question: currentQuestion, answer }]",
 		`requestJSON("/v1/provider-status")`, "PROVIDER_CONFIGURATION_REQUIRED", "AIサービスへ接続してください",
 		"openSettingsDialog", "renderProviderSettings", "秘密情報はiPhoneやbrowser storageへ保存しません",
 		"PROVIDER_AUTHENTICATION_REQUIRED", "PROVIDER_BILLING_REQUIRED", "PROVIDER_PERMISSION_DENIED",

@@ -535,15 +535,15 @@ test("employee visual section stays separate from selected request chat", async 
       await menu.click();
       await page.locator("#nav-employees-home").click();
     }
-    await expect(page.locator(".office-floor")).toBeVisible();
-    await expect(page.locator(".office-booth").first()).toBeVisible();
+    await expect(page.locator(".shared-office")).toBeVisible();
+    await expect(page.locator(".shared-office-station").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "社内の動き" })).toBeVisible();
     await startRequest(page, "りんごについて100文字程度で説明して");
     await expect(page.locator("#activity-timeline")).toBeVisible();
     if (isMobile) {
-      await expect(page.locator(".office-floor")).toBeHidden();
+      await expect(page.locator(".shared-office-stations")).toBeHidden();
     } else {
-      await expect(page.locator(".office-floor")).toBeVisible();
+      await expect(page.locator(".shared-office")).toBeVisible();
     }
   } finally {
     await environment.stop();
@@ -588,12 +588,12 @@ test("UI refinement: composer, settings, branding, themes, and office visual", a
       await page.locator("#nav-employees-home").click();
       await expect(page.getByRole("heading", { name: "AI会社の様子" })).toBeVisible();
       await expect(page.locator(".employee-compact-row").first()).toBeVisible();
-      await expect(page.locator(".office-booth-scene").first()).toBeHidden();
+      await expect(page.locator(".station-scene").first()).toBeHidden();
     } else {
       await page.emulateMedia({ colorScheme: "light" });
       await expect(page.locator("#workspace-view")).toBeVisible();
-      await expect(page.locator(".office-booth").first()).toBeVisible();
-      await expect(page.locator(".office-booth-scene").first()).toBeVisible();
+      await expect(page.locator(".shared-office-station").first()).toBeVisible();
+      await expect(page.locator(".station-scene").first()).toBeVisible();
       await expect(page.locator(".office-worker").first()).toBeVisible();
     }
 
@@ -607,8 +607,92 @@ test("UI refinement: composer, settings, branding, themes, and office visual", a
       await page.locator("#nav-employees-home").click();
       await expect(page.getByRole("heading", { name: "AI会社の様子" })).toBeVisible();
       await expect(page.locator(".employee-compact-row").first()).toBeVisible();
-      await expect(page.locator(".office-booth-scene").first()).toBeHidden();
+      await expect(page.locator(".station-scene").first()).toBeHidden();
     }
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("UI refinement round 2: composer, sequential clarifications, shared office", async ({ page }, testInfo) => {
+  const environment = await startBrowserEnvironment("clarification_three");
+  const isMobileProject = testInfo.project.name.includes("iphone");
+  const q1 = "Browser Gate質問1：対象読者は誰ですか？";
+  const q2 = "Browser Gate質問2：希望する文体は？";
+  const q3 = "Browser Gate質問3：掲載先はどこですか？";
+  const a1 = "初めてWorkCairnを使う人向けです。";
+  const a2 = "やさしい説明文でお願いします。";
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "clarification presentation gate用の短い成果物を作ってください");
+    await expect(page.locator('#composer-input[placeholder="回答を入力..."]')).toBeVisible({ timeout: 45_000 });
+
+    const timeline = page.locator("#activity-timeline");
+    const composerStatus = page.locator("#composer-status");
+    const composerInput = page.locator("#composer-input");
+
+    await expect(timeline).toContainText(q1);
+    await expect(timeline).not.toContainText(q2);
+    await expect(timeline).not.toContainText(q3);
+    // composer-status names the single next unanswered question directly
+    // (Next() only ever names one question -- see the incremental
+    // clarification commit design), not a "質問 N / M" progress counter.
+    await expect(composerStatus).toContainText(q1);
+    await expect(composerStatus).not.toContainText("回答を入力");
+    await expect(composerInput).toHaveAttribute("placeholder", "回答を入力...");
+
+    await composerInput.fill(a1);
+    await page.locator("#composer-send").click();
+    await expect(timeline).toContainText(q1);
+    await expect(timeline).toContainText(a1);
+    await expect(timeline).toContainText(q2);
+    await expect(timeline).not.toContainText(q3);
+    await expect(composerStatus).toContainText(q2);
+
+    await composerInput.fill(a2);
+    await page.locator("#composer-send").click();
+    await expect(timeline).toContainText(q2);
+    await expect(timeline).toContainText(a2);
+    await expect(timeline).toContainText(q3);
+    await expect(composerStatus).toContainText(q3);
+
+    await page.waitForTimeout(5500);
+    await expect(composerStatus).toContainText(q3);
+    await expect(timeline).toContainText(q1);
+    await expect(timeline).toContainText(a1);
+    await expect(timeline).toContainText(q2);
+    await expect(timeline).toContainText(a2);
+    await expect(timeline.getByText(q3)).toHaveCount(1);
+    await expect(timeline.getByText(q1)).toHaveCount(1);
+
+    if (!isMobileProject) {
+      await expect(page.locator(".shared-office")).toHaveCount(1);
+      await expect(page.locator(".office-zone")).toHaveCount(0);
+      await expect(page.locator(".shared-office-station")).toHaveCount(3);
+      await expect(page.locator(".office-worker.pose-idle").first()).toBeVisible();
+
+      const layoutRatio = await page.locator(".workspace-layout").evaluate((element) => {
+        const columns = getComputedStyle(element).gridTemplateColumns.split(" ");
+        const left = parseFloat(columns[0]);
+        const right = parseFloat(columns[1]);
+        return right / (left + right);
+      });
+      expect(layoutRatio).toBeGreaterThan(0.58);
+
+      await page.emulateMedia({ colorScheme: "light" });
+      const workerTone = await page.locator(".worker-body").first().evaluate((element) => getComputedStyle(element).backgroundColor);
+      expect(workerTone).not.toBe("rgba(0, 0, 0, 0)");
+
+      await page.emulateMedia({ colorScheme: "dark" });
+      const darkWorkerTone = await page.locator(".worker-head").first().evaluate((element) => getComputedStyle(element).backgroundColor);
+      expect(darkWorkerTone).not.toBe("rgba(0, 0, 0, 0)");
+    } else {
+      await expect(page.locator(".employee-compact-row")).toHaveCount(3);
+    }
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(page.getByRole("button", { name: "送信" })).toBeEnabled();
   } finally {
     await environment.stop();
   }
@@ -650,6 +734,103 @@ test("selected request detail persists after provider failure", async ({ page })
     await page.waitForTimeout(5500);
     await expect(page.locator("#request-detail-view")).toBeVisible();
     await expect(page.locator("#activity-timeline")).toContainText("PROVIDER_RATE_LIMITED");
+  } finally {
+    await environment.stop();
+  }
+});
+
+// TestClarificationAnswersCommitIncrementally is the browser-level
+// regression for the WorkCairn clarification UX semantic gap: each
+// composer submission durably commits its own answer immediately (no
+// batching in local UI state), reload restores exactly the answered
+// history plus the single pending question, and Plan generation (a real
+// Provider call) only runs once after the final answer -- never once per
+// question.
+test("clarification answers commit incrementally: durable per-answer Turns, reload restoration, single Plan regeneration", async ({ page }) => {
+  const environment = await startBrowserEnvironment("clarification_three");
+  const q1 = "Browser Gate質問1：対象読者は誰ですか？";
+  const q2 = "Browser Gate質問2：希望する文体は？";
+  const q3 = "Browser Gate質問3：掲載先はどこですか？";
+  const a1 = "初めてWorkCairnを使う人向けです。";
+  const a2 = "やさしい説明文でお願いします。";
+  const a3 = "社内ブログに掲載します。";
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "clarification incremental gate用の短い成果物を作ってください");
+    await expect(page.locator('#composer-input[placeholder="回答を入力..."]')).toBeVisible({ timeout: 45_000 });
+
+    const timeline = page.locator("#activity-timeline");
+    const composerStatus = page.locator("#composer-status");
+    const composerInput = page.locator("#composer-input");
+
+    // 1/2. Only Q1 is shown; Q2/Q3 are not revealed yet.
+    await expect(timeline).toContainText(q1);
+    await expect(timeline).not.toContainText(q2);
+    await expect(timeline).not.toContainText(q3);
+    // 14. The composer is always exactly one input/send pair.
+    await expect(page.locator("#composer-input")).toHaveCount(1);
+    await expect(page.locator("#composer-send")).toHaveCount(1);
+    // Initial CEO Plan Intent generation: exactly 1 Provider call so far.
+    expect(environment.provider.calls.length).toBe(1);
+
+    // 3. Send A1 from the composer.
+    await composerInput.fill(a1);
+    await page.locator("#composer-send").click();
+    // 4. Q1/A1 remain in history. 5. Q2 is the only next pending question.
+    await expect(timeline).toContainText(q1);
+    await expect(timeline).toContainText(a1);
+    await expect(timeline).toContainText(q2);
+    await expect(timeline).not.toContainText(q3);
+    await expect(composerStatus).toContainText(q2);
+    await expect(page.locator("#composer-input")).toHaveCount(1);
+    // Answering Q1 alone must not trigger Plan regeneration.
+    expect(environment.provider.calls.length).toBe(1);
+
+    // 15. Polling (every 5s) must not lose the current pending question.
+    await page.waitForTimeout(5500);
+    await expect(composerStatus).toContainText(q2);
+    await expect(timeline).toContainText(q1);
+    await expect(timeline).toContainText(a1);
+    expect(environment.provider.calls.length).toBe(1);
+
+    // 6/7. Reload restores Q1/A1/Q2 -- durable Turns, not client state.
+    await page.reload();
+    await ensureRequestDetail(page);
+    await expect(timeline).toContainText(q1);
+    await expect(timeline).toContainText(a1);
+    await expect(timeline).toContainText(q2);
+    await expect(timeline).not.toContainText(q3);
+    await expect(composerStatus).toContainText(q2);
+    await expect(page.locator("#composer-input")).toHaveCount(1);
+    expect(environment.provider.calls.length).toBe(1);
+
+    // 8. Send A2.
+    await composerInput.fill(a2);
+    await page.locator("#composer-send").click();
+    // 9. Q1,A1,Q2,A2,Q3 now visible in that order (checked precisely below).
+    await expect(timeline).toContainText(q3);
+    await expect(composerStatus).toContainText(q3);
+    expect(environment.provider.calls.length).toBe(1);
+
+    // 10. Send A3 (final answer).
+    await composerInput.fill(a3);
+    await page.locator("#composer-send").click();
+    // 11. Clarification is complete; Plan generation is reached.
+    await expect(page.locator(".msg-embed-plan")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole("button", { name: "この内容で進める" })).toBeVisible({ timeout: 60_000 });
+    // 13. Exactly one additional Provider call for the final Plan
+    // regeneration -- never one per answered question.
+    expect(environment.provider.calls.length).toBe(2);
+
+    // 12. Final Conversation Projection order: Q1,A1,Q2,A2,Q3,A3.
+    const clarificationNodes = page.locator("#activity-timeline article.msg-clarification, #activity-timeline article.msg-user");
+    const texts = await clarificationNodes.allTextContents();
+    const expectedOrder = [q1, a1, q2, a2, q3, a3];
+    const observedOrder = texts
+      .map((text) => expectedOrder.findIndex((needle) => text.includes(needle)))
+      .filter((index) => index !== -1);
+    expect(observedOrder).toEqual([0, 1, 2, 3, 4, 5]);
   } finally {
     await environment.stop();
   }

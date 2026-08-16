@@ -46,6 +46,36 @@
         "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"利用開始の案内が追加され、要件を満たしています。\"}"}], "usage": {"input_tokens": 27, "output_tokens": 22}}
       }
     ],
+    "clarification_three": [
+      {
+        "name": "ceo_intent_clarification_three",
+        "delay_ms": 500,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_ceo_clarify_three_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Browser Clarification Project\",\"objective\":\"3問clarificationのPresentationを確認する\",\"summary\":\"Content Writerが作成しQA Engineerが確認する\",\"steps\":[{\"kind\":\"write\",\"description\":\"clarification確認用の短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[\"Browser Gate質問1：対象読者は誰ですか？\",\"Browser Gate質問2：希望する文体は？\",\"Browser Gate質問3：掲載先はどこですか？\"]}"}], "usage": {"input_tokens": 18, "output_tokens": 42}}
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 500,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_ceo_final_three_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Browser Clarification Project\",\"objective\":\"3問clarificationのPresentationを確認する\",\"summary\":\"clarification確認用の短い成果物を作成する\",\"steps\":[{\"kind\":\"write\",\"description\":\"clarification確認用の短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 21, "output_tokens": 39}}
+      },
+      {
+        "name": "task_execution_success",
+        "delay_ms": 500,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_task_three_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# Clarification Gate\n\n3問clarificationのPresentation確認用成果物です。"}], "usage": {"input_tokens": 24, "output_tokens": 31}}
+      },
+      {
+        "name": "re_review_approve",
+        "delay_ms": 500,
+        "status": 200,
+        "headers": {"content-type": "application/json", "request-id": "req_browser_review_three_001"},
+        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"clarification gate用の成果物として問題ありません。\"}"}], "usage": {"input_tokens": 27, "output_tokens": 22}}
+      }
+    ],
     "provider_failure": [
       {
         "name": "ceo_intent_success",
