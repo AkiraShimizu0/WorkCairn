@@ -67,7 +67,11 @@
                   <button id="refresh-button" class="text-link" type="button">更新</button>
                 </div>
               </header>
-              <div id="session-list" class="session-list"></div>
+              <div id="session-list-filter" class="session-list-filter" role="tablist" aria-label="依頼一覧の表示">
+                <button id="session-filter-active" class="session-filter-tab" type="button" role="tab" aria-selected="true" aria-controls="session-list">依頼</button>
+                <button id="session-filter-archived" class="session-filter-tab" type="button" role="tab" aria-selected="false" aria-controls="session-list">削除済み</button>
+              </div>
+              <div id="session-list" class="session-list" role="tabpanel"></div>
             </section>
 
             <section id="request-detail-view" class="request-pane-view request-detail-view request-thread" hidden>

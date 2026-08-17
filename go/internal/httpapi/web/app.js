@@ -42,6 +42,9 @@ const ui = {
   detailsPanel: document.querySelector("#details-panel"),
   details: document.querySelector("#details-content"),
   sessionList: document.querySelector("#session-list"),
+  sessionListFilter: document.querySelector("#session-list-filter"),
+  sessionFilterActive: document.querySelector("#session-filter-active"),
+  sessionFilterArchived: document.querySelector("#session-filter-archived"),
   timeline: document.querySelector("#activity-timeline"),
   employeeGrid: document.querySelector("#employee-grid"),
   companyFeed: document.querySelector("#company-feed"),
@@ -94,6 +97,10 @@ const state = {
   pendingAttentionTitle: "",
   workflowPlanPreview: null,
   composerDraft: "",
+  sessionListFilter: "active",
+  sessionMenuSessionId: "",
+  sessionConfirmSessionId: "",
+  refreshSequence: 0,
 };
 
 class APIError extends Error {
@@ -231,6 +238,69 @@ function clearSessionPresentationState() {
 
 function isDraftRequestActive() {
   return Boolean(state.draftRequest);
+}
+
+function isArchivedRecord(record = state.record) {
+  return record?.archived === true;
+}
+
+function closeSessionMenus() {
+  state.sessionMenuSessionId = "";
+  state.sessionConfirmSessionId = "";
+}
+
+function renderSessionListFilter() {
+  const archived = state.sessionListFilter === "archived";
+  ui.sessionFilterActive.classList.toggle("active", !archived);
+  ui.sessionFilterArchived.classList.toggle("active", archived);
+  ui.sessionFilterActive.setAttribute("aria-selected", archived ? "false" : "true");
+  ui.sessionFilterArchived.setAttribute("aria-selected", archived ? "true" : "false");
+}
+
+async function setSessionListFilter(filter, { userInitiated = true } = {}) {
+  if (state.sessionListFilter === filter) return;
+  closeSessionMenus();
+  state.sessionListFilter = filter;
+  renderSessionListFilter();
+  const viewingArchived = isArchivedRecord();
+  if (userInitiated && ((filter === "active" && viewingArchived) || (filter === "archived" && state.record && !viewingArchived))) {
+    await clearSelectedSessionPresentation();
+  }
+  await loadSessions();
+  applyNavigationLayout();
+}
+
+function sessionListEmptyMessage() {
+  return state.sessionListFilter === "archived"
+    ? "削除済みの依頼はありません。"
+    : "まだ依頼はありません。";
+}
+
+async function clearSelectedSessionPresentation() {
+  state.refreshSequence += 1;
+  state.record = null;
+  state.next = null;
+  state.lastError = null;
+  state.pendingAttentionTitle = "";
+  state.workflowPlanPreview = null;
+  clearSessionPresentationState();
+  localStorage.removeItem(STORAGE_SESSION);
+  clearCurrentError();
+  clearActionSurface();
+  ui.requestSummary.replaceChildren();
+  ui.timeline.replaceChildren();
+  ui.detailsPanel.hidden = true;
+  ui.details.replaceChildren();
+  state.renderKey = "";
+  state.detailRenderKey = "";
+  state.timelineRenderKey = "";
+  renderAutonomy();
+  renderProofOfWork();
+  renderCEOAttention();
+  renderComposerState(null);
+  if (isRequestDetailVisible()) renderEmpty();
+  applyNavigationLayout();
+  updateNavDrawerState();
 }
 
 function sessionListPresentation(record) {
@@ -412,6 +482,7 @@ function employeeActivityStatusText(employee) {
 }
 
 function composerStatusText(next) {
+  if (isArchivedRecord()) return "削除済みの依頼です。元に戻すと再び操作できます。";
   if (state.lastError) return "判断が必要です";
   const pending = storedPendingCommand();
   if (pending) {
@@ -458,6 +529,9 @@ function composerStatusText(next) {
 function composerCapabilities(next) {
   if (isDraftRequestActive()) {
     return { enabled: true, placeholder: "依頼内容を入力...", mode: "draft" };
+  }
+  if (isArchivedRecord()) {
+    return { enabled: false, placeholder: "削除済みの依頼です", mode: "archived" };
   }
   if (!next || state.lastError) {
     return { enabled: false, placeholder: "メッセージを入力...", mode: "idle" };
@@ -888,7 +962,7 @@ function showRequestDetail(sessionID = state.record?.session_id) {
     return;
   }
   if (sessionID && sessionID !== state.record?.session_id) {
-    selectSession(sessionID);
+    void selectSession(sessionID).then(() => showRequestDetail(sessionID));
     return;
   }
   setNav("request_detail");
@@ -1022,10 +1096,28 @@ async function startWorkspace() {
   ui.settingsButton.hidden = false;
   ui.menuButton.hidden = isDesktopLayout();
   setConnected(true);
-  await Promise.all([loadSessions(), loadProviderStatus(), loadWorkspaceStatus(), loadOrganization().catch(() => null), loadCompanyActivity().catch(() => null)]);
+  renderSessionListFilter();
+  await Promise.all([loadProviderStatus(), loadWorkspaceStatus(), loadOrganization().catch(() => null), loadCompanyActivity().catch(() => null)]);
   const stored = localStorage.getItem(STORAGE_SESSION);
-  const candidate = state.sessions.find((record) => record.session_id === stored) ||
-    state.sessions.find((record) => !["completed", "action_completed"].includes(record.state)) || state.sessions[0];
+  if (stored) {
+    try {
+      const record = await requestJSON(`/v1/interactions/${encodeURIComponent(stored)}`);
+      state.sessionListFilter = record.archived ? "archived" : "active";
+      renderSessionListFilter();
+      await loadSessions();
+      const preferredNav = localStorage.getItem(STORAGE_NAV);
+      await selectSession(stored, { rememberNav: false });
+      if (preferredNav === "request_detail" || isDesktopLayout()) showRequestDetail(stored);
+      else if (preferredNav === "request_list" && !isDesktopLayout()) setNav("request_list", false);
+      else setNav("employees_home", false);
+      if (state.workspaceStatus && (!state.workspaceStatus.organization_ready || !state.providerStatus?.configured)) openSetupWizard();
+      return;
+    } catch {
+      localStorage.removeItem(STORAGE_SESSION);
+    }
+  }
+  await loadSessions();
+  const candidate = state.sessions.find((record) => !["completed", "action_completed"].includes(record.state)) || state.sessions[0];
   const preferredNav = localStorage.getItem(STORAGE_NAV);
   if (candidate?.session_id) {
     await selectSession(candidate.session_id, { rememberNav: false });
@@ -1187,12 +1279,130 @@ function openSettingsDialog() {
 }
 
 async function loadSessions() {
-  state.sessions = await requestJSON("/v1/interactions");
+  const query = state.sessionListFilter === "archived" ? "?archived=true" : "";
+  state.sessions = await requestJSON(`/v1/interactions${query}`);
   state.sessions.sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)));
+  renderSessionListFilter();
   renderSessions();
 }
 
+async function resolveSessionExpectedVersion(sessionID, fallbackVersion = null) {
+  if (state.record?.session_id === sessionID && state.next?.expected_version != null) {
+    return state.next.expected_version;
+  }
+  if (state.record?.session_id === sessionID && state.record?.version != null) {
+    return state.record.version;
+  }
+  if (fallbackVersion != null) return fallbackVersion;
+  const detail = await requestJSON(`/v1/interactions/${encodeURIComponent(sessionID)}`);
+  return detail.version;
+}
+
+async function executeArchiveToggleCommand(operation, payload, busyTitle, busyMessage, onSuccess) {
+  if (state.commandInFlight || sessionStorage.getItem(STORAGE_PENDING)) {
+    toast("同じ処理を実行中です。完了するまでお待ちください。");
+    return false;
+  }
+  state.commandInFlight = true;
+  let accepted = false;
+  try {
+    const command = {
+      version: COMMAND_VERSION,
+      command_id: commandID(),
+      operation,
+      approved: true,
+      payload,
+    };
+    state.activeCommandID = command.command_id;
+    sessionStorage.setItem(STORAGE_PENDING, JSON.stringify(command));
+    state.renderKey = "";
+    renderInFlight(command);
+    setBusy(true, busyTitle, busyMessage);
+    await requestJSON("/v1/commands", {
+      method: "POST",
+      headers: { Prefer: "respond-async" },
+      body: JSON.stringify(command),
+    });
+    accepted = true;
+    await monitorAcceptedCommand(command);
+    await onSuccess();
+    setBusy(false);
+    return true;
+  } catch (error) {
+    if (!accepted && error.status !== 0) sessionStorage.removeItem(STORAGE_PENDING);
+    showError(error);
+    return false;
+  } finally {
+    state.commandInFlight = Boolean(sessionStorage.getItem(STORAGE_PENDING));
+    if (!sessionStorage.getItem(STORAGE_PENDING)) state.activeCommandID = "";
+  }
+}
+
+async function confirmArchiveSession(record) {
+  closeSessionMenus();
+  renderSessions();
+  const sessionID = record.session_id;
+  const wasSelected = state.record?.session_id === sessionID;
+  let expectedVersion;
+  try {
+    expectedVersion = await resolveSessionExpectedVersion(sessionID, record.version);
+  } catch (error) {
+    showError(error, "依頼の状態を取得できませんでした");
+    return;
+  }
+  const success = await executeArchiveToggleCommand(
+    "interaction.archive",
+    { session_id: sessionID, expected_version: expectedVersion, current_time: now() },
+    "一覧から非表示にしています",
+    "成果物や実行記録は保持したまま、依頼一覧から外します。",
+    async () => {
+      if (wasSelected) await clearSelectedSessionPresentation();
+      await setSessionListFilter("active", { userInitiated: false });
+      await loadCompanyActivity(true).catch(() => null);
+      renderEmployeesPane();
+      applyNavigationLayout();
+      updateNavDrawerState();
+    },
+  );
+  if (success) toast("依頼一覧から非表示にしました。");
+}
+
+async function confirmUnarchiveSession() {
+  const record = state.record;
+  if (!record || !isArchivedRecord(record)) return;
+  const sessionID = record.session_id;
+  let expectedVersion;
+  try {
+    expectedVersion = await resolveSessionExpectedVersion(sessionID, record.version);
+  } catch (error) {
+    showError(error, "依頼の状態を取得できませんでした");
+    return;
+  }
+  const success = await executeArchiveToggleCommand(
+    "interaction.unarchive",
+    { session_id: sessionID, expected_version: expectedVersion, current_time: now() },
+    "依頼を復元しています",
+    "削除済み一覧から依頼一覧へ戻します。",
+    async () => {
+      await setSessionListFilter("active", { userInitiated: false });
+      await refreshCurrent(true);
+      showRequestDetail(sessionID);
+    },
+  );
+  if (success) toast("依頼を一覧に戻しました。");
+}
+
+async function syncSessionListFilterToRecord() {
+  if (!state.record?.session_id || typeof state.record.archived !== "boolean") return;
+  const shouldBeArchived = state.record.archived;
+  const filterIsArchived = state.sessionListFilter === "archived";
+  if (shouldBeArchived === filterIsArchived) return;
+  await setSessionListFilter(shouldBeArchived ? "archived" : "active", { userInitiated: false });
+}
+
 async function selectSession(id, options = {}) {
+  closeSessionMenus();
+  state.refreshSequence += 1;
   if (!id) {
     state.record = null;
     state.next = null;
@@ -1231,6 +1441,7 @@ async function refreshCurrent(silent = false) {
     renderEmpty();
     return;
   }
+  const sequence = ++state.refreshSequence;
   try {
     const [record, next, reportResult, conversationResult] = await Promise.all([
       requestJSON(`/v1/interactions/${encodeURIComponent(id)}`),
@@ -1242,6 +1453,7 @@ async function refreshCurrent(silent = false) {
         .then((conversation) => ({ conversation }))
         .catch((error) => ({ error })),
     ]);
+    if (sequence !== state.refreshSequence) return;
     state.record = record;
     state.next = next;
     state.workReport = reportResult.report || null;
@@ -1251,13 +1463,18 @@ async function refreshCurrent(silent = false) {
     restoreError(record);
     if (!state.lastError) await restoreDurableFailure(next);
     await loadTaskEvidenceDetails().catch(() => null);
+    if (sequence !== state.refreshSequence) return;
     setConnected(true);
+    await syncSessionListFilterToRecord();
+    if (sequence !== state.refreshSequence) return;
     renderRequestDetail();
     syncRequestDetailNavigation();
     await loadSessions();
+    if (sequence !== state.refreshSequence) return;
     await loadCompanyActivity().catch(() => null);
     renderEmployeesPane();
   } catch (error) {
+    if (sequence !== state.refreshSequence) return;
     setConnected(false);
     showError(error, silent ? "Macとの接続を確認してください" : "依頼の状態を取得できませんでした");
   }
@@ -1281,7 +1498,7 @@ function renderEmpty() {
 
 function renderSessions() {
   if (!state.sessions.length) {
-    ui.sessionList.replaceChildren(node("p", { class: "empty" }, "まだ依頼はありません。"));
+    ui.sessionList.replaceChildren(node("p", { class: "empty" }, sessionListEmptyMessage()));
     return;
   }
   const activeID = state.record?.session_id;
@@ -1289,30 +1506,91 @@ function renderSessions() {
   ui.sessionList.replaceChildren(...groups.flatMap((group) => [
     node("section", { class: "session-date-group" },
       node("h2", { class: "session-date-label" }, group.label),
-      ...group.items.map((record) => {
-        const presentation = sessionListPresentation(record);
-        return node("button", {
-          class: `session-item${activeID === record.session_id ? " active" : ""}`,
-          type: "button",
-          onclick: () => {
-            selectSession(record.session_id);
-            showRequestDetail(record.session_id);
-          },
-        },
-        sessionIconNode(presentation.icon),
-        node("span", { class: "session-copy" },
-          node("span", { class: "session-title" }, requestTitleText(record.request)),
-          node("span", { class: "session-meta" }, sessionListMeta(record, presentation)),
-        ),
-        );
-      }),
+      ...group.items.map((record) => renderSessionRow(record, activeID)),
     ),
   ]));
+}
+
+function renderSessionRow(record, activeID) {
+  const presentation = sessionListPresentation(record);
+  const isActive = activeID === record.session_id;
+  const menuOpen = state.sessionMenuSessionId === record.session_id;
+  const confirmOpen = state.sessionConfirmSessionId === record.session_id;
+  const title = requestTitleText(record.request);
+  const rowChildren = [
+    node("button", {
+      class: `session-item${isActive ? " active" : ""}`,
+      type: "button",
+      onclick: async () => {
+        closeSessionMenus();
+        await selectSession(record.session_id);
+        showRequestDetail(record.session_id);
+      },
+    },
+    sessionIconNode(presentation.icon),
+    node("span", { class: "session-copy" },
+      node("span", { class: "session-title" }, title),
+      node("span", { class: "session-meta" }, sessionListMeta(record, presentation)),
+    ),
+    ),
+  ];
+  if (state.sessionListFilter === "active") {
+    rowChildren.push(node("button", {
+      class: "session-menu-button",
+      type: "button",
+      "aria-label": `${title}の操作`,
+      "aria-expanded": menuOpen || confirmOpen ? "true" : "false",
+      "aria-haspopup": "menu",
+      onclick: (event) => {
+        event.stopPropagation();
+        if (confirmOpen) return;
+        state.sessionMenuSessionId = menuOpen ? "" : record.session_id;
+        state.sessionConfirmSessionId = "";
+        renderSessions();
+      },
+    }, "…"));
+  }
+  const row = node("div", {
+    class: `session-row${isActive ? " active" : ""}${menuOpen || confirmOpen ? " menu-open" : ""}`,
+  }, ...rowChildren);
+  if (confirmOpen) {
+    row.append(node("div", {
+      class: "session-archive-confirm",
+      role: "dialog",
+      "aria-labelledby": `archive-confirm-${record.session_id}`,
+    },
+    node("p", { id: `archive-confirm-${record.session_id}`, class: "session-archive-confirm-copy" },
+      "依頼一覧から非表示にします。成果物や会社の実行記録は保持されます。"),
+    node("div", { class: "session-archive-confirm-actions" },
+      button("キャンセル", "quiet chip", () => {
+        closeSessionMenus();
+        renderSessions();
+      }),
+      button("履歴から削除", "primary chip", () => confirmArchiveSession(record)),
+    ),
+    ));
+  } else if (menuOpen && state.sessionListFilter === "active") {
+    row.append(node("div", { class: "session-menu-panel", role: "menu" },
+      node("button", {
+        class: "session-menu-item",
+        type: "button",
+        role: "menuitem",
+        onclick: (event) => {
+          event.stopPropagation();
+          state.sessionMenuSessionId = "";
+          state.sessionConfirmSessionId = record.session_id;
+          renderSessions();
+        },
+      }, "履歴から削除"),
+    ));
+  }
+  return row;
 }
 
 function renderNext(force = false) {
   const next = state.next;
   if (!next) return renderEmpty();
+  if (isArchivedRecord()) return renderArchivedSessionView(force);
   const pendingCommand = storedPendingCommand();
   const pendingForSession = pendingCommand && (!pendingCommand.payload?.session_id || pendingCommand.payload.session_id === next.session_id);
   const pendingInForeground = pendingForSession && isRequestDetailVisible();
@@ -1343,6 +1621,20 @@ function renderNext(force = false) {
   case "done": return renderDone();
   default: return showError(new Error(`Unsupported next action: ${next.kind}`));
   }
+}
+
+function renderArchivedSessionView(force = false) {
+  const key = `archived:${state.record?.session_id}:${state.record?.version}:${state.conversation?.entries?.length || 0}`;
+  if (!force && state.renderKey === key) return;
+  state.renderKey = key;
+  state.pendingAttentionTitle = "";
+  clearActionSurface();
+  renderComposerState(state.next);
+  ui.activeCard.hidden = true;
+  ui.activeCard.replaceChildren();
+  setQuickReplies([button("元に戻す", "primary chip", confirmUnarchiveSession)]);
+  state.forceScrollToBottom = true;
+  renderTimeline();
 }
 
 function renderRememberedError(error) {
@@ -2298,6 +2590,7 @@ function renderRequestDetail() {
   applyNavigationLayout();
   syncRequestDetailNavigation();
   renderNext();
+  renderRequestSummary();
   renderDetails();
   renderTimeline();
   renderAutonomy();
@@ -2332,9 +2625,18 @@ function renderRequestSummary() {
     ui.requestSummary.replaceChildren();
     return;
   }
-  ui.requestSummary.replaceChildren(
-    node("h1", { class: "thread-title" }, requestTitleText(record.request)),
-  );
+  const children = [
+    node("div", { class: "thread-summary-head" },
+      node("h1", { class: "thread-title" }, requestTitleText(record.request)),
+      isArchivedRecord(record) ? node("span", { class: "archived-badge" }, "削除済み") : null,
+    ),
+  ];
+  if (isArchivedRecord(record)) {
+    children.push(node("div", { class: "archived-actions" },
+      button("元に戻す", "quiet chip", confirmUnarchiveSession),
+    ));
+  }
+  ui.requestSummary.replaceChildren(...children.filter(Boolean));
 }
 
 async function loadCompanyActivity(force = false) {
@@ -2833,6 +3135,20 @@ function closeDialog(event) {
 ui.pairingForm.addEventListener("submit", pair);
 document.querySelector("#new-request-button")?.addEventListener("click", openNewRequestDraft);
 document.querySelector("#refresh-button").addEventListener("click", () => refreshCurrent());
+ui.sessionFilterActive?.addEventListener("click", () => setSessionListFilter("active"));
+ui.sessionFilterArchived?.addEventListener("click", () => setSessionListFilter("archived"));
+document.addEventListener("click", (event) => {
+  if (!state.sessionMenuSessionId && !state.sessionConfirmSessionId) return;
+  if (event.target.closest(".session-row")) return;
+  closeSessionMenus();
+  renderSessions();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (!state.sessionMenuSessionId && !state.sessionConfirmSessionId) return;
+  closeSessionMenus();
+  renderSessions();
+});
 ui.settingsButton.addEventListener("click", openSettingsDialog);
 document.querySelector("#provider-status-refresh").addEventListener("click", refreshProviderStatus);
 ui.menuButton.addEventListener("click", openNavDrawer);
@@ -2902,7 +3218,8 @@ async function initialize() {
 }
 
 setInterval(async () => {
-  if (!state.busy && !ui.actionDialog.open && !ui.requestDialog.open && !ui.setupDialog.open && document.visibilityState === "visible") {
+  if (!state.busy && !state.commandInFlight && !sessionStorage.getItem(STORAGE_PENDING) &&
+    !ui.actionDialog.open && !ui.requestDialog.open && !ui.setupDialog.open && document.visibilityState === "visible") {
     if (isDraftRequestActive()) return;
     if (state.record) await refreshCurrent(true);
     else {

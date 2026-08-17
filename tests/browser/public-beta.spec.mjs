@@ -922,6 +922,255 @@ test("office room visual: single room, characters, poses, themes, and mobile fal
   }
 });
 
+async function ensureRequestList(page) {
+  const menu = page.locator("#menu-button");
+  if (await menu.isVisible()) {
+    await menu.click();
+    await page.locator("#nav-request-list").click();
+    await expect(page.locator("#nav-drawer")).toBeHidden();
+    await expect(page.locator("#request-detail-view")).toHaveClass(/mobile-hidden/);
+  }
+  await expect(page.locator("#request-list-view")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "依頼" })).toBeVisible();
+}
+
+async function switchSessionFilter(page, label) {
+  await ensureRequestList(page);
+  await page.getByRole("tab", { name: label, exact: true }).click();
+}
+
+async function openSessionRowMenu(page, titlePattern) {
+  await ensureRequestList(page);
+  const row = page.locator(".session-row").filter({ hasText: titlePattern });
+  const menuButton = row.locator(".session-menu-button");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (await menuButton.isVisible()) await menuButton.click();
+    else await menuButton.evaluate((element) => element.click());
+    try {
+      await expect(page.getByRole("menuitem", { name: "履歴から削除" })).toBeVisible({ timeout: 3000 });
+      return;
+    } catch (error) {
+      if (attempt === 2) throw error;
+    }
+  }
+}
+
+async function openSessionFromList(page, titlePattern) {
+  await ensureRequestList(page);
+  const sessionButton = page.locator(".session-row").filter({ hasText: titlePattern }).locator(".session-item");
+  await sessionButton.evaluate((element) => element.click());
+  if (await page.locator("#menu-button").isVisible()) {
+    await expect(page.locator("#request-detail-view")).not.toHaveClass(/mobile-hidden/, { timeout: 15_000 });
+  }
+}
+
+async function expectArchivedDetail(page) {
+  await expect(page.locator(".archived-badge")).toContainText("削除済み");
+  await expect(page.locator("#composer-input")).toHaveAttribute("placeholder", "削除済みの依頼です");
+}
+
+async function archiveSessionFromList(page, titlePattern) {
+  await openSessionRowMenu(page, titlePattern);
+  const menuItem = page.getByRole("menuitem", { name: "履歴から削除" });
+  await expect(menuItem).toBeVisible({ timeout: 10_000 });
+  await menuItem.click();
+  await expect(page.locator(".session-archive-confirm")).toBeVisible();
+  await page.getByRole("button", { name: "履歴から削除", exact: true }).click();
+}
+
+test("archive lifecycle hides active sessions, preserves detail, and restores on unarchive", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  const commands = [];
+  page.on("request", (request) => {
+    if (request.method() !== "POST" || !request.url().endsWith("/v1/commands")) return;
+    try { commands.push(request.postDataJSON()); } catch {}
+  });
+  const requestText = "Archive UI browser gate用の依頼です";
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, requestText);
+    await expect(page.locator("#composer-status")).toContainText("進め方を準備しています", { timeout: 20_000 });
+
+    await ensureRequestList(page);
+    const titlePattern = new RegExp(requestText);
+    await expect(page.locator("#session-filter-active")).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(".session-row").filter({ hasText: requestText })).toHaveCount(1);
+
+    await archiveSessionFromList(page, titlePattern);
+    await expect(page.locator("#toast")).toContainText("依頼一覧から非表示にしました");
+    expect(commands.filter((command) => command.operation === "interaction.archive")).toHaveLength(1);
+    await expect(page.locator(".session-row").filter({ hasText: requestText })).toHaveCount(0);
+
+    await switchSessionFilter(page, "削除済み");
+    await expect(page.locator("#session-filter-archived")).toHaveAttribute("aria-selected", "true");
+    const archivedRow = page.locator(".session-row").filter({ hasText: requestText });
+    await expect(archivedRow).toHaveCount(1);
+    await archivedRow.locator(".session-item").click();
+    await expectArchivedDetail(page);
+    await expect(page.locator("#activity-timeline")).toContainText(requestText);
+
+    await page.getByRole("button", { name: "元に戻す" }).first().click();
+    await expect(page.locator("#toast")).toContainText("依頼を一覧に戻しました");
+    expect(commands.filter((command) => command.operation === "interaction.unarchive")).toHaveLength(1);
+    await expect(page.locator(".archived-badge")).toHaveCount(0);
+    await expect(page.locator("#session-filter-active")).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(".session-row").filter({ hasText: requestText })).toHaveCount(1);
+    await switchSessionFilter(page, "削除済み");
+    await expect(page.locator(".session-row").filter({ hasText: requestText })).toHaveCount(0);
+    await switchSessionFilter(page, "依頼");
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("archive confirmation cancel keeps the session active", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  const commands = [];
+  page.on("request", (request) => {
+    if (request.method() !== "POST" || !request.url().endsWith("/v1/commands")) return;
+    try { commands.push(request.postDataJSON()); } catch {}
+  });
+  const requestText = "Archive cancel browser gate用の依頼です";
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, requestText);
+    await ensureRequestList(page);
+    const titlePattern = new RegExp(requestText);
+    await expect(page.locator(".session-row").filter({ hasText: requestText })).toHaveCount(1, { timeout: 45_000 });
+    await openSessionRowMenu(page, titlePattern);
+    await page.getByRole("menuitem", { name: "履歴から削除" }).click();
+    await page.getByRole("button", { name: "キャンセル", exact: true }).click();
+    expect(commands.filter((command) => command.operation === "interaction.archive")).toHaveLength(0);
+    await expect(page.locator(".session-row").filter({ hasText: requestText })).toHaveCount(1);
+    await expect(page.locator(".session-archive-confirm")).toHaveCount(0);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("archive and unarchive failures keep canonical list state", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name.includes("iphone"), "Command-route failure assertions run on desktop where archive controls stay in the stable list pane");
+  const environment = await startBrowserEnvironment("happy_path");
+  const requestText = "Archive failure browser gate用の依頼です";
+  const commands = [];
+  page.on("request", (request) => {
+    if (request.method() !== "POST" || !request.url().endsWith("/v1/commands")) return;
+    try { commands.push(request.postDataJSON()); } catch {}
+  });
+  let archiveAttempts = 0;
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, requestText);
+    await ensureRequestList(page);
+    const titlePattern = new RegExp(requestText);
+
+    await page.route("**/v1/commands", async (route) => {
+      let body = null;
+      try { body = route.request().postDataJSON(); } catch {}
+      if (body?.operation === "interaction.archive") {
+        archiveAttempts += 1;
+        await route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({
+            version: "workspace-command.v1",
+            ok: false,
+            error: { code: "INTERACTION_VERSION_CONFLICT", stage: "interaction_archive", recovery_required: true },
+          }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await openSessionRowMenu(page, titlePattern);
+    await expect(page.getByRole("menuitem", { name: "履歴から削除" })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("menuitem", { name: "履歴から削除" }).click();
+    await page.getByRole("button", { name: "履歴から削除", exact: true }).click();
+    expect(archiveAttempts).toBe(1);
+    await expect(page.locator("#toast")).not.toContainText("依頼一覧から非表示にしました");
+    await expect(page.locator(".session-row").filter({ hasText: requestText })).toHaveCount(1);
+
+    await page.unroute("**/v1/commands");
+    await archiveSessionFromList(page, titlePattern);
+    await switchSessionFilter(page, "削除済み");
+    await openSessionFromList(page, titlePattern);
+    await expectArchivedDetail(page);
+
+    await page.route("**/v1/commands", async (route) => {
+      let body = null;
+      try { body = route.request().postDataJSON(); } catch {}
+      if (body?.operation === "interaction.unarchive") {
+        await route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({
+            version: "workspace-command.v1",
+            ok: false,
+            error: { code: "INTERACTION_INVALID_STATE", stage: "interaction_unarchive", recovery_required: true },
+          }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.getByRole("button", { name: "元に戻す" }).first().click();
+    await expect(page.locator("#toast")).not.toContainText("依頼を一覧に戻しました");
+    await expectArchivedDetail(page);
+    await switchSessionFilter(page, "削除済み");
+    await expect(page.locator(".session-row").filter({ hasText: requestText })).toHaveCount(1);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("archive filter and detail survive polling and reload without stale flashes", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  const requestText = "Archive navigation browser gate用の依頼です";
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, requestText);
+    await ensureRequestList(page);
+    const titlePattern = new RegExp(requestText);
+    await openSessionFromList(page, titlePattern);
+    await expect(page.locator("#request-detail-view")).toBeVisible();
+    await expect(page.locator("#activity-timeline")).toContainText(requestText);
+    await page.waitForTimeout(5200);
+    await expect(page.locator("#request-detail-view")).toBeVisible();
+    await expect(page.locator("#activity-timeline")).toContainText(requestText);
+    await expect(page.locator(".thread-title")).not.toContainText("新しい依頼");
+
+    await archiveSessionFromList(page, titlePattern);
+    await switchSessionFilter(page, "削除済み");
+    await openSessionFromList(page, titlePattern);
+    await expectArchivedDetail(page);
+    const archivedTitle = await page.locator(".thread-title").innerText();
+
+    await expect(page.locator("#composer-input")).toHaveAttribute("placeholder", "削除済みの依頼です");
+    await page.reload();
+    await expect(page.locator("#workspace-view")).toBeVisible();
+    await expect(page.locator("#session-filter-archived")).toHaveAttribute("aria-selected", "true", { timeout: 30_000 });
+    await expectArchivedDetail(page);
+    await expect(page.locator("#activity-timeline")).toContainText(requestText);
+    await page.waitForTimeout(5200);
+    await expectArchivedDetail(page);
+    await expect(page.locator(".thread-title")).toHaveText(archivedTitle);
+
+    await switchSessionFilter(page, "依頼");
+    await expect(page.locator(".archived-badge")).toHaveCount(0);
+    await expect(page.locator("#activity-timeline")).not.toContainText(requestText);
+    await openNewRequestFromUI(page);
+    await expect(page.locator(".thread-title")).toContainText("新しい依頼");
+    await expect(page.locator("#activity-timeline")).not.toContainText(requestText);
+  } finally {
+    await environment.stop();
+  }
+});
+
 test("steps.description failure lists indexed structured field shapes in diagnostics", async ({ page }) => {
   const environment = await startBrowserEnvironment("ceo_plan_steps_description_failure");
   try {
@@ -944,7 +1193,7 @@ test("steps.description failure lists indexed structured field shapes in diagnos
       await menu.click();
       await page.locator("#nav-request-list").click();
     }
-    const sessionButton = page.getByRole("button", { name: /steps.description shape diagnostic gate用の依頼です/ });
+    const sessionButton = page.locator("#session-list .session-item").filter({ hasText: "steps.description shape diagnostic gate用の依頼です" });
     await expect(sessionButton).toBeVisible({ timeout: 45_000 });
     await sessionButton.click();
     await expect(page.locator("#activity-timeline").getByRole("button", { name: "ⓘ エラーの詳細" })).toBeVisible({ timeout: 15_000 });
