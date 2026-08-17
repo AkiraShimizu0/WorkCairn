@@ -8,6 +8,13 @@ async function openNewRequestFromUI(page) {
     await listButton.click();
     return;
   }
+  const back = page.locator("#back-to-list-button");
+  if (await back.isVisible()) {
+    await back.click();
+    await expect(page.locator("#new-request-button")).toBeVisible();
+    await listButton.click();
+    return;
+  }
   const menu = page.locator("#menu-button");
   await expect(menu).toBeVisible();
   await menu.click();
@@ -58,16 +65,7 @@ async function startRequest(page, requestText) {
   let draftReady = await composer.isVisible()
     && (await composer.getAttribute("placeholder")) === "依頼内容を入力...";
   if (!draftReady) {
-    const newRequest = page.getByRole("button", { name: "＋ 新規作成" });
-    if (await newRequest.isVisible()) {
-      await newRequest.click();
-    } else {
-      const menu = page.locator("#menu-button");
-      if (await menu.isVisible()) {
-        await menu.click();
-        await page.locator("#nav-new-request").click();
-      }
-    }
+    await openNewRequestFromUI(page);
   }
   await expect(page.locator("#request-detail-view")).toBeVisible();
   await composer.fill(requestText);
@@ -194,7 +192,7 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
     }
 
     // The completion screen offers no quick-reply buttons -- the sole
-    // entry point for a new request is the request list's own "＋ 新規作成".
+    // entry point for a new request is the request list's own icon-only "新規作成".
     await expect(page.getByRole("button", { name: "完了を確認" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "新しい仕事を依頼" })).toHaveCount(0);
 
@@ -732,7 +730,8 @@ test("selected request detail persists through polling, completion, and failure"
     if (isMobile) {
       await expect(page.locator("#request-list-view")).toBeHidden();
     } else {
-      await expect(page.locator("#request-list-view")).toBeVisible();
+      await expect(page.locator("#request-list-view")).toBeHidden();
+      await expect(page.locator("#request-detail-view")).toBeVisible();
       await expect(page.locator(".requests-pane")).toHaveClass(/has-detail/);
     }
   } finally {
@@ -929,6 +928,8 @@ async function ensureRequestList(page) {
     await page.locator("#nav-request-list").click();
     await expect(page.locator("#nav-drawer")).toBeHidden();
     await expect(page.locator("#request-detail-view")).toHaveClass(/mobile-hidden/);
+  } else if (await page.locator("#request-list-view").isHidden()) {
+    await page.locator("#back-to-list-button").click();
   }
   await expect(page.locator("#request-list-view")).toBeVisible();
   await expect(page.getByRole("tab", { name: "依頼" })).toBeVisible();
@@ -1066,6 +1067,7 @@ test("archive and unarchive failures keep canonical list state", async ({ page }
     await startRequest(page, requestText);
     await ensureRequestList(page);
     const titlePattern = new RegExp(requestText);
+    await expect(page.locator(".session-row").filter({ hasText: requestText })).toHaveCount(1, { timeout: 45_000 });
 
     await page.route("**/v1/commands", async (route) => {
       let body = null;
@@ -1166,6 +1168,119 @@ test("archive filter and detail survive polling and reload without stale flashes
     await openNewRequestFromUI(page);
     await expect(page.locator(".thread-title")).toContainText("新しい依頼");
     await expect(page.locator("#activity-timeline")).not.toContainText(requestText);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("desktop detail view hides request list body until explicit back navigation", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name.includes("iphone"), "Desktop-only list/detail toggle");
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "detail list toggle gate用の依頼です");
+    await expect(page.locator("#request-detail-view")).toBeVisible();
+    await expect(page.locator("#request-list-view")).toBeHidden();
+    await expect(page.locator("#session-list")).toBeHidden();
+    await page.locator("#back-to-list-button").click();
+    await expect(page.locator("#request-list-view")).toBeVisible();
+    await expect(page.locator("#request-detail-view")).toBeHidden();
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("icon-only request list header exposes accessible new and refresh actions", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await page.locator("#back-to-list-button").click();
+    const create = page.locator("#new-request-button");
+    const refresh = page.locator("#refresh-button");
+    await expect(create).toHaveAttribute("aria-label", "新規作成");
+    await expect(refresh).toHaveAttribute("aria-label", "更新");
+    await expect(create).not.toContainText("新規作成");
+    await expect(refresh).not.toContainText("更新");
+    await expect(create.locator(".icon-action-svg")).toBeVisible();
+    await expect(refresh.locator(".icon-action-svg")).toBeVisible();
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("archive on another session succeeds while workflow command monitors independently", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name.includes("iphone"), "Concurrent command assertions run on desktop where list and archive controls stay stable");
+  const environment = await startBrowserEnvironment("happy_path");
+  const commands = [];
+  page.on("request", (request) => {
+    if (request.method() !== "POST" || !request.url().endsWith("/v1/commands")) return;
+    try { commands.push(request.postDataJSON()); } catch {}
+  });
+  const requestA = "Concurrent archive gate session A";
+  const requestB = "Concurrent archive gate session B";
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, requestB);
+    await waitForPlanOrClarification(page);
+    await ensureRequestList(page);
+    await expect(page.locator(".session-row").filter({ hasText: requestB })).toHaveCount(1, { timeout: 45_000 });
+
+    await openNewRequestFromUI(page);
+    await startRequest(page, requestA);
+    await waitForPlanOrClarification(page);
+    await answerClarificationIfNeeded(page);
+    await approvePlanAndExecute(page);
+    await expect(page.locator("#composer-status")).toContainText("Makerの成果物作成", { timeout: 20_000 });
+
+    await ensureRequestList(page);
+    await archiveSessionFromList(page, new RegExp(requestB));
+    expect(commands.filter((command) => command.operation === "interaction.archive")).toHaveLength(1);
+    await expect(page.locator("#toast")).toContainText("依頼一覧から非表示にしました");
+    await expect(page.locator(".session-row").filter({ hasText: requestB })).toHaveCount(0);
+
+    await openSessionFromList(page, new RegExp(requestA));
+    await expect(page.locator("#activity-timeline")).toContainText(requestA);
+    await expect(page.locator("#toast")).not.toContainText("同じ処理を実行中");
+    await expect(page.locator("#activity-timeline")).not.toContainText("INTERACTION_VERSION_CONFLICT");
+    const workflowCommands = commands.filter((command) => command.operation === "interaction.plan.approve_and_execute");
+    expect(workflowCommands.length).toBeGreaterThanOrEqual(1);
+    const archiveCommand = commands.find((command) => command.operation === "interaction.archive");
+    expect(archiveCommand?.command_id).toBeTruthy();
+    expect(workflowCommands.some((command) => command.command_id === archiveCommand?.command_id)).toBeFalsy();
+    const composerStatus = await page.locator("#composer-status").innerText();
+    expect(composerStatus.trim().length).toBeGreaterThan(0);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("office room visual exposes room scene, characters, poses, and compact fallback", async ({ page }, testInfo) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  const isMobileProject = testInfo.project.name.includes("iphone");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    if (isMobileProject) {
+      await page.locator("#menu-button").click();
+      await page.locator("#nav-employees-home").click();
+      await expect(page.locator(".office-room-compact .employee-compact-row")).toHaveCount(3);
+      await expect(page.locator(".office-room-characters").first()).toBeHidden();
+      return;
+    }
+    await expect(page.locator(".office-room")).toHaveCount(1);
+    await expect(page.locator(".office-room-scene")).toBeVisible();
+    await expect(page.locator(".room-character")).toHaveCount(3);
+    await expect(page.locator(".char-head").first()).toBeVisible();
+    await expect(page.locator(".char-leg").first()).toBeVisible();
+    await expect(page.locator(".char-eye").first()).toBeVisible();
+    await page.emulateMedia({ colorScheme: "dark" });
+    const darkHeadTone = await page.locator(".char-head").first().evaluate((element) => getComputedStyle(element).backgroundColor);
+    expect(darkHeadTone).not.toBe("rgba(0, 0, 0, 0)");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(page.locator(".room-character").first()).toBeVisible();
   } finally {
     await environment.stop();
   }

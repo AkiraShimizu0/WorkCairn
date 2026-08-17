@@ -846,14 +846,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
     gap: 0;
   }
   .requests-pane.has-detail .request-list-view {
-    flex: 0 0 auto;
-    max-height: 36%;
-    min-height: 0;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--line);
-  }
-  .requests-pane.has-detail .request-list-view .session-list {
-    max-height: 160px;
+    display: none;
   }
   .requests-pane.has-detail .request-detail-view.request-thread {
     flex: 1 1 auto;
@@ -1069,14 +1062,52 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 .requests-pane .list-actions {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
-  flex-wrap: wrap;
+}
+
+.icon-action-button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  background: var(--surface-strong);
+  cursor: pointer;
+}
+
+.icon-action-button.new-request-button {
+  color: var(--ink-strong);
+  background: var(--green);
+  border-color: transparent;
+}
+
+.icon-action-svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.icon-action-button:hover {
+  color: var(--ink);
+  filter: brightness(1.03);
+}
+
+.icon-action-button.new-request-button:hover {
+  filter: brightness(1.05);
+}
+
+.icon-action-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .new-request-button {
-  min-height: 36px;
-  padding: 8px 14px;
+  min-height: 44px;
+  padding: 0;
   font-size: 13px;
 }
 
@@ -2259,7 +2290,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 /* Office room: one canvas, three animated characters */
 .office-room {
   position: relative;
-  min-height: 260px;
+  min-height: 280px;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: var(--surface-strong);
@@ -2269,7 +2300,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   position: relative;
   width: 100%;
   aspect-ratio: 400 / 240;
-  min-height: 200px;
+  min-height: 220px;
 }
 .office-room-svg {
   display: block;
@@ -2283,10 +2314,29 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   stroke: var(--office-desk);
   stroke-width: 2;
 }
+.room-window-bar {
+  stroke: var(--office-desk);
+  stroke-width: 1.5;
+  opacity: .75;
+}
 .room-whiteboard {
   fill: rgba(255, 255, 255, .82);
   stroke: var(--office-desk);
   stroke-width: 2;
+}
+.room-shelf {
+  fill: var(--office-chair);
+  stroke: var(--office-desk);
+  stroke-width: 1.5;
+}
+.room-shelf-board {
+  fill: var(--office-doc);
+  opacity: .85;
+}
+.room-consult-rug {
+  fill: rgba(147, 180, 204, .12);
+  stroke: var(--office-desk);
+  stroke-width: 1;
 }
 .room-board-line {
   stroke: rgba(53, 95, 133, .22);
@@ -2343,6 +2393,33 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   background: var(--avatar-skin, #f0dcc8);
   box-shadow: inset 0 -2px 0 rgba(0,0,0,.08), 0 0 0 1px rgba(0,0,0,.14);
   z-index: 3;
+}
+.char-face {
+  position: absolute;
+  inset: 5px 3px 4px;
+}
+.char-eye {
+  position: absolute;
+  top: 2px;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: rgba(20, 28, 24, .82);
+  box-shadow: 0 0 0 .5px rgba(255,255,255,.35);
+}
+.char-eye-left { left: 3px; }
+.char-eye-right { right: 3px; }
+.char-chair-back {
+  position: absolute;
+  top: 30px;
+  left: 8px;
+  width: 18px;
+  height: 8px;
+  border-radius: 6px 6px 2px 2px;
+  background: var(--office-chair);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.12);
+  opacity: 0;
+  z-index: 0;
 }
 .char-torso {
   position: absolute;
@@ -2416,7 +2493,23 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 .room-character.zone-desk-1 { left: 50%; bottom: 44%; animation: none; }
 .room-character.zone-desk-2 { left: 82%; bottom: 44%; animation: none; }
 .room-character.zone-review { left: 82%; bottom: 44%; animation: none; }
-.room-character.zone-consult { left: 10%; bottom: 48%; animation: none; }
+.room-character.zone-consult { left: 14%; bottom: 46%; animation: none; }
+
+.room-character.pose-desk .char-chair-back,
+.room-character.pose-revise .char-chair-back,
+.room-character.pose-done .char-chair-back { opacity: 1; }
+.room-character.pose-desk .char-leg,
+.room-character.pose-revise .char-leg,
+.room-character.pose-done .char-leg {
+  height: 8px;
+  top: 36px;
+}
+.room-character.pose-desk .char-leg-left,
+.room-character.pose-revise .char-leg-left { transform: rotate(8deg); }
+.room-character.pose-desk .char-leg-right,
+.room-character.pose-revise .char-leg-right { transform: rotate(-8deg); }
+.room-character.pose-consult .char-arm-left { animation: char-consult-left 1.6s ease-in-out infinite; }
+.room-character.pose-consult .char-arm-right { animation: char-consult-right 1.6s ease-in-out infinite; }
 
 .room-character.zone-walk-0 .char-leg-left,
 .room-character.zone-walk-1 .char-leg-left,
@@ -2524,6 +2617,14 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 @keyframes char-review-left {
   0%, 100% { transform: rotate(18deg); }
   50% { transform: rotate(8deg); }
+}
+@keyframes char-consult-left {
+  0%, 100% { transform: rotate(24deg); }
+  50% { transform: rotate(12deg) translateY(-1px); }
+}
+@keyframes char-consult-right {
+  0%, 100% { transform: rotate(-24deg); }
+  50% { transform: rotate(-12deg) translateY(-1px); }
 }
 
 .office-zone {
@@ -2808,6 +2909,23 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 
   .session-filter-tab.active {
     background: var(--surface);
+  }
+
+  .icon-action-button {
+    background: var(--surface-strong);
+    border-color: var(--line);
+    color: var(--muted);
+  }
+
+  .icon-action-button.new-request-button {
+    color: var(--ink-strong);
+    background: var(--green-dark);
+    border-color: transparent;
+  }
+
+  .char-eye {
+    background: rgba(231, 236, 232, .92);
+    box-shadow: 0 0 0 .5px rgba(0,0,0,.35);
   }
 
   .button.primary.chip,

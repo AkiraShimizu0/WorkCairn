@@ -362,7 +362,7 @@ func TestEmbeddedWebUIProjectsAcceptedCommandAsInFlightUntilTerminal(t *testing.
 		t.Fatal(err)
 	}
 	script := string(content)
-	storage := strings.Index(script, "sessionStorage.setItem(STORAGE_PENDING")
+	storage := strings.Index(script, "addPendingCommand(command)")
 	render := strings.Index(script, "renderInFlight(command);")
 	submit := strings.Index(script, `requestJSON("/v1/commands"`)
 	if storage < 0 || render < storage || submit < render {
@@ -379,7 +379,7 @@ func TestEmbeddedWebUIProjectsAcceptedCommandAsInFlightUntilTerminal(t *testing.
 	}
 	terminal := strings.Index(script, `if (record.state === "succeeded")`)
 	terminalEnd := strings.Index(script[terminal:], `if (record.state === "failed"`)
-	if terminal < 0 || terminalEnd < 0 || !strings.Contains(script[terminal:terminal+terminalEnd], "sessionStorage.removeItem(STORAGE_PENDING)") ||
+	if terminal < 0 || terminalEnd < 0 || !strings.Contains(script[terminal:terminal+terminalEnd], "removePendingCommand(command.command_id)") ||
 		!strings.Contains(script[terminal:terminal+terminalEnd], `state.renderKey = ""`) {
 		t.Fatal("successful terminal Command does not clear the in-flight projection before the next refresh")
 	}
@@ -392,7 +392,7 @@ func TestCommandProviderFailureProjectionFindsReviewedWorkflowTaskFailure(t *tes
 	}
 	script := string(content)
 	start := strings.Index(script, "function commandProviderFailure(result)")
-	end := strings.Index(script[start:], "function storedPendingCommand()")
+	end := strings.Index(script[start:], "function storedPendingCommand(")
 	if start < 0 || end < 0 {
 		t.Fatal("Provider failure projection is missing")
 	}

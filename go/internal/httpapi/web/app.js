@@ -10,6 +10,76 @@ const LOCAL_PROVIDER_SETUP_TIMEOUT_MS = 180000;
 const DESKTOP_QUERY = "(min-width: 900px)";
 const LIAISON_ROLE = "Product Manager";
 
+function readPendingCommandsMap() {
+  const raw = sessionStorage.getItem(STORAGE_PENDING);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed?.command_id && parsed?.version === COMMAND_VERSION) {
+      return { [parsed.command_id]: parsed };
+    }
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return Object.fromEntries(Object.entries(parsed).filter(([, command]) =>
+        command?.command_id && command?.version === COMMAND_VERSION,
+      ));
+    }
+  } catch {}
+  return {};
+}
+
+function writePendingCommandsMap(map) {
+  if (!Object.keys(map).length) sessionStorage.removeItem(STORAGE_PENDING);
+  else sessionStorage.setItem(STORAGE_PENDING, JSON.stringify(map));
+}
+
+function syncCommandInFlightState() {
+  state.commandInFlight = anyPendingCommands().length > 0;
+}
+
+function addPendingCommand(command) {
+  const map = readPendingCommandsMap();
+  map[command.command_id] = command;
+  writePendingCommandsMap(map);
+  syncCommandInFlightState();
+}
+
+function removePendingCommand(commandId) {
+  const map = readPendingCommandsMap();
+  delete map[commandId];
+  writePendingCommandsMap(map);
+  syncCommandInFlightState();
+}
+
+function anyPendingCommands() {
+  return Object.values(readPendingCommandsMap());
+}
+
+function pendingCommandForSession(sessionId) {
+  if (!sessionId) return null;
+  return anyPendingCommands().find((command) => command.payload?.session_id === sessionId) || null;
+}
+
+function hasPendingForSession(sessionId) {
+  return Boolean(pendingCommandForSession(sessionId));
+}
+
+function updateBackgroundWorkingState() {
+  const viewingSession = state.record?.session_id;
+  const viewingDetail = isRequestDetailVisible();
+  const background = anyPendingCommands().some((command) => {
+    const sessionId = command.payload?.session_id;
+    if (!sessionId) return true;
+    return !viewingDetail || sessionId !== viewingSession;
+  });
+  setBackgroundWorking(background);
+}
+
+function shouldBlockPollingRefresh() {
+  if (state.busy) return true;
+  const viewingSession = state.record?.session_id;
+  return Boolean(viewingSession && hasPendingForSession(viewingSession));
+}
+
 const ui = {
   pairingView: document.querySelector("#pairing-view"),
   pairingForm: document.querySelector("#pairing-form"),
@@ -913,16 +983,16 @@ function setNav(name, remember = true) {
 function applyNavigationLayout() {
   const desktop = isDesktopLayout();
   const showDetail = Boolean(state.record) || isDraftRequestActive();
+  const showList = desktop ? !showDetail : state.nav === "request_list";
   ui.menuButton.hidden = desktop;
   ui.requestsPane.classList.toggle("mobile-visible", desktop || state.nav === "request_list" || state.nav === "request_detail" || isDraftRequestActive());
   ui.requestsPane.classList.toggle("has-detail", desktop && showDetail);
   ui.employeesPane.classList.toggle("mobile-hidden", !desktop && state.nav !== "employees_home");
-  ui.requestListView.classList.toggle("mobile-hidden", !desktop && state.nav !== "request_list");
+  ui.requestListView.hidden = !showList;
+  ui.requestListView.classList.toggle("mobile-hidden", ui.requestListView.hidden);
   ui.requestDetailView.hidden = !showDetail;
   ui.requestDetailView.classList.toggle("mobile-hidden", !desktop && (state.nav !== "request_detail" || !showDetail));
-  ui.requestListView.hidden = !desktop && state.nav !== "request_list";
-  ui.requestListView.classList.toggle("mobile-hidden", ui.requestListView.hidden);
-  setBackgroundWorking(Boolean(storedPendingCommand()) && !isRequestDetailVisible());
+  updateBackgroundWorkingState();
 }
 
 function openNavDrawer() {
@@ -1051,7 +1121,7 @@ function showError(error, title = "処理を完了できませんでした") {
   };
   const providerIssue = providerSetupRequired || providerGenerationFailed || providerFailureCopy;
   const providerSettingsAction = providerSetupRequired || code === "PROVIDER_AUTHENTICATION_REQUIRED" || code === "PROVIDER_PERMISSION_DENIED";
-  const pending = sessionStorage.getItem(STORAGE_PENDING);
+  const pending = storedPendingCommand(state.record?.session_id);
   const errorRenderKey = `error:${JSON.stringify([remembered?.session_id || "", remembered?.session_version || 0, code, stage || "", remembered?.command_id || ""] )}`;
   if (state.renderKey === errorRenderKey) return;
   state.renderKey = errorRenderKey;
@@ -1299,24 +1369,28 @@ async function resolveSessionExpectedVersion(sessionID, fallbackVersion = null) 
 }
 
 async function executeArchiveToggleCommand(operation, payload, busyTitle, busyMessage, onSuccess) {
-  if (state.commandInFlight || sessionStorage.getItem(STORAGE_PENDING)) {
+  const sessionId = payload.session_id;
+  if (hasPendingForSession(sessionId)) {
     toast("同じ処理を実行中です。完了するまでお待ちください。");
     return false;
   }
-  state.commandInFlight = true;
   let accepted = false;
+  let command = null;
   try {
-    const command = {
+    command = {
       version: COMMAND_VERSION,
       command_id: commandID(),
       operation,
       approved: true,
       payload,
     };
-    state.activeCommandID = command.command_id;
-    sessionStorage.setItem(STORAGE_PENDING, JSON.stringify(command));
-    state.renderKey = "";
-    renderInFlight(command);
+    addPendingCommand(command);
+    const affectsView = sessionId === state.record?.session_id && isRequestDetailVisible();
+    if (affectsView) {
+      state.activeCommandID = command.command_id;
+      state.renderKey = "";
+      renderInFlight(command);
+    }
     setBusy(true, busyTitle, busyMessage);
     await requestJSON("/v1/commands", {
       method: "POST",
@@ -1329,12 +1403,12 @@ async function executeArchiveToggleCommand(operation, payload, busyTitle, busyMe
     setBusy(false);
     return true;
   } catch (error) {
-    if (!accepted && error.status !== 0) sessionStorage.removeItem(STORAGE_PENDING);
+    if (!accepted && command?.command_id) removePendingCommand(command.command_id);
     showError(error);
     return false;
   } finally {
-    state.commandInFlight = Boolean(sessionStorage.getItem(STORAGE_PENDING));
-    if (!sessionStorage.getItem(STORAGE_PENDING)) state.activeCommandID = "";
+    if (command?.command_id && state.activeCommandID === command.command_id) state.activeCommandID = "";
+    updateBackgroundWorkingState();
   }
 }
 
@@ -1591,10 +1665,10 @@ function renderNext(force = false) {
   const next = state.next;
   if (!next) return renderEmpty();
   if (isArchivedRecord()) return renderArchivedSessionView(force);
-  const pendingCommand = storedPendingCommand();
-  const pendingForSession = pendingCommand && (!pendingCommand.payload?.session_id || pendingCommand.payload.session_id === next.session_id);
+  const pendingCommand = storedPendingCommand(next.session_id);
+  const pendingForSession = Boolean(pendingCommand);
   const pendingInForeground = pendingForSession && isRequestDetailVisible();
-  setBackgroundWorking(Boolean(pendingCommand) && !pendingInForeground);
+  updateBackgroundWorkingState();
   if (pendingForSession) {
     const key = `running:${pendingCommand.command_id}`;
     if (!force && state.renderKey === key) return;
@@ -1916,26 +1990,27 @@ function approvalFacts(facts) {
 }
 
 async function executeNextCommand(next, payload, busyTitle, busyMessage, fixedCommandID = null) {
-  if (state.commandInFlight || sessionStorage.getItem(STORAGE_PENDING)) {
+  const sessionId = payload.session_id;
+  if (hasPendingForSession(sessionId)) {
     toast("同じ処理を実行中です。完了するまでお待ちください。");
     return false;
   }
-  state.commandInFlight = true;
   let accepted = false;
+  let command = null;
   try {
-    const command = {
+    command = {
       version: COMMAND_VERSION,
       command_id: fixedCommandID || commandID(),
       operation: next.operation,
       approved: true,
       payload,
     };
+    addPendingCommand(command);
     state.activeCommandID = command.command_id;
-    sessionStorage.setItem(STORAGE_PENDING, JSON.stringify(command));
     state.renderKey = "";
     renderInFlight(command);
     setBusy(false);
-    setBackgroundWorking(false);
+    updateBackgroundWorkingState();
     await requestJSON("/v1/commands", {
       method: "POST",
       headers: { Prefer: "respond-async" },
@@ -1947,11 +2022,14 @@ async function executeNextCommand(next, payload, busyTitle, busyMessage, fixedCo
     setBusy(false);
     return true;
   } catch (error) {
-    if (!accepted && error.status !== 0) sessionStorage.removeItem(STORAGE_PENDING);
+    if (!accepted && command?.command_id) removePendingCommand(command.command_id);
     showError(error);
     return false;
   } finally {
-    state.commandInFlight = Boolean(sessionStorage.getItem(STORAGE_PENDING));
+    if (command?.command_id && state.activeCommandID === command.command_id && !pendingCommandForSession(sessionId)) {
+      state.activeCommandID = "";
+    }
+    updateBackgroundWorkingState();
   }
 }
 
@@ -1961,10 +2039,11 @@ function wait(milliseconds) {
 
 async function monitorAcceptedCommand(command) {
   setBusy(false);
-  const viewingSession = localStorage.getItem(STORAGE_SESSION) === command.payload?.session_id && isRequestDetailVisible();
-  setBackgroundWorking(!viewingSession);
-  state.activeCommandID = command.command_id;
+  const sessionId = command.payload?.session_id;
+  const viewingSession = localStorage.getItem(STORAGE_SESSION) === sessionId && isRequestDetailVisible();
+  updateBackgroundWorkingState();
   if (viewingSession) {
+    state.activeCommandID = command.command_id;
     state.renderKey = "";
     renderInFlight(command);
   }
@@ -1981,17 +2060,16 @@ async function monitorAcceptedCommand(command) {
       continue;
     }
     if (record.state === "succeeded") {
-      sessionStorage.removeItem(STORAGE_PENDING);
-      setBackgroundWorking(false);
-      state.activeCommandID = "";
-      state.commandInFlight = false;
+      removePendingCommand(command.command_id);
+      if (state.activeCommandID === command.command_id) state.activeCommandID = "";
+      updateBackgroundWorkingState();
       state.renderKey = "";
       return record;
     }
     if (record.state === "failed" || record.state === "partial_failure") {
-      sessionStorage.removeItem(STORAGE_PENDING);
-      setBackgroundWorking(false);
-      state.commandInFlight = false;
+      removePendingCommand(command.command_id);
+      if (state.activeCommandID === command.command_id) state.activeCommandID = "";
+      updateBackgroundWorkingState();
       state.renderKey = "";
       throw new APIError(record.failure?.code || "COMMAND_FAILED", 422, {
         code: record.failure?.code || "COMMAND_FAILED",
@@ -2002,7 +2080,7 @@ async function monitorAcceptedCommand(command) {
       });
     }
     if (record.state !== "running") {
-	  setBackgroundWorking(false);
+	  updateBackgroundWorkingState();
       throw new APIError("COMMAND_LEDGER_INVALID", 500, { code: "COMMAND_LEDGER_INVALID", recovery_required: true });
     }
     await wait(1000);
@@ -2039,42 +2117,42 @@ function errorDiagnostics(details, result) {
   };
 }
 
-function storedPendingCommand() {
-  const serialized = sessionStorage.getItem(STORAGE_PENDING);
-  if (!serialized) return null;
-  try {
-    const command = JSON.parse(serialized);
-    if (command?.version !== COMMAND_VERSION || typeof command.command_id !== "string" || !command.command_id) return null;
-    return command;
-  } catch {
-    return null;
-  }
+function storedPendingCommand(sessionId = null) {
+  const scopedSession = sessionId || state.record?.session_id || localStorage.getItem(STORAGE_SESSION);
+  if (scopedSession) return pendingCommandForSession(scopedSession);
+  return null;
 }
 
-async function resumePendingCommand(serialized) {
-  let command;
-  try {
-    command = JSON.parse(serialized);
-  } catch {
-    sessionStorage.removeItem(STORAGE_PENDING);
-    return;
+async function resumePendingCommand(command) {
+  if (typeof command === "string") {
+    try {
+      command = JSON.parse(command);
+    } catch {
+      sessionStorage.removeItem(STORAGE_PENDING);
+      return;
+    }
   }
   if (command?.version !== COMMAND_VERSION || typeof command.command_id !== "string" || !command.command_id) {
-    sessionStorage.removeItem(STORAGE_PENDING);
+    removePendingCommand(command?.command_id);
     return;
   }
-  state.commandInFlight = true;
   try {
     await monitorAcceptedCommand(command);
-    await refreshCurrent();
+    if (command.payload?.session_id === state.record?.session_id) await refreshCurrent();
     setBusy(false);
     toast("Macで完了した処理を反映しました。");
   } catch (error) {
-    setBackgroundWorking(false);
-    showError(error, "前回のCommand状態を確認できませんでした");
-  } finally {
-    state.commandInFlight = Boolean(sessionStorage.getItem(STORAGE_PENDING));
+    updateBackgroundWorkingState();
+    if (command.payload?.session_id === state.record?.session_id) {
+      showError(error, "前回のCommand状態を確認できませんでした");
+    }
   }
+}
+
+async function resumeAllPendingCommands() {
+  const commands = anyPendingCommands();
+  if (!commands.length) return;
+  await Promise.all(commands.map((command) => resumePendingCommand(command)));
 }
 
 function employeeIdentityByRole(role) {
@@ -2765,6 +2843,24 @@ function officeRoomSvgNode() {
   };
   addRect("room-window", { x: 288, y: 28, width: 72, height: 48, rx: 4 });
   addRect("room-whiteboard", { x: 156, y: 34, width: 88, height: 52, rx: 4 });
+  addRect("room-shelf", { x: 12, y: 72, width: 36, height: 56, rx: 3 });
+  addRect("room-shelf-board", { x: 16, y: 78, width: 28, height: 4, rx: 1 });
+  addRect("room-shelf-board", { x: 16, y: 92, width: 28, height: 4, rx: 1 });
+  addRect("room-shelf-board", { x: 16, y: 106, width: 28, height: 4, rx: 1 });
+  addRect("room-consult-rug", { x: 18, y: 176, width: 56, height: 24, rx: 8 });
+  const windowBarV = document.createElementNS(svgNS, "line");
+  windowBarV.setAttribute("class", "room-window-bar");
+  windowBarV.setAttribute("x1", "324");
+  windowBarV.setAttribute("y1", "32");
+  windowBarV.setAttribute("x2", "324");
+  windowBarV.setAttribute("y2", "72");
+  const windowBarH = document.createElementNS(svgNS, "line");
+  windowBarH.setAttribute("class", "room-window-bar");
+  windowBarH.setAttribute("x1", "292");
+  windowBarH.setAttribute("y1", "52");
+  windowBarH.setAttribute("x2", "356");
+  windowBarH.setAttribute("y2", "52");
+  svg.append(windowBarV, windowBarH);
   const line = document.createElementNS(svgNS, "line");
   line.setAttribute("class", "room-board-line");
   line.setAttribute("x1", "168");
@@ -2816,12 +2912,18 @@ function roomCharacterNode(employee, index) {
   },
   node("div", { class: "room-character-figure", "aria-hidden": "true" },
     node("span", { class: "char-hair" }),
-    node("span", { class: "char-head" }),
+    node("span", { class: "char-head" },
+      node("span", { class: "char-face" },
+        node("span", { class: "char-eye char-eye-left" }),
+        node("span", { class: "char-eye char-eye-right" }),
+      ),
+    ),
     node("span", { class: "char-torso" }),
     node("span", { class: "char-arm char-arm-left" }),
     node("span", { class: "char-arm char-arm-right" }),
     node("span", { class: "char-leg char-leg-left" }),
     node("span", { class: "char-leg char-leg-right" }),
+    node("span", { class: "char-chair-back" }),
   ),
   node("span", { class: "char-shadow", "aria-hidden": "true" }),
   employee.display_status === "社長と相談中" || employee.ceo_attention
@@ -3087,8 +3189,8 @@ function openNewRequestDraft() {
 }
 
 async function submitDraftRequest() {
-  if (!isDraftRequestActive() || submitDraftRequest.inFlight || state.commandInFlight) {
-    if (submitDraftRequest.inFlight || state.commandInFlight) toast("同じ処理を実行中です");
+  if (!isDraftRequestActive() || submitDraftRequest.inFlight) {
+    if (submitDraftRequest.inFlight) toast("同じ処理を実行中です");
     return;
   }
   const request = ui.composerInput.value.trim();
@@ -3208,8 +3310,7 @@ async function initialize() {
       return;
     }
     await startWorkspace();
-    const pending = sessionStorage.getItem(STORAGE_PENDING);
-    if (pending) await resumePendingCommand(pending);
+    if (anyPendingCommands().length) await resumeAllPendingCommands();
   } catch (error) {
     setConnected(false);
     ui.pairingView.hidden = false;
@@ -3218,7 +3319,7 @@ async function initialize() {
 }
 
 setInterval(async () => {
-  if (!state.busy && !state.commandInFlight && !sessionStorage.getItem(STORAGE_PENDING) &&
+  if (!shouldBlockPollingRefresh() &&
     !ui.actionDialog.open && !ui.requestDialog.open && !ui.setupDialog.open && document.visibilityState === "visible") {
     if (isDraftRequestActive()) return;
     if (state.record) await refreshCurrent(true);
