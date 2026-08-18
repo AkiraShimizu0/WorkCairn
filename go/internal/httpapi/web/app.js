@@ -167,6 +167,7 @@ const state = {
   pendingAttentionTitle: "",
   workflowPlanPreview: null,
   composerDraft: "",
+  composerRenderMode: "",
   sessionListFilter: "active",
   sessionMenuSessionId: "",
   sessionConfirmSessionId: "",
@@ -304,6 +305,7 @@ function clearSessionPresentationState() {
   state.pendingAttentionTitle = "";
   state.workflowPlanPreview = null;
   state.composerDraft = "";
+  state.composerRenderMode = "";
 }
 
 function isDraftRequestActive() {
@@ -531,29 +533,20 @@ function resetClarificationDraft() {
   state.composerDraft = "";
 }
 
-function activeEmployeeStatuses() {
-  return (state.companyActivity?.employees || []).filter((employee) =>
-    ["作業中", "レビュー中", "修正中"].includes(employee.display_status),
+function conversationHasFailureEntry() {
+  return (state.conversation?.entries || []).some(
+    (entry) => entry.category === "system" && entry.kind === "failure",
   );
 }
 
-function employeeActivityStatusText(employee) {
-  const name = employee.name || employee.id || "AI社員";
-  switch (employee.display_status) {
-  case "作業中":
-    return employee.current_work_title ? `${name}が${employee.current_work_title}を作成しています` : `${name}が作業しています`;
-  case "レビュー中":
-    return employee.current_work_title ? `${name}が${employee.current_work_title}をレビューしています` : `${name}がレビューしています`;
-  case "修正中":
-    return employee.current_work_title ? `${name}が${employee.current_work_title}の修正版を確認しています` : `${name}が修正しています`;
-  default:
-    return "";
-  }
-}
-
-function composerStatusText(next) {
+function composerFieldText(next) {
   if (isArchivedRecord()) return "削除済みの依頼です。元に戻すと再び操作できます。";
-  if (state.lastError) return "判断が必要です";
+  if (state.pendingAttentionTitle) return state.pendingAttentionTitle;
+  if (state.lastError) {
+    if (conversationHasFailureEntry()) return "判断が必要です";
+    const guidance = interactionErrorGuidance(state.lastError.code, state.lastError.stage);
+    return `${state.lastError.title || "処理を完了できませんでした。"} ${guidance}`.trim();
+  }
   const pending = storedPendingCommand();
   if (pending) {
     if (pending.operation === "interaction.plan.approve_and_execute" || pending.operation === "interaction.workflow.execute") {
@@ -565,35 +558,16 @@ function composerStatusText(next) {
     const copy = inFlightCopy(pending.operation);
     return copy.message || copy.title || copy.label;
   }
-  if (isDraftRequestActive()) return "依頼内容を入力してください";
+  if (isDraftRequestActive()) return "";
   if (!next) return "依頼を選択してください";
-
-  const activeEmployees = activeEmployeeStatuses();
-  if (activeEmployees.length === 1) {
-    const status = employeeActivityStatusText(activeEmployees[0]);
-    if (status) return status;
-  } else if (activeEmployees.length > 1) {
-    return `${activeEmployees.length}人の社員が作業しています`;
+  if (next.kind === "answer_clarifications") return "";
+  if (next.kind === "approve_plan_generation") {
+    return state.providerStatus?.configured ? "" : "AIサービスへ接続してください。";
   }
-
-  if (next.kind === "answer_clarifications") {
-    // next.questions always names exactly the single next unanswered
-    // CEOQuestion (interaction.RecordAnswers commits one durable Turn per
-    // answer, in order) -- there is no multi-question progress to track
-    // locally.
-    return next.questions[0] || "確認の質問";
-  }
-  if (next.kind === "approve_plan_generation") return "進め方を準備しています";
-  if (next.kind === "approve_plan_apply") return "進め方の確認待ちです";
-  if (next.kind === "approve_workflow") return "実行承認待ちです";
+  if (next.kind === "approve_plan_apply" || next.kind === "approve_workflow") return "";
   if (next.kind === "done" || next.kind === "optional_external_action_or_done") return "完了しました";
   if (next.kind === "inspect_workflow_recovery" || next.kind === "inspect_action_recovery") return "判断が必要です";
-
-  const liaison = (state.companyActivity?.employees || []).find((employee) =>
-    employee.is_liaison && employee.display_status === "社長と相談中",
-  );
-  if (liaison?.name) return `${liaison.name}が社長の回答待ちです`;
-  return "作業を進めています";
+  return "";
 }
 
 function composerCapabilities(next) {
@@ -617,16 +591,36 @@ function composerCapabilities(next) {
 
 function renderComposerState(next) {
   const capabilities = composerCapabilities(next);
-  ui.composerStatus.textContent = composerStatusText(next);
-  ui.composerInput.placeholder = capabilities.placeholder;
-  ui.composerInput.readOnly = !capabilities.enabled;
+  const fieldText = composerFieldText(next);
+  const previousMode = state.composerRenderMode;
+
+  if (capabilities.enabled) {
+    ui.composerInput.readOnly = false;
+    ui.composerInput.placeholder = capabilities.placeholder;
+    if (previousMode !== capabilities.mode) {
+      ui.composerInput.value = (capabilities.mode === "clarification" || capabilities.mode === "draft")
+        ? (state.composerDraft || "")
+        : "";
+    }
+  } else {
+    if (previousMode === "clarification" && ui.composerInput.value) {
+      state.composerDraft = ui.composerInput.value;
+    }
+    ui.composerInput.readOnly = true;
+    ui.composerInput.value = fieldText;
+    ui.composerInput.placeholder = fieldText ? "" : capabilities.placeholder;
+  }
+
   ui.composerInput.setAttribute("aria-readonly", capabilities.enabled ? "false" : "true");
+  ui.composerInput.setAttribute(
+    "aria-label",
+    capabilities.enabled ? capabilities.placeholder : (fieldText || capabilities.placeholder || "現在の状態"),
+  );
   ui.composerSend.disabled = !capabilities.enabled;
   ui.threadComposer.dataset.mode = capabilities.mode;
   ui.threadComposer.classList.toggle("composer-idle", !capabilities.enabled);
-  if (capabilities.mode === "clarification" && state.composerDraft && !ui.composerInput.value) {
-    ui.composerInput.value = state.composerDraft;
-  }
+  ui.composerStatus.textContent = "";
+  state.composerRenderMode = capabilities.mode;
 }
 
 function isThreadNearBottom() {
@@ -1136,9 +1130,16 @@ function showError(error, title = "処理を完了できませんでした") {
     recoveryAction,
     button("依頼一覧へ", "quiet chip", () => { selectSession(null); showRequestList(); }),
   ]);
-  ui.activeCard.hidden = true;
-  ui.activeCard.replaceChildren();
+  const actions = remembered ? composerAdjacentErrorActions(remembered) : null;
+  if (actions) {
+    ui.activeCard.hidden = false;
+    ui.activeCard.replaceChildren(actions);
+  } else {
+    ui.activeCard.hidden = true;
+    ui.activeCard.replaceChildren();
+  }
   if (remembered) {
+    renderComposerState(state.next);
     renderTimeline();
     renderSessions();
   }
@@ -1711,6 +1712,14 @@ function renderArchivedSessionView(force = false) {
   renderTimeline();
 }
 
+function composerAdjacentErrorActions(error) {
+  if (!error || conversationHasFailureEntry()) return null;
+  return inlineMessageActions({
+    detail: parseDiagnosticsFacts(error),
+    onCopy: () => copySanitizedError(error),
+  });
+}
+
 function renderRememberedError(error) {
   setQuickReplies([
     button(error.command_id ? "処理を再確認" : "状態を更新", "primary chip", () => error.command_id
@@ -1718,8 +1727,15 @@ function renderRememberedError(error) {
       : refreshCurrent()),
     button("再読み込み", "quiet chip", async () => { clearCurrentError(); state.renderKey = ""; await refreshCurrent(); }),
   ]);
-  ui.activeCard.hidden = true;
-  ui.activeCard.replaceChildren();
+  const actions = composerAdjacentErrorActions(error);
+  if (actions) {
+    ui.activeCard.hidden = false;
+    ui.activeCard.replaceChildren(actions);
+  } else {
+    ui.activeCard.hidden = true;
+    ui.activeCard.replaceChildren();
+  }
+  renderComposerState(state.next);
   state.forceScrollToBottom = true;
   renderTimeline();
 }
@@ -1769,21 +1785,13 @@ function renderPlanGeneration(next) {
 }
 
 function renderProviderSetup() {
-  const missing = state.providerStatus?.missing || [];
-  const invalid = state.providerStatus?.invalid || [];
-  const reasons = [];
-  if (missing.includes("credential")) reasons.push("Claudeがまだ接続されていません");
-  if (invalid.length) reasons.push("Provider設定を安全に検証できませんでした");
-  if (!reasons.length) reasons.push("接続状態を取得できませんでした");
   setQuickReplies([
     button("AI Connectionsを開く", "primary chip", openSettingsDialog),
     button("今は設定しない", "quiet chip", () => toast("依頼は進め方の作成待ちのまま保存されています。")),
   ]);
-  ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(
-    node("ul", { class: "trust-list" }, ...reasons.map((reason) => node("li", {}, reason))),
-    node("p", { class: "composer-note" }, "MacのAI ConnectionsからClaudeを接続してください。iPhoneからsecretは送らず、別Providerへの自動fallbackも行いません。"),
-  );
+  ui.activeCard.hidden = true;
+  ui.activeCard.replaceChildren();
+  renderComposerState(state.next);
   state.forceScrollToBottom = true;
   renderTimeline();
 }
@@ -1945,6 +1953,7 @@ function renderAttention(next, title) {
   ui.activeCard.hidden = true;
   ui.activeCard.replaceChildren();
   state.pendingAttentionTitle = title;
+  renderComposerState(next);
   state.forceScrollToBottom = true;
   renderTimeline();
 }
@@ -1975,6 +1984,7 @@ async function inspectCommands(references) {
     ui.activeCard.hidden = true;
     ui.activeCard.replaceChildren();
     state.pendingAttentionTitle = "処理記録を確認してください。";
+    renderComposerState(state.next);
     renderTimeline();
   } catch (error) {
     showError(error, "処理記録を取得できませんでした");
@@ -2418,52 +2428,12 @@ function planPendingNode(current) {
 function pendingInteractionNodes() {
   const next = state.next;
   if (!next) return [];
-  const pending = storedPendingCommand();
-  if (pending) return [];
-  if (state.lastError) {
-    const hasConversationFailure = (state.conversation?.entries || []).some(
-      (entry) => entry.category === "system" && entry.kind === "failure",
-    );
-    if (hasConversationFailure) return [];
-    const guidance = interactionErrorGuidance(state.lastError.code, state.lastError.stage);
-    return [node("article", { class: "msg msg-system msg-failure attention" },
-      node("div", { class: "msg-system-rule", "aria-hidden": "true" }),
-      node("p", { class: "msg-system-copy" }, `${state.lastError.title || "処理を完了できませんでした。"}\n\n${guidance} 自動retryせず、次の判断を待っています。`),
-      inlineMessageActions({
-        detail: parseDiagnosticsFacts(state.lastError),
-        onCopy: () => copySanitizedError(state.lastError),
-      }),
-      node("div", { class: "msg-system-rule", "aria-hidden": "true" }),
-    )];
-  }
-  if (state.pendingAttentionTitle) {
-    return [node("article", { class: "msg msg-system attention" },
-      node("p", { class: "msg-system-copy" }, state.pendingAttentionTitle),
-    )];
-  }
+  if (storedPendingCommand()) return [];
   switch (next.kind) {
-  case "approve_plan_generation":
-    if (!state.providerStatus?.configured) {
-      return [node("article", { class: "msg msg-system attention" },
-        node("p", { class: "msg-system-copy" }, "AIサービスへ接続してください。"),
-      )];
-    }
-    // Composer status already carries the single-line state copy.
-    return [];
-  case "answer_clarifications":
-    // The current unanswered question is already visible via the
-    // canonical ConversationEntry (clarification_requested) rendered in
-    // conversationTimelineNodes() -- composer status carries progress,
-    // placeholder stays a generic input hint.
-    return [];
   case "approve_plan_apply": {
     const current = currentPlan();
     return current ? [planPendingNode(current)] : [];
   }
-  case "approve_workflow":
-    return [node("article", { class: "msg msg-system" },
-      node("p", { class: "msg-system-copy" }, "Makerとは別のQA Reviewerを、役割と許可範囲から自動選択します。今回任せる仕事ステップの上限は20件です。"),
-    )];
   default:
     return [];
   }

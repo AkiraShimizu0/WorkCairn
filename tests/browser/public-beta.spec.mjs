@@ -21,6 +21,29 @@ async function openNewRequestFromUI(page) {
   await page.locator("#nav-new-request").click();
 }
 
+async function expectComposerInput(page, { value = null, placeholder = null, editable = null } = {}) {
+  const input = page.locator("#composer-input");
+  if (placeholder != null) await expect(input).toHaveAttribute("placeholder", placeholder);
+  if (editable === true) await expect(input).toBeEditable();
+  if (editable === false) await expect(input).not.toBeEditable();
+  if (value instanceof RegExp) await expect(input).toHaveValue(value);
+  else if (value != null) await expect(input).toHaveValue(value);
+}
+
+async function expectTextOnceNearComposer(page, text) {
+  const input = page.locator("#composer-input");
+  const timeline = page.locator("#activity-timeline");
+  await expect(input).toHaveValue(text);
+  await expect(timeline).not.toContainText(text);
+}
+
+async function expectTextOnceInTimeline(page, text) {
+  const footer = page.locator(".thread-footer");
+  const timeline = page.locator("#activity-timeline");
+  await expect(timeline).toContainText(text);
+  await expect(footer.locator("#composer-input")).not.toHaveValue(text);
+}
+
 async function pairThroughUI(page, daemon) {
   let forcedRemoteStatus = false;
   const statusRoute = async (route) => {
@@ -70,7 +93,7 @@ async function startRequest(page, requestText) {
   await expect(page.locator("#request-detail-view")).toBeVisible();
   await composer.fill(requestText);
   await page.locator("#composer-send").click();
-  await expect(page.locator("#composer-status")).toBeVisible();
+  await expect(page.locator("#composer-input")).toBeVisible();
 }
 
 async function waitForPlanOrClarification(page) {
@@ -102,7 +125,7 @@ async function approvePlanAndExecute(page) {
   const approve = page.getByRole("button", { name: "この内容で進める" });
   await expect(approve).toHaveCount(1);
   await approve.click();
-  await expect(page.locator("#composer-status")).toContainText("Makerの成果物作成");
+  await expect(page.locator("#composer-input")).toHaveValue(/Makerの成果物作成/, { timeout: 20_000 });
   await expect(approve).toHaveCount(0);
 }
 
@@ -146,7 +169,6 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
     await completeFirstRun(page);
     await startRequest(page, "初めての利用者向けにWorkCairnの紹介文を作り、別のAIで確認してください");
 
-    await expect(page.locator("#composer-status")).toContainText("進め方を準備しています", { timeout: 20_000 });
     await expect(page.getByRole("button", { name: "進め方の作成を承認" })).toHaveCount(0);
 
     const phase = await waitForPlanOrClarification(page);
@@ -641,18 +663,15 @@ test("UI refinement round 2: composer, sequential clarifications, shared office"
     await expect(page.locator('#composer-input[placeholder="回答を入力..."]')).toBeVisible({ timeout: 45_000 });
 
     const timeline = page.locator("#activity-timeline");
-    const composerStatus = page.locator("#composer-status");
     const composerInput = page.locator("#composer-input");
 
     await expect(timeline).toContainText(q1);
     await expect(timeline).not.toContainText(q2);
     await expect(timeline).not.toContainText(q3);
-    // composer-status names the single next unanswered question directly
-    // (Next() only ever names one question -- see the incremental
-    // clarification commit design), not a "質問 N / M" progress counter.
-    await expect(composerStatus).toContainText(q1);
-    await expect(composerStatus).not.toContainText("回答を入力");
     await expect(composerInput).toHaveAttribute("placeholder", "回答を入力...");
+    await expect(composerInput).toBeEditable();
+    await expect(composerInput).toHaveValue("");
+    await expectTextOnceInTimeline(page, q1);
 
     await composerInput.fill(a1);
     await page.locator("#composer-send").click();
@@ -660,17 +679,21 @@ test("UI refinement round 2: composer, sequential clarifications, shared office"
     await expect(timeline).toContainText(a1);
     await expect(timeline).toContainText(q2);
     await expect(timeline).not.toContainText(q3);
-    await expect(composerStatus).toContainText(q2);
+    await expect(composerInput).toHaveAttribute("placeholder", "回答を入力...");
+    await expect(composerInput).toHaveValue("");
+    await expectTextOnceInTimeline(page, q2);
 
     await composerInput.fill(a2);
     await page.locator("#composer-send").click();
     await expect(timeline).toContainText(q2);
     await expect(timeline).toContainText(a2);
     await expect(timeline).toContainText(q3);
-    await expect(composerStatus).toContainText(q3);
+    await expect(composerInput).toHaveAttribute("placeholder", "回答を入力...");
+    await expect(composerInput).toHaveValue("");
+    await expectTextOnceInTimeline(page, q3);
 
     await page.waitForTimeout(5500);
-    await expect(composerStatus).toContainText(q3);
+    await expect(composerInput).toHaveAttribute("placeholder", "回答を入力...");
     await expect(timeline).toContainText(q1);
     await expect(timeline).toContainText(a1);
     await expect(timeline).toContainText(q2);
@@ -780,13 +803,14 @@ test("clarification answers commit incrementally: durable per-answer Turns, relo
     await expect(page.locator('#composer-input[placeholder="回答を入力..."]')).toBeVisible({ timeout: 45_000 });
 
     const timeline = page.locator("#activity-timeline");
-    const composerStatus = page.locator("#composer-status");
     const composerInput = page.locator("#composer-input");
 
     // 1/2. Only Q1 is shown; Q2/Q3 are not revealed yet.
     await expect(timeline).toContainText(q1);
     await expect(timeline).not.toContainText(q2);
     await expect(timeline).not.toContainText(q3);
+    await expect(composerInput).toHaveAttribute("placeholder", "回答を入力...");
+    await expect(composerInput).toHaveValue("");
     // 14. The composer is always exactly one input/send pair.
     await expect(page.locator("#composer-input")).toHaveCount(1);
     await expect(page.locator("#composer-send")).toHaveCount(1);
@@ -801,16 +825,17 @@ test("clarification answers commit incrementally: durable per-answer Turns, relo
     await expect(timeline).toContainText(a1);
     await expect(timeline).toContainText(q2);
     await expect(timeline).not.toContainText(q3);
-    await expect(composerStatus).toContainText(q2);
+    await expect(composerInput).toHaveAttribute("placeholder", "回答を入力...");
+    await expect(composerInput).toHaveValue("");
     await expect(page.locator("#composer-input")).toHaveCount(1);
     // Answering Q1 alone must not trigger Plan regeneration.
     expect(environment.provider.calls.length).toBe(1);
 
     // 15. Polling (every 5s) must not lose the current pending question.
     await page.waitForTimeout(5500);
-    await expect(composerStatus).toContainText(q2);
-    await expect(timeline).toContainText(q1);
-    await expect(timeline).toContainText(a1);
+    await expect(composerInput).toHaveAttribute("placeholder", "回答を入力...");
+    await expect(timeline).toContainText(q2);
+    await expect(page.locator("#composer-input")).toHaveCount(1);
     expect(environment.provider.calls.length).toBe(1);
 
     // 6/7. Reload restores Q1/A1/Q2 -- durable Turns, not client state.
@@ -820,7 +845,8 @@ test("clarification answers commit incrementally: durable per-answer Turns, relo
     await expect(timeline).toContainText(a1);
     await expect(timeline).toContainText(q2);
     await expect(timeline).not.toContainText(q3);
-    await expect(composerStatus).toContainText(q2);
+    await expect(composerInput).toHaveAttribute("placeholder", "回答を入力...");
+    await expect(composerInput).toHaveValue("");
     await expect(page.locator("#composer-input")).toHaveCount(1);
     expect(environment.provider.calls.length).toBe(1);
 
@@ -829,7 +855,8 @@ test("clarification answers commit incrementally: durable per-answer Turns, relo
     await page.locator("#composer-send").click();
     // 9. Q1,A1,Q2,A2,Q3 now visible in that order (checked precisely below).
     await expect(timeline).toContainText(q3);
-    await expect(composerStatus).toContainText(q3);
+    await expect(composerInput).toHaveAttribute("placeholder", "回答を入力...");
+    await expect(composerInput).toHaveValue("");
     expect(environment.provider.calls.length).toBe(1);
 
     // 10. Send A3 (final answer).
@@ -967,7 +994,7 @@ async function openSessionFromList(page, titlePattern) {
 
 async function expectArchivedDetail(page) {
   await expect(page.locator(".archived-badge")).toContainText("削除済み");
-  await expect(page.locator("#composer-input")).toHaveAttribute("placeholder", "削除済みの依頼です");
+  await expect(page.locator("#composer-input")).toHaveValue(/削除済みの依頼です/);
 }
 
 async function archiveSessionFromList(page, titlePattern) {
@@ -991,7 +1018,7 @@ test("archive lifecycle hides active sessions, preserves detail, and restores on
     await pairThroughUI(page, environment.daemon);
     await completeFirstRun(page);
     await startRequest(page, requestText);
-    await expect(page.locator("#composer-status")).toContainText("進め方を準備しています", { timeout: 20_000 });
+    await waitForPlanOrClarification(page);
 
     await ensureRequestList(page);
     const titlePattern = new RegExp(requestText);
@@ -1152,7 +1179,7 @@ test("archive filter and detail survive polling and reload without stale flashes
     await expectArchivedDetail(page);
     const archivedTitle = await page.locator(".thread-title").innerText();
 
-    await expect(page.locator("#composer-input")).toHaveAttribute("placeholder", "削除済みの依頼です");
+    await expect(page.locator("#composer-input")).toHaveValue(/削除済みの依頼です/);
     await page.reload();
     await expect(page.locator("#workspace-view")).toBeVisible();
     await expect(page.locator("#session-filter-archived")).toHaveAttribute("aria-selected", "true", { timeout: 30_000 });
@@ -1233,7 +1260,7 @@ test("archive on another session succeeds while workflow command monitors indepe
     await waitForPlanOrClarification(page);
     await answerClarificationIfNeeded(page);
     await approvePlanAndExecute(page);
-    await expect(page.locator("#composer-status")).toContainText("Makerの成果物作成", { timeout: 20_000 });
+    await expect(page.locator("#composer-input")).toHaveValue(/Makerの成果物作成/, { timeout: 20_000 });
 
     await ensureRequestList(page);
     await archiveSessionFromList(page, new RegExp(requestB));
@@ -1250,8 +1277,8 @@ test("archive on another session succeeds while workflow command monitors indepe
     const archiveCommand = commands.find((command) => command.operation === "interaction.archive");
     expect(archiveCommand?.command_id).toBeTruthy();
     expect(workflowCommands.some((command) => command.command_id === archiveCommand?.command_id)).toBeFalsy();
-    const composerStatus = await page.locator("#composer-status").innerText();
-    expect(composerStatus.trim().length).toBeGreaterThan(0);
+    const composerValue = await page.locator("#composer-input").inputValue();
+    expect(composerValue.trim().length).toBeGreaterThan(0);
   } finally {
     await environment.stop();
   }
@@ -1286,6 +1313,61 @@ test("office room visual exposes room scene, characters, poses, and compact fall
   }
 });
 
+test("composer state copy appears once across clarification, workflow, plan, failure, and completion", async ({ page }) => {
+  const workflowCopy = "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。";
+  const q1 = "Browser Gate質問1：対象読者は誰ですか？";
+  const clarificationEnv = await startBrowserEnvironment("clarification_three");
+  try {
+    await pairThroughUI(page, clarificationEnv.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "composer dedupe gate用の短い成果物を作ってください");
+    await expect(page.locator('#composer-input[placeholder="回答を入力..."]')).toBeVisible({ timeout: 45_000 });
+    await expectTextOnceInTimeline(page, q1);
+    await expect(page.locator("#composer-status")).toHaveClass(/visually-hidden/);
+    await expect(page.locator("#composer-status")).toBeEmpty();
+  } finally {
+    await clarificationEnv.stop();
+  }
+
+  const happyEnv = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, happyEnv.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "composer dedupe happy path gate用の依頼です");
+    await waitForPlanOrClarification(page);
+    await answerClarificationIfNeeded(page);
+    await expect(page.locator(".msg-embed-plan")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole("button", { name: "この内容で進める" })).toBeVisible();
+    await expect(page.locator("#composer-input")).toHaveValue("");
+    await expect(page.locator("#quick-replies")).toContainText("この内容で進める");
+    await approvePlanAndExecute(page);
+    const composerInput = page.locator("#composer-input");
+    const runningValue = await composerInput.inputValue();
+    if (runningValue.includes("Maker")) {
+      await expectTextOnceNearComposer(page, workflowCopy);
+    }
+    await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible({ timeout: 45_000 });
+    await expect(composerInput).toHaveValue("完了しました");
+  } finally {
+    await happyEnv.stop();
+  }
+
+  const failureEnv = await startBrowserEnvironment("provider_failure");
+  try {
+    await pairThroughUI(page, failureEnv.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "composer dedupe failure gate用の依頼です");
+    await waitForPlanOrClarification(page);
+    await answerClarificationIfNeeded(page, "はい。安全な表示を確認します。");
+    await approvePlanAndExecute(page);
+    await expect(page.locator("#activity-timeline")).toContainText("PROVIDER_RATE_LIMITED", { timeout: 30_000 });
+    await expect(page.locator("#composer-input")).toHaveValue("判断が必要です");
+    await expect(page.locator("#quick-replies")).toContainText("処理を再確認");
+  } finally {
+    await failureEnv.stop();
+  }
+});
+
 test("steps.description failure lists indexed structured field shapes in diagnostics", async ({ page }) => {
   const environment = await startBrowserEnvironment("ceo_plan_steps_description_failure");
   try {
@@ -1311,11 +1393,12 @@ test("steps.description failure lists indexed structured field shapes in diagnos
     const sessionButton = page.locator("#session-list .session-item").filter({ hasText: "steps.description shape diagnostic gate用の依頼です" });
     await expect(sessionButton).toBeVisible({ timeout: 45_000 });
     await sessionButton.click();
-    await expect(page.locator("#activity-timeline").getByRole("button", { name: "ⓘ エラーの詳細" })).toBeVisible({ timeout: 15_000 });
+    const composerFooter = page.locator("#request-detail-view .thread-footer");
+    await expect(composerFooter.getByRole("button", { name: "ⓘ エラーの詳細" })).toBeVisible({ timeout: 15_000 });
 
-    const detailsToggle = page.locator("#activity-timeline").getByRole("button", { name: "ⓘ エラーの詳細" }).last();
+    const detailsToggle = composerFooter.getByRole("button", { name: "ⓘ エラーの詳細" }).last();
     await detailsToggle.click();
-    const panel = page.locator("#activity-timeline .msg-technical-panel").last();
+    const panel = composerFooter.locator(".msg-technical-panel").last();
     await expect(panel).toContainText("Structured field shapes");
     await expect(panel).toContainText("steps.0.description");
     await expect(panel).toContainText("steps.1.description");
@@ -1326,7 +1409,7 @@ test("steps.description failure lists indexed structured field shapes in diagnos
     await expect(panel).not.toContainText("Steps Shape Gate");
     await expect(panel).not.toContainText("required_role");
 
-    const copyButton = page.locator("#activity-timeline").getByRole("button", { name: "診断情報をコピー" }).last();
+    const copyButton = composerFooter.getByRole("button", { name: "診断情報をコピー" }).last();
     await copyButton.click();
     const copied = await page.evaluate(() => window.__lastCopied || "");
     expect(copied).toContain("steps.0.description");

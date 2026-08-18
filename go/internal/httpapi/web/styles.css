@@ -1740,10 +1740,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 
 .composer-status {
   margin: 0;
-  padding: 0 4px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
+  padding: 0;
 }
 
 .composer-input-row {
@@ -1771,6 +1768,11 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 
 .thread-composer.composer-idle textarea {
   color: var(--muted);
+  cursor: default;
+}
+
+.thread-composer.composer-idle textarea[readonly] {
+  -webkit-text-fill-color: var(--muted);
 }
 
 .composer-send {
