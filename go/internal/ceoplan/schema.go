@@ -72,8 +72,17 @@ func IntentJSONSchema(allowedRoles []string) (map[string]any, error) {
 	}
 	stepProperties := func(kind map[string]any) map[string]any {
 		return map[string]any{
-			"kind":          kind,
-			"description":   intentString("A concrete description of the work. Must contain a non-whitespace character."),
+			"kind": kind,
+			// This is the primary contract statement for steps[].description:
+			// explicit about what content is expected (an
+			// actionable instruction, not a label) and explicit about the
+			// rejected shape (empty or whitespace-only), since "required"
+			// alone does not stop Anthropic Structured Outputs from
+			// returning a present-but-blank string. BuildPrompt's own
+			// instruction stays a short, non-duplicated pointer at this
+			// same rule -- this description is the one place the full
+			// wording lives.
+			"description":   intentString("The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value."),
 			"required_role": roleSchema,
 		}
 	}

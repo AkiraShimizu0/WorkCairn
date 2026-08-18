@@ -55,7 +55,7 @@ func BuildPrompt(request string, employees []organization.Identity) (worker.Prom
 		"## stepsの各要素",
 		"kind, description, required_role 以外のfieldは禁止です。kindとdescriptionは常に必須です。",
 		`kindは "write", "research", "analyze", "implement", "review" のいずれか1つの文字列にしてください。それ以外の値は使用しないでください。`,
-		"descriptionには、そのstepで何を行うかを具体的に記述してください。",
+		"descriptionには、そのstepで何を行うかを具体的に記述してください。空文字列や空白のみの値は禁止です。",
 		requiredRoleInstruction,
 		"stepsの順序は、実施すべき順番のまま出力してください。依存関係IDは出力しないでください（WorkCairnが順序から構築します）。",
 		"担当する具体的な社員は出力しないでください（WorkCairnがrequired_roleと組織台帳から決定します）。",

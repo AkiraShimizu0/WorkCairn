@@ -128,6 +128,29 @@ func TestIntentJSONSchemaShape(t *testing.T) {
 	}
 }
 
+// TestIntentJSONSchemaStepDescriptionExplicitlyRejectsBlank locks the
+// steps[].description hardening: since Anthropic Structured Outputs'
+// "required" alone cannot stop a
+// present-but-blank string, steps[].description's schema "description"
+// field is the primary contract statement -- it must explicitly name the
+// rejected shape (empty or whitespace-only) on both step variants
+// (non-review and review), not just say a field is "required".
+func TestIntentJSONSchemaStepDescriptionExplicitlyRejectsBlank(t *testing.T) {
+	schema, err := IntentJSONSchema(testAllowedRoles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantText = "The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value."
+	stepsSchema := schema["properties"].(map[string]any)["steps"].(map[string]any)
+	stepUnion := stepsSchema["items"].(map[string]any)["anyOf"].([]any)
+	for index, rawStep := range stepUnion {
+		descriptionSchema := rawStep.(map[string]any)["properties"].(map[string]any)["description"].(map[string]any)
+		if descriptionSchema["description"] != wantText {
+			t.Fatalf("steps item %d description schema text = %q, want %q", index, descriptionSchema["description"], wantText)
+		}
+	}
+}
+
 // TestIntentJSONSchemaRejectsEmptyAllowedRoles locks ADR-0048's fail-closed
 // principle: zero usable Organization Role titles must never silently
 // produce an unconstrained free-form required_role schema.

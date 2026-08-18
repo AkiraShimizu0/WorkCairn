@@ -195,8 +195,18 @@ func TestCEOPlanIntentPromptExampleIsValidAndContractIsExplicit(t *testing.T) {
 		!strings.Contains(built.System, "それ以外のfieldを一切追加しないでください") ||
 		!strings.Contains(built.System, "該当しない配列も省略せず、空配列[]として出力してください") ||
 		!strings.Contains(built.System, "write・research・analyze・implementでは必須") ||
-		!strings.Contains(built.System, `"review"の場合だけ省略可能`) {
+		!strings.Contains(built.System, `"review"の場合だけ省略可能`) ||
+		!strings.Contains(built.System, "descriptionには、そのstepで何を行うかを具体的に記述してください。空文字列や空白のみの値は禁止です。") {
 		t.Fatal("Prompt does not make the strict output contract explicit")
+	}
+	// The blank-description prohibition must appear exactly once in the
+	// Prompt: the schema's own "description" field is the primary,
+	// detailed contract statement (see
+	// TestIntentJSONSchemaStepDescriptionExplicitlyRejectsBlank), and the
+	// Prompt carries only a short, non-duplicated pointer at the same
+	// rule -- not a second full restatement of it.
+	if strings.Count(built.System, "空白のみの値は禁止です") != 1 {
+		t.Fatalf("Prompt repeats the blank-description prohibition %d times, want exactly 1", strings.Count(built.System, "空白のみの値は禁止です"))
 	}
 	for _, heading := range []string{
 		"## 必須出力ルール（例外なし）", "## top-level fields", "## stepsの各要素", "## 出力例",

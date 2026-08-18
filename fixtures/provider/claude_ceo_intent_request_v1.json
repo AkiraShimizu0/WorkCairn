@@ -40,7 +40,7 @@
                     },
                     "description": {
                       "type": "string",
-                      "description": "A concrete description of the work. Must contain a non-whitespace character."
+                      "description": "The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value."
                     },
                     "required_role": {
                       "type": "string",
@@ -60,7 +60,7 @@
                     },
                     "description": {
                       "type": "string",
-                      "description": "A concrete description of the work. Must contain a non-whitespace character."
+                      "description": "The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value."
                     },
                     "required_role": {
                       "type": "string",
