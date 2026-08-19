@@ -66,6 +66,18 @@ make public-beta-smoke
 
 Go生成物`bin/workcairn-core`、`bin/workcairn`、`bin/workcairn-daemon`はGit管理しません。テストは実Vaultや実APIへ接続しない構成にしてください。
 
+## Browser Gate Validation Staging
+
+`make public-beta-browser-gate`（Chromium desktop + WebKit iPhone、フルsuite）は正しい検証ですが、実装途中で毎回回すには重すぎます。Test Speed roundで、`tests/browser/`を機能別spec（`conversation`/`deliverable`/`archive`/`setup`/`ai-office`/`failure`/`detail-pane`/`mobile-layout`）へ分割し、`@critical`/`@conversation`/`@deliverable`/`@archive`/`@setup`/`@office`/`@failure`/`@detail`/`@mobile`タグを付与しました。UI変更時は次の3段階で検証してください。
+
+1. **実装中**: `make check-ui-fast`（chromium-desktopのみ、`@critical`タグだけ、数分以内）を、変更のたびに繰り返します。full Browser Gateを実装途中で繰り返しません。
+2. **関連実装完成時**: 触れたUI領域に対応するtagで`make check-ui-changed AREA=<tag>`（例: `AREA=deliverable`）を実行し、Green化してから次の作業へ進みます。
+3. **Checkpoint完成・commit候補時**: `make check-ui-full`（`public-beta-browser-gate`と同じ、Chromium＋WebKit両方のフルsuite）を1回だけ実行し、その後`go test -race ./...`と`make v1-release-gate`も実行します。
+
+full Browser Gateでfailureが出た場合は、失敗したtestだけを修正・再実行し、原因を潰してから最後にfullをもう一度だけ実行します。full suiteを失敗のたびに繰り返しません。
+
+新しいUI testを追加する際は、実際にbrowser固有の確認（DOM描画、table、mobile overflow、composer pinned等）が必要な場合だけPlaywrightへ追加し、Markdown parserやrole labelのような純粋なmapping/formatting ロジックは（unit test基盤を追加する際は）より高速な層で検証することを優先してください。
+
 ## Documentation
 
 - 現在の構造は`docs/Architecture.md`、規範は`docs/CONSTITUTION.md`、計画は`docs/ROADMAP.md`を正とします。

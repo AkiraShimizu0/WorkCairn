@@ -13,7 +13,7 @@ RELEASE_GOARCH ?= $(shell cd $(GO_DIR) && go env GOARCH)
 DIST_DIR ?= dist
 PUBLIC_BETA_VERSION := $(shell sed -n '1p' VERSION)
 
-.PHONY: go-build go-test public-beta-smoke public-beta-browser-setup public-beta-browser-gate public-beta-build-matrix v1-release-gate release-package verify-release-package test
+.PHONY: go-build go-test public-beta-smoke public-beta-browser-setup public-beta-browser-gate public-beta-build-matrix v1-release-gate release-package verify-release-package test check-ui-fast check-ui-changed check-ui-full
 
 go-build:
 	mkdir -p bin
@@ -44,6 +44,31 @@ public-beta-browser-setup:
 public-beta-browser-gate: go-build
 	test -x node_modules/.bin/playwright
 	npm run browser:gate
+
+# Staged Browser Gate entry points (Test Speed round). Use narrow/targeted
+# runs while iterating; run check-ui-full only once, right before a
+# checkpoint commit. See AGENTS.md "Browser Gate Validation Staging".
+#
+# check-ui-fast: chromium-desktop only, @critical-tagged tests -- the
+# smallest set that still covers the core product path end to end.
+check-ui-fast: go-build
+	node --check go/internal/httpapi/web/app.js
+	test -x node_modules/.bin/playwright
+	npx playwright test --project=chromium-desktop --grep '@critical'
+
+# check-ui-changed AREA=<tag>: chromium-desktop only, tests tagged @<tag>
+# (conversation|deliverable|archive|setup|office|failure|detail|mobile).
+# Pick AREA to match whatever you just touched.
+check-ui-changed: go-build
+	test -n "$(AREA)" || (echo "usage: make check-ui-changed AREA=<conversation|deliverable|archive|setup|office|failure|detail|mobile>" && exit 1)
+	test -x node_modules/.bin/playwright
+	npx playwright test --project=chromium-desktop --grep '@$(AREA)'
+
+# check-ui-full: full regression across both projects -- the exact same
+# recipe as public-beta-browser-gate, kept as its own name so "fast /
+# changed / full" reads as one staged family. Run this once, at Checkpoint
+# completion / immediately before a commit candidate, not while iterating.
+check-ui-full: public-beta-browser-gate
 
 public-beta-build-matrix:
 	./scripts/check-release-matrix.sh
