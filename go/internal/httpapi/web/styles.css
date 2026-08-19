@@ -864,6 +864,9 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+    padding-right: 6px;
   }
   .request-detail-view.request-thread {
     flex: 1 1 auto;
@@ -1182,7 +1185,6 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   grid-area: menu;
   width: 36px;
   min-height: 36px;
-  margin-right: -4px;
   align-self: center;
 }
 
@@ -1835,8 +1837,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   cursor: pointer;
 }
 
-.msg-info-toggle-labeled,
-.msg-deliverable-toggle {
+.msg-info-toggle-labeled {
   width: auto;
   min-width: 0;
   padding: 6px 10px;
@@ -1855,26 +1856,6 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 
 .msg-technical-panel-actions {
   margin-top: 8px;
-}
-
-.msg-deliverable-panel {
-  margin-top: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.92);
-  font-size: 12px;
-}
-
-.msg-deliverable-panel .deliverable-preview {
-  max-height: 200px;
-  overflow: auto;
-  margin: 8px 0 0;
-  padding: 10px;
-  border-radius: 8px;
-  background: #f8f8f6;
-  font-size: 12px;
-  white-space: pre-wrap;
 }
 
 .request-insights-hidden {
@@ -2031,6 +2012,47 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   font-weight: 500;
 }
 
+.msg-live-status {
+  margin: 10px 0;
+}
+
+.msg-live-status-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+}
+
+.msg-live-status-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: live-status-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes live-status-pulse {
+  0%, 100% { opacity: .35; transform: scale(.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-live-status-dot { animation: none; }
+}
+
+.msg-live-status-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .msg-text {
   margin: 0 0 6px;
   white-space: pre-wrap;
@@ -2048,7 +2070,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   padding: 10px 12px;
   border-left: 3px solid var(--line);
   border-radius: 0 8px 8px 0;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--surface-strong);
 }
 
 .msg-attach-label {
@@ -2231,7 +2253,9 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 
 .msg-company-fact {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   padding: 4px 0;
 }
 
@@ -2256,6 +2280,147 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   margin-top: 4px;
   color: var(--muted);
   font-size: 10px;
+}
+
+/* Deliverable viewer: a wide inline panel, never a small popup/modal (see
+   the "popupよりchat中心" product direction). It sits as a full-width
+   sibling of the compact company-fact pill, not nested inside it. */
+.deliverable-viewer-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.deliverable-viewer-toggle {
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  background: var(--surface-strong);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.deliverable-viewer-toggle:hover {
+  background: var(--surface);
+}
+
+.deliverable-viewer {
+  width: 100%;
+  max-width: 100%;
+  max-height: min(70vh, 640px);
+  overflow: auto;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--ink);
+  background: var(--surface);
+  box-sizing: border-box;
+}
+
+.deliverable-body {
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.md-heading {
+  margin: 18px 0 8px;
+  color: var(--ink-strong, var(--ink));
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.md-heading:first-child { margin-top: 0; }
+
+.md-paragraph {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.md-paragraph:last-child { margin-bottom: 0; }
+
+.md-list {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.md-list li {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.md-blockquote {
+  margin: 0 0 12px;
+  padding: 4px 14px;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+.md-blockquote p {
+  margin: 0 0 4px;
+}
+
+.md-blockquote p:last-child { margin-bottom: 0; }
+
+.md-code-block {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  border-radius: 10px;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+}
+
+.deliverable-body code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-strong);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.md-code-block code {
+  padding: 0;
+  background: transparent;
+}
+
+.md-table-wrap {
+  margin: 0 0 12px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.md-table th,
+.md-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.md-table th {
+  color: var(--ink-strong, var(--ink));
+  background: var(--surface-strong);
+  font-weight: 700;
+}
+
+.md-table tr:last-child td {
+  border-bottom: 0;
 }
 
 .msg-directed .msg-mention {

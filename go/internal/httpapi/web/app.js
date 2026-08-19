@@ -74,10 +74,22 @@ function updateBackgroundWorkingState() {
   setBackgroundWorking(background);
 }
 
+// shouldBlockPollingRefresh only blocks the periodic timeline/record
+// refresh while the busy overlay owns the screen. It deliberately does NOT
+// block just because the viewed Session itself has a pending outer Command
+// (e.g. interaction.plan.approve_and_execute / workflow.execute still
+// running): canonical ConversationEntry facts for Task assignment,
+// Deliverable, Review, and Revision are committed progressively by that
+// Command's own child Commands while it is still "pending" client-side, and
+// renderNext()/renderInFlight() already re-derive the correct in-flight
+// composer/action presentation from the pending Command in sessionStorage
+// on every refresh -- refreshing the underlying data during that window
+// does not disturb it. Blocking here previously meant a workflow's Task/
+// Review/Revision progress never appeared in an open detail until the
+// Session list was reopened, which re-ran refreshCurrent() unconditionally
+// via selectSession(). See the Conversation UX Hardening round.
 function shouldBlockPollingRefresh() {
-  if (state.busy) return true;
-  const viewingSession = state.record?.session_id;
-  return Boolean(viewingSession && hasPendingForSession(viewingSession));
+  return state.busy;
 }
 
 const ui = {
@@ -547,17 +559,12 @@ function composerFieldText(next) {
     const guidance = interactionErrorGuidance(state.lastError.code, state.lastError.stage);
     return `${state.lastError.title || "処理を完了できませんでした。"} ${guidance}`.trim();
   }
-  const pending = storedPendingCommand();
-  if (pending) {
-    if (pending.operation === "interaction.plan.approve_and_execute" || pending.operation === "interaction.workflow.execute") {
-      return "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。";
-    }
-    if (pending.operation === "interaction.start" || pending.operation === "interaction.plan.generate") {
-      return "進め方を準備しています";
-    }
-    const copy = inFlightCopy(pending.operation);
-    return copy.message || copy.title || copy.label;
-  }
+  // While a Command is pending, the composer shows no processing text at
+  // all -- only a disabled/idle field (composerCapabilities' "running"
+  // mode placeholder). The live-status sentence (inFlightCopy's message)
+  // exists exactly once, in the timeline, via liveStatusNode; the composer
+  // is not a second place for the same or an equivalent "考え中" copy.
+  if (storedPendingCommand()) return "";
   if (isDraftRequestActive()) return "";
   if (!next) return "依頼を選択してください";
   if (next.kind === "answer_clarifications") return "";
@@ -571,6 +578,18 @@ function composerFieldText(next) {
 }
 
 function composerCapabilities(next) {
+  // A pending Command takes priority over every other mode, including
+  // "draft": state.draftRequest is still set for the entire window the
+  // first interaction.start Command is pending (it is only cleared after
+  // that Command resolves), and state.next can still be null/stale at that
+  // same point (no Session has been fetched into client state yet) -- so
+  // this check must come before both the draft and the !next branches
+  // below, or the composer would stay in "draft"/"idle" edit mode instead
+  // of the disabled "running" state (blank field, no processing text --
+  // see composerFieldText).
+  if (storedPendingCommand()) {
+    return { enabled: false, placeholder: "メッセージを入力...", mode: "running" };
+  }
   if (isDraftRequestActive()) {
     return { enabled: true, placeholder: "依頼内容を入力...", mode: "draft" };
   }
@@ -579,9 +598,6 @@ function composerCapabilities(next) {
   }
   if (!next || state.lastError) {
     return { enabled: false, placeholder: "メッセージを入力...", mode: "idle" };
-  }
-  if (storedPendingCommand()) {
-    return { enabled: false, placeholder: "メッセージを入力...", mode: "running" };
   }
   if (next.kind === "answer_clarifications") {
     return { enabled: true, placeholder: "回答を入力...", mode: "clarification" };
@@ -692,21 +708,28 @@ function setBackgroundWorking(active) {
   ui.backgroundStatus.setAttribute("aria-label", active ? "バックグラウンドで実行中" : "");
 }
 
+// inFlightCopy is the single source for the timeline's ephemeral
+// live-status sentence (liveStatusNode) while a Command is pending. It is
+// deliberately timeline-only: the composer shows no processing/"考え中"
+// text at all during this window (see composerFieldText and
+// composerCapabilities' "running" mode) -- only a disabled, blank field --
+// so this copy is never duplicated or paraphrased anywhere else.
 function inFlightCopy(operation) {
   switch (operation) {
   case "interaction.start":
   case "interaction.plan.generate":
-    return { label: "進め方を準備しています", title: "進め方を準備しています", message: "質問または進め方ができるまで、Macで処理を続けます。" };
+    return { message: "依頼内容を確認して、進め方を整理しています…" };
+  case "interaction.answer":
+    return { message: "回答を確認して、続きの進め方を整理しています…" };
   case "interaction.plan.approve_and_execute":
   case "interaction.workflow.execute":
-    return { label: "仕事を進めています", title: "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。", message: "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。" };
+    return { message: "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。" };
   default:
-    return { label: "処理中", title: "会社が仕事を進めています", message: "承認済みの処理をMacで安全に続けています。" };
+    return { message: "承認済みの処理をMacで安全に続けています。" };
   }
 }
 
-function renderInFlight(command) {
-  const copy = inFlightCopy(command?.operation);
+function renderInFlight() {
   clearActionSurface();
   renderComposerState(state.next);
   ui.activeCard.hidden = true;
@@ -1837,7 +1860,7 @@ function currentPlan() {
 }
 
 function roleLabel(role) {
-  const labels = { "Product Manager": "企画担当", "Content Writer": "コンテンツ担当", "QA Engineer": "QA担当" };
+  const labels = { "Product Manager": "企画担当", "Content Writer": "コンテンツ担当", "QA Engineer": "品質確認担当" };
   return labels[role] || "担当AI";
 }
 
@@ -2303,13 +2326,18 @@ function conversationEntryNode(entry) {
   }
   if (entry.category === "company_fact") {
     const text = companyFactText(entry);
+    // The Deliverable viewer is a sibling of the compact pill, not nested
+    // inside it: .msg-company-fact-body is a small centered chip by design
+    // (every other company fact), and the viewer must be able to expand to
+    // near-full thread width (see deliverableViewerNode) -- it could never
+    // do that while confined inside the chip's own compact box.
     const viewer = entry.kind === "deliverable_ready" ? deliverableViewerNode(entry) : null;
     return node("article", { class: "msg msg-company-fact" },
       node("div", { class: "msg-company-fact-body" },
         text ? node("p", { class: "msg-company-fact-copy" }, text) : null,
-        viewer,
         entry.at ? node("time", { class: "msg-company-fact-time" }, sessionTimeLabel(entry.at)) : null,
       ),
+      viewer,
     );
   }
   if (entry.kind === "clarification_requested") {
@@ -2372,26 +2400,190 @@ function appliedProjectName() {
   return applied?.project_name || "";
 }
 
+// ---------------------------------------------------------------------
+// Minimal DOM-based Markdown subset renderer.
+//
+// The canonical Deliverable body is stored and served as plain Markdown
+// text (unchanged) -- this renders it safely for display only. Every node
+// is built via the existing node() DOM helper, which always appends text
+// through document.createTextNode (see node() above) rather than parsing
+// raw markup, so no Markdown or Deliverable content can inject raw HTML or
+// script into the page. This intentionally covers only the documented
+// subset (heading,
+// paragraph, unordered/ordered list, bold, inline code, code block,
+// blockquote, link, table) -- it is not a general CommonMark
+// implementation and does not attempt to be one.
+// ---------------------------------------------------------------------
+
+const MARKDOWN_INLINE_PATTERN = /`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)\s]+)\)/g;
+
+// safeMarkdownLinkHref only allows schemes that cannot execute script when
+// clicked (http/https/mailto) -- javascript: and other schemes are
+// rejected outright, matching "raw HTMLを無制限に許可しない".
+function safeMarkdownLinkHref(url) {
+  try {
+    const parsed = new URL(url, window.location.href);
+    if (["http:", "https:", "mailto:"].includes(parsed.protocol)) return parsed.href;
+  } catch {}
+  return null;
+}
+
+function parseMarkdownInline(text) {
+  const nodes = [];
+  let lastIndex = 0;
+  MARKDOWN_INLINE_PATTERN.lastIndex = 0;
+  let match;
+  while ((match = MARKDOWN_INLINE_PATTERN.exec(text))) {
+    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+    if (match[1] != null) {
+      nodes.push(node("code", {}, match[1]));
+    } else if (match[2] != null) {
+      nodes.push(node("strong", {}, match[2]));
+    } else {
+      const href = safeMarkdownLinkHref(match[4]);
+      nodes.push(href ? node("a", { href, target: "_blank", rel: "noopener noreferrer" }, match[3]) : match[3]);
+    }
+    lastIndex = MARKDOWN_INLINE_PATTERN.lastIndex;
+  }
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes;
+}
+
+function markdownTableRow(line) {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparator(line) {
+  return /^\|?[\s:|-]+\|?$/.test(line.trim()) && line.includes("-");
+}
+
+function parseMarkdownBlocks(text) {
+  const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
+  const blocks = [];
+  let index = 0;
+  const isSpecialLine = (line) =>
+    line.trim() === "" || /^```/.test(line) || /^#{1,6}\s+/.test(line) || /^[-*]\s+/.test(line) ||
+    /^\d+\.\s+/.test(line) || /^>\s?/.test(line) || /^\|.*\|\s*$/.test(line);
+  while (index < lines.length) {
+    const line = lines[index];
+    if (line.trim() === "") { index++; continue; }
+
+    const fenceMatch = line.match(/^```(\w*)\s*$/);
+    if (fenceMatch) {
+      const codeLines = [];
+      index++;
+      while (index < lines.length && !/^```\s*$/.test(lines[index])) { codeLines.push(lines[index]); index++; }
+      index++;
+      blocks.push({ type: "code", text: codeLines.join("\n") });
+      continue;
+    }
+
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      blocks.push({ type: "heading", level: headingMatch[1].length, text: headingMatch[2].trim() });
+      index++;
+      continue;
+    }
+
+    if (/^\|.*\|\s*$/.test(line) && index + 1 < lines.length && isMarkdownTableSeparator(lines[index + 1])) {
+      const header = markdownTableRow(line);
+      index += 2;
+      const rows = [];
+      while (index < lines.length && /^\|.*\|\s*$/.test(lines[index])) { rows.push(markdownTableRow(lines[index])); index++; }
+      blocks.push({ type: "table", header, rows });
+      continue;
+    }
+
+    if (/^>\s?/.test(line)) {
+      const quoteLines = [];
+      while (index < lines.length && /^>\s?/.test(lines[index])) { quoteLines.push(lines[index].replace(/^>\s?/, "")); index++; }
+      blocks.push({ type: "blockquote", text: quoteLines.join("\n") });
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(line)) {
+      const items = [];
+      while (index < lines.length && /^[-*]\s+/.test(lines[index])) { items.push(lines[index].replace(/^[-*]\s+/, "")); index++; }
+      blocks.push({ type: "ul", items });
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(line)) {
+      const items = [];
+      while (index < lines.length && /^\d+\.\s+/.test(lines[index])) { items.push(lines[index].replace(/^\d+\.\s+/, "")); index++; }
+      blocks.push({ type: "ol", items });
+      continue;
+    }
+
+    const paragraphLines = [];
+    while (index < lines.length && !isSpecialLine(lines[index])) { paragraphLines.push(lines[index]); index++; }
+    if (paragraphLines.length) blocks.push({ type: "paragraph", text: paragraphLines.join("\n") });
+    else index++;
+  }
+  return blocks;
+}
+
+function renderMarkdownParagraphLines(text) {
+  const lines = text.split("\n");
+  return lines.flatMap((line, lineIndex) =>
+    lineIndex < lines.length - 1 ? [...parseMarkdownInline(line), node("br")] : parseMarkdownInline(line));
+}
+
+function renderMarkdownBlock(block) {
+  switch (block.type) {
+  case "heading":
+    return node(`h${Math.min(block.level, 6)}`, { class: "md-heading" }, ...parseMarkdownInline(block.text));
+  case "code":
+    return node("pre", { class: "md-code-block" }, node("code", {}, block.text));
+  case "blockquote":
+    return node("blockquote", { class: "md-blockquote" },
+      ...block.text.split("\n").map((line) => node("p", {}, ...parseMarkdownInline(line))));
+  case "ul":
+    return node("ul", { class: "md-list" }, ...block.items.map((item) => node("li", {}, ...parseMarkdownInline(item))));
+  case "ol":
+    return node("ol", { class: "md-list" }, ...block.items.map((item) => node("li", {}, ...parseMarkdownInline(item))));
+  case "table":
+    return node("div", { class: "md-table-wrap" },
+      node("table", { class: "md-table" },
+        node("thead", {}, node("tr", {}, ...block.header.map((cell) => node("th", {}, ...parseMarkdownInline(cell))))),
+        node("tbody", {}, ...block.rows.map((row) => node("tr", {}, ...row.map((cell) => node("td", {}, ...parseMarkdownInline(cell)))))),
+      ));
+  case "paragraph":
+  default:
+    return node("p", { class: "md-paragraph" }, ...renderMarkdownParagraphLines(block.text));
+  }
+}
+
+function renderMarkdown(text) {
+  const blocks = parseMarkdownBlocks(text);
+  return blocks.length ? blocks.map(renderMarkdownBlock) : [node("p", { class: "md-paragraph" }, "（本文なし）")];
+}
+
 // deliverableViewerNode reuses the existing read-only
 // /v1/projects/{project}/tasks/{task}/evidence projection (the same one
 // the request-detail side panel already fetches into state.evidence) to
 // let the CEO open a completed Deliverable directly from the "成果物を作成
 // しました" message -- never composing or caching a copy of the Deliverable
-// body itself; the canonical Deliverable stays the source of truth.
+// body itself; the canonical Deliverable stays the source of truth. The
+// expanded viewer is a wide inline panel (near-full thread width), not a
+// small popup/modal -- per the "popupよりchat中心" product direction.
 function deliverableViewerNode(entry) {
   const projectName = appliedProjectName();
   if (!projectName || !entry.task_id) return null;
-  const panel = node("div", { class: "msg-deliverable-panel", hidden: true });
+  const panel = node("div", { class: "deliverable-viewer", hidden: true });
   const toggle = node("button", {
-    class: "icon-button msg-deliverable-toggle",
+    class: "deliverable-viewer-toggle",
     type: "button",
-    onclick: async () => {
+    "aria-expanded": "false",
+    onclick: async (event) => {
       const opening = panel.hidden;
       panel.hidden = !panel.hidden;
-      if (opening) await fillDeliverablePanel(panel, projectName, entry.task_id);
+      event.currentTarget.setAttribute("aria-expanded", String(opening));
+      event.currentTarget.textContent = opening ? "成果物を閉じる" : "成果物を見る";
+      if (opening) await fillDeliverableViewer(panel, projectName, entry.task_id);
     },
   }, "成果物を見る");
-  return node("div", { class: "msg-actions" }, toggle, panel);
+  return node("div", { class: "deliverable-viewer-wrap" }, toggle, panel);
 }
 
 // Always re-fetches from the canonical evidence endpoint on every open --
@@ -2399,8 +2591,10 @@ function deliverableViewerNode(entry) {
 // cycle, so a value cached from an earlier point in the same session must
 // never be shown as if it were still current. state.evidence is still
 // updated so the existing request-detail side panel can reuse the fresh
-// copy, but this viewer never trusts what it finds there.
-async function fillDeliverablePanel(panel, projectName, taskId) {
+// copy, but this viewer never trusts what it finds there. The body text
+// (deliverable.content) is the sole source rendered -- Task title or
+// request text are never substituted as a fallback body.
+async function fillDeliverableViewer(panel, projectName, taskId) {
   const key = `${projectName}/${taskId}`;
   panel.replaceChildren(node("p", { class: "supporting" }, "成果物を確認しています…"));
   let evidence;
@@ -2414,7 +2608,7 @@ async function fillDeliverablePanel(panel, projectName, taskId) {
   const deliverable = evidence.deliverable;
   panel.replaceChildren(
     deliverable
-      ? node("pre", { class: "deliverable-preview" }, deliverable.content || "（本文なし）")
+      ? node("div", { class: "deliverable-body" }, ...renderMarkdown(deliverable.content))
       : node("p", { class: "supporting" }, "成果物はまだcommitされていません。"),
   );
 }
@@ -2425,10 +2619,30 @@ function planPendingNode(current) {
   );
 }
 
+// liveStatusNode is an ephemeral, non-canonical "thinking" indicator
+// derived only from the Command currently pending in sessionStorage -- it
+// is never written to Conversation Projection and never becomes a Turn.
+// It exists purely as long as pendingInteractionNodes() is called while a
+// Command is pending for this Session; once that Command reaches a
+// terminal state and is removed from sessionStorage (monitorAcceptedCommand
+// / resumePendingCommand), the next refreshCurrent() drops this node and
+// shows whatever canonical entry the Command actually committed -- there is
+// no window where both are shown together.
+function liveStatusNode(pending) {
+  const copy = inFlightCopy(pending.operation);
+  return node("article", { class: "msg msg-system msg-live-status" },
+    node("div", { class: "msg-live-status-body" },
+      node("span", { class: "msg-live-status-dot", "aria-hidden": "true" }),
+      node("p", { class: "msg-live-status-copy" }, copy.message),
+    ),
+  );
+}
+
 function pendingInteractionNodes() {
+  const pending = storedPendingCommand();
+  if (pending) return [liveStatusNode(pending)];
   const next = state.next;
   if (!next) return [];
-  if (storedPendingCommand()) return [];
   switch (next.kind) {
   case "approve_plan_apply": {
     const current = currentPlan();
@@ -2488,7 +2702,13 @@ function planEmbedNode(plan) {
 }
 
 function renderTimeline() {
-  if (isDraftRequestActive()) {
+  // state.draftRequest is only cleared after submitDraftRequest()'s whole
+  // interaction.start Command resolves, so it is still set for the entire
+  // window that Command is pending -- without the storedPendingCommand()
+  // escape hatch here, the very first request's live-status entry
+  // (pendingInteractionNodes()) would never be reachable, permanently
+  // hidden behind this empty-draft placeholder instead.
+  if (isDraftRequestActive() && !storedPendingCommand()) {
     const key = "draft-empty";
     if (state.timelineRenderKey === key) return;
     state.timelineRenderKey = key;
@@ -2906,7 +3126,7 @@ function roomCharacterLabel(employee) {
   const statusClass = employeeStatusClass(employee.display_status);
   return node("div", { class: "room-character-label" },
     node("strong", {}, employee.name || employee.id),
-    node("small", {}, `${employee.role || "役割未設定"} · ${employee.display_status || "待機中"}`),
+    node("small", {}, `${employee.role ? roleLabel(employee.role) : "役割未設定"} · ${employee.display_status || "待機中"}`),
     node("span", { class: `employee-status ${statusClass}`.trim() },
       node("span", { class: "status-glyph", "aria-hidden": "true" }, employeeStatusIcon(employee.display_status)),
       employee.display_status || "待機中",
@@ -2926,7 +3146,7 @@ function employeeCompactRow(employee) {
     ),
     node("div", { class: "employee-compact-copy" },
       node("strong", {}, employee.name || employee.id),
-      node("small", {}, `${employee.department || "会社"} · ${employee.role || "役割未設定"}`),
+      node("small", {}, `${employee.department || "会社"} · ${employee.role ? roleLabel(employee.role) : "役割未設定"}`),
       node("span", { class: `employee-status ${statusClass}`.trim() },
         node("span", { class: "status-glyph", "aria-hidden": "true" }, employeeStatusIcon(employee.display_status)),
         node("span", { class: "status-dot", "aria-hidden": "true" }),
@@ -3005,7 +3225,13 @@ function renderSetupWizard() {
   const storage = storageStatusCopy();
   const missing = new Set(workspace.missing_roles || []);
   const people = (workspace.starter_organization || []).map((candidate) =>
-    node("div", { class: "setup-person" }, node("span", {}, candidate.role), node("strong", {}, missing.has(candidate.role) ? "追加が必要" : "準備済み")),
+    // First-run Setup is user-facing presentation UI, not an admin console
+    // that verifies/edits canonical Role strings -- it is read-only,
+    // accepts no Role text input, and matching-string identity is never
+    // required from the CEO here. The same presentation label used
+    // everywhere else applies; missing.has() still compares the
+    // *canonical* candidate.role, so localization never affects matching.
+    node("div", { class: "setup-person" }, node("span", {}, roleLabel(candidate.role)), node("strong", {}, missing.has(candidate.role) ? "追加が必要" : "準備済み")),
   );
   ui.setupContent.replaceChildren(
     node("article", { class: `setup-step ${workspace.layout_ready ? "ready" : "attention"}` },
@@ -3126,7 +3352,8 @@ function renderSetupTeamApproval(workspace) {
       node("h3", {}, "最小のAIチームを作成しますか？"),
       node("p", {}, "承認すると、このWorkCairn専用Vaultだけに企画・コンテンツ・QA担当を追加します。既存社員や個人Vaultは変更しません。"),
       node("div", { class: "setup-people" }, ...(workspace.starter_organization || []).map((candidate) =>
-        node("div", { class: "setup-person" }, node("span", {}, candidate.role), node("strong", {}, candidate.name)),
+        // Same presentation reasoning as renderSetupWizard above.
+        node("div", { class: "setup-person" }, node("span", {}, roleLabel(candidate.role)), node("strong", {}, candidate.name)),
       )),
       node("div", { class: "setup-actions" },
         button("承認してセットアップ", "primary", async () => {

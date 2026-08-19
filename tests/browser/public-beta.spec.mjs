@@ -30,13 +30,6 @@ async function expectComposerInput(page, { value = null, placeholder = null, edi
   else if (value != null) await expect(input).toHaveValue(value);
 }
 
-async function expectTextOnceNearComposer(page, text) {
-  const input = page.locator("#composer-input");
-  const timeline = page.locator("#activity-timeline");
-  await expect(input).toHaveValue(text);
-  await expect(timeline).not.toContainText(text);
-}
-
 async function expectTextOnceInTimeline(page, text) {
   const footer = page.locator(".thread-footer");
   const timeline = page.locator("#activity-timeline");
@@ -71,9 +64,16 @@ async function pairThroughUI(page, daemon) {
 
 async function completeFirstRun(page) {
   await expect(page.locator("#setup-dialog")).toBeVisible();
-  await expect(page.locator("#setup-content")).toContainText("Product Manager");
-  await expect(page.locator("#setup-content")).toContainText("Content Writer");
-  await expect(page.locator("#setup-content")).toContainText("QA Engineer");
+  // First-run Setup is user-facing presentation UI (read-only, no Role text
+  // input, no canonical-string matching performed by the CEO here), so it
+  // uses the same Japanese presentation label as everywhere else in the
+  // product -- never the raw canonical Organization role name.
+  await expect(page.locator("#setup-content")).toContainText("企画担当");
+  await expect(page.locator("#setup-content")).toContainText("コンテンツ担当");
+  await expect(page.locator("#setup-content")).toContainText("品質確認担当");
+  await expect(page.locator("#setup-content")).not.toContainText("Product Manager");
+  await expect(page.locator("#setup-content")).not.toContainText("Content Writer");
+  await expect(page.locator("#setup-content")).not.toContainText("QA Engineer");
   await page.getByRole("button", { name: "最初のAIチームを確認" }).click();
   await expect(page.locator("#setup-content")).toContainText("最小のAIチームを作成しますか？");
   await page.getByRole("button", { name: "承認してセットアップ" }).click();
@@ -125,7 +125,13 @@ async function approvePlanAndExecute(page) {
   const approve = page.getByRole("button", { name: "この内容で進める" });
   await expect(approve).toHaveCount(1);
   await approve.click();
-  await expect(page.locator("#composer-input")).toHaveValue(/Makerの成果物作成/, { timeout: 20_000 });
+  // The composer enters the disabled "running" mode with no processing
+  // text at all -- the fuller "Makerの成果物作成..." sentence lives once
+  // in the timeline as an ephemeral live-status entry, never duplicated
+  // here (data-mode is the precise signal since the pre-approval
+  // "approve_workflow" state is already blank/disabled too).
+  await expect(page.locator("#thread-composer")).toHaveAttribute("data-mode", "running", { timeout: 20_000 });
+  await expect(page.locator("#composer-input")).toHaveValue("");
   await expect(approve).toHaveCount(0);
 }
 
@@ -224,7 +230,7 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
     const deliverableToggle = page.locator("#activity-timeline").getByRole("button", { name: "成果物を見る" }).first();
     await expect(deliverableToggle).toBeVisible();
     await deliverableToggle.click();
-    await expect(page.locator("#activity-timeline .deliverable-preview").first()).toContainText("WorkCairn紹介文");
+    await expect(page.locator("#activity-timeline .deliverable-viewer").first()).toContainText("WorkCairn紹介文");
 
     await page.reload();
     await expect(page.locator("#workspace-view")).toBeVisible();
@@ -1260,7 +1266,6 @@ test("archive on another session succeeds while workflow command monitors indepe
     await waitForPlanOrClarification(page);
     await answerClarificationIfNeeded(page);
     await approvePlanAndExecute(page);
-    await expect(page.locator("#composer-input")).toHaveValue(/Makerの成果物作成/, { timeout: 20_000 });
 
     await ensureRequestList(page);
     await archiveSessionFromList(page, new RegExp(requestB));
@@ -1277,8 +1282,20 @@ test("archive on another session succeeds while workflow command monitors indepe
     const archiveCommand = commands.find((command) => command.operation === "interaction.archive");
     expect(archiveCommand?.command_id).toBeTruthy();
     expect(workflowCommands.some((command) => command.command_id === archiveCommand?.command_id)).toBeFalsy();
-    const composerValue = await page.locator("#composer-input").inputValue();
-    expect(composerValue.trim().length).toBeGreaterThan(0);
+    // Session A's workflow may still be running or may have already
+    // finished by the time we reopen it -- either way the composer must be
+    // in one of these two well-defined states, never stuck blank-but-idle
+    // or showing stale garbage. While running it shows no processing text
+    // at all (see the composer/timeline role split); once done it shows
+    // the completion copy.
+    const composerInput = page.locator("#composer-input");
+    const composerMode = await page.locator("#thread-composer").getAttribute("data-mode");
+    expect(["running", "idle"]).toContain(composerMode);
+    if (composerMode === "running") {
+      await expect(composerInput).toHaveValue("");
+    } else {
+      await expect(composerInput).toHaveValue("完了しました");
+    }
   } finally {
     await environment.stop();
   }
@@ -1342,12 +1359,14 @@ test("composer state copy appears once across clarification, workflow, plan, fai
     await expect(page.locator("#quick-replies")).toContainText("この内容で進める");
     await approvePlanAndExecute(page);
     const composerInput = page.locator("#composer-input");
-    const runningValue = await composerInput.inputValue();
-    if (runningValue.includes("Maker")) {
-      await expectTextOnceNearComposer(page, workflowCopy);
-    }
+    // workflowCopy is now the ephemeral live-status TIMELINE sentence
+    // (never duplicated into the composer, which shows only the short
+    // "仕事を進めています" label already asserted inside
+    // approvePlanAndExecute). Once the workflow reaches a terminal state
+    // and canonical entries replace it, it must not remain in the timeline.
     await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible({ timeout: 45_000 });
     await expect(composerInput).toHaveValue("完了しました");
+    await expect(page.locator("#activity-timeline")).not.toContainText(workflowCopy);
   } finally {
     await happyEnv.stop();
   }
@@ -1417,6 +1436,222 @@ test("steps.description failure lists indexed structured field shapes in diagnos
     expect(copied.indexOf("steps.0.description")).toBeLessThan(copied.indexOf("steps.1.description"));
     expect(copied).not.toContain("Steps Shape Gate");
     expect(copied).not.toContain("required_role");
+  } finally {
+    await environment.stop();
+  }
+});
+
+// --- Conversation UX Hardening round ---------------------------------
+
+test("processing live feedback appears in the timeline while a request is submitted and clears without duplication", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "処理中feedback gate用の依頼です");
+    const timeline = page.locator("#activity-timeline");
+    const composerInput = page.locator("#composer-input");
+    // The pending window is transient (Mock Provider delay only), so check
+    // both conditions from one atomic snapshot rather than two sequential
+    // Playwright assertions -- otherwise the state can legitimately move on
+    // to the terminal question between the two separate polls.
+    await page.waitForFunction(() => {
+      const timelineText = document.querySelector("#activity-timeline")?.textContent || "";
+      return timelineText.includes("依頼内容を確認して、進め方を整理しています");
+    }, { timeout: 10_000 });
+    // The composer shows no processing/"考え中" text at all -- disabled and
+    // blank, never a paraphrase of the timeline's live-status sentence.
+    await expect(composerInput).toHaveValue("");
+    await expect(composerInput).not.toBeEditable();
+    for (const phrase of ["進め方を整理しています", "依頼内容を確認して", "処理中", "整理しています"]) {
+      expect(await composerInput.inputValue()).not.toContain(phrase);
+    }
+    await waitForPlanOrClarification(page);
+    // Once the terminal question/Plan lands, the ephemeral sentence must
+    // not remain alongside it.
+    await expect(timeline).not.toContainText("依頼内容を確認して、進め方を整理しています");
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("clarification answer processing shows live feedback in the timeline and clears once the next result lands", async ({ page }) => {
+  const environment = await startBrowserEnvironment("clarification_three");
+  const q1 = "Browser Gate質問1：対象読者は誰ですか？";
+  const q2 = "Browser Gate質問2：希望する文体は？";
+  const q3 = "Browser Gate質問3：掲載先はどこですか？";
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "回答処理feedback gate用の依頼です");
+    const composerInput = page.locator("#composer-input");
+    const timeline = page.locator("#activity-timeline");
+    await expect(composerInput).toHaveAttribute("placeholder", "回答を入力...", { timeout: 45_000 });
+    await expect(timeline).toContainText(q1);
+
+    // Q1/Q2 answers never reach the Provider (see the incremental
+    // clarification round), so they resolve too fast to reliably observe a
+    // live-status frame -- send them to reach Q3, the final answer that
+    // does trigger a real Provider round-trip with an observable delay.
+    await composerInput.fill("読者は初めての利用者です。");
+    await page.locator("#composer-send").click();
+    await expect(timeline).toContainText(q2, { timeout: 15_000 });
+    await composerInput.fill("やさしい文体でお願いします。");
+    await page.locator("#composer-send").click();
+    await expect(timeline).toContainText(q3, { timeout: 15_000 });
+
+    await composerInput.fill("社内ブログに掲載します。");
+    await page.locator("#composer-send").click();
+    await expect(timeline).toContainText("回答を確認して、続きの進め方を整理しています", { timeout: 10_000 });
+    // The composer shows no processing/"考え中" text at all -- disabled and
+    // blank, never a paraphrase of the timeline's live-status sentence.
+    await expect(composerInput).toHaveValue("");
+    await expect(composerInput).not.toBeEditable();
+    for (const phrase of ["続きを整理しています", "回答を確認して", "処理中", "整理しています"]) {
+      expect(await composerInput.inputValue()).not.toContain(phrase);
+    }
+    await expect(page.locator(".msg-embed-plan")).toBeVisible({ timeout: 60_000 });
+    await expect(timeline).not.toContainText("回答を確認して、続きの進め方を整理しています");
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("real-time workflow entries appear in an open detail without returning to the session list", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "リアルタイム反映gate用の依頼です");
+    await waitForPlanOrClarification(page);
+    await answerClarificationIfNeeded(page);
+    await approvePlanAndExecute(page);
+    // The whole rest of this test deliberately never navigates back to the
+    // session list -- Task assignment, Deliverable, Review, and completion
+    // must all reach this open detail view purely through polling/monitor.
+    const timeline = page.locator("#activity-timeline");
+    await expect(timeline).toContainText("を割り当てました", { timeout: 30_000 });
+    await expect(timeline).toContainText("成果物を作成しました", { timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible({ timeout: 45_000 });
+    await expect(page.locator("#request-detail-view")).toBeVisible();
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("Dark Mode Plan embed keeps readable contrast instead of white-on-white", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await page.emulateMedia({ colorScheme: "dark" });
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "Dark Mode Plan contrast gate用の依頼です");
+    await waitForPlanOrClarification(page);
+    await answerClarificationIfNeeded(page);
+    await expect(page.locator(".msg-embed-plan")).toBeVisible({ timeout: 60_000 });
+    const attach = page.locator(".msg-embed-plan .msg-attach").first();
+    await expect(attach).toBeVisible();
+    const background = await attach.evaluate((element) => getComputedStyle(element).backgroundColor);
+    const nameNode = attach.locator(".msg-attach-list strong").first();
+    const textColor = await nameNode.evaluate((element) => getComputedStyle(element).color);
+    // The exact dark --surface-strong value the fix integrates with,
+    // locking in the regression (previously a hardcoded near-white).
+    expect(background).toBe("rgb(29, 36, 32)");
+    expect(background).not.toBe("rgb(255, 255, 255)");
+    expect(textColor).not.toBe(background);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("employee role labels render in natural Japanese while canonical roles stay internal-only", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await ensureRequestDetail(page);
+    const menu = page.locator("#menu-button");
+    if (await menu.isVisible()) {
+      await menu.click();
+      await page.locator("#nav-employees-home").click();
+    }
+    await expect(page.locator("body")).toContainText("企画担当");
+    await expect(page.locator("body")).toContainText("コンテンツ担当");
+    await expect(page.locator("body")).toContainText("品質確認担当");
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("deliverable viewer expands inline at wide width and renders a Markdown table as a table", async ({ page }) => {
+  const environment = await startBrowserEnvironment("deliverable_markdown_table");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    await startRequest(page, "Markdown table gate用の依頼です");
+    await waitForPlanOrClarification(page);
+    await answerClarificationIfNeeded(page);
+    await approvePlanAndExecute(page);
+    await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible({ timeout: 45_000 });
+
+    const toggle = page.getByRole("button", { name: "成果物を見る" }).first();
+    await expect(toggle).toBeVisible({ timeout: 15_000 });
+    await toggle.click();
+    const viewer = page.locator(".deliverable-viewer").first();
+    await expect(viewer).toBeVisible();
+
+    // Wide inline display, never a small popup/modal.
+    await expect(page.locator("dialog[open]")).toHaveCount(0);
+    const viewerBox = await viewer.boundingBox();
+    const threadBox = await page.locator("#thread-scroll").boundingBox();
+    expect(viewerBox.width).toBeGreaterThan(threadBox.width * 0.85);
+
+    // The Markdown table renders as an actual table, not raw pipe text.
+    const table = viewer.locator("table.md-table");
+    await expect(table).toBeVisible();
+    await expect(table.locator("th")).toHaveCount(2);
+    await expect(table.locator("td")).toHaveCount(4);
+    await expect(viewer).toContainText("項目");
+    await expect(viewer).toContainText("内容");
+    await expect(viewer).not.toContainText("|---|---|");
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("session list scrollbar does not overlap the row menu button once the list overflows", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name.includes("iphone"), "Scrollbar overlap is a desktop pointer-scrollbar concern; mobile uses touch overlay scrolling with no reserved gutter");
+  const environment = await startBrowserEnvironment("session_list_overflow");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRun(page);
+    for (let index = 0; index < 16; index += 1) {
+      await startRequest(page, `Scroll overlap gate ${index}`);
+      // This fixture's Plan always resolves with no clarification question
+      // (see session_list_overflow), so wait directly for the Plan button
+      // rather than waitForPlanOrClarification's generic helper -- that
+      // helper first waits out a full 45s clarification-selector timeout
+      // per call when clarification never appears, which is far too slow
+      // repeated 16 times in one test.
+      await expect(page.getByRole("button", { name: "この内容で進める" })).toBeVisible({ timeout: 15_000 });
+    }
+    await ensureRequestList(page);
+    const list = page.locator("#session-list");
+    await expect(list.locator(".session-row")).toHaveCount(16, { timeout: 20_000 });
+    const overflowing = await list.evaluate((element) => element.scrollHeight > element.clientHeight);
+    expect(overflowing).toBeTruthy();
+
+    const overlap = await list.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const scrollbarWidth = element.offsetWidth - element.clientWidth;
+      const contentRightEdge = rect.right - scrollbarWidth;
+      const buttons = [...element.querySelectorAll(".session-menu-button")];
+      return buttons.some((button) => button.getBoundingClientRect().right > contentRightEdge + 1);
+    });
+    expect(overlap).toBeFalsy();
+
+    await switchSessionFilter(page, "削除済み");
+    await expect(page.locator("#session-list")).toBeVisible();
   } finally {
     await environment.stop();
   }
