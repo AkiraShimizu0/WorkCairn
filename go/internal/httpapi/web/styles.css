@@ -422,13 +422,13 @@ textarea { min-height: 120px; resize: vertical; }
 .approval-box {
   margin-top: 16px;
   padding: 15px;
-  border: 1px solid #d7ddd8;
+  border: 1px solid var(--line);
   border-radius: 16px;
-  background: #f8faf7;
+  background: var(--surface-strong);
 }
 
 .approval-box dl, .fact-grid { margin: 0; }
-.approval-box dl > div, .fact-grid > div { display: grid; grid-template-columns: minmax(90px, .38fr) 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px solid #e4e8e4; }
+.approval-box dl > div, .fact-grid > div { display: grid; grid-template-columns: minmax(90px, .38fr) 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .approval-box dl > div:last-child, .fact-grid > div:last-child { border-bottom: 0; }
 dt { color: var(--muted); font-size: 12px; }
 dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 650; }
@@ -439,19 +439,44 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   margin-top: 16px;
   border: 1px solid var(--line);
   border-radius: 18px;
-  background: rgba(255,255,255,.52);
+  background: var(--surface-strong);
 }
 
 .detail-panel > summary { min-height: 50px; padding: 14px 17px; cursor: pointer; font-size: 14px; font-weight: 720; }
 .detail-content { padding: 0 17px 17px; }
+
+/* #details-panel is now a genuinely visible, user-openable disclosure
+   living inside #thread-scroll (see index.html) -- these id-scoped rules
+   intentionally out-specificity the pre-existing ".requests-pane
+   .detail-panel" mobile-app-list override below (a leftover from an
+   earlier dashboard-style layout that no longer matches any live element
+   except this one), so the panel always renders as the same rounded,
+   token-based card used by the deliverable viewer, not the old flush/
+   transparent list style. */
+#details-panel {
+  margin: 12px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface-strong);
+}
+#details-panel > summary {
+  min-height: 46px;
+  padding: 12px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--muted);
+}
+#details-panel > summary:hover { background: var(--surface); }
+#details-content { padding: 0 16px 16px; }
 .detail-block { padding: 14px 0; border-top: 1px solid var(--line); }
 .detail-block h3 { font-size: 15px; }
 .detail-block ul { margin: 8px 0 0; padding-left: 20px; }
 .detail-block li { margin: 5px 0; font-size: 13px; }
-.artifact-detail { margin-top: 10px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.artifact-detail { margin-top: 10px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-strong); }
 .artifact-detail > summary { min-height: 48px; padding: 13px; cursor: pointer; font-size: 13px; font-weight: 750; }
 .artifact-detail .fact-grid { padding: 0 13px; }
-.deliverable-preview { max-height: 360px; margin: 10px 13px 13px; padding: 13px; overflow: auto; border-radius: 12px; color: #26332d; background: #f3f5f2; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.artifact-detail .deliverable-viewer-wrap { padding: 0 13px 13px; }
 .review-summary { margin-top: 10px; padding: 12px 13px; border-radius: 12px; background: var(--green-soft); }
 .review-summary strong, .review-summary small { display: block; }
 .review-summary small { margin-top: 2px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
@@ -1354,7 +1379,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   grid-template-columns: minmax(88px, .34fr) 1fr;
   gap: 8px;
   padding: 6px 0;
-  border-bottom: 1px solid rgba(217, 222, 216, .7);
+  border-bottom: 1px solid var(--line);
 }
 
 .requests-pane .approval-box dt {
@@ -1487,7 +1512,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 
 .requests-pane .detail-block {
   padding: 12px 0;
-  border-top: 1px solid rgba(217, 222, 216, .7);
+  border-top: 1px solid var(--line);
 }
 
 .requests-pane .detail-block:first-child { border-top: 0; }
@@ -3127,8 +3152,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   .msg-company-fact,
   .msg-system,
   .msg-embed,
-  .msg-technical-panel,
-  .deliverable-preview {
+  .msg-technical-panel {
     background: var(--surface);
     border-color: var(--line);
   }

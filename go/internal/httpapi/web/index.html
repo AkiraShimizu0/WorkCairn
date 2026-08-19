@@ -93,6 +93,10 @@
               <div id="thread-scroll" class="thread-scroll">
                 <h2 id="timeline-heading" class="visually-hidden">この依頼の歩み</h2>
                 <div id="activity-timeline" class="conversation-thread" aria-labelledby="timeline-heading"></div>
+                <details id="details-panel" class="detail-panel" hidden>
+                  <summary aria-controls="details-content">詳細を見る</summary>
+                  <div id="details-content" class="detail-content"></div>
+                </details>
                 <button id="thread-jump-latest" class="thread-jump-latest" type="button" hidden>新しい更新</button>
               </div>
 
@@ -119,11 +123,6 @@
                 <div id="autonomy-summary"></div>
                 <div id="attention-grid" class="attention-grid"></div>
               </div>
-
-              <details id="details-panel" class="detail-panel visually-hidden" hidden aria-hidden="true">
-                <summary>Technical details</summary>
-                <div id="details-content" class="detail-content"></div>
-              </details>
             </section>
           </aside>
 

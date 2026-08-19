@@ -149,6 +149,16 @@ const ui = {
   toast: document.querySelector("#toast"),
 };
 
+// setDetailsPanelHidden is the single place that toggles #details-panel's
+// `hidden` attribute. #details-panel is a genuinely visible, user-openable
+// <details> disclosure living inside #thread-scroll (never a popup, never
+// crowding the composer) -- see the Detail Pane Visibility round's report
+// for the investigation that found the panel had been carrying a permanent
+// screen-reader-only clip left over from an earlier redesign.
+function setDetailsPanelHidden(hidden) {
+  ui.detailsPanel.hidden = hidden;
+}
+
 const state = {
   sessions: [],
   record: null,
@@ -373,7 +383,7 @@ async function clearSelectedSessionPresentation() {
   clearActionSurface();
   ui.requestSummary.replaceChildren();
   ui.timeline.replaceChildren();
-  ui.detailsPanel.hidden = true;
+  setDetailsPanelHidden(true);
   ui.details.replaceChildren();
   state.renderKey = "";
   state.detailRenderKey = "";
@@ -2331,7 +2341,7 @@ function conversationEntryNode(entry) {
     // (every other company fact), and the viewer must be able to expand to
     // near-full thread width (see deliverableViewerNode) -- it could never
     // do that while confined inside the chip's own compact box.
-    const viewer = entry.kind === "deliverable_ready" ? deliverableViewerNode(entry) : null;
+    const viewer = entry.kind === "deliverable_ready" ? deliverableViewerNode(appliedProjectName(), entry.task_id) : null;
     return node("article", { class: "msg msg-company-fact" },
       node("div", { class: "msg-company-fact-body" },
         text ? node("p", { class: "msg-company-fact-copy" }, text) : null,
@@ -2560,16 +2570,18 @@ function renderMarkdown(text) {
 }
 
 // deliverableViewerNode reuses the existing read-only
-// /v1/projects/{project}/tasks/{task}/evidence projection (the same one
-// the request-detail side panel already fetches into state.evidence) to
-// let the CEO open a completed Deliverable directly from the "成果物を作成
-// しました" message -- never composing or caching a copy of the Deliverable
-// body itself; the canonical Deliverable stays the source of truth. The
-// expanded viewer is a wide inline panel (near-full thread width), not a
-// small popup/modal -- per the "popupよりchat中心" product direction.
-function deliverableViewerNode(entry) {
-  const projectName = appliedProjectName();
-  if (!projectName || !entry.task_id) return null;
+// /v1/projects/{project}/tasks/{task}/evidence projection to let the CEO
+// open a completed Deliverable -- never composing or caching a copy of the
+// Deliverable body itself; the canonical Deliverable stays the source of
+// truth. The expanded viewer is a wide inline panel (near-full available
+// width), not a small popup/modal -- per the "popupよりchat中心" product
+// direction. This single component is shared by both surfaces that can
+// show a Deliverable: the timeline's "成果物を作成しました" message
+// (conversationEntryNode) and the request-detail side panel's per-Task
+// evidence block (taskEvidenceBlock) -- one presentation, one fetch path,
+// not two divergent viewers for the same canonical content.
+function deliverableViewerNode(projectName, taskId) {
+  if (!projectName || !taskId) return null;
   const panel = node("div", { class: "deliverable-viewer", hidden: true });
   const toggle = node("button", {
     class: "deliverable-viewer-toggle",
@@ -2580,7 +2592,7 @@ function deliverableViewerNode(entry) {
       panel.hidden = !panel.hidden;
       event.currentTarget.setAttribute("aria-expanded", String(opening));
       event.currentTarget.textContent = opening ? "成果物を閉じる" : "成果物を見る";
-      if (opening) await fillDeliverableViewer(panel, projectName, entry.task_id);
+      if (opening) await fillDeliverableViewer(panel, projectName, taskId);
     },
   }, "成果物を見る");
   return node("div", { class: "deliverable-viewer-wrap" }, toggle, panel);
@@ -2740,7 +2752,7 @@ function renderTimeline() {
 function renderDetails() {
   const record = state.record;
   if (!record) {
-    ui.detailsPanel.hidden = true;
+    setDetailsPanelHidden(true);
     ui.details.replaceChildren();
     state.detailRenderKey = "";
     return;
@@ -2751,7 +2763,7 @@ function renderDetails() {
   const key = JSON.stringify([record.session_id, record.version, evidenceKey]);
   if (state.detailRenderKey === key) return;
   state.detailRenderKey = key;
-  ui.detailsPanel.hidden = false;
+  setDetailsPanelHidden(false);
   const blocks = [
     detailBlock("依頼", [record.request, `Session: ${record.session_id}`, `Version: ${record.version} / ${stateLabel(record.state)}`]),
   ];
@@ -2775,7 +2787,7 @@ function renderDetails() {
     for (const task of workflow.tasks) {
       const key = `${workflow.project_name}/${task.task_id}`;
       const evidence = state.evidence.get(key);
-      if (evidence) blocks.push(taskEvidenceBlock(evidence));
+      if (evidence) blocks.push(taskEvidenceBlock(evidence, workflow.project_name));
     }
   }
   const action = [...record.turns].reverse().find((turn) => turn.action)?.action;
@@ -2789,7 +2801,7 @@ function renderDetails() {
   ui.details.replaceChildren(...blocks);
 }
 
-function taskEvidenceBlock(evidence) {
+function taskEvidenceBlock(evidence, projectName) {
   const children = [
     node("h3", {}, `成果物・Review — ${evidence.task.id}`),
     node("p", { class: "supporting" }, `Task状態: ${evidence.task.status} / Version ${evidence.task.version}`),
@@ -2802,7 +2814,10 @@ function taskEvidenceBlock(evidence) {
         node("div", {}, node("dt", {}, "実行時刻"), node("dd", {}, evidence.deliverable.executed_at)),
         node("div", {}, node("dt", {}, "保存先"), node("dd", {}, evidence.deliverable.relative_path)),
       ),
-      node("pre", { class: "deliverable-preview" }, evidence.deliverable.content || "（本文なし）"),
+      // Same wide, Markdown-rendered viewer as the timeline's "成果物を
+      // 作成しました" message (deliverableViewerNode) -- one presentation
+      // for the same canonical Deliverable, not a second raw/small one.
+      deliverableViewerNode(projectName, evidence.task.id),
     ));
   } else {
     children.push(node("p", { class: "warning" }, "Deliverableはまだcommitされていません。"));
@@ -2847,7 +2862,7 @@ function renderRequestDetail() {
     ui.requestSummary.replaceChildren();
     ui.activeCard.replaceChildren();
     ui.timeline.replaceChildren();
-    ui.detailsPanel.hidden = true;
+    setDetailsPanelHidden(true);
     ui.details.replaceChildren();
     renderAutonomy();
     renderProofOfWork();
@@ -2876,7 +2891,7 @@ function renderDraftRequestDetail() {
   ui.activeCard.replaceChildren();
   ui.timeline.replaceChildren(node("p", { class: "empty" }, "依頼内容を入力してください。"));
   state.timelineRenderKey = "draft-empty";
-  ui.detailsPanel.hidden = true;
+  setDetailsPanelHidden(true);
   ui.details.replaceChildren();
   ui.composerInput.value = "";
   state.composerDraft = "";
@@ -3458,6 +3473,13 @@ ui.navNewRequest.addEventListener("click", () => { closeNavDrawer(); openNewRequ
 ui.navCurrentRequest.addEventListener("click", () => showRequestDetail());
 ui.navSettings.addEventListener("click", () => { closeNavDrawer(); openSettingsDialog(); });
 ui.backToListButton.addEventListener("click", showRequestList);
+if (ui.detailsPanel) {
+  const detailsSummary = ui.detailsPanel.querySelector("summary");
+  ui.detailsPanel.addEventListener("toggle", () => {
+    detailsSummary?.setAttribute("aria-expanded", String(ui.detailsPanel.open));
+  });
+  detailsSummary?.setAttribute("aria-expanded", String(ui.detailsPanel.open));
+}
 if (ui.threadScroll) {
   ui.threadScroll.addEventListener("scroll", () => {
     state.threadNearBottom = isThreadNearBottom();
