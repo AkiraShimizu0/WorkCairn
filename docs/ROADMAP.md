@@ -4,6 +4,8 @@
 
 WorkCairnは、Workspace Kernelを中心とするGo Only製品Runtimeです。Project、Organization、Workflow、Task、Event、Worker、Policy、Review、Revision、Deliverable、Auditの中核ルールと通常運用はGoを正本とします。
 
+次の主要な方向性は、**人間の少ない指示から、多くの有用な成果を、安全・有限・追跡可能な形で生み出すこと**（Leverage Engine）です。1回のCEO依頼を独立した複数Taskへ安全に分解し、依存関係のないTaskを並列実行し、最後に結果を統合する — これは新しいengineを追加するのではなく、既存のCEO Plan decomposition、Task Dependency、Reviewed Workflow、Autonomy Contract、Command Ledgerを拡張して実現します（[ADR-0051](adr/ADR-0051-leverage-engine-parallel-decomposition-foundation.md)）。
+
 ロードマップは現在地、次の順序、完了条件を示します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、現在構造は[SystemOverview.md](SystemOverview.md)と[Architecture.md](Architecture.md)、確定した設計判断は[ADR](adr/)を参照してください。
 
 ## Completed — Foundation and Go Migration
@@ -318,6 +320,17 @@ mobile attention表示は現在outer／child Command IDとLedger stateまでで�
 - Recovery applyを追加する場合は別の明示digest／Version承認に分離する
 - Vault path、秘密情報、Prompt、Provider responseをclientへ出さない
 - normal Workflowのbusiness ruleやSession stateを変更しない
+
+## Next 2 — Leverage Engine Foundation (Design)
+
+ADR-0051で、1回のCEO依頼から複数Taskを安全に並列実行し統合するLeverage Engineの最小設計を確定しました。調査の結果、Decomposition Planner（`ceoplan`）、Dependency model（`workflow`／`project`）、単一承認chain（ADR-0049）は既に実装済みであり、新規実装が必要なのは以下だけです。
+
+- `go/internal/workflow.EvaluateAllReadiness`: 依存関係を満たした全Readyタスクを返す純粋関数（既存`EvaluateReadiness`の兄弟）
+- `ReviewedWorkflowRunService`の並列dispatch拡張（bounded goroutine、既存`ExecuteTask → ExecuteReview → 条件付きExecuteRevision`分岐を束単位で実行）
+- Autonomy Contract（`workcairn-autonomy.v1`）へのadditive LoopGuard／Budget Safetyフィールド（`MaxGeneratedTasks`／`MaxParallelTasks`／`MaxRevisionCount`等）
+- `event.Event`の既存`CorrelationID`／`CausationID`フィールドの初回活用（lineage、Task Domain自体は無変更）
+
+最初のvertical sliceは並列dispatchの実行側（decomposition側は既存流用）に限定し、再帰分解、Specialist Routing実装、No Progress Detector実装、Budget Guardの実測強制は含めません。
 
 ## Completed — Public Beta Go Only Repository
 
