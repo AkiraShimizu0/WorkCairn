@@ -196,9 +196,15 @@ func renderRevisionIntent(intent revision.Intent) string {
 		"",
 		"# " + intent.Title,
 		"",
-		"## 指摘一覧",
-		"",
 	}
+	// AdditionalGuidance (Revision Limit Recovery) is optional and rendered
+	// as its own section only when present, immediately after the title and
+	// before the Reviewer's own findings -- durable, Auditable evidence of
+	// what the CEO actually asked for, distinct from what QA found.
+	if intent.AdditionalGuidance != "" {
+		lines = append(lines, "## CEOからの追加指示", "", singleLine(intent.AdditionalGuidance), "")
+	}
+	lines = append(lines, "## 指摘一覧", "")
 	for index, issue := range intent.ReviewDecision.Issues {
 		lines = append(lines,
 			fmt.Sprintf("### %d. %s / %s", index+1, issue.Category, issue.Severity),

@@ -75,6 +75,13 @@ var publicBetaCommandOperations = map[string]struct{}{
 	// every other interaction.* write.
 	"interaction.archive":   {},
 	"interaction.unarchive": {},
+	// interaction.workflow.recover_revision is the CEO's single explicit
+	// action after a Revision Limit stop (ADR-0051 Revision Guard;
+	// Revision Limit Recovery). Record.Next() only ever offers it from
+	// StateWorkflowAttentionRequired when the recorded Failure is
+	// specifically REVISION_LIMIT_REACHED and a stalled Task genuinely
+	// exists -- never a caller-visible retry/parallel-style choice.
+	"interaction.workflow.recover_revision": {},
 }
 
 func publicBetaCommandAllowed(operation string) bool {

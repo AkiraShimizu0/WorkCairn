@@ -15,6 +15,7 @@ import (
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/workcairn/go/internal/policy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
@@ -808,5 +809,249 @@ func TestRunParallelZeroOrNegativeMaxParallelTasksDefaultsToOne(t *testing.T) {
 	}
 	if maxActive, _ := executor.snapshot(); maxActive != 1 {
 		t.Fatalf("maxParallelTasks<=0 should default to 1, observed max concurrency = %d", maxActive)
+	}
+}
+
+// --- Revision Guard off-by-one (Revision Limit Recovery Checkpoint) ----
+//
+// autonomy.DefaultMaxRevisionCount's own doc comment already pins the
+// product-level meaning of "MaxRevisionCount=N": N Revisions permitted,
+// i.e. N+1 attempts total (the original execution plus N Request Changes
+// -> Revision cycles). The three tests below pin the exact same contract
+// one layer down, at RunParallel's own maxRevisionCount parameter, so a
+// future change to runBranch's revisionCount comparison cannot silently
+// shift this by one without a test failing here first.
+
+// TestRunParallelRevisionGuardLimitOnePermitsExactlyOneRevisionTwoAttemptsTotal
+// pins maxRevisionCount=1 (the smallest meaningful limit) to exactly two
+// attempts: the original Task, one Revision, and then a stop -- proving the
+// Guard does not off-by-one into permitting either zero or two Revisions.
+func TestRunParallelRevisionGuardLimitOnePermitsExactlyOneRevisionTwoAttemptsTotal(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{}
+	reviewer := &scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{
+		"TASK-A1": review.VerdictRequestChanges,
+		"TASK-A2": review.VerdictRequestChanges,
+	}}
+	reviser := &scriptedRevisionChainReviserFake{next: map[string]string{"TASK-A1": "TASK-A2"}}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+
+	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT-ONE", "CMD-REVISION-LIMIT-ONE", 10, 2, 1, planner)
+
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "revision_limit" || !errors.Is(err, ErrRevisionLimitReached) {
+		t.Fatalf("RunParallel() error = %v, want a revision_limit-staged ErrRevisionLimitReached", err)
+	}
+	gotIDs := make([]string, len(result.Tasks))
+	for index, current := range result.Tasks {
+		gotIDs[index] = current.TaskID
+	}
+	if !reflect.DeepEqual(gotIDs, []string{"TASK-A1", "TASK-A2"}) {
+		t.Fatalf("result.Tasks IDs = %#v, want exactly [TASK-A1 TASK-A2] (limit=1 permits one Revision, two attempts total)", gotIDs)
+	}
+	reviser.mu.Lock()
+	reviserCalls := append([]string(nil), reviser.calls...)
+	reviser.mu.Unlock()
+	if !reflect.DeepEqual(reviserCalls, []string{"TASK-A1"}) {
+		t.Fatalf("reviser calls = %#v, want exactly [TASK-A1] (a second Revision must never be created at limit=1)", reviserCalls)
+	}
+}
+
+// TestRunParallelRevisionGuardApproveBeforeLimitNeverCallsReviser proves the
+// Guard never touches the reviser at all on the ordinary Approve path --
+// the off-by-one risk runs both directions, and a Guard that fired one
+// attempt too early would show up here as an unwanted reviser call.
+func TestRunParallelRevisionGuardApproveBeforeLimitNeverCallsReviser(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{}
+	reviewer := &scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{"TASK-A1": review.VerdictApprove}}
+	reviser := &noopReviserFake{t: t}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+
+	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT-APPROVE", "CMD-REVISION-LIMIT-APPROVE", 10, 2, 1, planner)
+	if err != nil || result.Status != "completed" || len(result.Tasks) != 1 || result.Tasks[0].Verdict != review.VerdictApprove {
+		t.Fatalf("RunParallel() = %#v, %v", result, err)
+	}
+}
+
+// TestRunParallelZeroMaxRevisionCountDefaultsToOneNotTwo pins RunParallel's
+// own defaulting rule for an unset/zero maxRevisionCount parameter: exactly
+// 1, matching the same "0 means legacy/unset" convention
+// autonomy.Contract.EffectiveMaxRevisionCount already documents one layer
+// up -- not silently 0 (no Revision ever allowed) and not
+// autonomy.DefaultMaxRevisionCount's own value of 2 (RunParallel has no
+// dependency on the autonomy package and must not assume a caller always
+// resolves through it).
+func TestRunParallelZeroMaxRevisionCountDefaultsToOneNotTwo(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{}
+	reviewer := &scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{
+		"TASK-A1": review.VerdictRequestChanges,
+		"TASK-A2": review.VerdictRequestChanges,
+	}}
+	reviser := &scriptedRevisionChainReviserFake{next: map[string]string{"TASK-A1": "TASK-A2"}}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+
+	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT-ZERO", "CMD-REVISION-LIMIT-ZERO", 10, 2, 0, planner)
+
+	if !errors.Is(err, ErrRevisionLimitReached) {
+		t.Fatalf("RunParallel() error = %v, want ErrRevisionLimitReached", err)
+	}
+	gotIDs := make([]string, len(result.Tasks))
+	for index, current := range result.Tasks {
+		gotIDs[index] = current.TaskID
+	}
+	if !reflect.DeepEqual(gotIDs, []string{"TASK-A1", "TASK-A2"}) {
+		t.Fatalf("result.Tasks IDs = %#v, want exactly [TASK-A1 TASK-A2] (maxRevisionCount=0 must default to 1, not 0 or 2)", gotIDs)
+	}
+}
+
+// --- No-Progress wiring (ProgressPolicy) --------------------------------
+
+// stubProgressPolicy lets a test script exactly which ProgressDecision (or
+// error) runBranch's ProgressPolicy call receives, and records every
+// ProgressSignal it was called with for assertion.
+type stubProgressPolicy struct {
+	mu       sync.Mutex
+	decision policy.ProgressDecision
+	err      error
+	calls    []policy.ProgressSignal
+}
+
+func (stub *stubProgressPolicy) Evaluate(_ context.Context, signal policy.ProgressSignal) (policy.ProgressDecision, error) {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	stub.calls = append(stub.calls, signal)
+	if stub.err != nil {
+		return "", stub.err
+	}
+	return stub.decision, nil
+}
+
+// TestRunParallelNoProgressPolicyStopsBranchBeforeRevisionLimit proves
+// runBranch actually calls a configured ProgressPolicy and honors an
+// Escalate decision by stopping the branch immediately -- before ever
+// creating a single Revision, and well before the (much higher) hard
+// MaxRevisionCount would itself have stopped it.
+func TestRunParallelNoProgressPolicyStopsBranchBeforeRevisionLimit(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{}
+	reviewer := &scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{"TASK-A1": review.VerdictRequestChanges}}
+	reviser := &noopReviserFake{t: t}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+	stub := &stubProgressPolicy{decision: policy.ProgressEscalate}
+	service.SetProgressPolicy(stub)
+
+	// maxRevisionCount is deliberately generous (5) so a stop here can only
+	// be attributed to the ProgressPolicy, never to the Revision Guard's own
+	// count.
+	result, err := service.RunParallel(context.Background(), "CMD-NO-PROGRESS", "CMD-NO-PROGRESS", 10, 2, 5, planner)
+
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "no_progress" || !errors.Is(err, ErrNoProgressDetected) {
+		t.Fatalf("RunParallel() error = %v, want a no_progress-staged ErrNoProgressDetected", err)
+	}
+	gotIDs := make([]string, len(result.Tasks))
+	for index, current := range result.Tasks {
+		gotIDs[index] = current.TaskID
+	}
+	if !reflect.DeepEqual(gotIDs, []string{"TASK-A1"}) {
+		t.Fatalf("result.Tasks IDs = %#v, want exactly [TASK-A1] (No-Progress must stop before any Revision is created, well under maxRevisionCount=5)", gotIDs)
+	}
+	stub.mu.Lock()
+	signalCalls := append([]policy.ProgressSignal(nil), stub.calls...)
+	stub.mu.Unlock()
+	if len(signalCalls) != 1 || signalCalls[0].ConsecutiveSameFeedbackCount != 1 || signalCalls[0].NormalizedFeedback == "" ||
+		signalCalls[0].TaskLineageID != "TASK-A1" || signalCalls[0].RevisionCount != 0 {
+		t.Fatalf("ProgressPolicy calls = %#v, want a single call with ConsecutiveSameFeedbackCount=1 RevisionCount=0", signalCalls)
+	}
+}
+
+// TestRunParallelNoProgressPolicyEscalatesOnRepeatedFeedbackBeforeRevisionLimit
+// exercises the realistic No-Progress v0 shape end-to-end (RepeatedFeedbackProgressPolicy,
+// not a stub that always escalates): identical Review feedback repeating
+// stops the branch on its 2nd occurrence, one attempt earlier than the
+// higher hard MaxRevisionCount would have.
+func TestRunParallelNoProgressPolicyEscalatesOnRepeatedFeedbackBeforeRevisionLimit(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{}
+	reviewer := &scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{
+		"TASK-A1": review.VerdictRequestChanges,
+		"TASK-A2": review.VerdictRequestChanges,
+	}}
+	reviser := &scriptedRevisionChainReviserFake{next: map[string]string{"TASK-A1": "TASK-A2"}}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+	service.SetProgressPolicy(policy.RepeatedFeedbackProgressPolicy{})
+
+	// maxRevisionCount is deliberately generous (5) so a stop here can only
+	// be attributed to the ProgressPolicy, never to the Revision Guard's own
+	// count -- scriptedVerdictReviewerFake returns the exact same static
+	// Issue text for every Request Changes verdict, so the second attempt's
+	// normalizedReviewFeedback is guaranteed identical to the first.
+	result, err := service.RunParallel(context.Background(), "CMD-NO-PROGRESS-REPEATED", "CMD-NO-PROGRESS-REPEATED", 10, 2, 5, planner)
+
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "no_progress" || !errors.Is(err, ErrNoProgressDetected) {
+		t.Fatalf("RunParallel() error = %v, want a no_progress-staged ErrNoProgressDetected", err)
+	}
+	gotIDs := make([]string, len(result.Tasks))
+	for index, current := range result.Tasks {
+		gotIDs[index] = current.TaskID
+	}
+	if !reflect.DeepEqual(gotIDs, []string{"TASK-A1", "TASK-A2"}) {
+		t.Fatalf("result.Tasks IDs = %#v, want exactly [TASK-A1 TASK-A2] (No-Progress must stop before a 3rd attempt, well under maxRevisionCount=5)", gotIDs)
+	}
+	reviser.mu.Lock()
+	reviserCalls := append([]string(nil), reviser.calls...)
+	reviser.mu.Unlock()
+	if !reflect.DeepEqual(reviserCalls, []string{"TASK-A1"}) {
+		t.Fatalf("reviser calls = %#v, want exactly [TASK-A1] (no further Revision once escalation is decided)", reviserCalls)
+	}
+}
+
+// TestRunParallelNilProgressPolicyIsFullyBackwardCompatible proves that not
+// calling SetProgressPolicy at all (the zero value, matching every caller
+// that predates the No-Progress Foundation) never changes behavior: only
+// the Revision Guard's own MaxRevisionCount can stop a branch.
+func TestRunParallelNilProgressPolicyIsFullyBackwardCompatible(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{}
+	reviewer := &scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{
+		"TASK-A1": review.VerdictRequestChanges,
+		"TASK-A2": review.VerdictRequestChanges,
+		"TASK-A3": review.VerdictRequestChanges,
+	}}
+	reviser := &scriptedRevisionChainReviserFake{next: map[string]string{"TASK-A1": "TASK-A2", "TASK-A2": "TASK-A3"}}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+	// No SetProgressPolicy call -- service.progressPolicy stays nil.
+
+	result, err := service.RunParallel(context.Background(), "CMD-NO-POLICY", "CMD-NO-POLICY", 10, 2, 2, planner)
+
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "revision_limit" || !errors.Is(err, ErrRevisionLimitReached) {
+		t.Fatalf("RunParallel() error = %v, want a revision_limit-staged ErrRevisionLimitReached (nil Policy changes nothing)", err)
+	}
+	if len(result.Tasks) != 3 {
+		t.Fatalf("result.Tasks = %#v, want all 3 attempts (nil Policy never stops a branch early)", result.Tasks)
+	}
+}
+
+// TestRunParallelProgressPolicyErrorStopsBranchAsNoProgressStage proves a
+// ProgressPolicy error (e.g. an invalid signal) is treated as a genuine
+// stop, staged "no_progress" like an Escalate decision, rather than being
+// silently swallowed or crashing the branch.
+func TestRunParallelProgressPolicyErrorStopsBranchAsNoProgressStage(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{}
+	reviewer := &scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{"TASK-A1": review.VerdictRequestChanges}}
+	reviser := &noopReviserFake{t: t}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+	service.SetProgressPolicy(&stubProgressPolicy{err: policy.ErrInvalidProgressInput})
+
+	_, err := service.RunParallel(context.Background(), "CMD-POLICY-ERROR", "CMD-POLICY-ERROR", 10, 2, 5, planner)
+
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "no_progress" || !errors.Is(err, policy.ErrInvalidProgressInput) {
+		t.Fatalf("RunParallel() error = %v, want a no_progress-staged policy.ErrInvalidProgressInput", err)
 	}
 }

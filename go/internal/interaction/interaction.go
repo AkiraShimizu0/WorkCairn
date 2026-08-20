@@ -17,6 +17,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
 )
 
 const SchemaVersion = 1
@@ -71,6 +72,14 @@ const (
 	// remains the single source of truth.
 	TurnArchived   TurnKind = "archived"
 	TurnUnarchived TurnKind = "unarchived"
+	// TurnRevisionRecoveryStarted records the CEO's own recovery action
+	// (Revision Limit Recovery) from StateWorkflowAttentionRequired: it
+	// names the specific Task the CEO wants revised again and carries an
+	// optional fresh instruction (RecoveryGuidance). It carries no Plan/
+	// Answers/Workflow/Action evidence of its own -- the Reviewed Workflow
+	// continuation this authorizes still produces its own ordinary
+	// TurnWorkflowRecorded, exactly like every other Workflow round.
+	TurnRevisionRecoveryStarted TurnKind = "revision_recovery_started"
 )
 
 type ActionStatus string
@@ -182,6 +191,11 @@ type Turn struct {
 	PreAuthorizedWorkflowCommandID string            `json:"pre_authorized_workflow_command_id,omitempty"`
 	Workflow                       *WorkflowEvidence `json:"workflow,omitempty"`
 	Action                         *ActionEvidence   `json:"action,omitempty"`
+	// RecoveryTaskID and RecoveryGuidance are set only on a
+	// TurnRevisionRecoveryStarted turn (Revision Limit Recovery). See that
+	// Kind's own doc comment.
+	RecoveryTaskID   string `json:"recovery_task_id,omitempty"`
+	RecoveryGuidance string `json:"recovery_guidance,omitempty"`
 }
 
 type Record struct {
@@ -385,6 +399,15 @@ func (record Record) Validate() error {
 				return ErrInvalidSession
 			}
 			archived = false
+		case TurnRevisionRecoveryStarted:
+			if state != StateWorkflowAttentionRequired || turn.Plan != nil || turn.PlanDigest != "" || len(turn.Answers) != 0 ||
+				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || turn.Action != nil ||
+				strings.TrimSpace(turn.RecoveryTaskID) != turn.RecoveryTaskID || turn.RecoveryTaskID == "" ||
+				strings.ContainsAny(turn.RecoveryTaskID, "\r\n") ||
+				(turn.RecoveryGuidance != "" && (strings.ContainsAny(turn.RecoveryGuidance, "\r\n") || len(turn.RecoveryGuidance) > revision.MaxAdditionalGuidanceLength)) {
+				return ErrInvalidSession
+			}
+			state = StateReadyToExecute
 		default:
 			return ErrInvalidSession
 		}
@@ -527,6 +550,25 @@ func (record Record) PendingWorkflowPreAuthorization() (string, bool) {
 	return last.PreAuthorizedWorkflowCommandID, true
 }
 
+// stalledRevisionTaskID finds the one Task, if any, whose Review verdict
+// was Request Changes but which never received a follow-up Revision --
+// exactly and only the state the Revision Guard's stop leaves behind (every
+// other Request Changes verdict in a completed round was either
+// auto-revised, matching a non-empty RevisionCommandID, or belongs to a
+// still-running branch that would not appear in a terminal Workflow
+// Turn's evidence at all). No new field is needed to identify it: this is
+// a pure read of WorkflowTaskEvidence, the same evidence Conversation
+// Projection already reads.
+func stalledRevisionTaskID(tasks []WorkflowTaskEvidence) (string, bool) {
+	for index := len(tasks) - 1; index >= 0; index-- {
+		current := tasks[index]
+		if current.Verdict == review.VerdictRequestChanges && current.RevisionCommandID == "" {
+			return current.TaskID, true
+		}
+	}
+	return "", false
+}
+
 func (record Record) RecordWorkflow(evidence WorkflowEvidence, at time.Time) (Record, error) {
 	projectID, projectName, ok := record.AppliedProject()
 	if record.Validate() != nil || record.State != StateReadyToExecute || !ok || at.IsZero() ||
@@ -545,6 +587,35 @@ func (record Record) RecordWorkflow(evidence WorkflowEvidence, at time.Time) (Re
 	case WorkflowStatusFailed, WorkflowStatusPartialFailure:
 		next.State = StateWorkflowAttentionRequired
 	}
+	return next, next.Validate()
+}
+
+// RecordRevisionRecoveryStarted is the CEO's own explicit recovery action
+// after a Revision Limit stop (StateWorkflowAttentionRequired): it durably
+// records which Task the CEO wants revised again and any fresh instruction,
+// then reopens the Session for exactly one more Reviewed Workflow round --
+// mirroring how WorkflowStatusBlocked/LimitReached already leave the
+// Session in StateReadyToExecute for the same "continue via a new Command"
+// pattern (RecordWorkflow above), just reached from
+// StateWorkflowAttentionRequired instead. This is not automatic retry: the
+// caller (ExecuteInteractionRecoverRevision) only ever calls this in
+// response to a fresh, explicitly approved Command carrying its own new
+// Command ID -- it is never invoked by anything inside the Reviewed
+// Workflow's own automatic dispatch.
+func (record Record) RecordRevisionRecoveryStarted(taskID, guidance string, at time.Time) (Record, error) {
+	taskID = strings.TrimSpace(taskID)
+	guidance = strings.TrimSpace(guidance)
+	if record.Validate() != nil || record.State != StateWorkflowAttentionRequired || at.IsZero() ||
+		taskID == "" || strings.ContainsAny(taskID, "\r\n") ||
+		(guidance != "" && (strings.ContainsAny(guidance, "\r\n") || len(guidance) > revision.MaxAdditionalGuidanceLength)) {
+		return Record{}, ErrInvalidState
+	}
+	next := record.Clone()
+	next.Turns = append(next.Turns, Turn{
+		Kind: TurnRevisionRecoveryStarted, At: at, RecoveryTaskID: taskID, RecoveryGuidance: guidance,
+	})
+	next.Version++
+	next.State = StateReadyToExecute
 	return next, next.Validate()
 }
 
@@ -719,6 +790,22 @@ func (record Record) Next() (NextAction, error) {
 		next.Commands = []CommandReference{
 			{Scope: "workspace", CommandID: workflow.CommandID},
 			{Scope: "project", ProjectName: workflow.ProjectName, CommandID: workflow.WorkflowCommandID},
+		}
+		// Revision Limit Recovery (additive): only when the stop is
+		// specifically the Revision Guard or the No-Progress Foundation's
+		// own stop -- never for an unrelated partial failure (a Provider
+		// error, a structural failure) -- and only when a stalled Task
+		// actually exists (a Review verdict of Request Changes with no
+		// follow-up Revision recorded for it, exactly the state either
+		// guard leaves behind and the only state PlanRevision itself will
+		// ever treat as executable). This never asks the CEO to pick a
+		// recovery mechanism; it only appears when it genuinely applies.
+		if workflow.Failure != nil && (workflow.Failure.Code == "REVISION_LIMIT_REACHED" || workflow.Failure.Code == "NO_PROGRESS_DETECTED") {
+			if stalledTaskID, found := stalledRevisionTaskID(workflow.Tasks); found {
+				next.Operation, next.ApprovalRequired = "interaction.workflow.recover_revision", true
+				next.RequiredFields = []string{"task_id", "command_id", "current_time"}
+				next.EligibleTaskIDs = []string{stalledTaskID}
+			}
 		}
 	case StateCompleted:
 		next.Kind, next.Operation, next.ApprovalRequired = NextOptionalAction, "interaction.action.wordpress.publish", true

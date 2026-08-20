@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/workcairn/go/internal/policy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
@@ -30,6 +33,16 @@ var (
 	// point. The already-recorded Request Changes verdict is itself the
 	// durable, observable evidence of why this branch stopped.
 	ErrRevisionLimitReached = errors.New("revision limit reached for this Task")
+	// ErrNoProgressDetected means a ProgressPolicy (No-Progress Foundation)
+	// judged one Task lineage's own Review feedback to be repeating without
+	// change, and this branch stops for the same reason ErrRevisionLimitReached
+	// does -- the last attempt's execution and Review both already
+	// committed canonically; Go simply declines to spend another Revision
+	// on a lineage its own Policy says is not converging. Only ever
+	// returned when a ProgressPolicy is actually configured (see
+	// ReviewedWorkflowRunService.SetProgressPolicy) -- nil is always
+	// backward compatible and never produces this.
+	ErrNoProgressDetected = errors.New("no-progress detected for this Task lineage")
 )
 
 type ReviewedWorkflowTaskExecutor interface {
@@ -85,6 +98,11 @@ type ReviewedWorkflowRunService struct {
 	executor ReviewedWorkflowTaskExecutor
 	reviewer ReviewedWorkflowReviewer
 	reviser  ReviewedWorkflowReviser
+	// progressPolicy is optional (nil by default): every existing caller
+	// that never sets one keeps today's exact behavior (only the Revision
+	// Guard's MaxRevisionCount can stop a branch early). See
+	// SetProgressPolicy.
+	progressPolicy policy.ProgressPolicy
 }
 
 func NewReviewedWorkflowRunService(
@@ -97,6 +115,18 @@ func NewReviewedWorkflowRunService(
 		return nil, fmt.Errorf("reviewed Workflow planner, executor, reviewer, and reviser are required")
 	}
 	return &ReviewedWorkflowRunService{planner: planner, executor: executor, reviewer: reviewer, reviser: reviser}, nil
+}
+
+// SetProgressPolicy attaches an optional No-Progress Foundation boundary
+// (ADR-TBD): runBranch calls it, if set, right after a Request Changes
+// verdict and before deciding whether to create another Revision. A nil
+// Policy (the default) is fully backward compatible -- only
+// MaxRevisionCount can stop a branch. The Policy itself never sees raw
+// Deliverable or Provider content, and never mutates Task state; it only
+// receives the typed, already-sanitized policy.ProgressSignal this Service
+// computes from canonical Review evidence it already holds.
+func (service *ReviewedWorkflowRunService) SetProgressPolicy(progressPolicy policy.ProgressPolicy) {
+	service.progressPolicy = progressPolicy
 }
 
 func (service *ReviewedWorkflowRunService) Run(ctx context.Context, parentCommandID string, maxTasks int) (ReviewedWorkflowRunResult, error) {
@@ -452,6 +482,12 @@ func (service *ReviewedWorkflowRunService) runBranch(
 	// readiness, not its position in the table.
 	isRevisionContinuation := false
 	revisionCount := 0
+	// previousFeedback/consecutiveSameFeedback track this branch's own
+	// lineage locally (never persisted, never a new Task field): the
+	// No-Progress Foundation's ProgressPolicy call below reasons only over
+	// this in-memory signal, scoped to this one goroutine's own branch.
+	previousFeedback := ""
+	consecutiveSameFeedback := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return branchResults, stageError("cancelled", err)
@@ -491,6 +527,26 @@ func (service *ReviewedWorkflowRunService) runBranch(
 		case review.VerdictApprove:
 			return branchResults, nil
 		case review.VerdictRequestChanges:
+			feedback := normalizedReviewFeedback(reviewed.Execution.Decision)
+			if feedback != "" && feedback == previousFeedback {
+				consecutiveSameFeedback++
+			} else {
+				consecutiveSameFeedback = 1
+			}
+			previousFeedback = feedback
+			if service.progressPolicy != nil {
+				decision, policyErr := service.progressPolicy.Evaluate(ctx, policy.ProgressSignal{
+					TaskLineageID: startTaskID, RevisionCount: revisionCount,
+					NormalizedFeedback: feedback, ConsecutiveSameFeedbackCount: consecutiveSameFeedback,
+				})
+				if policyErr != nil {
+					return branchResults, stageError("no_progress", policyErr)
+				}
+				if decision == policy.ProgressEscalate || decision == policy.ProgressCancel {
+					return branchResults, stageError("no_progress",
+						fmt.Errorf("%w: task %s lineage %s", ErrNoProgressDetected, currentTaskID, startTaskID))
+				}
+			}
 			if revisionCount >= maxRevisionCount {
 				return branchResults, stageError("revision_limit",
 					fmt.Errorf("%w: task %s (limit %d)", ErrRevisionLimitReached, currentTaskID, maxRevisionCount))
@@ -521,6 +577,27 @@ func (service *ReviewedWorkflowRunService) runBranch(
 
 func reviewedChildCommandID(parentCommandID, operation, taskID string) (string, error) {
 	return commandledger.DeriveChildCommandID(parentCommandID, operation+":"+taskID)
+}
+
+// normalizedReviewFeedback reduces one Review Decision to a stable, plain
+// comparison key for the No-Progress Foundation's ProgressPolicy signal
+// (policy.ProgressSignal.NormalizedFeedback): every Issue's
+// Category/Severity/Description/SuggestedAction plus the Decision Summary,
+// trimmed and lowercased, sorted so the same set of findings normalizes
+// identically regardless of the order a Reviewer happened to list them in.
+// This is a plain equality key, never raw content handed to a Provider,
+// an embedding model, or Audit -- callers only ever compare two of these
+// for exact equality.
+func normalizedReviewFeedback(decision review.Decision) string {
+	lines := make([]string, 0, len(decision.Issues)+1)
+	for _, issue := range decision.Issues {
+		lines = append(lines, strings.ToLower(strings.TrimSpace(
+			issue.Category+"|"+issue.Severity+"|"+issue.Description+"|"+issue.SuggestedAction,
+		)))
+	}
+	sort.Strings(lines)
+	summary := strings.ToLower(strings.TrimSpace(decision.Summary))
+	return strings.Join(lines, "\n") + "\n" + summary
 }
 
 func reviewedWorkflowFailure(result *ReviewedWorkflowRunResult, stage string, err error) error {

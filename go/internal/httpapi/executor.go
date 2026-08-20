@@ -337,6 +337,14 @@ type interactionPlanApplyPayload struct {
 	CurrentTime     time.Time `json:"current_time"`
 }
 
+type interactionRecoverRevisionPayload struct {
+	SessionID          string    `json:"session_id"`
+	ExpectedVersion    uint64    `json:"expected_version"`
+	TaskID             string    `json:"task_id"`
+	AdditionalGuidance string    `json:"additional_guidance,omitempty"`
+	CurrentTime        time.Time `json:"current_time"`
+}
+
 type interactionWorkflowExecutePayload struct {
 	SessionID          string             `json:"session_id"`
 	ExpectedVersion    uint64             `json:"expected_version"`
@@ -479,6 +487,16 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		return workspaceprocess.ExecuteInteractionPlanApproveAndExecute(ctx, workspaceprocess.InteractionApplyInput{
 			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
 			ProjectID: payload.ProjectID, PlanDigest: payload.PlanDigest, CurrentTime: payload.CurrentTime,
+			CommandID: command.CommandID, EventObservers: executor.observers,
+		}, executor.providerConfig(), executor.httpClient, true)
+	case "interaction.workflow.recover_revision":
+		var payload interactionRecoverRevisionPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteInteractionRecoverRevision(ctx, workspaceprocess.InteractionRecoverRevisionInput{
+			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
+			TaskID: payload.TaskID, AdditionalGuidance: payload.AdditionalGuidance, CurrentTime: payload.CurrentTime,
 			CommandID: command.CommandID, EventObservers: executor.observers,
 		}, executor.providerConfig(), executor.httpClient, true)
 	case "interaction.workflow.execute":

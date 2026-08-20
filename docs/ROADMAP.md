@@ -334,6 +334,20 @@ ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全�
 
 対象外のまま（将来の別ADR候補）：再帰分解（Taskが自分の子Taskを動的生成すること）、Specialist Routingの実装、No Progress Detectorの実装、Budget Guard（`MaxTokens`/`MaxCost`/`MaxRuntime`/`MaxToolCalls`）の実測・強制、`MaxChildTasksPerTask`/`MaxTaskDepth`、DEGRADE Policy。詳細は[ADR-0051](adr/ADR-0051-leverage-engine-parallel-decomposition-foundation.md)を参照してください。
 
+## Completed — Revision Limit Recovery and No-Progress Foundation
+
+[ADR-0052](adr/ADR-0052-revision-limit-recovery-and-no-progress-foundation.md)（Accepted）により、並列実行がRevision Guardの上限に達して停止したあと、CEOが少ない操作で安全に結果を救い、必要な部分だけ続けられる経路を実装しました。成功条件は「上限に達したこと」ではなく「そこからの回復操作の少なさ」です。
+
+- `interaction.workflow.recover_revision`: Revision Limit Recovery専用の新しいadditive Command。既存の`revision.execute`と`runInteractionWorkflowChain`（ADR-0049）を内部で再利用するだけで、新しいWorkflow再開ロジックは持たない
+- `interaction.Turn.RecoveryTaskID`/`RecoveryGuidance`（新Turn Kind `revision_recovery_started`）: 新しい永続IDを追加せず、既存のTask ID文字列とCEOの追加指示だけでlineageを表現
+- `revision.Intent.AdditionalGuidance`: CEOの追加指示を、既存の唯一のPrompt入力チャネルであるRevision TaskのTitleへ折り込む（新しいPrompt注入機構は追加していない）
+- `REVISION_LIMIT_REACHED`/`NO_PROGRESS_DETECTED`のFailureEnvelope統合（`reviewedWorkflowOuterEnvelope`）: 既存のConversation Projection／Command Ledger／HTTP／UI伝播経路（ADR-0041/0047）はそのまま、2つの新しいCodeを転記するだけ
+- `policy.ProgressPolicy`（`go/internal/policy/progress.go`）: Task状態を直接変更しない純粋な決定境界。`RepeatedFeedbackProgressPolicy`をNo-Progress v0として実装（同一Task lineageで正規化済みReview所見が既定2回連続一致した場合のみ停止）。Provider非依存、embedding／AI判定は使わない
+- 並列Branch（A成功／B上限到達／C成功）のケースで、A/Cの結果を失わず、Synthesisを誤って完了扱いにせず、B単独のRecoveryだけでA/Cを再実行せずにSynthesisが再開することを、新しいコードを書かずに既存の`RunParallel`/`EvaluateAllReadiness`の組み合わせだけで達成（統合テストで確認）
+- Web UI: 既存の`taskEvidenceBlock`/`deliverableViewerNode`を再利用したRecovery専用画面。composerは「追加の指示（任意）」を受け付ける専用modeになり、既存のprocessing live status表示とは重複しない
+
+対象外のまま（将来の別Checkpoint候補）：Deliverable内容の意味的比較（embedding／類似度判定）、Cost／Tool Call量に基づくProgress判定、Deliverableハッシュ・digest比較の実装、BudgetGuard／Scheduler統合、ADR-0049 Case B相当の完全なcrash-recovery対称性。詳細は[ADR-0052](adr/ADR-0052-revision-limit-recovery-and-no-progress-foundation.md)を参照してください。
+
 ## Completed — Public Beta Go Only Repository
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。

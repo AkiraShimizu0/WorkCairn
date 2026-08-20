@@ -18,8 +18,11 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/project"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
@@ -603,6 +606,47 @@ func writeReviewedWorkflowVault(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+// TestReviewedWorkflowOuterEnvelopeClassifiesRevisionLimitAndNoProgress pins
+// the exact FailureEnvelope reviewedWorkflowOuterEnvelope builds for
+// RunParallel's two Revision Guard / No-Progress Foundation stop stages
+// (Revision Limit Recovery Checkpoint): a distinct Code per stage so a
+// human can tell which guard actually stopped the branch, Evidence
+// asserting exactly what Recovery presentation is allowed to assume is
+// already durably committed (Deliverable, Task state, canonical Review),
+// and Partial/RecoveryRequired both true so downstream Ledger/HTTP/UI never
+// have to guess this was anything other than a recoverable stop.
+func TestReviewedWorkflowOuterEnvelopeClassifiesRevisionLimitAndNoProgress(t *testing.T) {
+	for _, testCase := range []struct {
+		stage, wantCode string
+	}{
+		{"revision_limit", "REVISION_LIMIT_REACHED"},
+		{"no_progress", "NO_PROGRESS_DETECTED"},
+	} {
+		envelope := reviewedWorkflowOuterEnvelope(service.ReviewedWorkflowRunResult{}, testCase.stage, true)
+		if envelope == nil || envelope.Code != testCase.wantCode || envelope.Stage != testCase.stage ||
+			!envelope.Partial || !envelope.RecoveryRequired || envelope.Evidence == nil ||
+			!envelope.Evidence.Deliverable || !envelope.Evidence.TaskState || !envelope.Evidence.ReviewCanonical {
+			t.Fatalf("reviewedWorkflowOuterEnvelope(stage=%s) = %#v, want Code=%s Partial/RecoveryRequired=true full Evidence",
+				testCase.stage, envelope, testCase.wantCode)
+		}
+	}
+}
+
+// TestReviewedWorkflowOuterEnvelopeForwardsChildEnvelopeUnchanged proves the
+// selector never reclassifies a genuine child Execution/Review failure --
+// it must return exactly the child's own already-computed Envelope, not a
+// generic REVIEWED_WORKFLOW_FAILED fallback, whenever one is available.
+func TestReviewedWorkflowOuterEnvelopeForwardsChildEnvelopeUnchanged(t *testing.T) {
+	childEnvelope := failure.New("PROVIDER_REFUSED", "task_execute")
+	result := service.ReviewedWorkflowRunResult{Tasks: []service.ReviewedWorkflowTaskResult{
+		{TaskID: "TASK-001", Execution: execution.Result{Failure: &childEnvelope}},
+	}}
+	envelope := reviewedWorkflowOuterEnvelope(result, "task_execute", true)
+	if envelope == nil || envelope.Code != "PROVIDER_REFUSED" || envelope.Stage != "task_execute" {
+		t.Fatalf("reviewedWorkflowOuterEnvelope() = %#v, want the child's own Envelope forwarded unchanged", envelope)
+	}
 }
 
 func reviewProviderOutput(verdict review.Verdict) string {

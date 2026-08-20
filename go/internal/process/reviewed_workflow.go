@@ -14,6 +14,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
 	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
+	"github.com/AkiraShimizu0/workcairn/go/internal/policy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
@@ -230,6 +231,14 @@ func ExecuteReviewedWorkflow(
 	if err != nil {
 		return service.ReviewedWorkflowRunResult{}, finishDurableCommand(ctx, claim, service.ReviewedWorkflowRunResult{}, err, "REVIEWED_WORKFLOW_FAILED", "workflow_composition", false)
 	}
+	// No-Progress Foundation (v0): a conservative, non-AI default -- the
+	// same RepeatThreshold (2) as autonomy.DefaultMaxRevisionCount's own
+	// default, so this only meaningfully engages once a caller raises
+	// MaxRevisionCount above its default in a future Checkpoint. It never
+	// mutates Task state; it only lets runBranch stop a genuinely
+	// non-converging branch a little earlier than the Revision Guard's
+	// hard count cap would.
+	runService.SetProgressPolicy(policy.RepeatedFeedbackProgressPolicy{})
 	// RunParallel drives dispatch for every caller of this Command, not just
 	// a caller that explicitly asked for parallel execution -- there is no
 	// such caller-visible choice (ADR-0051 Checkpoint "production wiring").
@@ -297,9 +306,33 @@ func reviewedWorkflowOuterEnvelope(result service.ReviewedWorkflowRunResult, sta
 		}
 	}
 	var envelope failure.Envelope
-	if child != nil {
+	switch {
+	case child != nil:
 		envelope = *child
-	} else {
+	case stage == "revision_limit":
+		// The Revision Guard's own stop, not a Task/Review execution
+		// failure: the last attempt's own execution and Review both
+		// committed canonically (the Task completed, the RequestChanges
+		// verdict is a real, already-saved Review artifact) -- Go simply
+		// declined to create yet another Revision Task. Evidence reflects
+		// exactly that, so Recovery presentation (Checkpoint F) never needs
+		// to guess whether a Deliverable/Review exists to show.
+		envelope = failure.New("REVISION_LIMIT_REACHED", stage)
+		envelope.Evidence = &failure.CommittedEvidence{Deliverable: true, TaskState: true, ReviewCanonical: true}
+	case stage == "no_progress":
+		// The No-Progress Foundation's own stop (ADR-TBD): same shape as
+		// revision_limit above -- the last attempt's execution and Review
+		// both committed canonically, and Go declined to spend another
+		// Revision on a lineage its own ProgressPolicy judged as not
+		// converging. Recovery presentation and interaction.Next()'s
+		// stalledRevisionTaskID heuristic treat this identically to
+		// REVISION_LIMIT_REACHED -- both leave exactly the same
+		// recoverable state (Request Changes verdict, no follow-up
+		// Revision) -- only the Code differs, so a human can tell which
+		// guard actually stopped the branch.
+		envelope = failure.New("NO_PROGRESS_DETECTED", stage)
+		envelope.Evidence = &failure.CommittedEvidence{Deliverable: true, TaskState: true, ReviewCanonical: true}
+	default:
 		envelope = failure.New("REVIEWED_WORKFLOW_FAILED", stage)
 	}
 	envelope.Partial = partial

@@ -32,6 +32,10 @@ type RevisionPlanInput struct {
 	SourceTaskID  string
 	ReviewVersion string
 	CurrentTime   time.Time
+	// AdditionalGuidance is an optional CEO-authored instruction (Revision
+	// Limit Recovery). Blank for every automatic Revision the Reviewed
+	// Workflow creates on its own -- see revision.Intent.AdditionalGuidance.
+	AdditionalGuidance string
 }
 
 type RevisionPlan struct {
@@ -44,6 +48,7 @@ type RevisionPlan struct {
 	ReviewDecision         review.Decision `json:"review_decision"`
 	AssigneeID             string          `json:"assignee_id"`
 	Title                  string          `json:"title"`
+	AdditionalGuidance     string          `json:"additional_guidance,omitempty"`
 	RevisionTaskID         string          `json:"revision_task_id"`
 	IntentPath             string          `json:"intent_path"`
 	Executable             bool            `json:"executable"`
@@ -143,12 +148,25 @@ func PlanRevision(ctx context.Context, input RevisionPlanInput) (RevisionPlan, e
 	if intentExists {
 		blocking = append(blocking, "revision_intent_path_already_exists")
 	}
+	guidance := strings.TrimSpace(input.AdditionalGuidance)
+	title := input.SourceTaskID + "のレビュー指摘を反映する"
+	if guidance != "" {
+		if strings.ContainsAny(guidance, "\r\n") || len(guidance) > revision.MaxAdditionalGuidanceLength {
+			blocking = append(blocking, "additional_guidance_invalid")
+		} else {
+			// Folded directly into Title -- the existing, unmodified
+			// Title -> Worker Prompt channel (prompt.BuildRunPrompt's
+			// "作業指示" line) -- so the Runner genuinely sees the CEO's
+			// fresh instruction without any new Prompt-building code.
+			title += "（CEOからの追加指示: " + guidance + "）"
+		}
+	}
 	return RevisionPlan{
 		ProjectID: input.ProjectID, ProjectName: input.ProjectName,
 		SourceTaskID: input.SourceTaskID, SourceTaskStatus: source.Status,
 		SourceReviewCanonical: canonical, SourceReviewProjection: projection,
 		ReviewDecision: decision, AssigneeID: assigneeID,
-		Title:          input.SourceTaskID + "のレビュー指摘を反映する",
+		Title: title, AdditionalGuidance: guidance,
 		RevisionTaskID: revisionTaskID, IntentPath: intentPath,
 		Executable: len(blocking) == 0, BlockingReasons: blocking, ApprovalRequired: true,
 	}, nil
@@ -162,12 +180,13 @@ func ExecuteRevision(ctx context.Context, input ExecuteRevisionInput) (revision.
 		return revision.Result{}, ErrRevisionApprovalRequired
 	}
 	claim, err := claimProjectCommand(ctx, input.VaultRoot, input.ProjectName, input.CommandID, "revision.execute", input.SourceTaskID, struct {
-		ProjectID     string    `json:"project_id"`
-		ProjectName   string    `json:"project_name"`
-		SourceTaskID  string    `json:"source_task_id"`
-		ReviewVersion string    `json:"review_version,omitempty"`
-		CurrentTime   time.Time `json:"current_time"`
-	}{input.ProjectID, input.ProjectName, input.SourceTaskID, input.ReviewVersion, input.CurrentTime})
+		ProjectID          string    `json:"project_id"`
+		ProjectName        string    `json:"project_name"`
+		SourceTaskID       string    `json:"source_task_id"`
+		ReviewVersion      string    `json:"review_version,omitempty"`
+		AdditionalGuidance string    `json:"additional_guidance,omitempty"`
+		CurrentTime        time.Time `json:"current_time"`
+	}{input.ProjectID, input.ProjectName, input.SourceTaskID, input.ReviewVersion, strings.TrimSpace(input.AdditionalGuidance), input.CurrentTime})
 	if err != nil {
 		return revision.Result{}, err
 	}
@@ -216,7 +235,7 @@ func executeClaimedRevision(ctx context.Context, input ExecuteRevisionInput) (re
 		SourceTaskID: plan.SourceTaskID, SourceReview: plan.SourceReviewCanonical,
 		SourceProjection: plan.SourceReviewProjection, ReviewDecision: plan.ReviewDecision,
 		AssigneeID: plan.AssigneeID, RevisionTaskID: plan.RevisionTaskID,
-		Title: plan.Title, CreatedAt: input.CurrentTime,
+		Title: plan.Title, AdditionalGuidance: plan.AdditionalGuidance, CreatedAt: input.CurrentTime,
 	})
 	stopErr := runtime.Stop()
 	if executionErr != nil {

@@ -179,6 +179,14 @@ func ValidatePayload(operation string, content json.RawMessage) error {
 			WorkflowPlanDigest string             `json:"workflow_plan_digest"`
 			Autonomy           *autonomy.Contract `json:"autonomy_contract,omitempty"`
 		}{}
+	case "interaction.workflow.recover_revision":
+		target = &struct {
+			SessionID          string    `json:"session_id"`
+			ExpectedVersion    uint64    `json:"expected_version"`
+			TaskID             string    `json:"task_id"`
+			AdditionalGuidance string    `json:"additional_guidance,omitempty"`
+			CurrentTime        time.Time `json:"current_time"`
+		}{}
 	case "interaction.action.wordpress.publish":
 		target = &struct {
 			SessionID        string    `json:"session_id"`
@@ -214,30 +222,31 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 		return ErrInvalidPayload
 	}
 	requiredStrings := map[string][]string{
-		"workspace.setup":                      {},
-		"task.execute":                         {"project_id", "project_name", "task_id"},
-		"review.execute":                       {"project_id", "project_name", "task_id", "reviewer_id"},
-		"revision.execute":                     {"project_id", "project_name", "source_task_id"},
-		"workflow.execute":                     {"project_id", "project_name"},
-		"workflow.reviewed.execute":            {"project_id", "project_name", "reviewer_id"},
-		"ceo_plan.apply":                       {"project_id"},
-		"project.bootstrap":                    {"project_id", "project_name"},
-		"task.create":                          {"project_name", "title"},
-		"project.dependencies.create":          {"project_name"},
-		"organization.employee_hire":           {},
-		"organization.employee_rename":         {},
-		"organization.employee_id_repair":      {},
-		"organization.sync":                    {},
-		"action.wordpress.publish":             {"project_id", "project_name", "task_id", "target_id", "source_sha256"},
-		"interaction.start":                    {"session_id", "request", "request_digest", "model"},
-		"interaction.plan.generate":            {"session_id"},
-		"interaction.answer":                   {"session_id"},
-		"interaction.plan.apply":               {"session_id", "project_id", "plan_digest"},
-		"interaction.plan.approve_and_execute": {"session_id", "project_id", "plan_digest"},
-		"interaction.workflow.execute":         {"session_id", "reviewer_id", "workflow_plan_digest"},
-		"interaction.action.wordpress.publish": {"session_id", "task_id", "target_id", "action_plan_digest"},
-		"interaction.archive":                  {"session_id"},
-		"interaction.unarchive":                {"session_id"},
+		"workspace.setup":                       {},
+		"task.execute":                          {"project_id", "project_name", "task_id"},
+		"review.execute":                        {"project_id", "project_name", "task_id", "reviewer_id"},
+		"revision.execute":                      {"project_id", "project_name", "source_task_id"},
+		"workflow.execute":                      {"project_id", "project_name"},
+		"workflow.reviewed.execute":             {"project_id", "project_name", "reviewer_id"},
+		"ceo_plan.apply":                        {"project_id"},
+		"project.bootstrap":                     {"project_id", "project_name"},
+		"task.create":                           {"project_name", "title"},
+		"project.dependencies.create":           {"project_name"},
+		"organization.employee_hire":            {},
+		"organization.employee_rename":          {},
+		"organization.employee_id_repair":       {},
+		"organization.sync":                     {},
+		"action.wordpress.publish":              {"project_id", "project_name", "task_id", "target_id", "source_sha256"},
+		"interaction.start":                     {"session_id", "request", "request_digest", "model"},
+		"interaction.plan.generate":             {"session_id"},
+		"interaction.answer":                    {"session_id"},
+		"interaction.plan.apply":                {"session_id", "project_id", "plan_digest"},
+		"interaction.plan.approve_and_execute":  {"session_id", "project_id", "plan_digest"},
+		"interaction.workflow.execute":          {"session_id", "reviewer_id", "workflow_plan_digest"},
+		"interaction.workflow.recover_revision": {"session_id", "task_id"},
+		"interaction.action.wordpress.publish":  {"session_id", "task_id", "target_id", "action_plan_digest"},
+		"interaction.archive":                   {"session_id"},
+		"interaction.unarchive":                 {"session_id"},
 	}
 	stringsRequired, supported := requiredStrings[operation]
 	if !supported {
@@ -298,7 +307,7 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 			return ErrInvalidPayload
 		}
 	}
-	if operation == "interaction.plan.generate" || operation == "interaction.answer" || operation == "interaction.plan.apply" || operation == "interaction.plan.approve_and_execute" || operation == "interaction.workflow.execute" || operation == "interaction.action.wordpress.publish" || operation == "interaction.archive" || operation == "interaction.unarchive" {
+	if operation == "interaction.plan.generate" || operation == "interaction.answer" || operation == "interaction.plan.apply" || operation == "interaction.plan.approve_and_execute" || operation == "interaction.workflow.execute" || operation == "interaction.workflow.recover_revision" || operation == "interaction.action.wordpress.publish" || operation == "interaction.archive" || operation == "interaction.unarchive" {
 		var expected uint64
 		if raw, ok := fields["expected_version"]; !ok || json.Unmarshal(raw, &expected) != nil || expected == 0 {
 			return ErrInvalidPayload
