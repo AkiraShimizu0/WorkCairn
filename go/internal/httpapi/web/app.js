@@ -1155,7 +1155,7 @@ function interactionErrorGuidance(code, stage = "") {
     return "品質確認で修正上限に達しました。直前の成果物と指摘内容はそのまま保存されています。自動で修正は再開しません。";
   }
   if (code === "NO_PROGRESS_DETECTED") {
-    return "同じ指摘が繰り返されたため、品質確認を一度止めました。直前の成果物と指摘内容はそのまま保存されています。自動で修正は再開しません。";
+    return "修正を続けていますが、成果に十分な変化がなく、同じ品質上の指摘が続いています。自動修正を停止しました。直前の成果物と指摘内容はそのまま保存されています。";
   }
   return "成立済みの記録を推測で変更せず、現在の状態を確認してください。";
 }
@@ -1905,7 +1905,7 @@ function submitClarificationAnswers(next) {
 }
 
 // submitRevisionRecovery is Revision Limit Recovery's single explicit CEO
-// action (ADR-TBD): the additional instruction is optional (an empty
+// action (ADR-0052): the additional instruction is optional (an empty
 // composer is a valid, common submission -- "just try again with the same
 // findings" is still a genuinely new, human-approved decision, never an
 // automatic retry) and becomes interaction.workflow.recover_revision's own
@@ -2064,7 +2064,7 @@ function renderDone() {
   renderTimeline();
 }
 
-// renderRevisionLimitRecovery presents Revision Limit Recovery (ADR-TBD):
+// renderRevisionLimitRecovery presents Revision Limit Recovery (ADR-0052):
 // the CEO must be able to see *why* the automatic Review/Revision loop
 // stopped -- the stalled Task's own canonical Deliverable and latest
 // Review verdict/findings, via the exact same taskEvidenceBlock/

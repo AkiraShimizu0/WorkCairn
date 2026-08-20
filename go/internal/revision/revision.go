@@ -36,7 +36,7 @@ type Intent struct {
 	Title            string          `json:"title"`
 	CreatedAt        time.Time       `json:"created_at"`
 	// AdditionalGuidance is an optional, CEO-authored instruction attached
-	// to this specific Revision (e.g. Revision Limit Recovery, ADR-TBD):
+	// to this specific Revision (e.g. Revision Limit Recovery, ADR-0052):
 	// "ignore this finding and prioritize readability." It is additive and
 	// blank by default -- every automatic Revision the Reviewed Workflow
 	// creates on its own leaves this empty, unchanged from before this

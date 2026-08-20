@@ -1160,6 +1160,228 @@
           }
         }
       }
+    ],
+    "no_progress_v1": [
+      {
+        "name": "ceo_intent_clarification",
+        "delay_ms": 500,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_noprogress_clarify_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"No Progress Acceptance Project\",\"objective\":\"品質確認が停滞したときの検知を確認する\",\"summary\":\"Content Writerが作成しQA Engineerが確認する\",\"steps\":[{\"kind\":\"write\",\"description\":\"停滞検知確認用の紹介文を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[\"読者は初めてWorkCairnを使う人ですか？\"]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 24,
+            "output_tokens": 32
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 500,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_noprogress_final_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"No Progress Acceptance Project\",\"objective\":\"品質確認が停滞したときの検知を確認する\",\"summary\":\"停滞検知確認用の紹介文を作成し独立Reviewする\",\"steps\":[{\"kind\":\"write\",\"description\":\"停滞検知確認用の紹介文を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 24,
+            "output_tokens": 32
+          }
+        }
+      },
+      {
+        "name": "task_execution_success",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_noprogress_task_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "# WorkCairn紹介文\n\nWorkCairnは、必要な判断だけを人に返し、AI社員が計画・作成・確認を進める、自分専用のAI会社です。"
+            }
+          ],
+          "usage": {
+            "input_tokens": 24,
+            "output_tokens": 32
+          }
+        }
+      },
+      {
+        "name": "review_request_changes_1",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_noprogress_review_changes_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"verdict\": \"Request Changes\", \"issues\": [{\"category\": \"requirements\", \"severity\": \"medium\", \"description\": \"利用開始の案内に関する要件が不足しています。\", \"suggested_action\": \"利用開始の案内について追記してください。\"}], \"summary\": \"利用開始の案内を追加すると目的を満たします。\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 24,
+            "output_tokens": 32
+          }
+        }
+      },
+      {
+        "name": "revision_success_1",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_noprogress_revision_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "# WorkCairn紹介文\n\nWorkCairnは、必要な判断だけを人に返し、AI社員が計画・作成・確認を進める、自分専用のAI会社です。"
+            }
+          ],
+          "usage": {
+            "input_tokens": 24,
+            "output_tokens": 32
+          }
+        }
+      },
+      {
+        "name": "review_request_changes_2",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_noprogress_review_changes_002"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"verdict\": \"Request Changes\", \"issues\": [{\"category\": \"requirements\", \"severity\": \"medium\", \"description\": \"導入手順の案内に関する要件が不足しています。\", \"suggested_action\": \"導入手順の案内について追記してください。\"}], \"summary\": \"導入手順の案内を追加すると目的を満たします。\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 24,
+            "output_tokens": 32
+          }
+        }
+      },
+      {
+        "name": "revision_success_2",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_noprogress_revision_002"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "# WorkCairn紹介文\n\nWorkCairnは、必要な判断だけを人に返し、AI社員が計画・作成・確認を進める、自分専用のAI会社です。"
+            }
+          ],
+          "usage": {
+            "input_tokens": 24,
+            "output_tokens": 32
+          }
+        }
+      },
+      {
+        "name": "review_request_changes_3",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_noprogress_review_changes_003"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"verdict\": \"Request Changes\", \"issues\": [{\"category\": \"requirements\", \"severity\": \"medium\", \"description\": \"次のステップの案内に関する要件が不足しています。\", \"suggested_action\": \"次のステップの案内について追記してください。\"}], \"summary\": \"次のステップの案内を追加すると目的を満たします。\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 24,
+            "output_tokens": 32
+          }
+        }
+      },
+      {
+        "name": "revision_success_3",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_noprogress_revision_003"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "# WorkCairn紹介文\n\nWorkCairnは、必要な判断だけを人に返し、AI社員が計画・作成・確認を進める、自分専用のAI会社です。まず自然な言葉で、会社に任せたい仕事を入力してください。"
+            }
+          ],
+          "usage": {
+            "input_tokens": 24,
+            "output_tokens": 32
+          }
+        }
+      },
+      {
+        "name": "re_review_approve",
+        "delay_ms": 700,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_noprogress_review_approve_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"案内が追加され、要件を満たしています。\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 24,
+            "output_tokens": 32
+          }
+        }
+      }
     ]
   }
 }

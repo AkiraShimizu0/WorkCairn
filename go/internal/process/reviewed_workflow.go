@@ -231,14 +231,20 @@ func ExecuteReviewedWorkflow(
 	if err != nil {
 		return service.ReviewedWorkflowRunResult{}, finishDurableCommand(ctx, claim, service.ReviewedWorkflowRunResult{}, err, "REVIEWED_WORKFLOW_FAILED", "workflow_composition", false)
 	}
-	// No-Progress Foundation (v0): a conservative, non-AI default -- the
-	// same RepeatThreshold (2) as autonomy.DefaultMaxRevisionCount's own
-	// default, so this only meaningfully engages once a caller raises
+	// Progress Intelligence v1 (ADR-0053): a conservative, non-AI default
+	// requiring Review Progress (structural ReviewSignature repeating),
+	// Deliverable Progress (fingerprint unchanged), and Execution Progress
+	// (Revisions already spent) to ALL agree before escalating -- a single
+	// stalled signal alone never stops a branch. All three default
+	// thresholds (2) match autonomy.DefaultMaxRevisionCount's own default,
+	// so this only meaningfully engages once a caller raises
 	// MaxRevisionCount above its default in a future Checkpoint. It never
 	// mutates Task state; it only lets runBranch stop a genuinely
 	// non-converging branch a little earlier than the Revision Guard's
-	// hard count cap would.
-	runService.SetProgressPolicy(policy.RepeatedFeedbackProgressPolicy{})
+	// hard count cap would. RepeatedFeedbackProgressPolicy (v0, literal
+	// Review-text comparison) remains available for direct/operator
+	// callers that construct their own ReviewedWorkflowRunService.
+	runService.SetProgressPolicy(policy.CompoundProgressPolicy{})
 	// RunParallel drives dispatch for every caller of this Command, not just
 	// a caller that explicitly asked for parallel execution -- there is no
 	// such caller-visible choice (ADR-0051 Checkpoint "production wiring").
@@ -320,7 +326,7 @@ func reviewedWorkflowOuterEnvelope(result service.ReviewedWorkflowRunResult, sta
 		envelope = failure.New("REVISION_LIMIT_REACHED", stage)
 		envelope.Evidence = &failure.CommittedEvidence{Deliverable: true, TaskState: true, ReviewCanonical: true}
 	case stage == "no_progress":
-		// The No-Progress Foundation's own stop (ADR-TBD): same shape as
+		// The No-Progress Foundation's own stop (ADR-0052): same shape as
 		// revision_limit above -- the last attempt's execution and Review
 		// both committed canonically, and Go declined to spend another
 		// Revision on a lineage its own ProgressPolicy judged as not

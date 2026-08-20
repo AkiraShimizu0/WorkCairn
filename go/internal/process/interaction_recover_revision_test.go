@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -36,11 +37,29 @@ import (
 // deliberately distinct lineage anchored at the stalled Task's own ID, so
 // without this toggle it would itself join the watched set and the
 // scenario could never demonstrate a successful recovery.
-func recoveryScenarioMockServer(t *testing.T, watchTaskID string) (server *httptest.Server, callCount func() int, setForceApprove func(bool)) {
+// Task execution responses for the watched lineage deliberately vary their
+// content on every attempt (see the "default" case below) -- Progress
+// Intelligence v1's Deliverable Progress signal (policy.ProgressPolicy /
+// CompoundProgressPolicy, wired into production ExecuteReviewedWorkflow)
+// would otherwise see the *same* Deliverable body every attempt and, once
+// combined with the repeating structural Review finding this lineage also
+// produces, escalate as NO_PROGRESS_DETECTED at the same attempt count a
+// fixed/unchanging Deliverable body would reach -- one attempt before this
+// test's own Revision Guard proof gets to run. This scenario is
+// specifically exercising the Revision Guard's hard count
+// (ErrRevisionLimitReached); No-Progress has its own dedicated coverage in
+// internal/service.
+// varyDeliverableContent controls whether the watched lineage's Task
+// execution responses change on every attempt (true, the Revision Guard
+// scenario -- see the doc comment above) or stay byte-for-byte identical
+// (false, deliberately triggering Progress Intelligence v1's Deliverable
+// Progress signal so a caller can exercise NO_PROGRESS_DETECTED instead).
+func recoveryScenarioMockServer(t *testing.T, watchTaskID string, varyDeliverableContent bool) (server *httptest.Server, callCount func() int, setForceApprove func(bool)) {
 	t.Helper()
 	var mu sync.Mutex
 	calls := 0
 	requestChangesCount := 0
+	executionCount := 0
 	watched := map[string]bool{watchTaskID: true}
 	forceApprove := false
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -63,7 +82,7 @@ func recoveryScenarioMockServer(t *testing.T, watchTaskID string) (server *httpt
 		var output string
 		switch {
 		case structured:
-			ownTaskID, titleLine := reviewedTaskIdentity(combined)
+			ownTaskID, titleLine := taskIdentityFromPrompt(combined, "元タスクID: ", "元タスクタイトル: ")
 			mu.Lock()
 			partOfWatchedLineage := !forceApprove && (watched[ownTaskID] || watchedTitleReferencesLineage(titleLine, watched))
 			if partOfWatchedLineage {
@@ -78,7 +97,22 @@ func recoveryScenarioMockServer(t *testing.T, watchTaskID string) (server *httpt
 				output = reviewProviderOutput(review.VerdictApprove)
 			}
 		default:
-			output = "# deliverable\n\n本文"
+			ownTaskID, titleLine := taskIdentityFromPrompt(combined, "タスクID: ", "タイトル: ")
+			mu.Lock()
+			partOfWatchedLineage := !forceApprove && (watched[ownTaskID] || watchedTitleReferencesLineage(titleLine, watched))
+			if partOfWatchedLineage {
+				executionCount++
+			}
+			attempt := executionCount
+			mu.Unlock()
+			switch {
+			case partOfWatchedLineage && varyDeliverableContent:
+				output = fmt.Sprintf("# deliverable\n\n本文（実行%d回目の内容です）", attempt)
+			case partOfWatchedLineage:
+				output = "# deliverable\n\n本文（内容は変化しません）"
+			default:
+				output = "# deliverable\n\n本文"
+			}
 		}
 		mu.Lock()
 		calls++
@@ -95,17 +129,20 @@ func recoveryScenarioMockServer(t *testing.T, watchTaskID string) (server *httpt
 	return server, callCount, setForceApprove
 }
 
-// reviewedTaskIdentity extracts the "元タスクID"/"元タスクタイトル" lines a
-// Review Provider request always carries (prompt.BuildReview) so the mock
-// above can identify which Task lineage a request belongs to without any
-// dependency on the real Prompt package.
-func reviewedTaskIdentity(combined string) (taskID, title string) {
+// taskIdentityFromPrompt extracts a Task ID/Title pair from a Provider
+// request's combined prompt text, given the exact line prefixes the real
+// Prompt package uses -- "元タスクID: "/"元タスクタイトル: " for Review
+// requests (prompt.BuildReview), "タスクID: "/"タイトル: " for Task
+// execution requests (prompt.Builder.build) -- so the mock above can
+// identify which Task lineage a request belongs to without any dependency
+// on the real Prompt package itself.
+func taskIdentityFromPrompt(combined, idPrefix, titlePrefix string) (taskID, title string) {
 	for _, line := range strings.Split(combined, "\n") {
 		switch {
-		case strings.HasPrefix(line, "元タスクID: "):
-			taskID = strings.TrimPrefix(line, "元タスクID: ")
-		case strings.HasPrefix(line, "元タスクタイトル: "):
-			title = strings.TrimPrefix(line, "元タスクタイトル: ")
+		case strings.HasPrefix(line, idPrefix):
+			taskID = strings.TrimPrefix(line, idPrefix)
+		case strings.HasPrefix(line, titlePrefix):
+			title = strings.TrimPrefix(line, titlePrefix)
 		}
 	}
 	return taskID, title
@@ -176,7 +213,7 @@ func TestInteractionRecoverRevisionParallelBranchLimitThenRecoverySucceedsWithou
 	// TestInteractionPlanApproveAndExecuteAutomaticallyParallelizesIndependentTasksThenSynthesis
 	// already relies on -- and is this test's designated stuck branch (B).
 	const branchBTaskID = "TASK-002"
-	server, callCount, setForceApprove := recoveryScenarioMockServer(t, branchBTaskID)
+	server, callCount, setForceApprove := recoveryScenarioMockServer(t, branchBTaskID, true)
 	defer server.Close()
 	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL}
 
@@ -302,5 +339,95 @@ func TestInteractionRecoverRevisionParallelBranchLimitThenRecoverySucceedsWithou
 	}
 	if callsAfterRecovery <= callsBeforeRecovery {
 		t.Fatalf("recovery itself made no new Provider calls: before=%d after=%d", callsBeforeRecovery, callsAfterRecovery)
+	}
+}
+
+// TestInteractionRecoverRevisionParallelBranchNoProgressThenRecoverySucceedsWithoutReExecutingOtherBranches
+// is Progress Intelligence v1's parallel-branch proof (mirroring the
+// Revision Guard proof above, but for the No-Progress stop instead): of
+// three independent branches (A, B, C) plus a Synthesis Task depending on
+// all three, only B is made to repeat the same structural QA finding
+// while its own Deliverable body never actually changes between attempts
+// -- CompoundProgressPolicy escalates before the Revision Guard's own hard
+// count would have. This proves, through the same real production chain,
+// that Progress Intelligence's stop is recoverable exactly like the
+// Revision Guard's: A and C's results are never lost, Synthesis never
+// dispatches early, a single Recovery Command revises B alone, and once B
+// Approves, Synthesis becomes ready and completes -- without re-executing
+// A or C.
+func TestInteractionRecoverRevisionParallelBranchNoProgressThenRecoverySucceedsWithoutReExecutingOtherBranches(t *testing.T) {
+	root := writeApproveAndExecuteVault(t)
+	at := time.Date(2026, time.August, 19, 9, 0, 0, 0, time.UTC)
+	sessionID, projectName := "SESSION-RECOVER-NOPROGRESS-001", "並列復旧アプリ2"
+	_, digest := writeApprovalRequiredSessionWithPlan(t, root, sessionID, writeApproveAndExecuteParallelPlan(projectName), at)
+
+	const branchBTaskID = "TASK-002"
+	server, _, setForceApprove := recoveryScenarioMockServer(t, branchBTaskID, false)
+	defer server.Close()
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL}
+
+	outerCommandID := "CMD-RECOVER-NOPROGRESS-001"
+	applyInput := InteractionApplyInput{
+		VaultRoot: root, SessionID: sessionID, ExpectedVersion: 2, ProjectID: "PROJECT-RECOVER-NOPROGRESS-001",
+		PlanDigest: digest, CurrentTime: at.Add(2 * time.Minute), CommandID: outerCommandID,
+	}
+	result, err := ExecuteInteractionPlanApproveAndExecute(context.Background(), applyInput, provider, server.Client(), true)
+
+	var recorded *RecordedCommandError
+	if !errors.As(err, &recorded) || recorded.Code != "NO_PROGRESS_DETECTED" || recorded.Stage != "no_progress" {
+		t.Fatalf("ExecuteInteractionPlanApproveAndExecute() error = %v, want a NO_PROGRESS_DETECTED/no_progress RecordedCommandError", err)
+	}
+	if result.Workflow.Status != "partial_failure" || !result.SessionCommitted ||
+		result.Session.State != interaction.StateWorkflowAttentionRequired {
+		t.Fatalf("result = %#v", result)
+	}
+
+	seenTaskIDs := map[string]review.Verdict{}
+	for _, current := range result.Workflow.Tasks {
+		seenTaskIDs[current.TaskID] = current.Verdict
+	}
+	if seenTaskIDs["TASK-001"] != review.VerdictApprove || seenTaskIDs["TASK-003"] != review.VerdictApprove {
+		t.Fatalf("branches A/C = %#v, want both Approved and preserved despite B's failure", seenTaskIDs)
+	}
+	if _, synthesisDispatched := seenTaskIDs["TASK-004"]; synthesisDispatched {
+		t.Fatal("Synthesis Task TASK-004 must never be dispatched while branch B is still stuck")
+	}
+
+	evidence := result.Session.Turns[len(result.Session.Turns)-1].Workflow
+	if evidence == nil {
+		t.Fatal("Session's latest Turn carries no Workflow evidence")
+	}
+	stalledTaskID := stalledTaskFromWorkflow(t, evidence.Tasks)
+
+	next, err := result.Session.Next()
+	if err != nil || next.Operation != "interaction.workflow.recover_revision" || !next.ApprovalRequired ||
+		len(next.EligibleTaskIDs) != 1 || next.EligibleTaskIDs[0] != stalledTaskID {
+		t.Fatalf("Next() = %#v, %v, want a Recovery operation targeting %s", next, err, stalledTaskID)
+	}
+
+	setForceApprove(true)
+	recoveryCommandID := "CMD-RECOVER-NOPROGRESS-RECOVERY-001"
+	recoveryInput := InteractionRecoverRevisionInput{
+		VaultRoot: root, SessionID: sessionID, ExpectedVersion: result.Session.Version, TaskID: stalledTaskID,
+		AdditionalGuidance: "同じ指摘が続いていますが、この観点は無視して続けてください", CurrentTime: at.Add(10 * time.Minute),
+		CommandID: recoveryCommandID,
+	}
+	recovered, recoverErr := ExecuteInteractionRecoverRevision(context.Background(), recoveryInput, provider, server.Client(), true)
+	if recoverErr != nil || recovered.Workflow.Status != "completed" || !recovered.SessionCommitted ||
+		recovered.Session.State != interaction.StateCompleted {
+		t.Fatalf("ExecuteInteractionRecoverRevision() = %#v, %v", recovered, recoverErr)
+	}
+
+	for _, current := range recovered.Workflow.Tasks {
+		if current.TaskID == "TASK-001" || current.TaskID == "TASK-003" {
+			t.Fatalf("recovery round re-dispatched already-completed Task %s: %#v", current.TaskID, recovered.Workflow.Tasks)
+		}
+	}
+	recoveredIDs := map[string]review.Verdict{}
+	for _, current := range recovered.Workflow.Tasks {
+		recoveredIDs[current.TaskID] = current.Verdict
+	}
+	if recoveredIDs["TASK-004"] != review.VerdictApprove {
+		t.Fatalf("Synthesis TASK-004 = %#v, want Approved once B recovered", recovered.Workflow.Tasks)
 	}
 }

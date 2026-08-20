@@ -20,6 +20,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 	"github.com/AkiraShimizu0/workcairn/go/internal/taskstore"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
 type reviewedWorkflowFixture struct {
@@ -1053,5 +1054,191 @@ func TestRunParallelProgressPolicyErrorStopsBranchAsNoProgressStage(t *testing.T
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "no_progress" || !errors.Is(err, policy.ErrInvalidProgressInput) {
 		t.Fatalf("RunParallel() error = %v, want a no_progress-staged policy.ErrInvalidProgressInput", err)
+	}
+}
+
+// --- Progress Intelligence v1 (CompoundProgressPolicy) ------------------
+
+// contentScriptedExecutorFake returns a scripted Deliverable body per call
+// (in call order), so a test controls exactly when Deliverable Progress
+// sees "changed" vs "unchanged" content between a branch's own attempts.
+type contentScriptedExecutorFake struct {
+	mu      sync.Mutex
+	content []string
+	calls   int
+}
+
+func (fake *contentScriptedExecutorFake) Execute(_ context.Context, taskID, commandID string, targeted bool) (execution.Result, error) {
+	fake.mu.Lock()
+	index := fake.calls
+	fake.calls++
+	fake.mu.Unlock()
+	text := ""
+	if index < len(fake.content) {
+		text = fake.content[index]
+	}
+	return execution.Result{
+		TaskID: taskID, Status: execution.StatusCompleted,
+		WorkerResult: &worker.ExecutionResult{Content: text}, Duration: 5 * time.Millisecond,
+	}, nil
+}
+
+// structuralVerdictReviewerFake returns a scripted Verdict per Task ID
+// (like scriptedVerdictReviewerFake), but every Request Changes verdict
+// carries a distinct free-text Description while keeping the exact same
+// Category/Severity -- proving ReviewSignature-based comparison is
+// insensitive to wording that normalizedReviewFeedback's literal-text
+// comparison would treat as "different feedback."
+type structuralVerdictReviewerFake struct {
+	mu       sync.Mutex
+	verdicts map[string]review.Verdict
+	calls    []string
+}
+
+func (fake *structuralVerdictReviewerFake) Execute(_ context.Context, taskID, commandID string) (review.OrchestrationResult, error) {
+	fake.mu.Lock()
+	verdict, ok := fake.verdicts[taskID]
+	fake.calls = append(fake.calls, taskID)
+	callIndex := len(fake.calls)
+	fake.mu.Unlock()
+	if !ok {
+		verdict = review.VerdictApprove
+	}
+	issues := []review.Issue{}
+	if verdict == review.VerdictRequestChanges {
+		issues = []review.Issue{{
+			Category: "requirements", Severity: "medium",
+			Description:     fmt.Sprintf("要件が不足しています（レビュー%d回目の表現）。", callIndex),
+			SuggestedAction: fmt.Sprintf("要件を追記してください（レビュー%d回目の表現）。", callIndex),
+		}}
+	}
+	return review.OrchestrationResult{
+		Status:         "completed",
+		Execution:      &review.ExecutionResult{TaskID: taskID, Decision: review.Decision{Verdict: verdict, Issues: issues}, Duration: 5 * time.Millisecond},
+		Artifact:       &review.Record{TaskID: taskID, CanonicalPath: "Reviews/" + taskID + ".json", ProjectionPath: "Reviews/" + taskID + ".md", CanonicalCommitted: true, ProjectionCommitted: true},
+		EventPublished: true,
+	}, nil
+}
+
+// TestRunParallelCompoundProgressPolicyEscalatesWhenReviewAndDeliverableAndRevisionAllStall
+// is Progress Intelligence v1's core proof: the same underlying QA finding
+// repeats (with different wording each time -- proving ReviewSignature's
+// structural comparison, not literal text), the Deliverable body genuinely
+// never changes between attempts, and enough Revisions have already been
+// spent -- only once all three agree does the branch stop, one attempt
+// before the Revision Guard's own hard count would have stopped it anyway.
+func TestRunParallelCompoundProgressPolicyEscalatesWhenReviewAndDeliverableAndRevisionAllStall(t *testing.T) {
+	executor := &contentScriptedExecutorFake{content: []string{"同じ内容です。", "同じ内容です。", "同じ内容です。"}}
+	reviewer := &structuralVerdictReviewerFake{verdicts: map[string]review.Verdict{
+		"TASK-A1": review.VerdictRequestChanges,
+		"TASK-A2": review.VerdictRequestChanges,
+		"TASK-A3": review.VerdictRequestChanges,
+	}}
+	reviser := &scriptedRevisionChainReviserFake{next: map[string]string{"TASK-A1": "TASK-A2", "TASK-A2": "TASK-A3"}}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+	service.SetProgressPolicy(policy.CompoundProgressPolicy{})
+
+	// maxRevisionCount is deliberately generous (5) so a stop here can only
+	// be attributed to CompoundProgressPolicy, never to the Revision
+	// Guard's own count.
+	result, err := service.RunParallel(context.Background(), "CMD-COMPOUND-PROGRESS", "CMD-COMPOUND-PROGRESS", 10, 2, 5, planner)
+
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "no_progress" || !errors.Is(err, ErrNoProgressDetected) {
+		t.Fatalf("RunParallel() error = %v, want a no_progress-staged ErrNoProgressDetected", err)
+	}
+	gotIDs := make([]string, len(result.Tasks))
+	for index, current := range result.Tasks {
+		gotIDs[index] = current.TaskID
+	}
+	if !reflect.DeepEqual(gotIDs, []string{"TASK-A1", "TASK-A2", "TASK-A3"}) {
+		t.Fatalf("result.Tasks IDs = %#v, want exactly [TASK-A1 TASK-A2 TASK-A3]", gotIDs)
+	}
+	reviser.mu.Lock()
+	reviserCalls := append([]string(nil), reviser.calls...)
+	reviser.mu.Unlock()
+	if !reflect.DeepEqual(reviserCalls, []string{"TASK-A1", "TASK-A2"}) {
+		t.Fatalf("reviser calls = %#v, want exactly [TASK-A1 TASK-A2] (no 3rd Revision once escalation is decided)", reviserCalls)
+	}
+}
+
+// TestRunParallelCompoundProgressPolicyContinuesWhenDeliverableKeepsChanging
+// proves the Deliverable Progress signal alone is not enough to escalate:
+// the same structural finding repeats, but the Deliverable genuinely
+// changes each attempt, so CompoundProgressPolicy must never stop the
+// branch -- it converges (eventually Approves) or hits the ordinary
+// Revision Guard, but never the no_progress stage.
+func TestRunParallelCompoundProgressPolicyContinuesWhenDeliverableKeepsChanging(t *testing.T) {
+	executor := &contentScriptedExecutorFake{content: []string{"バージョン1の内容です。", "バージョン2の内容です。", "バージョン3の内容です。"}}
+	reviewer := &structuralVerdictReviewerFake{verdicts: map[string]review.Verdict{
+		"TASK-A1": review.VerdictRequestChanges,
+		"TASK-A2": review.VerdictRequestChanges,
+		"TASK-A3": review.VerdictRequestChanges,
+	}}
+	reviser := &scriptedRevisionChainReviserFake{next: map[string]string{"TASK-A1": "TASK-A2", "TASK-A2": "TASK-A3"}}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+	service.SetProgressPolicy(policy.CompoundProgressPolicy{})
+
+	// maxRevisionCount=2 (the product default): if CompoundProgressPolicy
+	// never escalates, this must stop via the ordinary Revision Guard
+	// instead -- proving the Deliverable-changing case falls through to
+	// existing, unmodified behavior rather than being silently swallowed.
+	result, err := service.RunParallel(context.Background(), "CMD-COMPOUND-CHANGING", "CMD-COMPOUND-CHANGING", 10, 2, 2, planner)
+
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "revision_limit" || !errors.Is(err, ErrRevisionLimitReached) {
+		t.Fatalf("RunParallel() error = %v, want a revision_limit-staged ErrRevisionLimitReached (never no_progress when the Deliverable keeps changing)", err)
+	}
+	if len(result.Tasks) != 3 {
+		t.Fatalf("result.Tasks = %#v, want all 3 attempts", result.Tasks)
+	}
+}
+
+// TestRunParallelCompoundProgressPolicyNeverEscalatesOnFirstAttemptAlone
+// guards against a degenerate implementation that treats "no prior
+// Deliverable to compare against" as "unchanged": a single Request
+// Changes verdict, however many Revisions the caller permits, must never
+// stop the branch through CompoundProgressPolicy.
+func TestRunParallelCompoundProgressPolicyNeverEscalatesOnFirstAttemptAlone(t *testing.T) {
+	executor := &contentScriptedExecutorFake{content: []string{"最初の内容です。"}}
+	reviewer := &structuralVerdictReviewerFake{verdicts: map[string]review.Verdict{"TASK-A1": review.VerdictApprove}}
+	reviser := &noopReviserFake{t: t}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+	service.SetProgressPolicy(policy.CompoundProgressPolicy{})
+
+	result, err := service.RunParallel(context.Background(), "CMD-COMPOUND-FIRST", "CMD-COMPOUND-FIRST", 10, 2, 5, planner)
+	if err != nil || result.Status != "completed" || len(result.Tasks) != 1 || result.Tasks[0].Verdict != review.VerdictApprove {
+		t.Fatalf("RunParallel() = %#v, %v", result, err)
+	}
+}
+
+// TestRunParallelCompoundProgressPolicyObservesResourceSignals proves
+// ProviderCallCount and ElapsedDuration are actually populated on the
+// ProgressSignal a Policy receives -- observational fields even though
+// CompoundProgressPolicy itself does not gate its decision on them.
+func TestRunParallelCompoundProgressPolicyObservesResourceSignals(t *testing.T) {
+	executor := &contentScriptedExecutorFake{content: []string{"同じ内容です。", "改善後の内容です。"}}
+	reviewer := &structuralVerdictReviewerFake{verdicts: map[string]review.Verdict{
+		"TASK-A1": review.VerdictRequestChanges,
+		"TASK-A2": review.VerdictApprove,
+	}}
+	reviser := &scriptedRevisionChainReviserFake{next: map[string]string{"TASK-A1": "TASK-A2"}}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+	stub := &stubProgressPolicy{decision: policy.ProgressContinue}
+	service.SetProgressPolicy(stub)
+
+	_, err := service.RunParallel(context.Background(), "CMD-RESOURCE-SIGNALS", "CMD-RESOURCE-SIGNALS", 10, 2, 5, planner)
+	if err != nil {
+		t.Fatalf("RunParallel() error = %v, want nil (branch converges to Approve on the 2nd attempt)", err)
+	}
+	stub.mu.Lock()
+	calls := append([]policy.ProgressSignal(nil), stub.calls...)
+	stub.mu.Unlock()
+	if len(calls) != 1 || calls[0].ProviderCallCount != 2 || calls[0].ElapsedDuration <= 0 {
+		t.Fatalf("ProgressPolicy calls = %#v, want ProviderCallCount=2 (1 execute + 1 review) and a positive ElapsedDuration", calls)
 	}
 }

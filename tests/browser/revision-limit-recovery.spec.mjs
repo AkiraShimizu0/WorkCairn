@@ -9,7 +9,7 @@ import {
   waitForPlanOrClarification,
 } from "./support/actions.mjs";
 
-// Revision Limit Recovery (ADR-TBD): CEO request -> Plan approval -> Task
+// Revision Limit Recovery (ADR-0052): CEO request -> Plan approval -> Task
 // execution -> QA Request Changes -> Revision -> Request Changes again ->
 // MaxRevisionCount reached -> Recovery UI displayed -> CEO gives an
 // additional instruction -> a new Command (never a replay of the failed

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
@@ -118,7 +119,7 @@ func NewReviewedWorkflowRunService(
 }
 
 // SetProgressPolicy attaches an optional No-Progress Foundation boundary
-// (ADR-TBD): runBranch calls it, if set, right after a Request Changes
+// (ADR-0052): runBranch calls it, if set, right after a Request Changes
 // verdict and before deciding whether to create another Revision. A nil
 // Policy (the default) is fully backward compatible -- only
 // MaxRevisionCount can stop a branch. The Policy itself never sees raw
@@ -488,6 +489,23 @@ func (service *ReviewedWorkflowRunService) runBranch(
 	// this in-memory signal, scoped to this one goroutine's own branch.
 	previousFeedback := ""
 	consecutiveSameFeedback := 0
+	// Progress Intelligence v1 (ADR-0053) locals: all scoped to this one
+	// branch's own goroutine, never persisted, never shared across
+	// branches. previousReviewSignature/consecutiveSameReview parallel
+	// previousFeedback/consecutiveSameFeedback above but compare the
+	// structural ReviewSignature instead of literal feedback text.
+	// previousDeliverableFingerprint/hasPreviousDeliverableFingerprint/
+	// consecutiveUnchangedDeliverable track whether the Deliverable body
+	// this branch's own Task executions produce is actually changing
+	// between attempts -- computed purely in-memory from
+	// execution.Result.WorkerResult.Content, never persisted or logged.
+	var previousReviewSignature policy.ReviewSignature
+	consecutiveSameReview := 0
+	var previousDeliverableFingerprint policy.DeliverableFingerprint
+	hasPreviousDeliverableFingerprint := false
+	consecutiveUnchangedDeliverable := 0
+	providerCallCount := 0
+	var elapsedDuration time.Duration
 	for {
 		if err := ctx.Err(); err != nil {
 			return branchResults, stageError("cancelled", err)
@@ -505,6 +523,30 @@ func (service *ReviewedWorkflowRunService) runBranch(
 		if executeErr != nil {
 			return branchResults, stageError("task_execute", executeErr)
 		}
+		// Deliverable Progress (Progress Intelligence v1): computed purely
+		// in-memory from this attempt's own WorkerResult.Content -- never
+		// persisted, logged, or sent anywhere -- and compared only against
+		// this same branch's immediately preceding attempt. A missing
+		// WorkerResult (no fake/zero-value Deliverable content available)
+		// conservatively reports "changed" rather than guessing "unchanged".
+		deliverableChanged := true
+		if executed.WorkerResult != nil {
+			currentFingerprint := policy.NewDeliverableFingerprint(executed.WorkerResult.Content)
+			if hasPreviousDeliverableFingerprint {
+				if currentFingerprint == previousDeliverableFingerprint {
+					deliverableChanged = false
+					consecutiveUnchangedDeliverable++
+				} else {
+					consecutiveUnchangedDeliverable = 0
+				}
+			}
+			previousDeliverableFingerprint = currentFingerprint
+			hasPreviousDeliverableFingerprint = true
+		} else {
+			consecutiveUnchangedDeliverable = 0
+		}
+		providerCallCount++
+		elapsedDuration += executed.Duration
 
 		reviewCommandID, err := reviewedChildCommandID(parentCommandID, "review.execute", currentTaskID)
 		if err != nil {
@@ -523,6 +565,8 @@ func (service *ReviewedWorkflowRunService) runBranch(
 		if reviewed.Execution == nil || reviewed.Artifact == nil || !reviewed.Artifact.CanonicalCommitted {
 			return branchResults, stageError("review", ErrInvalidReviewedWorkflowResult)
 		}
+		providerCallCount++
+		elapsedDuration += reviewed.Execution.Duration
 		switch reviewed.Execution.Decision.Verdict {
 		case review.VerdictApprove:
 			return branchResults, nil
@@ -534,10 +578,26 @@ func (service *ReviewedWorkflowRunService) runBranch(
 				consecutiveSameFeedback = 1
 			}
 			previousFeedback = feedback
+			// Review Progress (Progress Intelligence v1): a structural
+			// comparison (Verdict + typed Issue Category/Severity set,
+			// NewReviewSignature) run alongside the v0 literal-text
+			// comparison above -- resilient to a Provider merely
+			// rewording the same finding, which the literal comparison
+			// is not.
+			reviewSignature := policy.NewReviewSignature(reviewed.Execution.Decision)
+			if consecutiveSameReview > 0 && reviewSignature.Equal(previousReviewSignature) {
+				consecutiveSameReview++
+			} else {
+				consecutiveSameReview = 1
+			}
+			previousReviewSignature = reviewSignature
 			if service.progressPolicy != nil {
 				decision, policyErr := service.progressPolicy.Evaluate(ctx, policy.ProgressSignal{
 					TaskLineageID: startTaskID, RevisionCount: revisionCount,
 					NormalizedFeedback: feedback, ConsecutiveSameFeedbackCount: consecutiveSameFeedback,
+					ReviewSignature: reviewSignature, ConsecutiveSameReviewCount: consecutiveSameReview,
+					DeliverableChanged: deliverableChanged, ConsecutiveUnchangedDeliverableCount: consecutiveUnchangedDeliverable,
+					ProviderCallCount: providerCallCount, ElapsedDuration: elapsedDuration,
 				})
 				if policyErr != nil {
 					return branchResults, stageError("no_progress", policyErr)

@@ -348,6 +348,19 @@ ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全�
 
 対象外のまま（将来の別Checkpoint候補）：Deliverable内容の意味的比較（embedding／類似度判定）、Cost／Tool Call量に基づくProgress判定、Deliverableハッシュ・digest比較の実装、BudgetGuard／Scheduler統合、ADR-0049 Case B相当の完全なcrash-recovery対称性。詳細は[ADR-0052](adr/ADR-0052-revision-limit-recovery-and-no-progress-foundation.md)を参照してください。
 
+## Completed — Progress Intelligence v1
+
+[ADR-0053](adr/ADR-0053-progress-intelligence-v1.md)（Accepted）により、No-Progress Foundation v0（Review所見の文字列一致）を、Review／Deliverable／Execution 3つの独立したdeterministic signalの組み合わせへ進化させました。成功条件は「AIが何回働いたか」ではなく「働いた結果、成果が実際に改善しているか」です。embedding／semantic AI judgeは使わず、判定のために別のLLMループを新設してもいません。
+
+- `policy.ReviewSignature`/`NewReviewSignature`: Review所見を自由文ではなく既存のtyped enumフィールド（`review.Issue`のCategory／Severity）だけから構造的に比較。sort＋dedupeによりIssueの記述順序やGoのmap iteration順に依存しない。Providerが同じ指摘を別の言い回しで書いても、Category／Severityが同じなら同一signatureになる
+- `policy.DeliverableFingerprint`/`NewDeliverableFingerprint`: Deliverable本文を改行コード統一・行末/前後空白trimだけのcontent-blindな正規化後、SHA-256でhash化した内部専用のopaque値。Domain・Vault・Audit・Event・UI・外部JSON Contractのいずれへも一切永続化・露出しない。changed/unchangedの二値のみで、類似度スコアは持たない
+- `policy.CompoundProgressPolicy`: Review Progress（同一構造signatureの連続一致）・Deliverable Progress（fingerprintの連続不変）・Execution Progress（Revision消費数）の3条件が**すべて**一致したときだけ停止する保守的な複合Policy。単一信号だけでは絶対に停止しない（false positive対策）。既定threshold（全て2）は`autonomy.DefaultMaxRevisionCount`と同じ保守的な値
+- `ProgressSignal`へ`ReviewSignature`／`ConsecutiveSameReviewCount`／`DeliverableChanged`／`ConsecutiveUnchangedDeliverableCount`／`ProviderCallCount`／`ElapsedDuration`をadditiveに追加。Resource Signal（Provider call数・経過時間）は既存の`worker.TokenUsage`/`Duration`から算出する観測用フィールドで、Policyのdecisionには使わない（Cost推定は今回作らず、将来のBudgetGuardへ委ねる）
+- Production wiring（`process/reviewed_workflow.go`）を`RepeatedFeedbackProgressPolicy`（v0）から`CompoundProgressPolicy`（v1）へ切り替え。v0自体は削除せず、直接/operator呼び出し元向けに残置
+- No-Progress停止も既存のRevision Limit Recovery UX（`interaction.workflow.recover_revision`、既存の`taskEvidenceBlock`/`deliverableViewerNode`）をそのまま再利用——別のRecovery画面は作っていない。並列Branch（A成功／B No-Progress／C成功）でも、A/Cの結果を失わず、B単独のRecoveryだけでSynthesisが再開することを統合テストで確認
+
+対象外のまま（将来の別Checkpoint候補）：意味的類似度・embeddingベースの比較、Cost estimate、Token usageのProgressSignalへの追加、ErrorKind（FailureEnvelope Code）反復をProgress Intelligenceへ使う実装（設計ノートのみ）。詳細は[ADR-0053](adr/ADR-0053-progress-intelligence-v1.md)を参照してください。
+
 ## Completed — Public Beta Go Only Repository
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。
