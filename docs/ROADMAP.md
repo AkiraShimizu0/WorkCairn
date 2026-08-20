@@ -361,6 +361,20 @@ ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全�
 
 対象外のまま（将来の別Checkpoint候補）：意味的類似度・embeddingベースの比較、Cost estimate、Token usageのProgressSignalへの追加、ErrorKind（FailureEnvelope Code）反復をProgress Intelligenceへ使う実装（設計ノートのみ）。詳細は[ADR-0053](adr/ADR-0053-progress-intelligence-v1.md)を参照してください。
 
+## Completed — BudgetGuard v1
+
+[ADR-0054](adr/ADR-0054-budgetguard-v1.md)（Accepted）により、「出力が改善しているか」（Progress Intelligence）とは独立した第三のPolicyとして、「許可された資源envelopeを既に超えたか」を判断するBudgetGuardを実装しました。成功条件は「少ない人間操作から多くの成果を出す」こと自体ではなく、「1回の依頼が有限時間・有限Provider利用で必ず停止可能であること」です。
+
+- `policy.BudgetPolicy`/`FixedBudgetPolicy`/`BudgetDecision`/`BudgetSignal`/`TokenUsageSignal`（`go/internal/policy/budget.go`）: Task状態を直接変更しない純粋な決定境界。Runtime／Provider Call Countの2軸を独立してチェックし、いずれか一方の超過だけで`BudgetEscalate`を返す（Progress Intelligenceの保守的なAND条件とは逆の設計——Budgetは安全上限であり、収束判断ではないため）
+- `autonomy.Contract.MaxProviderCalls`（既定60、上限300）/`MaxRuntime`（既定30分、上限2時間）: 既存の`MaxParallelTasks`等と同じ0=未設定規約。scopeは1 Reviewed Workflow execution単位（CEO Plan生成・Recovery自体は対象外）
+- `internal/service`の`budgetTracker`: `policy.BudgetPolicy`とは意図的に分離した、実際に並列安全な予約primitive（atomic reserve→invoke→record）。並列Branchが同時に最後の1枠を要求しても、超過は決して起きないことを200 goroutine・`-race`下の並列テストで確認。process-local・1呼び出しscopeのみの保証（durable化は将来課題として明記）
+- `worker.TokenUsage`の既存nilable設計（`*int`、unknown≠0）をそのまま利用したToken集計。v1ではゲーティングに使わず観測用のみ。Cost Budgetは未実装（価格tableが存在しないため、`ProviderCallCount × 仮単価`のような計算はどこにも作っていない）
+- FailureEnvelope: 単一Code `BUDGET_EXCEEDED` + `Category`（`"runtime"`/`"provider_call"`）で区別。実装中に見つけた実バグ（`runBranch`内部ループのcontext deadline判定が常に汎用的な`"cancelled"`へ分類されていた）を修正し、専用の回帰テストで検証
+- 並列Branch（A成功／B Budget停止／C成功）でA/Cの結果を失わず、Synthesisを誤って完了扱いにせず、replayが新しいProvider呼び出しをゼロにすることを、実HTTP mock・実Command Ledgerを通した統合テストで確認
+- Recovery UX: 既存の`interaction.workflow.recover_revision`は意図的に配線していません——Budget停止が残す状態は既存のstalled-task検出（Request Changes verdict＋未Revision）と構造的に一致しないため、無意味なdead UIを提示するより、CEOには完了済み成果の閲覧のみを提示する設計判断です（詳細はADR-0054）
+
+対象外のまま（将来の別Checkpoint候補）：Budget停止に対するRecovery Command（完了済み成果からの「必要な部分だけ続ける」再開）、Recovery時のBudget reset/inherit決定、Cost Budget／価格table、outer CEO Command全体を対象にしたBudget（CEO Plan生成・Recoveryを含む）、durable/Ledgerベースの予約、Metrics集計（provider-calls-per-command等）。詳細は[ADR-0054](adr/ADR-0054-budgetguard-v1.md)を参照してください。
+
 ## Completed — Public Beta Go Only Repository
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。

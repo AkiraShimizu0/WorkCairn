@@ -16,6 +16,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
 var (
@@ -44,6 +45,28 @@ var (
 	// ReviewedWorkflowRunService.SetProgressPolicy) -- nil is always
 	// backward compatible and never produces this.
 	ErrNoProgressDetected = errors.New("no-progress detected for this Task lineage")
+	// ErrRuntimeBudgetExceeded means this Workflow execution's own
+	// wall-clock deadline (BudgetGuard v1, ADR-0054) has been reached.
+	// Unlike ErrRevisionLimitReached/ErrNoProgressDetected, this is not a
+	// per-branch stop -- it ends the whole RunParallel call, since Runtime
+	// is a scope-wide resource, not one lineage's own budget. Only ever
+	// returned when SetBudgetLimits configured a positive MaxRuntime.
+	ErrRuntimeBudgetExceeded = errors.New("runtime budget exceeded for this reviewed Workflow execution")
+	// ErrProviderCallBudgetExceeded means this Workflow execution's shared
+	// Provider-call ceiling (BudgetGuard v1) is already reserved to
+	// capacity -- returned by a branch that tried to reserve the next
+	// Provider invocation and lost (or found the ceiling already full).
+	// Only ever returned when SetBudgetLimits configured a positive
+	// MaxProviderCalls.
+	ErrProviderCallBudgetExceeded = errors.New("provider call budget exceeded for this reviewed Workflow execution")
+	// ErrBudgetExceeded is the generic BudgetPolicy-driven stop, returned
+	// when a configured BudgetPolicy.Evaluate itself decides
+	// policy.BudgetEscalate for a reason its own configuration decides
+	// (e.g. FixedBudgetPolicy's own Runtime/Provider-call check) rather
+	// than the tracker's own reservation losing a race. See
+	// budgetTracker.reserveProviderCall for the race-safe path, which
+	// returns the more specific ErrProviderCallBudgetExceeded instead.
+	ErrBudgetExceeded = errors.New("budget exceeded for this reviewed Workflow execution")
 )
 
 type ReviewedWorkflowTaskExecutor interface {
@@ -104,6 +127,18 @@ type ReviewedWorkflowRunService struct {
 	// Guard's MaxRevisionCount can stop a branch early). See
 	// SetProgressPolicy.
 	progressPolicy policy.ProgressPolicy
+	// budgetPolicy/maxProviderCalls/maxRuntime are BudgetGuard v1's own
+	// optional configuration (ADR-0054): all zero-value by default, which
+	// RunParallel treats as "no Budget enforcement" -- every existing
+	// caller that never calls SetBudgetPolicy/SetBudgetLimits keeps
+	// today's exact behavior. See those setters.
+	budgetPolicy     policy.BudgetPolicy
+	maxProviderCalls int
+	maxRuntime       time.Duration
+	// clock is overridable only for tests (SetClock) so Runtime Budget
+	// tests never depend on wall-clock sleeps -- production always uses
+	// the zero-value default, time.Now.
+	clock func() time.Time
 }
 
 func NewReviewedWorkflowRunService(
@@ -115,7 +150,7 @@ func NewReviewedWorkflowRunService(
 	if serviceDependencyIsNil(planner) || serviceDependencyIsNil(executor) || serviceDependencyIsNil(reviewer) || serviceDependencyIsNil(reviser) {
 		return nil, fmt.Errorf("reviewed Workflow planner, executor, reviewer, and reviser are required")
 	}
-	return &ReviewedWorkflowRunService{planner: planner, executor: executor, reviewer: reviewer, reviser: reviser}, nil
+	return &ReviewedWorkflowRunService{planner: planner, executor: executor, reviewer: reviewer, reviser: reviser, clock: time.Now}, nil
 }
 
 // SetProgressPolicy attaches an optional No-Progress Foundation boundary
@@ -128,6 +163,38 @@ func NewReviewedWorkflowRunService(
 // computes from canonical Review evidence it already holds.
 func (service *ReviewedWorkflowRunService) SetProgressPolicy(progressPolicy policy.ProgressPolicy) {
 	service.progressPolicy = progressPolicy
+}
+
+// SetBudgetPolicy attaches an optional BudgetGuard boundary (ADR-0054):
+// RunParallel evaluates it, if set, before every new Task execution or
+// Review Provider invocation. A nil Policy (the default) is fully backward
+// compatible -- RunParallel enforces no Runtime/Provider-call ceiling at
+// all. Distinct responsibility from SetProgressPolicy: BudgetPolicy never
+// asks whether a result is improving, only whether this Workflow
+// execution's resource envelope (elapsed runtime, Provider calls made so
+// far) is still within its configured limits. Like ProgressPolicy, it
+// never sees raw Deliverable or Provider content and never mutates Task
+// state.
+func (service *ReviewedWorkflowRunService) SetBudgetPolicy(budgetPolicy policy.BudgetPolicy) {
+	service.budgetPolicy = budgetPolicy
+}
+
+// SetBudgetLimits configures the two BudgetGuard v1 ceilings RunParallel
+// enforces alongside SetBudgetPolicy: maxProviderCalls (0 = unlimited) and
+// maxRuntime (0 = unlimited). Both are Go-decided values a caller resolves
+// from autonomy.Contract.EffectiveMaxProviderCalls/EffectiveMaxRuntime --
+// never raw CEO input.
+func (service *ReviewedWorkflowRunService) SetBudgetLimits(maxProviderCalls int, maxRuntime time.Duration) {
+	service.maxProviderCalls = maxProviderCalls
+	service.maxRuntime = maxRuntime
+}
+
+// SetClock overrides the wall-clock source RunParallel's Runtime Budget
+// tracking uses. Test-only: production code never calls this, so
+// NewReviewedWorkflowRunService's own time.Now default is always what
+// production actually runs against.
+func (service *ReviewedWorkflowRunService) SetClock(clock func() time.Time) {
+	service.clock = clock
 }
 
 func (service *ReviewedWorkflowRunService) Run(ctx context.Context, parentCommandID string, maxTasks int) (ReviewedWorkflowRunResult, error) {
@@ -326,14 +393,33 @@ func (service *ReviewedWorkflowRunService) RunParallel(
 		maxRevisionCount = 1
 	}
 
+	// BudgetGuard v1 (ADR-0054): maxRuntime, if configured, becomes an
+	// actual context deadline for this whole call -- every downstream
+	// Provider HTTP call already respects context cancellation, so a
+	// Runtime Budget breach that happens mid-call aborts that in-flight
+	// call automatically, with no new cancellation plumbing. tracker is
+	// the single, mutex-protected accounting point every branch's own
+	// goroutine shares; it is never Task state and is discarded once this
+	// call returns.
+	budgetCtx := ctx
+	if service.maxRuntime > 0 {
+		var cancelBudget context.CancelFunc
+		budgetCtx, cancelBudget = context.WithTimeout(ctx, service.maxRuntime)
+		defer cancelBudget()
+	}
+	tracker := newBudgetTracker(service.clock)
+
 	var mu sync.Mutex // protects result.Tasks and remaining across goroutines
 	remaining := maxTasks
 
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := budgetCtx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return result, reviewedWorkflowFailure(&result, "budget", fmt.Errorf("%w: %v", ErrRuntimeBudgetExceeded, err))
+			}
 			return result, reviewedWorkflowFailure(&result, "cancelled", err)
 		}
-		batch, err := batchPlanner.NextBatch(ctx)
+		batch, err := batchPlanner.NextBatch(budgetCtx)
 		if err != nil {
 			return result, reviewedWorkflowFailure(&result, "plan", err)
 		}
@@ -368,7 +454,7 @@ func (service *ReviewedWorkflowRunService) RunParallel(
 			go func(taskID string) {
 				defer waitGroup.Done()
 				defer func() { <-semaphore }()
-				branchResults, branchErr := service.runBranch(ctx, parentCommandID, taskID, correlationID, maxRevisionCount)
+				branchResults, branchErr := service.runBranch(budgetCtx, parentCommandID, taskID, correlationID, maxRevisionCount, tracker)
 				mu.Lock()
 				result.Tasks = append(result.Tasks, branchResults...)
 				mu.Unlock()
@@ -439,6 +525,159 @@ func branchFailureStage(err error) string {
 	return "task_execute"
 }
 
+// budgetTracker is BudgetGuard v1's (ADR-0054) sole concurrency-safe
+// accounting point for one RunParallel call: every branch's own goroutine
+// shares the same tracker instance, so a resource ceiling (currently
+// Provider call count) is never exceeded even under concurrent dispatch.
+// It is explicitly not a policy.BudgetPolicy -- it is a stateful
+// reservation primitive a Policy's own pure decision cannot safely be
+// (concurrent reservation inherently mutates shared state), and it is not
+// Task state either: it is ephemeral, process-local bookkeeping scoped to
+// exactly one RunParallel call, discarded the moment that call returns.
+// v1's own correctness guarantee (never overshoot MaxProviderCalls) holds
+// only for this one process's own in-memory execution of one Command; a
+// future durable/multi-process runtime would need its own
+// Ledger-backed reservation, which this type's own reserve/record split is
+// deliberately shaped to make straightforward to add later without
+// reworking every call site.
+type budgetTracker struct {
+	mu                sync.Mutex
+	clock             func() time.Time
+	startedAt         time.Time
+	providerCallCount int
+	inputTokens       int
+	outputTokens      int
+	// tokensUnknown becomes (and stays) true the moment any observed
+	// Provider call's Usage did not report both Input/OutputTokens --
+	// never silently treated as zero usage (see policy.TokenUsageSignal's
+	// own doc comment on why "unknown" must never collapse into "known
+	// zero").
+	tokensUnknown bool
+}
+
+func newBudgetTracker(clock func() time.Time) *budgetTracker {
+	if clock == nil {
+		clock = time.Now
+	}
+	return &budgetTracker{clock: clock, startedAt: clock()}
+}
+
+// reserveProviderCall atomically checks-and-increments the shared Provider
+// call counter: it is the sole authoritative gate for MaxProviderCalls --
+// unlike a Policy's own read-then-decide, this method's single mutex
+// section makes "check remaining capacity" and "consume one unit of it"
+// one atomic step, so two concurrent branches racing for the last
+// available call can never both succeed. maxProviderCalls <= 0 means "no
+// limit": the call always succeeds, but the counter still increments, so
+// BudgetSignal.ProviderCallCount stays accurate for observability/Policy
+// use even when no ceiling is configured.
+func (tracker *budgetTracker) reserveProviderCall(maxProviderCalls int) bool {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if maxProviderCalls > 0 && tracker.providerCallCount >= maxProviderCalls {
+		return false
+	}
+	tracker.providerCallCount++
+	return true
+}
+
+// recordUsage accumulates one Provider call's Token usage after that call
+// has already completed (reservation happens before the call; recording
+// happens after, matching the reserve -> invoke -> record structure this
+// type is named for). It never estimates a missing value.
+func (tracker *budgetTracker) recordUsage(usage worker.TokenUsage) {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if usage.InputTokens == nil || usage.OutputTokens == nil {
+		tracker.tokensUnknown = true
+		return
+	}
+	tracker.inputTokens += *usage.InputTokens
+	tracker.outputTokens += *usage.OutputTokens
+}
+
+// snapshot is a pure, race-safe read of this tracker's current state as a
+// policy.BudgetSignal -- the only way a BudgetPolicy ever observes this
+// tracker's accounting.
+func (tracker *budgetTracker) snapshot() policy.BudgetSignal {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	return policy.BudgetSignal{
+		ElapsedRuntime:    tracker.clock().Sub(tracker.startedAt),
+		ProviderCallCount: tracker.providerCallCount,
+		TokenUsage: policy.TokenUsageSignal{
+			InputTokens: tracker.inputTokens, OutputTokens: tracker.outputTokens, Known: !tracker.tokensUnknown,
+		},
+	}
+}
+
+// reserveProviderCallBudget is runBranch's single call site for BudgetGuard
+// v1 enforcement, invoked immediately before every actual Task
+// execution/Review Provider invocation. It first asks the configured
+// BudgetPolicy (if any) whether the scope is still within its Runtime/
+// Provider-call envelope -- a pure read, giving a typed, Policy-driven
+// stop for the common case -- then, regardless of whether a Policy is
+// configured, always performs the tracker's own atomic reservation, which
+// is the actual race-safe gate for MaxProviderCalls. A caller that never
+// configures SetBudgetLimits (maxProviderCalls stays 0) always passes both
+// checks -- fully backward compatible.
+func (service *ReviewedWorkflowRunService) reserveProviderCallBudget(ctx context.Context, tracker *budgetTracker) error {
+	if service.budgetPolicy != nil {
+		signal := tracker.snapshot()
+		decision, err := service.budgetPolicy.Evaluate(ctx, signal)
+		if err != nil {
+			return stageError("budget", err)
+		}
+		if decision == policy.BudgetEscalate {
+			return stageError("budget", budgetPolicyExceededError(service.budgetPolicy, signal))
+		}
+	}
+	if !tracker.reserveProviderCall(service.maxProviderCalls) {
+		return stageError("budget", fmt.Errorf("%w: provider call limit %d", ErrProviderCallBudgetExceeded, service.maxProviderCalls))
+	}
+	return nil
+}
+
+// budgetPolicyExceededReasoner is an optional, narrower interface a
+// BudgetPolicy may implement (policy.FixedBudgetPolicy does) to name which
+// specific configured limit it escalated for. reserveProviderCallBudget's
+// Policy read is a fast, typed classification for the common case, but the
+// generic BudgetPolicy interface itself only returns a Decision, not a
+// reason -- without this, every Policy-driven stop would collapse to the
+// generic ErrBudgetExceeded, losing the Runtime-vs-Provider-call
+// distinction reviewedWorkflowOuterEnvelope's Category needs. A BudgetPolicy
+// that does not implement this optional interface still gets a safe, typed
+// stop (ErrBudgetExceeded), just without the finer reason.
+type budgetPolicyExceededReasoner interface {
+	ExceededReason(policy.BudgetSignal) (policy.BudgetExceededReason, bool)
+}
+
+// budgetPolicyExceededError classifies a Policy-driven BudgetEscalate
+// decision into the same typed sentinels a reservation-driven stop already
+// uses, so a caller (reviewedWorkflowOuterEnvelope) can tell Runtime and
+// Provider-call stops apart regardless of which of the two mechanisms
+// actually caught it first. Every returned error still satisfies
+// errors.Is(err, ErrBudgetExceeded) -- callers that only check the generic
+// sentinel keep working unchanged.
+func budgetPolicyExceededError(configured policy.BudgetPolicy, signal policy.BudgetSignal) error {
+	reasoner, ok := configured.(budgetPolicyExceededReasoner)
+	if !ok {
+		return ErrBudgetExceeded
+	}
+	reason, exceeded := reasoner.ExceededReason(signal)
+	if !exceeded {
+		return ErrBudgetExceeded
+	}
+	switch reason {
+	case policy.BudgetReasonRuntime:
+		return fmt.Errorf("%w: %w", ErrRuntimeBudgetExceeded, ErrBudgetExceeded)
+	case policy.BudgetReasonProviderCall:
+		return fmt.Errorf("%w: %w", ErrProviderCallBudgetExceeded, ErrBudgetExceeded)
+	default:
+		return ErrBudgetExceeded
+	}
+}
+
 // runBranch executes one independent chain starting at taskID: Execute →
 // Review → (if Request Changes) Revise → Execute the revised Task → Review
 // → ... until Approve, a hard error, or the branch's own Revision Guard
@@ -464,6 +703,7 @@ func (service *ReviewedWorkflowRunService) runBranch(
 	startTaskID string,
 	correlationID string,
 	maxRevisionCount int,
+	tracker *budgetTracker,
 ) ([]ReviewedWorkflowTaskResult, error) {
 	var branchResults []ReviewedWorkflowTaskResult
 	currentTaskID := startTaskID
@@ -508,7 +748,23 @@ func (service *ReviewedWorkflowRunService) runBranch(
 	var elapsedDuration time.Duration
 	for {
 		if err := ctx.Err(); err != nil {
+			// Mirrors RunParallel's own top-of-batch check: a branch that
+			// loops back between revision rounds (never returning to
+			// RunParallel in between) is often the first place a Runtime
+			// Budget deadline is actually observed, so this must classify
+			// context.DeadlineExceeded as "budget"/ErrRuntimeBudgetExceeded
+			// exactly like RunParallel does, not fall through to the
+			// generic "cancelled" stage.
+			if errors.Is(err, context.DeadlineExceeded) {
+				return branchResults, stageError("budget", fmt.Errorf("%w: %v", ErrRuntimeBudgetExceeded, err))
+			}
 			return branchResults, stageError("cancelled", err)
+		}
+		// BudgetGuard v1 (ADR-0054): reserved immediately before the actual
+		// Task execution Provider invocation, never after -- a branch that
+		// cannot reserve capacity must never start the call at all.
+		if err := service.reserveProviderCallBudget(ctx, tracker); err != nil {
+			return branchResults, err
 		}
 		executionCommandID, err := reviewedChildCommandID(parentCommandID, "task.execute", currentTaskID)
 		if err != nil {
@@ -516,6 +772,7 @@ func (service *ReviewedWorkflowRunService) runBranch(
 		}
 		executeCtx := event.WithCorrelation(ctx, event.Correlation{CorrelationID: correlationID, CausationID: executionCommandID})
 		executed, executeErr := service.executor.Execute(executeCtx, currentTaskID, executionCommandID, true)
+		tracker.recordUsage(executed.Usage)
 		branchResults = append(branchResults, ReviewedWorkflowTaskResult{
 			TaskID: currentTaskID, Targeted: isRevisionContinuation, ExecutionCommandID: executionCommandID, Execution: executed,
 		})
@@ -548,12 +805,21 @@ func (service *ReviewedWorkflowRunService) runBranch(
 		providerCallCount++
 		elapsedDuration += executed.Duration
 
+		// BudgetGuard v1: reserved immediately before the Review Provider
+		// invocation, the second (and last) Provider-invoking call in one
+		// attempt.
+		if err := service.reserveProviderCallBudget(ctx, tracker); err != nil {
+			return branchResults, err
+		}
 		reviewCommandID, err := reviewedChildCommandID(parentCommandID, "review.execute", currentTaskID)
 		if err != nil {
 			return branchResults, stageError("command_identity", err)
 		}
 		reviewCtx := event.WithCorrelation(ctx, event.Correlation{CorrelationID: correlationID, CausationID: reviewCommandID})
 		reviewed, reviewErr := service.reviewer.Execute(reviewCtx, currentTaskID, reviewCommandID)
+		if reviewed.Execution != nil {
+			tracker.recordUsage(reviewed.Execution.Usage)
+		}
 		branchResults[lastIndex].ReviewCommandID = reviewCommandID
 		branchResults[lastIndex].Review = &reviewed
 		if reviewed.Execution != nil {

@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1241,4 +1242,384 @@ func TestRunParallelCompoundProgressPolicyObservesResourceSignals(t *testing.T) 
 	if len(calls) != 1 || calls[0].ProviderCallCount != 2 || calls[0].ElapsedDuration <= 0 {
 		t.Fatalf("ProgressPolicy calls = %#v, want ProviderCallCount=2 (1 execute + 1 review) and a positive ElapsedDuration", calls)
 	}
+}
+
+// --- BudgetGuard v1 (budgetTracker, FixedBudgetPolicy wiring) -----------
+
+// TestBudgetTrackerReserveProviderCallSequentialNeverExceedsLimit proves
+// the tracker's own reservation is the authoritative gate: exactly
+// maxProviderCalls sequential reservations succeed, every one after that
+// fails, regardless of whether a BudgetPolicy is also consulted.
+func TestBudgetTrackerReserveProviderCallSequentialNeverExceedsLimit(t *testing.T) {
+	tracker := newBudgetTracker(nil)
+	const limit = 3
+	succeeded := 0
+	for i := 0; i < limit+2; i++ {
+		if tracker.reserveProviderCall(limit) {
+			succeeded++
+		}
+	}
+	if succeeded != limit {
+		t.Fatalf("succeeded = %d, want exactly %d", succeeded, limit)
+	}
+	if tracker.snapshot().ProviderCallCount != limit {
+		t.Fatalf("snapshot().ProviderCallCount = %d, want %d (failed reservations must not increment)", tracker.snapshot().ProviderCallCount, limit)
+	}
+}
+
+// TestBudgetTrackerReserveProviderCallZeroLimitIsUnlimited proves
+// maxProviderCalls<=0 always succeeds while still counting for
+// observability.
+func TestBudgetTrackerReserveProviderCallZeroLimitIsUnlimited(t *testing.T) {
+	tracker := newBudgetTracker(nil)
+	for i := 0; i < 50; i++ {
+		if !tracker.reserveProviderCall(0) {
+			t.Fatalf("reserveProviderCall(0) failed on call %d, want always-succeed for an unlimited budget", i)
+		}
+	}
+	if tracker.snapshot().ProviderCallCount != 50 {
+		t.Fatalf("snapshot().ProviderCallCount = %d, want 50", tracker.snapshot().ProviderCallCount)
+	}
+}
+
+// TestBudgetTrackerReserveProviderCallParallelNeverExceedsLimit is the
+// concurrency-safety proof (race detector required): many goroutines race
+// for a small limit, and exactly that many succeed, never more --
+// confirming reserveProviderCall's single mutex section makes "check
+// remaining capacity" and "consume one unit of it" one atomic step.
+func TestBudgetTrackerReserveProviderCallParallelNeverExceedsLimit(t *testing.T) {
+	tracker := newBudgetTracker(nil)
+	const limit = 5
+	const attempts = 200
+	var succeeded int32
+	var waitGroup sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			if tracker.reserveProviderCall(limit) {
+				atomic.AddInt32(&succeeded, 1)
+			}
+		}()
+	}
+	waitGroup.Wait()
+	if int(succeeded) != limit {
+		t.Fatalf("succeeded = %d, want exactly %d (never more, even under %d concurrent attempts)", succeeded, limit, attempts)
+	}
+	if tracker.snapshot().ProviderCallCount != limit {
+		t.Fatalf("snapshot().ProviderCallCount = %d, want %d", tracker.snapshot().ProviderCallCount, limit)
+	}
+}
+
+// TestBudgetTrackerSnapshotElapsedRuntimeUsesInjectedClock proves Runtime
+// tracking depends only on the injected clock, never wall-clock sleeps.
+func TestBudgetTrackerSnapshotElapsedRuntimeUsesInjectedClock(t *testing.T) {
+	current := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return current }
+	tracker := newBudgetTracker(clock)
+	if got := tracker.snapshot().ElapsedRuntime; got != 0 {
+		t.Fatalf("ElapsedRuntime immediately after construction = %v, want 0", got)
+	}
+	current = current.Add(17 * time.Minute)
+	if got := tracker.snapshot().ElapsedRuntime; got != 17*time.Minute {
+		t.Fatalf("ElapsedRuntime after advancing the fake clock 17m = %v, want 17m", got)
+	}
+}
+
+// TestBudgetTrackerRecordUsageAccumulatesAndTracksUnknown proves Token
+// usage accumulates across calls and Known becomes (and stays) false the
+// moment any call's usage is unreported -- never silently 0.
+func TestBudgetTrackerRecordUsageAccumulatesAndTracksUnknown(t *testing.T) {
+	tracker := newBudgetTracker(nil)
+	inputA, outputA := 100, 50
+	tracker.recordUsage(worker.TokenUsage{InputTokens: &inputA, OutputTokens: &outputA})
+	signal := tracker.snapshot()
+	if !signal.TokenUsage.Known || signal.TokenUsage.InputTokens != 100 || signal.TokenUsage.OutputTokens != 50 {
+		t.Fatalf("snapshot() after one known call = %#v, want Known=true InputTokens=100 OutputTokens=50", signal.TokenUsage)
+	}
+	inputB, outputB := 30, 10
+	tracker.recordUsage(worker.TokenUsage{InputTokens: &inputB, OutputTokens: &outputB})
+	signal = tracker.snapshot()
+	if signal.TokenUsage.InputTokens != 130 || signal.TokenUsage.OutputTokens != 60 {
+		t.Fatalf("snapshot() after two known calls = %#v, want accumulated InputTokens=130 OutputTokens=60", signal.TokenUsage)
+	}
+	// A third call with unreported usage must flip Known to false
+	// permanently, without treating the missing values as 0.
+	tracker.recordUsage(worker.TokenUsage{})
+	signal = tracker.snapshot()
+	if signal.TokenUsage.Known {
+		t.Fatal("Known must become false once any call's usage is unreported")
+	}
+	if signal.TokenUsage.InputTokens != 130 || signal.TokenUsage.OutputTokens != 60 {
+		t.Fatalf("previously accumulated counts must not be discarded or zeroed: %#v", signal.TokenUsage)
+	}
+}
+
+// contentAndUsageExecutorFake is a minimal executor fake that always
+// Approves-worthy-executes successfully, optionally reporting Token usage,
+// used for BudgetGuard tests that do not need Progress Intelligence's own
+// content-variation machinery.
+type contentAndUsageExecutorFake struct {
+	usage worker.TokenUsage
+}
+
+func (fake *contentAndUsageExecutorFake) Execute(_ context.Context, taskID, commandID string, targeted bool) (execution.Result, error) {
+	return execution.Result{TaskID: taskID, Status: execution.StatusCompleted, Usage: fake.usage}, nil
+}
+
+// TestRunParallelProviderCallBudgetEnforcedByReservationAloneWithoutPolicy
+// proves the tracker's own reservation is authoritative independent of
+// whether a BudgetPolicy is configured: SetBudgetLimits alone (no
+// SetBudgetPolicy call) must still deterministically stop dispatch at the
+// configured ceiling, and in this configuration the reservation's own
+// ErrProviderCallBudgetExceeded is what actually surfaces (there is no
+// Policy read to classify the stop first).
+func TestRunParallelProviderCallBudgetEnforcedByReservationAloneWithoutPolicy(t *testing.T) {
+	executor := &contentAndUsageExecutorFake{}
+	reviewer := &approvingReviewerFake{}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A", "TASK-B", "TASK-C"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+	service.SetBudgetLimits(3, 0) // no SetBudgetPolicy call
+
+	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-RESERVATION-ONLY", "CMD-BUDGET-RESERVATION-ONLY", 10, 3, 5, planner)
+
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "budget" || !errors.Is(err, ErrProviderCallBudgetExceeded) {
+		t.Fatalf("RunParallel() error = %v, want a budget-staged ErrProviderCallBudgetExceeded", err)
+	}
+	if result.Status != "partial_failure" {
+		t.Fatalf("result.Status = %q, want partial_failure", result.Status)
+	}
+}
+
+func TestRunParallelProviderCallBudgetStopsBeforeExceedingLimit(t *testing.T) {
+	executor := &contentAndUsageExecutorFake{}
+	reviewer := &approvingReviewerFake{}
+	// 3 independent Tasks each need 2 Provider calls (execute+review) to
+	// Approve = 6 calls total if unbudgeted; a limit of 3 must let only
+	// the first 1-2 Tasks (whichever wins the race) complete, never all 3.
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A", "TASK-B", "TASK-C"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+	service.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxProviderCalls: 3})
+	service.SetBudgetLimits(3, 0)
+
+	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-CALLS", "CMD-BUDGET-CALLS", 10, 3, 5, planner)
+
+	// With a BudgetPolicy configured, its own pure read (checked before the
+	// tracker's atomic reservation is even attempted) is what actually
+	// classifies this deterministic, non-racing stop as ErrBudgetExceeded;
+	// ErrProviderCallBudgetExceeded is reserved for the race-window case
+	// where the reservation itself loses a race the Policy's own read
+	// could not have foreseen (see budgetTracker's own concurrency test).
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "budget" || !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("RunParallel() error = %v, want a budget-staged ErrBudgetExceeded", err)
+	}
+	if result.Status != "partial_failure" {
+		t.Fatalf("result.Status = %q, want partial_failure (some Tasks were produced before the budget stopped dispatch)", result.Status)
+	}
+	// Exactly 3 Provider calls were ever actually made -- never 4 or more,
+	// even though 3 branches raced concurrently for them.
+	totalCalls := 0
+	for _, current := range result.Tasks {
+		if current.ExecutionCommandID != "" {
+			totalCalls++
+		}
+		if current.ReviewCommandID != "" {
+			totalCalls++
+		}
+	}
+	if totalCalls > 3 {
+		t.Fatalf("observed %d actual Provider-invoking child Commands, want at most 3 (the configured MaxProviderCalls)", totalCalls)
+	}
+}
+
+func TestRunParallelBudgetPartialFailurePreservesOtherBranches(t *testing.T) {
+	executor := &contentAndUsageExecutorFake{}
+	reviewer := &approvingReviewerFake{}
+	// A and B each need exactly 2 calls to Approve = 4 calls total; C is a
+	// 3rd independent branch that must never get to run once the 4-call
+	// budget is exhausted by A and B alone.
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A", "TASK-B", "TASK-C"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+	service.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxProviderCalls: 4})
+	service.SetBudgetLimits(4, 0)
+
+	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-PARTIAL", "CMD-BUDGET-PARTIAL", 10, 3, 5, planner)
+
+	if !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("RunParallel() error = %v, want ErrBudgetExceeded", err)
+	}
+	if result.Status != "partial_failure" {
+		t.Fatalf("result.Status = %q, want partial_failure -- a plain success/silent drop is never acceptable", result.Status)
+	}
+	if len(result.Tasks) == 0 {
+		t.Fatal("result.Tasks is empty, want at least the Tasks that completed before the budget stopped dispatch")
+	}
+	for _, current := range result.Tasks {
+		if current.Review != nil && current.Verdict != review.VerdictApprove {
+			t.Fatalf("Task %s = %#v, every Task that did complete a Review must show its genuine Approve verdict, not a fabricated one", current.TaskID, current)
+		}
+	}
+}
+
+func TestRunParallelNilBudgetPolicyAndZeroLimitsFullyBackwardCompatible(t *testing.T) {
+	executor := &contentAndUsageExecutorFake{}
+	reviewer := &approvingReviewerFake{}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A", "TASK-B", "TASK-C"}}, {Completed: true}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+	// Neither SetBudgetPolicy nor SetBudgetLimits called -- must behave
+	// exactly as before BudgetGuard existed.
+
+	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-NONE", "CMD-BUDGET-NONE", 10, 3, 5, planner)
+	if err != nil || result.Status != "completed" || len(result.Tasks) != 3 {
+		t.Fatalf("RunParallel() = %#v, %v, want a plain completed 3-Task result with no Budget enforcement configured", result, err)
+	}
+}
+
+// TestRunParallelRuntimeBudgetStopsViaFakeClock proves Runtime Budget
+// enforcement never depends on a real wall-clock sleep: a fake clock
+// advances past the configured MaxRuntime between rounds, and RunParallel
+// must stop before dispatching the next round.
+func TestRunParallelRuntimeBudgetStopsViaFakeClock(t *testing.T) {
+	current := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	// advanceOnFirstReview lets the fake reviewer itself move the shared
+	// clock forward past the Runtime Budget once, simulating real time
+	// passing during Provider calls without a literal sleep.
+	var clockMu sync.Mutex
+	reviewer := &clockAdvancingReviewerFake{
+		verdicts: map[string]review.Verdict{"TASK-A": review.VerdictApprove},
+		advance: func() {
+			clockMu.Lock()
+			current = current.Add(time.Hour)
+			clockMu.Unlock()
+		},
+	}
+	executor := &contentAndUsageExecutorFake{}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A"}}, {TaskIDs: []string{"TASK-B"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+	service.SetClock(func() time.Time { clockMu.Lock(); defer clockMu.Unlock(); return current })
+	service.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxRuntime: time.Minute})
+	service.SetBudgetLimits(0, time.Minute)
+
+	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-RUNTIME", "CMD-BUDGET-RUNTIME", 10, 3, 5, planner)
+
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "budget" || !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("RunParallel() error = %v, want a budget-staged ErrBudgetExceeded (Runtime, via FixedBudgetPolicy)", err)
+	}
+	if result.Status != "partial_failure" {
+		t.Fatalf("result.Status = %q, want partial_failure (TASK-A completed before the Runtime Budget stopped round 2)", result.Status)
+	}
+	for _, current := range result.Tasks {
+		if current.TaskID == "TASK-B" {
+			t.Fatal("TASK-B must never be dispatched once the Runtime Budget is already exceeded before its own round starts")
+		}
+	}
+}
+
+// clockAdvancingReviewerFake behaves like approvingReviewerFake but also
+// calls an injected advance() hook once per Execute -- used only to move a
+// test's shared fake clock forward without a real sleep.
+type clockAdvancingReviewerFake struct {
+	mu       sync.Mutex
+	verdicts map[string]review.Verdict
+	calls    []string
+	advance  func()
+}
+
+func (fake *clockAdvancingReviewerFake) Execute(_ context.Context, taskID, commandID string) (review.OrchestrationResult, error) {
+	fake.mu.Lock()
+	verdict, ok := fake.verdicts[taskID]
+	fake.calls = append(fake.calls, taskID)
+	fake.mu.Unlock()
+	if !ok {
+		verdict = review.VerdictApprove
+	}
+	if fake.advance != nil {
+		fake.advance()
+	}
+	return review.OrchestrationResult{
+		Status:         "completed",
+		Execution:      &review.ExecutionResult{TaskID: taskID, Decision: review.Decision{Verdict: verdict, Issues: []review.Issue{}}},
+		Artifact:       &review.Record{TaskID: taskID, CanonicalPath: "Reviews/" + taskID + ".json", ProjectionPath: "Reviews/" + taskID + ".md", CanonicalCommitted: true, ProjectionCommitted: true},
+		EventPublished: true,
+	}, nil
+}
+
+// Command replay never re-invokes RunParallel at all: ExecuteReviewedWorkflow's
+// own Command Ledger claim/replay (ADR-0021) returns the already-stored
+// result before this Service is ever called again, so budgetTracker
+// accounting is authoritatively "only actual invocations, never replays"
+// by construction. The end-to-end proof (replaying an outer Command that
+// already hit the Provider-call Budget makes zero new Provider calls)
+// lives in internal/process's integration tests alongside the equivalent
+// existing Revision Limit / No-Progress replay proofs.
+
+// TestRunParallelRuntimeBudgetDeadlineExceededInsideBranchClassifiesAsBudgetNotCancelled
+// is a regression test for a real misclassification this Checkpoint fixed:
+// runBranch's own per-round ctx.Err() check (distinct from RunParallel's
+// own top-of-batch check) previously always returned the generic
+// "cancelled" stage regardless of *why* the context was done -- so a
+// Runtime Budget deadline that expired while a branch was looping
+// internally between revision rounds (never returning control to
+// RunParallel in between) was silently reported as a plain cancellation,
+// losing the BUDGET_EXCEEDED classification for what is actually the most
+// realistic way a Runtime Budget ever fires mid-branch. This forces exactly
+// that shape: a real (tiny) context.WithTimeout via SetBudgetLimits, no
+// BudgetPolicy configured (isolating this exact code path from the
+// separate Policy-driven one TestRunParallelRuntimeBudgetStopsViaFakeClock
+// already covers), and a Reviewer whose first call returns Request Changes
+// and blocks briefly -- long enough that the real deadline has already
+// elapsed by the time runBranch loops back for the Revision continuation's
+// own Execute. The sleep only guarantees ordering (deadline before the next
+// loop check); nothing here asserts an exact elapsed duration.
+func TestRunParallelRuntimeBudgetDeadlineExceededInsideBranchClassifiesAsBudgetNotCancelled(t *testing.T) {
+	executor := &contentAndUsageExecutorFake{}
+	reviewer := &requestChangesOnceThenBlockReviewerFake{taskID: "TASK-A", blockFor: 20 * time.Millisecond}
+	reviser := &scriptedRevisionChainReviserFake{next: map[string]string{"TASK-A": "TASK-A-REV"}}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+	service.SetBudgetLimits(0, 5*time.Millisecond) // real deadline, no BudgetPolicy configured
+
+	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-DEADLINE", "CMD-BUDGET-DEADLINE", 10, 1, 5, planner)
+
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) {
+		t.Fatalf("RunParallel() error = %v, want a *ReviewedWorkflowRunError", err)
+	}
+	if typed.Stage != "budget" || !errors.Is(err, ErrRuntimeBudgetExceeded) {
+		t.Fatalf("RunParallel() error = %v (stage=%q), want stage=budget and errors.Is ErrRuntimeBudgetExceeded -- got the generic \"cancelled\" stage instead if this regressed", err, typed.Stage)
+	}
+	if result.Status != "partial_failure" {
+		t.Fatalf("result.Status = %q, want partial_failure (TASK-A's own Request Changes round already committed)", result.Status)
+	}
+}
+
+// requestChangesOnceThenBlockReviewerFake returns Request Changes for
+// taskID's own first call, sleeping blockFor beforehand so a small real
+// context deadline configured by the test has already elapsed by the time
+// the caller's own next loop iteration checks ctx.Err() -- never asserting
+// an exact elapsed duration itself, only using the sleep to guarantee
+// ordering. Every other call (including the Revision continuation's own
+// Task ID) Approves immediately.
+type requestChangesOnceThenBlockReviewerFake struct {
+	taskID   string
+	blockFor time.Duration
+}
+
+func (fake *requestChangesOnceThenBlockReviewerFake) Execute(_ context.Context, taskID, commandID string) (review.OrchestrationResult, error) {
+	verdict := review.VerdictApprove
+	issues := []review.Issue{}
+	if taskID == fake.taskID {
+		verdict = review.VerdictRequestChanges
+		issues = []review.Issue{{Category: "requirements", Severity: "medium", Description: "不足", SuggestedAction: "追記"}}
+		time.Sleep(fake.blockFor)
+	}
+	return review.OrchestrationResult{
+		Status:         "completed",
+		Execution:      &review.ExecutionResult{TaskID: taskID, Decision: review.Decision{Verdict: verdict, Issues: issues}},
+		Artifact:       &review.Record{TaskID: taskID, CanonicalPath: "Reviews/" + taskID + ".json", ProjectionPath: "Reviews/" + taskID + ".md", CanonicalCommitted: true, ProjectionCommitted: true},
+		EventPublished: true,
+	}, nil
 }

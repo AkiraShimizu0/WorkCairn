@@ -18,6 +18,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/deliverable"
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
 	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/project"
@@ -573,6 +574,141 @@ func TestExecuteReviewedWorkflowRunsIndependentTasksThenSynthesis(t *testing.T) 
 	}
 }
 
+// providerCallCountingMockServer behaves exactly like
+// parallelProviderMockServer (unconditional Approve on every Review call, a
+// fixed Deliverable body on every Task execution call) but also exposes its
+// own call counter, so a BudgetGuard v1 test can assert the exact number of
+// Provider calls actually made -- and, on Command replay, that no new call
+// is made at all.
+func providerCallCountingMockServer(t *testing.T) (server *httptest.Server, callCount func() int) {
+	t.Helper()
+	var mu sync.Mutex
+	calls := 0
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		var decoded map[string]any
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			t.Errorf("decode Provider request: %v", err)
+		}
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		var output string
+		if _, structured := decoded["output_config"]; structured {
+			output = reviewProviderOutput(review.VerdictApprove)
+		} else {
+			output = "# deliverable\n\n本文"
+		}
+		encoded, _ := json.Marshal(map[string]any{
+			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": output}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+		response.Header().Set("content-type", "application/json")
+		_, _ = response.Write(encoded)
+	}))
+	callCount = func() int { mu.Lock(); defer mu.Unlock(); return calls }
+	return server, callCount
+}
+
+// TestExecuteReviewedWorkflowProviderCallBudgetExceededPartialResultReplaySafe
+// is BudgetGuard v1's own production Command-chain proof (ADR-0054),
+// mirroring TestExecuteReviewedWorkflowRunsIndependentTasksThenSynthesis's
+// real-Vault/real-HTTP/real-Command-Ledger shape but with the Autonomy
+// Contract's own MaxProviderCalls set low enough that the shared Provider
+// Call Budget for this one Reviewed Workflow execution runs out mid-round:
+// of the three independent first-round branches (TASK-001, TASK-002,
+// TASK-003), each needing exactly two Provider calls (Execute, Review) to
+// reach an Approve verdict, a Budget of 5 calls is exactly enough for two
+// branches to complete fully (4 calls) plus one more branch's own Execute
+// call (5th) -- leaving that branch's own Review call the one that loses
+// the reservation race and stops the whole run.
+//
+// This proves, through the real production entry point (no fake service
+// layer, no mocked BudgetPolicy): the shared Budget is never exceeded (at
+// most 5 Provider calls are ever actually made, confirmed by the mock
+// server's own counter); the two completed branches' results are preserved
+// in the partial result (never silently dropped); the Synthesis Task
+// (TASK-004, depending on all three) is never dispatched; the outer Command
+// finishes with a typed BUDGET_EXCEEDED FailureEnvelope whose Category is
+// "provider_call"; and replaying the identical Command ID returns the same
+// stored partial result without making a single additional Provider call --
+// Command Ledger replay is not "new execution", so it can never re-consume
+// Budget.
+func TestExecuteReviewedWorkflowProviderCallBudgetExceededPartialResultReplaySafe(t *testing.T) {
+	root := writeParallelReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	server, callCount := providerCallCountingMockServer(t)
+	defer server.Close()
+
+	input := ExecuteReviewedWorkflowInput{
+		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
+			WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+			ReviewerID:        "QA-001",
+		},
+		Approved: true, ApprovalReference: "approval-budget", CommandID: "CMD-BUDGET-WORKFLOW-001",
+		MaxTasks: 10, Autonomy: autonomy.Contract{MaxParallelTasks: 3, MaxProviderCalls: 5},
+	}
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL}
+	result, err := ExecuteReviewedWorkflow(context.Background(), input, provider, server.Client())
+
+	if err == nil {
+		t.Fatalf("ExecuteReviewedWorkflow() err = nil, want a Budget error")
+	}
+	var recorded *RecordedCommandError
+	if !errors.As(err, &recorded) {
+		t.Fatalf("ExecuteReviewedWorkflow() err = %#v, want a *RecordedCommandError", err)
+	}
+	if recorded.Code != "BUDGET_EXCEEDED" || !recorded.Partial {
+		t.Fatalf("RecordedCommandError = %#v, want code BUDGET_EXCEEDED, partial=true", recorded)
+	}
+	if recorded.Envelope == nil || recorded.Envelope.Code != "BUDGET_EXCEEDED" || recorded.Envelope.Category != "provider_call" {
+		t.Fatalf("RecordedCommandError.Envelope = %#v, want Code=BUDGET_EXCEEDED Category=provider_call", recorded.Envelope)
+	}
+	if result.Status != "partial_failure" {
+		t.Fatalf("result.Status = %q, want partial_failure", result.Status)
+	}
+	if len(result.Tasks) != 3 {
+		t.Fatalf("result.Tasks = %#v, want exactly 3 entries (two completed branches + the budget-stopped one)", result.Tasks)
+	}
+	approved := 0
+	stoppedTaskID := ""
+	for _, current := range result.Tasks {
+		if current.TaskID == "TASK-004" {
+			t.Fatalf("Synthesis Task TASK-004 was unexpectedly dispatched despite the Budget stop: %#v", result.Tasks)
+		}
+		if current.Verdict == review.VerdictApprove {
+			approved++
+			continue
+		}
+		if current.Review != nil {
+			t.Fatalf("budget-stopped Task %s unexpectedly has a Review result: %#v", current.TaskID, current.Review)
+		}
+		stoppedTaskID = current.TaskID
+	}
+	if approved != 2 || stoppedTaskID == "" {
+		t.Fatalf("result.Tasks = %#v, want exactly 2 Approved and 1 budget-stopped (no Review)", result.Tasks)
+	}
+	if calls := callCount(); calls != 5 {
+		t.Fatalf("Provider calls made = %d, want exactly 5 (the configured MaxProviderCalls, never exceeded)", calls)
+	}
+
+	beforeReplay := planVaultSnapshot(t, root)
+	replayed, replayErr := ExecuteReviewedWorkflow(context.Background(), input, provider, server.Client())
+	if replayErr == nil {
+		t.Fatalf("replay err = nil, want the same recorded Budget error")
+	}
+	var replayedRecorded *RecordedCommandError
+	if !errors.As(replayErr, &replayedRecorded) || replayedRecorded.Envelope == nil || replayedRecorded.Envelope.Code != "BUDGET_EXCEEDED" {
+		t.Fatalf("replay err = %#v, want the same stored BUDGET_EXCEEDED envelope", replayErr)
+	}
+	if !reflect.DeepEqual(result.Status, replayed.Status) || len(replayed.Tasks) != 3 || !reflect.DeepEqual(beforeReplay, planVaultSnapshot(t, root)) {
+		t.Fatalf("ExecuteReviewedWorkflow() replay = %#v, %v", replayed, replayErr)
+	}
+	if calls := callCount(); calls != 5 {
+		t.Fatalf("Provider calls made after replay = %d, want still exactly 5 (replay must never re-consume Budget)", calls)
+	}
+}
+
 // ReviewedWorkflowTaskResultForTest is a minimal projection used only to
 // keep the assertions above readable.
 type ReviewedWorkflowTaskResultForTest struct {
@@ -624,7 +760,7 @@ func TestReviewedWorkflowOuterEnvelopeClassifiesRevisionLimitAndNoProgress(t *te
 		{"revision_limit", "REVISION_LIMIT_REACHED"},
 		{"no_progress", "NO_PROGRESS_DETECTED"},
 	} {
-		envelope := reviewedWorkflowOuterEnvelope(service.ReviewedWorkflowRunResult{}, testCase.stage, true)
+		envelope := reviewedWorkflowOuterEnvelope(service.ReviewedWorkflowRunResult{}, testCase.stage, true, nil)
 		if envelope == nil || envelope.Code != testCase.wantCode || envelope.Stage != testCase.stage ||
 			!envelope.Partial || !envelope.RecoveryRequired || envelope.Evidence == nil ||
 			!envelope.Evidence.Deliverable || !envelope.Evidence.TaskState || !envelope.Evidence.ReviewCanonical {
@@ -643,9 +779,47 @@ func TestReviewedWorkflowOuterEnvelopeForwardsChildEnvelopeUnchanged(t *testing.
 	result := service.ReviewedWorkflowRunResult{Tasks: []service.ReviewedWorkflowTaskResult{
 		{TaskID: "TASK-001", Execution: execution.Result{Failure: &childEnvelope}},
 	}}
-	envelope := reviewedWorkflowOuterEnvelope(result, "task_execute", true)
+	envelope := reviewedWorkflowOuterEnvelope(result, "task_execute", true, nil)
 	if envelope == nil || envelope.Code != "PROVIDER_REFUSED" || envelope.Stage != "task_execute" {
 		t.Fatalf("reviewedWorkflowOuterEnvelope() = %#v, want the child's own Envelope forwarded unchanged", envelope)
+	}
+}
+
+// TestReviewedWorkflowOuterEnvelopeClassifiesBudgetExceeded pins the exact
+// FailureEnvelope reviewedWorkflowOuterEnvelope builds for BudgetGuard v1's
+// own stop stage (ADR-0054): a single Code (BUDGET_EXCEEDED) with Category
+// carrying which specific limit was exceeded (Runtime vs Provider-call),
+// and Evidence computed from the actual last Task's own state rather than
+// blanket-assumed like Revision Limit/No-Progress -- a Budget stop can
+// legitimately fire before a Task's own Review (or even Execution) ever
+// committed.
+func TestReviewedWorkflowOuterEnvelopeClassifiesBudgetExceeded(t *testing.T) {
+	runtimeEnvelope := reviewedWorkflowOuterEnvelope(service.ReviewedWorkflowRunResult{}, "budget", true, service.ErrRuntimeBudgetExceeded)
+	if runtimeEnvelope == nil || runtimeEnvelope.Code != "BUDGET_EXCEEDED" || runtimeEnvelope.Stage != "budget" ||
+		runtimeEnvelope.Category != "runtime" || !runtimeEnvelope.Partial || !runtimeEnvelope.RecoveryRequired {
+		t.Fatalf("reviewedWorkflowOuterEnvelope(Runtime) = %#v, want Code=BUDGET_EXCEEDED Category=runtime", runtimeEnvelope)
+	}
+	providerCallEnvelope := reviewedWorkflowOuterEnvelope(service.ReviewedWorkflowRunResult{}, "budget", true, service.ErrProviderCallBudgetExceeded)
+	if providerCallEnvelope == nil || providerCallEnvelope.Code != "BUDGET_EXCEEDED" || providerCallEnvelope.Category != "provider_call" {
+		t.Fatalf("reviewedWorkflowOuterEnvelope(ProviderCall) = %#v, want Code=BUDGET_EXCEEDED Category=provider_call", providerCallEnvelope)
+	}
+	// No Task ever completed before the stop: Evidence must stay nil
+	// rather than falsely claim a Deliverable/Review exists.
+	if runtimeEnvelope.Evidence != nil {
+		t.Fatalf("Evidence = %#v, want nil when result.Tasks is empty", runtimeEnvelope.Evidence)
+	}
+
+	// A Budget stop that fires after Execute succeeded but before Review
+	// ran (e.g. the reservation for the Review call failed) must report
+	// ReviewCanonical=false, unlike Revision Limit/No-Progress which only
+	// ever fire after a completed Review.
+	midAttemptResult := service.ReviewedWorkflowRunResult{Tasks: []service.ReviewedWorkflowTaskResult{
+		{TaskID: "TASK-001", Execution: execution.Result{Deliverable: &deliverable.Record{TaskID: "TASK-001", RelativePath: "Deliverables/TASK-001.md"}}},
+	}}
+	midAttemptEnvelope := reviewedWorkflowOuterEnvelope(midAttemptResult, "budget", true, service.ErrProviderCallBudgetExceeded)
+	if midAttemptEnvelope.Evidence == nil || !midAttemptEnvelope.Evidence.Deliverable || !midAttemptEnvelope.Evidence.TaskState ||
+		midAttemptEnvelope.Evidence.ReviewCanonical {
+		t.Fatalf("Evidence = %#v, want Deliverable=true TaskState=true ReviewCanonical=false (Review never ran for this attempt)", midAttemptEnvelope.Evidence)
 	}
 }
 

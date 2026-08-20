@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestStandardContractIsCanonicalAndEnforcesSafetyFloor(t *testing.T) {
@@ -46,6 +47,18 @@ func TestContractRejectsRelaxedOrAmbiguousScope(t *testing.T) {
 		func() Contract {
 			changed := valid.Clone()
 			changed.MaxRevisionCount = MaxRevisionCountCeiling + 1
+			return changed
+		}(),
+		func() Contract { changed := valid.Clone(); changed.MaxProviderCalls = -1; return changed }(),
+		func() Contract {
+			changed := valid.Clone()
+			changed.MaxProviderCalls = MaxProviderCallsCeiling + 1
+			return changed
+		}(),
+		func() Contract { changed := valid.Clone(); changed.MaxRuntime = -1; return changed }(),
+		func() Contract {
+			changed := valid.Clone()
+			changed.MaxRuntime = MaxRuntimeCeiling + time.Minute
 			return changed
 		}(),
 	}
@@ -121,5 +134,73 @@ func TestContractZeroMaxRevisionCountIsValidLegacyShapeAndDefaultsAtUse(t *testi
 	}
 	if got := legacy.EffectiveMaxRevisionCount(); got != DefaultMaxRevisionCount {
 		t.Fatalf("EffectiveMaxRevisionCount() = %d, want DefaultMaxRevisionCount", got)
+	}
+}
+
+// TestStandardContractSetsConservativeMaxProviderCallsDefault pins the
+// exact default (BudgetGuard v1: 60, measured against the existing
+// Leverage Engine happy path and its worst case still inside today's
+// Revision Guard -- see DefaultMaxProviderCalls's own doc comment).
+func TestStandardContractSetsConservativeMaxProviderCallsDefault(t *testing.T) {
+	contract, err := NewStandard([]string{"DEV-001"}, []string{"claude-work"}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contract.MaxProviderCalls != DefaultMaxProviderCalls || DefaultMaxProviderCalls != 60 {
+		t.Fatalf("MaxProviderCalls = %d, want DefaultMaxProviderCalls (60)", contract.MaxProviderCalls)
+	}
+	if got := contract.EffectiveMaxProviderCalls(); got != 60 {
+		t.Fatalf("EffectiveMaxProviderCalls() = %d, want 60", got)
+	}
+}
+
+// TestContractZeroMaxProviderCallsIsValidLegacyShapeAndDefaultsAtUse mirrors
+// the MaxParallelTasks/MaxRevisionCount legacy-shape tests above: a Contract
+// persisted before this field existed must still Validate() and must
+// resolve to the safe default, never to "0 Provider calls allowed".
+func TestContractZeroMaxProviderCallsIsValidLegacyShapeAndDefaultsAtUse(t *testing.T) {
+	legacy, err := NewStandard([]string{"DEV-001"}, []string{"claude-work"}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.MaxProviderCalls = 0
+	if err := legacy.Validate(); err != nil {
+		t.Fatalf("Validate() rejected a legacy zero-value MaxProviderCalls Contract: %v", err)
+	}
+	if got := legacy.EffectiveMaxProviderCalls(); got != DefaultMaxProviderCalls {
+		t.Fatalf("EffectiveMaxProviderCalls() = %d, want DefaultMaxProviderCalls", got)
+	}
+}
+
+// TestStandardContractSetsConservativeMaxRuntimeDefault pins the exact
+// default (BudgetGuard v1: 30 minutes -- see DefaultMaxRuntime's own doc
+// comment for how it relates to the existing per-request Provider
+// timeout).
+func TestStandardContractSetsConservativeMaxRuntimeDefault(t *testing.T) {
+	contract, err := NewStandard([]string{"DEV-001"}, []string{"claude-work"}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contract.MaxRuntime != DefaultMaxRuntime || DefaultMaxRuntime != 30*time.Minute {
+		t.Fatalf("MaxRuntime = %v, want DefaultMaxRuntime (30m)", contract.MaxRuntime)
+	}
+	if got := contract.EffectiveMaxRuntime(); got != 30*time.Minute {
+		t.Fatalf("EffectiveMaxRuntime() = %v, want 30m", got)
+	}
+}
+
+// TestContractZeroMaxRuntimeIsValidLegacyShapeAndDefaultsAtUse mirrors the
+// legacy-shape tests above for MaxRuntime.
+func TestContractZeroMaxRuntimeIsValidLegacyShapeAndDefaultsAtUse(t *testing.T) {
+	legacy, err := NewStandard([]string{"DEV-001"}, []string{"claude-work"}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.MaxRuntime = 0
+	if err := legacy.Validate(); err != nil {
+		t.Fatalf("Validate() rejected a legacy zero-value MaxRuntime Contract: %v", err)
+	}
+	if got := legacy.EffectiveMaxRuntime(); got != DefaultMaxRuntime {
+		t.Fatalf("EffectiveMaxRuntime() = %v, want DefaultMaxRuntime", got)
 	}
 }

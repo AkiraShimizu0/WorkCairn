@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 )
 
 const SchemaVersion = "workcairn-autonomy.v1"
@@ -41,6 +42,39 @@ const DefaultMaxRevisionCount = 2
 // MaxRevisionCountCeiling bounds MaxRevisionCount even if a future caller
 // path raises it above DefaultMaxRevisionCount.
 const MaxRevisionCountCeiling = 5
+
+// DefaultMaxProviderCalls is the Go-decided ceiling on actual Provider
+// invocations (Task execution + Review, summed across every branch) one
+// Reviewed Workflow execution may make (BudgetGuard v1, ADR-0054) --
+// distinct from and layered on top of the existing structural LoopGuards
+// above (MaxParallelTasks, MaxRevisionCount): those bound *how the work is
+// shaped*, this bounds *how much Provider usage that shape is allowed to
+// consume* even while every branch is genuinely converging. Measured
+// against the existing Leverage Engine happy path (4 Tasks -- 3 parallel
+// branches plus Synthesis -- each Approved on first Review = 8 calls) and
+// its own worst case still inside today's Revision Guard (4 Tasks x up to
+// 3 attempts each x 2 calls/attempt = 24 calls), this default leaves
+// generous headroom for legitimate multi-branch, multi-revision work while
+// still bounding a genuinely runaway scope to a finite number.
+const DefaultMaxProviderCalls = 60
+
+// MaxProviderCallsCeiling bounds MaxProviderCalls even if a future caller
+// path raises it above DefaultMaxProviderCalls.
+const MaxProviderCallsCeiling = 300
+
+// DefaultMaxRuntime is the Go-decided wall-clock ceiling for one Reviewed
+// Workflow execution (BudgetGuard v1, ADR-0054). Sized against the existing
+// per-request Provider timeout (runtime.DefaultProviderRequestTimeout, 5
+// minutes, ADR-0045): even several sequential rounds of concurrent
+// dispatch at that request timeout's worst case comfortably fit inside 30
+// minutes, while a genuinely stuck scope is still guaranteed to stop
+// within a bounded, human-reasonable window rather than running
+// indefinitely.
+const DefaultMaxRuntime = 30 * time.Minute
+
+// MaxRuntimeCeiling bounds MaxRuntime even if a future caller path raises
+// it above DefaultMaxRuntime.
+const MaxRuntimeCeiling = 2 * time.Hour
 
 var ErrInvalidContract = errors.New("invalid Autonomy Contract")
 
@@ -77,6 +111,16 @@ type Contract struct {
 	// additive). Go-decided like MaxParallelTasks; NewStandard always sets it
 	// to DefaultMaxRevisionCount.
 	MaxRevisionCount int `json:"max_revision_count,omitempty"`
+	// MaxProviderCalls bounds actual Provider invocations for one Reviewed
+	// Workflow execution (BudgetGuard v1, additive). Go-decided; NewStandard
+	// always sets it to DefaultMaxProviderCalls. Distinct responsibility from
+	// MaxParallelTasks/MaxRevisionCount above -- see those fields' own
+	// constants' doc comments for the LoopGuard/BudgetGuard boundary.
+	MaxProviderCalls int `json:"max_provider_calls,omitempty"`
+	// MaxRuntime bounds the wall-clock duration of one Reviewed Workflow
+	// execution (BudgetGuard v1, additive). Go-decided; NewStandard always
+	// sets it to DefaultMaxRuntime.
+	MaxRuntime time.Duration `json:"max_runtime,omitempty"`
 }
 
 func NewStandard(employeeIDs, models []string, executionLimit int) (Contract, error) {
@@ -85,6 +129,7 @@ func NewStandard(employeeIDs, models []string, executionLimit int) (Contract, er
 		Revision: PermissionDelegated, ExternalPublish: PermissionSeparateApprove, Spending: PermissionForbidden,
 		AllowedEmployeeIDs: canonical(employeeIDs), AllowedModels: canonical(models), ExecutionLimit: executionLimit,
 		MaxParallelTasks: DefaultMaxParallelTasks, MaxRevisionCount: DefaultMaxRevisionCount,
+		MaxProviderCalls: DefaultMaxProviderCalls, MaxRuntime: DefaultMaxRuntime,
 	}
 	return contract, contract.Validate()
 }
@@ -104,6 +149,12 @@ func (contract Contract) Validate() error {
 		// existed decodes with the field absent (Go zero value 0), which
 		// EffectiveMaxRevisionCount treats as DefaultMaxRevisionCount.
 		contract.MaxRevisionCount < 0 || contract.MaxRevisionCount > MaxRevisionCountCeiling ||
+		// Same "0 is unset/legacy" rule for the BudgetGuard v1 fields: a
+		// Contract persisted before these fields existed decodes with them
+		// absent (Go zero value), which EffectiveMaxProviderCalls/
+		// EffectiveMaxRuntime treat as their own Default.
+		contract.MaxProviderCalls < 0 || contract.MaxProviderCalls > MaxProviderCallsCeiling ||
+		contract.MaxRuntime < 0 || contract.MaxRuntime > MaxRuntimeCeiling ||
 		!canonicalList(contract.AllowedEmployeeIDs) || !canonicalList(contract.AllowedModels) {
 		return ErrInvalidContract
 	}
@@ -128,6 +179,27 @@ func (contract Contract) EffectiveMaxRevisionCount() int {
 		return DefaultMaxRevisionCount
 	}
 	return contract.MaxRevisionCount
+}
+
+// EffectiveMaxProviderCalls is what callers should enforce for one
+// Reviewed Workflow execution: an unset (zero-value / pre-BudgetGuard)
+// Contract behaves as DefaultMaxProviderCalls, never as "0 Provider calls
+// allowed".
+func (contract Contract) EffectiveMaxProviderCalls() int {
+	if contract.MaxProviderCalls <= 0 {
+		return DefaultMaxProviderCalls
+	}
+	return contract.MaxProviderCalls
+}
+
+// EffectiveMaxRuntime is what callers should enforce for one Reviewed
+// Workflow execution: an unset (zero-value / pre-BudgetGuard) Contract
+// behaves as DefaultMaxRuntime, never as "0 runtime allowed".
+func (contract Contract) EffectiveMaxRuntime() time.Duration {
+	if contract.MaxRuntime <= 0 {
+		return DefaultMaxRuntime
+	}
+	return contract.MaxRuntime
 }
 
 func (contract Contract) AllowsEmployee(employeeID string) bool {

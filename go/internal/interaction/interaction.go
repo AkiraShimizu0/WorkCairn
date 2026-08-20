@@ -800,6 +800,21 @@ func (record Record) Next() (NextAction, error) {
 		// guard leaves behind and the only state PlanRevision itself will
 		// ever treat as executable). This never asks the CEO to pick a
 		// recovery mechanism; it only appears when it genuinely applies.
+		//
+		// BUDGET_EXCEEDED (BudgetGuard v1, ADR-0054) is deliberately NOT
+		// included here: runBranch always records RevisionCommandID in the
+		// very same synchronous step it records the Request Changes verdict
+		// (no Budget reservation happens in between), so a Budget stop can
+		// never actually leave behind the "Request Changes, no follow-up
+		// Revision" shape stalledRevisionTaskID looks for -- the state this
+		// mechanism was built to find is unreachable from a Budget stop.
+		// The realistic state a Budget stop leaves mid-Revision-chain is a
+		// freshly created, never-executed Revision Task, which needs plain
+		// Workflow continuation, not another PlanRevision call -- offering
+		// this operation for a state it can never match would be dead,
+		// misleading UI. Left as a documented v1 gap (see ADR-0054); a CEO
+		// facing BUDGET_EXCEEDED sees the partial result only (Option A),
+		// with resuming the stopped work (Option B) deferred.
 		if workflow.Failure != nil && (workflow.Failure.Code == "REVISION_LIMIT_REACHED" || workflow.Failure.Code == "NO_PROGRESS_DETECTED") {
 			if stalledTaskID, found := stalledRevisionTaskID(workflow.Tasks); found {
 				next.Operation, next.ApprovalRequired = "interaction.workflow.recover_revision", true

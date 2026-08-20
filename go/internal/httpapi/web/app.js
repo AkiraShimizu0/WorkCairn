@@ -1157,6 +1157,9 @@ function interactionErrorGuidance(code, stage = "") {
   if (code === "NO_PROGRESS_DETECTED") {
     return "修正を続けていますが、成果に十分な変化がなく、同じ品質上の指摘が続いています。自動修正を停止しました。直前の成果物と指摘内容はそのまま保存されています。";
   }
+  if (code === "BUDGET_EXCEEDED") {
+    return "この依頼は設定された実行上限に達したため、自動処理を停止しました。完了済みの成果は保存されています。";
+  }
   return "成立済みの記録を推測で変更せず、現在の状態を確認してください。";
 }
 

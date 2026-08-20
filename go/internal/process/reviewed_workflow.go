@@ -245,6 +245,16 @@ func ExecuteReviewedWorkflow(
 	// Review-text comparison) remains available for direct/operator
 	// callers that construct their own ReviewedWorkflowRunService.
 	runService.SetProgressPolicy(policy.CompoundProgressPolicy{})
+	// BudgetGuard v1 (ADR-0054): a distinct, separately-configured safety
+	// boundary from Progress Intelligence above -- BudgetGuard never asks
+	// whether a branch is converging, only whether this Workflow
+	// execution's Runtime/Provider-call envelope (Go-decided via
+	// autonomy.Contract, never CEO input) is already exhausted. Either
+	// limit alone is enough to stop dispatch; it never mutates Task state.
+	maxProviderCalls := input.Autonomy.EffectiveMaxProviderCalls()
+	maxRuntime := input.Autonomy.EffectiveMaxRuntime()
+	runService.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxRuntime: maxRuntime, MaxProviderCalls: maxProviderCalls})
+	runService.SetBudgetLimits(maxProviderCalls, maxRuntime)
 	// RunParallel drives dispatch for every caller of this Command, not just
 	// a caller that explicitly asked for parallel execution -- there is no
 	// such caller-visible choice (ADR-0051 Checkpoint "production wiring").
@@ -268,7 +278,7 @@ func ExecuteReviewedWorkflow(
 	partial := len(result.Tasks) > 0
 	var envelope *failure.Envelope
 	if runErr != nil {
-		envelope = reviewedWorkflowOuterEnvelope(result, stage, partial)
+		envelope = reviewedWorkflowOuterEnvelope(result, stage, partial, runErr)
 	}
 	return result, finishDurableCommandWithEnvelope(ctx, claim, result, runErr, envelope, partial)
 }
@@ -298,7 +308,7 @@ func reviewOrchestrationProviderFailure(failure *ProviderFailure) *review.Provid
 // plan, revision, command identity) get a minimal Envelope carrying only
 // the existing generic code and the coarse stage -- still no invention of
 // new classification, just the same fallback this Command already used.
-func reviewedWorkflowOuterEnvelope(result service.ReviewedWorkflowRunResult, stage string, partial bool) *failure.Envelope {
+func reviewedWorkflowOuterEnvelope(result service.ReviewedWorkflowRunResult, stage string, partial bool, runErr error) *failure.Envelope {
 	var child *failure.Envelope
 	if len(result.Tasks) > 0 {
 		last := result.Tasks[len(result.Tasks)-1]
@@ -338,6 +348,32 @@ func reviewedWorkflowOuterEnvelope(result service.ReviewedWorkflowRunResult, sta
 		// guard actually stopped the branch.
 		envelope = failure.New("NO_PROGRESS_DETECTED", stage)
 		envelope.Evidence = &failure.CommittedEvidence{Deliverable: true, TaskState: true, ReviewCanonical: true}
+	case stage == "budget":
+		// BudgetGuard v1's own stop (ADR-0054): distinct from both guards
+		// above -- a Budget stop is never a judgement about convergence,
+		// and can fire at any point in a branch's own attempt (before
+		// Execute even starts, between Execute and Review, or between
+		// rounds), so unlike revision_limit/no_progress this case never
+		// blanket-assumes the last Task's Execution/Review both
+		// committed -- it reads the actual last Task's own state. One
+		// Code (BUDGET_EXCEEDED) covers both Runtime and Provider-call
+		// stops; Category carries which limit was actually exceeded so a
+		// human (or this Command's own Audit) can tell them apart without
+		// this package inventing a second Code.
+		envelope = failure.New("BUDGET_EXCEEDED", stage)
+		switch {
+		case errors.Is(runErr, service.ErrRuntimeBudgetExceeded):
+			envelope.Category = "runtime"
+		case errors.Is(runErr, service.ErrProviderCallBudgetExceeded):
+			envelope.Category = "provider_call"
+		}
+		if len(result.Tasks) > 0 {
+			last := result.Tasks[len(result.Tasks)-1]
+			reviewCommitted := last.Review != nil && last.Review.Artifact != nil && last.Review.Artifact.CanonicalCommitted
+			envelope.Evidence = &failure.CommittedEvidence{
+				Deliverable: last.Execution.Deliverable != nil, TaskState: true, ReviewCanonical: reviewCommitted,
+			}
+		}
 	default:
 		envelope = failure.New("REVIEWED_WORKFLOW_FAILED", stage)
 	}
