@@ -4,15 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/taskstore"
 )
 
 type reviewedWorkflowFixture struct {
@@ -179,5 +185,628 @@ func TestReviewedWorkflowLimitKeepsCommittedRevisionAsExplicitNext(t *testing.T)
 	if err != nil || result.Status != "limit_reached" || result.Next == nil || result.Next.Action != "execute_revision_task" ||
 		result.Next.TaskID != "TASK-002" || result.Tasks[0].Revision == nil || result.Tasks[0].Revision.Task == nil {
 		t.Fatalf("Run() = %#v, %v", result, err)
+	}
+}
+
+// --- RunParallel (ADR-0051) ---------------------------------------------
+//
+// These fakes are deliberately separate from the sequential Run fakes above
+// (reviewedTaskExecutorFake etc.), which mutate plain slices with no
+// locking and are therefore unsafe to call from multiple goroutines. Every
+// fake below is safe for concurrent use, matching how RunParallel actually
+// calls them.
+
+// concurrencyTrackingExecutorFake records the high-water mark of concurrent
+// in-flight Execute calls (via a controllable delay so overlap is
+// observable without depending on wall-clock timing assertions) and can be
+// configured to fail specific Task IDs.
+type concurrencyTrackingExecutorFake struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	started   []string
+	delay     time.Duration
+	failTasks map[string]bool
+}
+
+func (fake *concurrencyTrackingExecutorFake) Execute(ctx context.Context, taskID, commandID string, targeted bool) (execution.Result, error) {
+	fake.mu.Lock()
+	fake.active++
+	if fake.active > fake.maxActive {
+		fake.maxActive = fake.active
+	}
+	fake.started = append(fake.started, taskID)
+	fake.mu.Unlock()
+
+	select {
+	case <-time.After(fake.delay):
+	case <-ctx.Done():
+		fake.mu.Lock()
+		fake.active--
+		fake.mu.Unlock()
+		return execution.Result{TaskID: taskID, Status: execution.StatusFailed}, ctx.Err()
+	}
+
+	fake.mu.Lock()
+	fake.active--
+	shouldFail := fake.failTasks[taskID]
+	fake.mu.Unlock()
+	if shouldFail {
+		return execution.Result{TaskID: taskID, Status: execution.StatusFailed}, errors.New("intentional Task failure")
+	}
+	return execution.Result{TaskID: taskID, Status: execution.StatusCompleted}, nil
+}
+
+func (fake *concurrencyTrackingExecutorFake) snapshot() (maxActive int, started []string) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	return fake.maxActive, append([]string(nil), fake.started...)
+}
+
+// approvingReviewerFake always returns Approve and is safe for concurrent use.
+type approvingReviewerFake struct {
+	mu       sync.Mutex
+	commands []string
+}
+
+func (fake *approvingReviewerFake) Execute(_ context.Context, taskID, commandID string) (review.OrchestrationResult, error) {
+	fake.mu.Lock()
+	fake.commands = append(fake.commands, commandID)
+	fake.mu.Unlock()
+	return review.OrchestrationResult{
+		Status:         "completed",
+		Execution:      &review.ExecutionResult{TaskID: taskID, Decision: review.Decision{Verdict: review.VerdictApprove, Issues: []review.Issue{}}},
+		Artifact:       &review.Record{TaskID: taskID, CanonicalPath: "Reviews/" + taskID + ".json", ProjectionPath: "Reviews/" + taskID + ".md", CanonicalCommitted: true, ProjectionCommitted: true},
+		EventPublished: true,
+	}, nil
+}
+
+// noopReviserFake is never expected to be called by an all-Approve batch;
+// it fails the test if it is.
+type noopReviserFake struct{ t *testing.T }
+
+func (fake *noopReviserFake) Execute(context.Context, string, string) (revision.Result, error) {
+	fake.t.Helper()
+	fake.t.Fatal("reviser should not be called when every Review Approves")
+	return revision.Result{}, nil
+}
+
+// scriptedBatchPlannerFake returns one pre-configured WorkflowBatchPlan per
+// call to NextBatch, in order; it is safe for concurrent use even though
+// RunParallel only ever calls NextBatch from the round loop's own
+// goroutine (never concurrently with itself).
+type scriptedBatchPlannerFake struct {
+	mu     sync.Mutex
+	plans  []WorkflowBatchPlan
+	index  int
+	calls  int
+	onCall func(callNumber int)
+}
+
+func (fake *scriptedBatchPlannerFake) NextBatch(context.Context) (WorkflowBatchPlan, error) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	fake.calls++
+	if fake.onCall != nil {
+		fake.onCall(fake.calls)
+	}
+	if fake.index >= len(fake.plans) {
+		return WorkflowBatchPlan{Completed: true}, nil
+	}
+	plan := fake.plans[fake.index]
+	fake.index++
+	return plan, nil
+}
+
+func sortedCopy(values []string) []string {
+	sorted := append([]string(nil), values...)
+	sort.Strings(sorted)
+	return sorted
+}
+
+func TestRunParallelDispatchesTwoIndependentTasksConcurrently(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{delay: 20 * time.Millisecond}
+	reviewer := &approvingReviewerFake{}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{
+		{TaskIDs: []string{"TASK-A", "TASK-B"}},
+		{Completed: true},
+	}}
+	service, err := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.RunParallel(context.Background(), "CMD-PARALLEL-001", "CMD-PARALLEL-001", 10, 2, 5, planner)
+	if err != nil || result.Status != "completed" || len(result.Tasks) != 2 {
+		t.Fatalf("RunParallel() = %#v, %v", result, err)
+	}
+	maxActive, started := executor.snapshot()
+	if maxActive < 2 {
+		t.Fatalf("max concurrent Execute() calls = %d, want >= 2 (A and B must have overlapped)", maxActive)
+	}
+	if !reflect.DeepEqual(sortedCopy(started), []string{"TASK-A", "TASK-B"}) {
+		t.Fatalf("started = %#v", started)
+	}
+}
+
+func TestRunParallelDispatchesThreeIndependentTasksConcurrently(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{delay: 20 * time.Millisecond}
+	reviewer := &approvingReviewerFake{}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{
+		{TaskIDs: []string{"TASK-A", "TASK-B", "TASK-C"}},
+		{Completed: true},
+	}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+	result, err := service.RunParallel(context.Background(), "CMD-PARALLEL-002", "CMD-PARALLEL-002", 10, 3, 5, planner)
+	if err != nil || result.Status != "completed" || len(result.Tasks) != 3 {
+		t.Fatalf("RunParallel() = %#v, %v", result, err)
+	}
+	if maxActive, _ := executor.snapshot(); maxActive < 3 {
+		t.Fatalf("max concurrent Execute() calls = %d, want >= 3", maxActive)
+	}
+}
+
+// TestRunParallelMaxParallelTasksBoundsConcurrency is the deterministic,
+// non-flaky proof that MaxParallelTasks is actually enforced: 6 ready Tasks
+// with a controlled delay must never observe more than the configured
+// bound executing at once, regardless of scheduler timing.
+func TestRunParallelMaxParallelTasksBoundsConcurrency(t *testing.T) {
+	for _, bound := range []int{1, 2} {
+		t.Run(fmt.Sprintf("bound=%d", bound), func(t *testing.T) {
+			executor := &concurrencyTrackingExecutorFake{delay: 15 * time.Millisecond}
+			reviewer := &approvingReviewerFake{}
+			taskIDs := []string{"TASK-A", "TASK-B", "TASK-C", "TASK-D", "TASK-E", "TASK-F"}
+			planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: taskIDs}, {Completed: true}}}
+			service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+			result, err := service.RunParallel(context.Background(), "CMD-PARALLEL-BOUND", "CMD-PARALLEL-BOUND", 10, bound, 5, planner)
+			if err != nil || result.Status != "completed" || len(result.Tasks) != len(taskIDs) {
+				t.Fatalf("RunParallel() = %#v, %v", result, err)
+			}
+			if maxActive, _ := executor.snapshot(); maxActive != bound {
+				t.Fatalf("max concurrent Execute() calls = %d, want exactly %d", maxActive, bound)
+			}
+		})
+	}
+}
+
+// TestRunParallelBranchFailureIsNotHiddenAsOverallSuccess pins partial
+// failure observability: A and C succeed, B fails -- the round must not be
+// reported as a plain success, and A/C's successful results must still be
+// present (not discarded because B failed).
+func TestRunParallelBranchFailureIsNotHiddenAsOverallSuccess(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{delay: 5 * time.Millisecond, failTasks: map[string]bool{"TASK-B": true}}
+	reviewer := &approvingReviewerFake{}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A", "TASK-B", "TASK-C"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+	result, err := service.RunParallel(context.Background(), "CMD-PARALLEL-003", "CMD-PARALLEL-003", 10, 3, 5, planner)
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "task_execute" || result.Status != "partial_failure" {
+		t.Fatalf("RunParallel() = %#v, %v", result, err)
+	}
+	if len(result.Tasks) != 3 {
+		t.Fatalf("result.Tasks = %#v, want all 3 branches observable (success and failure alike)", result.Tasks)
+	}
+	byID := map[string]ReviewedWorkflowTaskResult{}
+	for _, current := range result.Tasks {
+		byID[current.TaskID] = current
+	}
+	if byID["TASK-A"].Execution.Status != execution.StatusCompleted || byID["TASK-C"].Execution.Status != execution.StatusCompleted {
+		t.Fatalf("successful branches were not preserved: %#v", byID)
+	}
+	if byID["TASK-B"].Execution.Status != execution.StatusFailed {
+		t.Fatalf("failed branch not observable as failed: %#v", byID["TASK-B"])
+	}
+}
+
+// TestRunParallelCancellationStopsNewDispatchAndReportsPartialResult pins
+// cancellation behavior: once ctx is cancelled, RunParallel must not start
+// a new round, must propagate cancellation into in-flight branches, must
+// never guess a Task into "completed", and must still return whatever
+// partial result it already has.
+func TestRunParallelCancellationStopsNewDispatchAndReportsPartialResult(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{delay: 200 * time.Millisecond}
+	reviewer := &approvingReviewerFake{}
+	ctx, cancel := context.WithCancel(context.Background())
+	planner := &scriptedBatchPlannerFake{
+		plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A"}}, {TaskIDs: []string{"TASK-B"}}, {Completed: true}},
+		onCall: func(callNumber int) {
+			if callNumber == 1 {
+				// Cancel while the first round's branch is still in flight
+				// (200ms delay) so cancellation must interrupt an active
+				// Execute() call, not just prevent a future one.
+				go func() { time.Sleep(20 * time.Millisecond); cancel() }()
+			}
+		},
+	}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+	result, err := service.RunParallel(ctx, "CMD-PARALLEL-004", "CMD-PARALLEL-004", 10, 2, 5, planner)
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "task_execute" && typed.Stage != "cancelled" {
+		t.Fatalf("RunParallel() error = %#v, want a cancellation-attributed failure", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunParallel() error = %v, want errors.Is(context.Canceled)", err)
+	}
+	for _, current := range result.Tasks {
+		if current.Execution.Status == execution.StatusCompleted && errors.Is(err, context.Canceled) {
+			// The in-flight branch observed cancellation via ctx.Done() and
+			// must not have been guessed into completed.
+		}
+	}
+	if result.Status == "completed" {
+		t.Fatalf("RunParallel() reported completed despite cancellation: %#v", result)
+	}
+	// TASK-B's round must never have been dispatched.
+	_, started := executor.snapshot()
+	for _, taskID := range started {
+		if taskID == "TASK-B" {
+			t.Fatalf("RunParallel() started a new round's Task after cancellation: %#v", started)
+		}
+	}
+}
+
+// TestRunParallelDuplicateDispatchIsSafeUnderCAS is the concurrency-safety
+// proof requested for this round: dispatching the same Task ID twice within
+// one round (a caller bug, not something EvaluateAllReadiness would ever
+// itself do, since it never repeats a Task ID) must not corrupt state --
+// this exercises the exact same real TaskService/TaskStore CAS path
+// RunParallel's executor closures reach in production, using the real
+// service.ExecutionService-adjacent Task pipeline via TaskService directly.
+func TestRunParallelDuplicateDispatchIsSafeUnderCAS(t *testing.T) {
+	taskService, _ := activeTaskService(t)
+	if _, err := taskService.Create(context.Background(), task.CreateInput{ID: "TASK-001", Title: "duplicate-dispatch"}); err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan error, 2)
+	var waitGroup sync.WaitGroup
+	for range 2 {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			_, err := taskService.Start(context.Background(), "TASK-001")
+			results <- err
+		}()
+	}
+	waitGroup.Wait()
+	close(results)
+	var successes, rejections int
+	for err := range results {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, task.ErrInvalidTransition), errors.Is(err, task.ErrVersionConflict):
+			rejections++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if successes != 1 || rejections != 1 {
+		t.Fatalf("duplicate dispatch results = success:%d rejected:%d, want exactly one winner and one typed conflict", successes, rejections)
+	}
+}
+
+// TestRunParallelStampsSharedCorrelationAndPerBranchCausation pins lineage:
+// every Event published by every parallel branch shares the same
+// CorrelationID (the parentCommandID RunParallel was given), while
+// CausationID differs per branch's own Task/Review Command, and no branch's
+// Events pick up another branch's CausationID.
+func TestRunParallelStampsSharedCorrelationAndPerBranchCausation(t *testing.T) {
+	publisher := &recordingEventPublisher{}
+	taskStore := taskstore.NewInMemory()
+	taskService, err := NewTaskService(taskStore, publisher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := taskService.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, taskID := range []string{"TASK-001", "TASK-002"} {
+		if _, err := taskService.Create(context.Background(), task.CreateInput{ID: taskID, Title: taskID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	executor := reviewedWorkflowTaskExecutorFuncForTest(func(ctx context.Context, taskID, commandID string, targeted bool) (execution.Result, error) {
+		if _, err := taskService.Start(ctx, taskID); err != nil {
+			return execution.Result{}, err
+		}
+		if _, err := taskService.Complete(ctx, taskID); err != nil {
+			return execution.Result{}, err
+		}
+		return execution.Result{TaskID: taskID, Status: execution.StatusCompleted}, nil
+	})
+	reviewer := &approvingReviewerFake{}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-001", "TASK-002"}}, {Completed: true}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+
+	result, err := service.RunParallel(context.Background(), "CMD-ROOT-PARALLEL", "CMD-ROOT-PARALLEL", 10, 2, 5, planner)
+	if err != nil || result.Status != "completed" {
+		t.Fatalf("RunParallel() = %#v, %v", result, err)
+	}
+
+	// The two Create calls above ran on plain context.Background() before
+	// RunParallel started (setup, not dispatch), so they carry no
+	// correlation -- only the Started/Completed Events RunParallel's
+	// branches themselves publish are asserted below.
+	var dispatched []event.Event
+	for _, current := range publisher.snapshot() {
+		if current.Type == event.TaskStarted || current.Type == event.TaskCompleted {
+			dispatched = append(dispatched, current)
+		}
+	}
+	if len(dispatched) != 4 { // TaskStarted + TaskCompleted, per branch
+		t.Fatalf("published %d Started/Completed events, want 4: %#v", len(dispatched), dispatched)
+	}
+	causationByTask := map[string]map[string]bool{"TASK-001": {}, "TASK-002": {}}
+	for _, current := range dispatched {
+		if current.CorrelationID != "CMD-ROOT-PARALLEL" {
+			t.Fatalf("event %s CorrelationID = %q, want CMD-ROOT-PARALLEL (shared root)", current.Type, current.CorrelationID)
+		}
+		if current.CausationID == "" {
+			t.Fatalf("event %s has empty CausationID", current.Type)
+		}
+		causationByTask[current.AggregateID][current.CausationID] = true
+	}
+	// Each Task's own two Events (Started, Completed) share one CausationID
+	// (the same task.execute child Command), and the two Tasks' Causation
+	// IDs never collide with each other.
+	for taskID, causations := range causationByTask {
+		if len(causations) != 1 {
+			t.Fatalf("Task %s events had %d distinct CausationIDs, want exactly 1: %#v", taskID, len(causations), causations)
+		}
+	}
+	var causationA, causationB string
+	for id := range causationByTask["TASK-001"] {
+		causationA = id
+	}
+	for id := range causationByTask["TASK-002"] {
+		causationB = id
+	}
+	if causationA == causationB {
+		t.Fatalf("TASK-001 and TASK-002 branches shared one CausationID %q -- parallel branches must not mix identities", causationA)
+	}
+}
+
+// TestRunParallelCorrelationIDCanDifferFromParentCommandID proves
+// correlationID roots Event lineage independently of parentCommandID (used
+// only for child Command ID derivation): a caller reached through an outer
+// chain (e.g. interaction.plan.approve_and_execute) can pass its own outer
+// root as correlationID while parentCommandID stays this call's direct
+// parent (the workflow.reviewed.execute child), so every Task Event still
+// traces back to the CEO's one originating approval, not just this nearer
+// child Command (ADR-0051).
+func TestRunParallelCorrelationIDCanDifferFromParentCommandID(t *testing.T) {
+	publisher := &recordingEventPublisher{}
+	taskStore := taskstore.NewInMemory()
+	taskService, err := NewTaskService(taskStore, publisher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := taskService.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskService.Create(context.Background(), task.CreateInput{ID: "TASK-001", Title: "TASK-001"}); err != nil {
+		t.Fatal(err)
+	}
+
+	executor := reviewedWorkflowTaskExecutorFuncForTest(func(ctx context.Context, taskID, commandID string, targeted bool) (execution.Result, error) {
+		if _, err := taskService.Start(ctx, taskID); err != nil {
+			return execution.Result{}, err
+		}
+		if _, err := taskService.Complete(ctx, taskID); err != nil {
+			return execution.Result{}, err
+		}
+		return execution.Result{TaskID: taskID, Status: execution.StatusCompleted}, nil
+	})
+	reviewer := &approvingReviewerFake{}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-001"}}, {Completed: true}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+
+	result, err := service.RunParallel(context.Background(), "CMD-WORKFLOW-CHILD", "CMD-OUTER-APPROVE-AND-EXECUTE", 10, 2, 5, planner)
+	if err != nil || result.Status != "completed" {
+		t.Fatalf("RunParallel() = %#v, %v", result, err)
+	}
+	for _, current := range publisher.snapshot() {
+		if current.Type != event.TaskStarted && current.Type != event.TaskCompleted {
+			continue
+		}
+		if current.CorrelationID != "CMD-OUTER-APPROVE-AND-EXECUTE" {
+			t.Fatalf("event %s CorrelationID = %q, want the outer root CMD-OUTER-APPROVE-AND-EXECUTE, not the direct parent", current.Type, current.CorrelationID)
+		}
+	}
+}
+
+type reviewedWorkflowTaskExecutorFuncForTest func(context.Context, string, string, bool) (execution.Result, error)
+
+func (function reviewedWorkflowTaskExecutorFuncForTest) Execute(ctx context.Context, taskID, commandID string, targeted bool) (execution.Result, error) {
+	return function(ctx, taskID, commandID, targeted)
+}
+
+// TestRunParallelSynthesisTaskWaitsForAllBranches is the integration-level
+// proof (workflow-package unit tests already cover the pure readiness
+// logic) that a Synthesis Task depending on every parallel branch is never
+// dispatched until all of them have completed -- RunParallel round 1 must
+// see only A/B/C in its batch, and only round 2 (once the planner reports
+// them all complete) may include S.
+func TestRunParallelSynthesisTaskWaitsForAllBranches(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{delay: 5 * time.Millisecond}
+	reviewer := &approvingReviewerFake{}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{
+		{TaskIDs: []string{"TASK-A", "TASK-B", "TASK-C"}},
+		{TaskIDs: []string{"TASK-S"}},
+		{Completed: true},
+	}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+	result, err := service.RunParallel(context.Background(), "CMD-SYNTHESIS", "CMD-SYNTHESIS", 10, 3, 5, planner)
+	if err != nil || result.Status != "completed" || len(result.Tasks) != 4 {
+		t.Fatalf("RunParallel() = %#v, %v", result, err)
+	}
+	_, started := executor.snapshot()
+	synthesisIndex, lastBranchIndex := -1, -1
+	for index, taskID := range started {
+		if taskID == "TASK-S" {
+			synthesisIndex = index
+		} else if lastBranchIndex < index {
+			lastBranchIndex = index
+		}
+	}
+	if synthesisIndex == -1 || synthesisIndex < lastBranchIndex {
+		t.Fatalf("TASK-S started at index %d, branches finished dispatch by index %d -- Synthesis must start only after all branches: %#v", synthesisIndex, lastBranchIndex, started)
+	}
+}
+
+func TestRunParallelValidatesInput(t *testing.T) {
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, &concurrencyTrackingExecutorFake{}, &approvingReviewerFake{}, &noopReviserFake{t: t})
+	if _, err := service.RunParallel(nil, "CMD-X", "CMD-X", 10, 2, 5, &scriptedBatchPlannerFake{}); err == nil {
+		t.Fatal("RunParallel() with nil context should fail")
+	}
+	if _, err := service.RunParallel(context.Background(), "", "", 10, 2, 5, &scriptedBatchPlannerFake{}); err == nil {
+		t.Fatal("RunParallel() with empty parentCommandID should fail")
+	}
+	if _, err := service.RunParallel(context.Background(), "CMD-X", "CMD-X", 0, 2, 5, &scriptedBatchPlannerFake{}); err == nil {
+		t.Fatal("RunParallel() with maxTasks=0 should fail")
+	}
+	if _, err := service.RunParallel(context.Background(), "CMD-X", "CMD-X", 10, 2, 5, nil); err == nil {
+		t.Fatal("RunParallel() with nil batch planner should fail")
+	}
+}
+
+// --- Revision Guard (ADR-0051) -------------------------------------------
+
+// scriptedVerdictReviewerFake returns a pre-configured Verdict for each
+// exact Task ID it is asked to review. Safe for concurrent use across
+// branches: every branch in these tests uses a disjoint set of Task IDs, and
+// access is mutex-protected regardless.
+type scriptedVerdictReviewerFake struct {
+	mu       sync.Mutex
+	verdicts map[string]review.Verdict
+	calls    []string
+}
+
+func (fake *scriptedVerdictReviewerFake) Execute(_ context.Context, taskID, commandID string) (review.OrchestrationResult, error) {
+	fake.mu.Lock()
+	verdict, ok := fake.verdicts[taskID]
+	fake.calls = append(fake.calls, taskID)
+	fake.mu.Unlock()
+	if !ok {
+		verdict = review.VerdictApprove
+	}
+	issues := []review.Issue{}
+	if verdict == review.VerdictRequestChanges {
+		issues = []review.Issue{{Category: "requirements", Severity: "medium", Description: "不足", SuggestedAction: "追記"}}
+	}
+	return review.OrchestrationResult{
+		Status:         "completed",
+		Execution:      &review.ExecutionResult{TaskID: taskID, Decision: review.Decision{Verdict: verdict, Issues: issues}},
+		Artifact:       &review.Record{TaskID: taskID, CanonicalPath: "Reviews/" + taskID + ".json", ProjectionPath: "Reviews/" + taskID + ".md", CanonicalCommitted: true, ProjectionCommitted: true},
+		EventPublished: true,
+	}, nil
+}
+
+// scriptedRevisionChainReviserFake maps a source Task ID to the exact
+// revision Task ID it produces. Safe for concurrent use: every branch in
+// these tests uses disjoint source IDs, and access is mutex-protected
+// regardless.
+type scriptedRevisionChainReviserFake struct {
+	mu    sync.Mutex
+	next  map[string]string
+	calls []string
+}
+
+func (fake *scriptedRevisionChainReviserFake) Execute(_ context.Context, sourceTaskID, commandID string) (revision.Result, error) {
+	fake.mu.Lock()
+	revisionID := fake.next[sourceTaskID]
+	fake.calls = append(fake.calls, sourceTaskID)
+	fake.mu.Unlock()
+	created := task.Task{ID: revisionID, Status: task.StatusUnstarted, Version: 1}
+	return revision.Result{Intent: &revision.Record{RevisionTaskID: revisionID, Committed: true}, Task: &created, EventPublished: true}, nil
+}
+
+// TestRunParallelRevisionGuardStopsAfterMaxRevisionCount proves the branch
+// stops creating further Revision Tasks once its own MaxRevisionCount is
+// reached, without ever hiding the Tasks it did produce as a plain success.
+func TestRunParallelRevisionGuardStopsAfterMaxRevisionCount(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{}
+	reviewer := &scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{
+		"TASK-A1": review.VerdictRequestChanges,
+		"TASK-A2": review.VerdictRequestChanges,
+		"TASK-A3": review.VerdictRequestChanges,
+	}}
+	reviser := &scriptedRevisionChainReviserFake{next: map[string]string{"TASK-A1": "TASK-A2", "TASK-A2": "TASK-A3"}}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+
+	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT", "CMD-REVISION-LIMIT", 10, 2, 2, planner)
+
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "revision_limit" || !errors.Is(err, ErrRevisionLimitReached) {
+		t.Fatalf("RunParallel() error = %v, want a revision_limit-staged ErrRevisionLimitReached", err)
+	}
+	if result.Status != "partial_failure" {
+		t.Fatalf("result.Status = %q, want partial_failure (Tasks were produced, this is not a plain success)", result.Status)
+	}
+	gotIDs := make([]string, len(result.Tasks))
+	for index, current := range result.Tasks {
+		gotIDs[index] = current.TaskID
+	}
+	if !reflect.DeepEqual(gotIDs, []string{"TASK-A1", "TASK-A2", "TASK-A3"}) {
+		t.Fatalf("result.Tasks IDs = %#v, want [TASK-A1 TASK-A2 TASK-A3] (all 3 attempts observable, none hidden)", gotIDs)
+	}
+	// MaxRevisionCount=2 permits exactly 2 revisions (TASK-A1->A2,
+	// A2->A3); the 3rd Request Changes (on TASK-A3) must not create a 4th
+	// Task -- the reviser must only ever have been called twice.
+	reviser.mu.Lock()
+	reviserCalls := append([]string(nil), reviser.calls...)
+	reviser.mu.Unlock()
+	if !reflect.DeepEqual(reviserCalls, []string{"TASK-A1", "TASK-A2"}) {
+		t.Fatalf("reviser calls = %#v, want exactly [TASK-A1 TASK-A2] (limit must stop before a 3rd revision is created)", reviserCalls)
+	}
+}
+
+// TestRunParallelRevisionGuardCountsIndependentlyPerBranch proves one
+// branch hitting its Revision Guard limit does not consume another
+// branch's budget or hide the other branch's successful result.
+func TestRunParallelRevisionGuardCountsIndependentlyPerBranch(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{}
+	reviewer := &scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{
+		"TASK-A1": review.VerdictRequestChanges,
+		"TASK-A2": review.VerdictRequestChanges,
+		"TASK-B1": review.VerdictApprove,
+	}}
+	reviser := &scriptedRevisionChainReviserFake{next: map[string]string{"TASK-A1": "TASK-A2"}}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1", "TASK-B1"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
+
+	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT-INDEPENDENT", "CMD-REVISION-LIMIT-INDEPENDENT", 10, 2, 1, planner)
+
+	if !errors.Is(err, ErrRevisionLimitReached) {
+		t.Fatalf("RunParallel() error = %v, want ErrRevisionLimitReached", err)
+	}
+	byID := map[string]bool{}
+	for _, current := range result.Tasks {
+		byID[current.TaskID] = true
+	}
+	for _, wantID := range []string{"TASK-A1", "TASK-A2", "TASK-B1"} {
+		if !byID[wantID] {
+			t.Fatalf("result.Tasks = %#v, missing %s -- one branch's limit must not hide another branch's result", result.Tasks, wantID)
+		}
+	}
+	for _, current := range result.Tasks {
+		if current.TaskID == "TASK-B1" && current.Verdict != review.VerdictApprove {
+			t.Fatalf("TASK-B1 (independent branch) = %#v, want an untouched Approve result", current)
+		}
+	}
+}
+
+func TestRunParallelZeroOrNegativeMaxParallelTasksDefaultsToOne(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{delay: 5 * time.Millisecond}
+	reviewer := &approvingReviewerFake{}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A", "TASK-B"}}, {Completed: true}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+	result, err := service.RunParallel(context.Background(), "CMD-ZERO", "CMD-ZERO", 10, 0, 5, planner)
+	if err != nil || result.Status != "completed" {
+		t.Fatalf("RunParallel() = %#v, %v", result, err)
+	}
+	if maxActive, _ := executor.snapshot(); maxActive != 1 {
+		t.Fatalf("maxParallelTasks<=0 should default to 1, observed max concurrency = %d", maxActive)
 	}
 }

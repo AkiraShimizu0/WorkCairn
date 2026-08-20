@@ -193,6 +193,55 @@ func EvaluateReadiness(
 	), nil
 }
 
+// EvaluateAllReadiness returns every currently-dispatchable Task: unstarted,
+// dependency-satisfied, and assigned to a known Employee. Unlike
+// EvaluateReadiness, which selects only the first unstarted Task (the
+// existing sequential-selection rule every other caller must keep
+// unchanged), this returns the full ready set so a caller can
+// bounded-parallel-dispatch independent Tasks within the same round (see
+// docs/adr/ADR-0051). It reuses ValidateDependencies for existence,
+// duplicate-ID, and cycle checks -- no second cycle detector.
+//
+// The returned order is deterministic: it always follows the order Tasks
+// were given in (the same order Tasks.md rows / WorkflowEngine already
+// carry), never map iteration order. Tasks that are not unstarted (already
+// completed, in progress, or held) are excluded, as are unstarted Tasks that
+// are blocked by an incomplete dependency or a missing/unknown assignee --
+// this function returns the ready set itself, not a status report of every
+// Task, so a blocked Task simply does not appear (it is not an error).
+func EvaluateAllReadiness(
+	tasks []Task,
+	dependencies []Dependency,
+	existingEmployees map[string]bool,
+) ([]ReadinessResult, error) {
+	graph, err := ValidateDependencies(tasks, dependencies)
+	if err != nil {
+		return nil, err
+	}
+	statusByID := make(map[string]string, len(tasks))
+	for _, current := range tasks {
+		statusByID[current.ID] = current.Status
+	}
+	ready := make([]ReadinessResult, 0, len(tasks))
+	for _, current := range tasks {
+		if current.Status != StatusUnstarted {
+			continue
+		}
+		dependencyIDs := append([]string{}, graph[current.ID]...)
+		blockedBy := make([]string, 0)
+		for _, dependencyID := range dependencyIDs {
+			if statusByID[dependencyID] != StatusCompleted {
+				blockedBy = append(blockedBy, dependencyID)
+			}
+		}
+		if current.AssigneeID == nil || !existingEmployees[*current.AssigneeID] || len(blockedBy) > 0 {
+			continue
+		}
+		ready = append(ready, taskResult(current, dependencyIDs, []string{}, true, StateReady, "ready", []string{}, "workflow_execute"))
+	}
+	return ready, nil
+}
+
 // EvaluateTaskReadiness validates one explicitly selected Task without
 // changing the default first-unstarted selection rule. It is used by a
 // reviewed Workflow only for the Revision Task proven by its immutable intent.

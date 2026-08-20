@@ -275,7 +275,16 @@ func runInteractionWorkflowChain(
 			ReviewerID: currentPlan.ReviewerID,
 		},
 		Approved: true, ApprovalReference: approvalReference, CommandID: workflowCommandID,
-		MaxTasks: maxTasks, EventObservers: eventObservers,
+		MaxTasks: maxTasks, Autonomy: currentPlan.Autonomy,
+		// CorrelationID roots every Task Event this Workflow's parallel
+		// dispatch publishes at parentCommandID -- this function's own
+		// caller-supplied root (the standalone interaction.workflow.execute
+		// Command's own ID, or interaction.plan.approve_and_execute's outer
+		// ID when reached through ADR-0049's chain), not workflowCommandID
+		// itself. This is what makes the CEO's single approval traceable as
+		// one correlation chain end to end (ADR-0051).
+		CorrelationID:  parentCommandID,
+		EventObservers: eventObservers,
 	}, provider, httpClient)
 	result := InteractionWorkflowResult{WorkflowCommandID: workflowCommandID, Workflow: workflowResult}
 	evidence, evidenceErr := interactionWorkflowEvidence(parentCommandID, maxTasks, currentPlan, workflowCommandID, workflowResult, workflowErr)
@@ -507,6 +516,14 @@ func resolveAutonomyContract(ctx context.Context, input InteractionWorkflowPlanI
 	}
 	if !slices.Equal(requested.AllowedEmployeeIDs, standard.AllowedEmployeeIDs) ||
 		!slices.Equal(requested.AllowedModels, standard.AllowedModels) {
+		return autonomy.Contract{}, ErrInteractionWorkflowPrecondition
+	}
+	// LoopGuard fields (ADR-0051) are Go-decided like every other field on
+	// this Contract: an explicit override must reproduce the same value Go
+	// itself would compute, exactly like AllowedEmployeeIDs/AllowedModels
+	// above, never a caller-chosen bound.
+	if requested.EffectiveMaxParallelTasks() != standard.EffectiveMaxParallelTasks() ||
+		requested.EffectiveMaxRevisionCount() != standard.EffectiveMaxRevisionCount() {
 		return autonomy.Contract{}, ErrInteractionWorkflowPrecondition
 	}
 	return requested, nil

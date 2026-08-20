@@ -30,13 +30,37 @@ async function reservePort() {
   return port;
 }
 
+// A scenario is either the original flat array (strict call-arrival order --
+// every existing scenario) or, additively, an object
+// { mode: "shape_queue", structured: [...], unstructured: [...] }. The
+// shape-queue mode exists only for scenarios that dispatch genuinely
+// concurrent Provider calls (ADR-0051 parallel execution): real concurrent
+// requests do not arrive in a fixed order, so a single positional index
+// would hand a Review-shaped script entry to a Task execution request (or
+// vice versa) purely by arrival timing. Matching by request shape instead
+// (Structured Outputs present => Review or CEO Plan Intent; absent => Task
+// execution) is safe here because every entry within one queue is
+// interchangeable content (e.g. every Review is an Approve) -- order within
+// a queue never needs to encode a scripted narrative for this scenario type,
+// unlike the sequential scenarios that still use the original array form.
 async function loadProviderFixture(scenario) {
   const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
   if (fixture.schema_version !== "workcairn-browser-provider-fixture.v1") {
     throw new Error(`unsupported provider fixture version: ${fixture.schema_version}`);
   }
   const responses = fixture.scenarios?.[scenario];
-  if (!Array.isArray(responses) || responses.length === 0) {
+  const isShapeQueue = responses && typeof responses === "object" && !Array.isArray(responses) && responses.mode === "shape_queue";
+  if (!Array.isArray(responses) && !isShapeQueue) {
+    throw new Error(`provider fixture scenario is missing: ${scenario}`);
+  }
+  if (isShapeQueue) {
+    if (!Array.isArray(responses.structured) || !Array.isArray(responses.unstructured) ||
+      responses.structured.length === 0 || responses.unstructured.length === 0) {
+      throw new Error(`provider fixture shape_queue scenario ${scenario} needs non-empty structured and unstructured arrays`);
+    }
+    return structuredClone(responses);
+  }
+  if (responses.length === 0) {
     throw new Error(`provider fixture scenario is missing: ${scenario}`);
   }
   return structuredClone(responses);
@@ -44,7 +68,10 @@ async function loadProviderFixture(scenario) {
 
 async function startProviderMock(scenario) {
   const responses = await loadProviderFixture(scenario);
+  const shapeQueue = !Array.isArray(responses) && responses.mode === "shape_queue" ? responses : null;
   const calls = [];
+  let structuredIndex = 0;
+  let unstructuredIndex = 0;
   const server = createHTTPServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -57,12 +84,19 @@ async function startProviderMock(scenario) {
       return;
     }
 
-    const current = responses[calls.length];
+    const structured = payload?.output_config?.format?.type === "json_schema";
+    let current;
+    if (shapeQueue) {
+      if (structured) current = shapeQueue.structured[structuredIndex++];
+      else current = shapeQueue.unstructured[unstructuredIndex++];
+    } else {
+      current = responses[calls.length];
+    }
     calls.push({
       path: request.url,
       method: request.method,
       model: payload?.model || "",
-      structured: payload?.output_config?.format?.type === "json_schema",
+      structured,
       fixture: current?.name || "unexpected"
     });
     if (request.method !== "POST" || request.url !== "/v1/messages" || request.headers["x-api-key"] !== fakeCredential || !current) {
@@ -75,10 +109,11 @@ async function startProviderMock(scenario) {
     response.end(JSON.stringify(current.body));
   });
   const port = await listen(server);
+  const expectedCount = shapeQueue ? shapeQueue.structured.length + shapeQueue.unstructured.length : responses.length;
   return {
     url: `http://127.0.0.1:${port}`,
     calls,
-    expectedCount: responses.length,
+    expectedCount,
     close: () => new Promise((resolveClose, reject) => server.close((error) => error ? reject(error) : resolveClose()))
   };
 }

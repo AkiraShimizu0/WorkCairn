@@ -96,6 +96,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0048: Organization-scoped Required Role Enum — Short-term Bridge toward Capability-based Assignment](adr/ADR-0048-organization-scoped-required-role-enum.md)
 - [ADR-0049: Go-owned Durable Chained Approval for Plan Apply and Reviewed Workflow Execution](adr/ADR-0049-go-owned-durable-chained-approval.md)
 - [ADR-0050: Interaction Archive Semantics — Visibility Metadata via Append-only Turn History, Not Physical Delete](adr/ADR-0050-interaction-archive-semantics.md)
+- [ADR-0051: Leverage Engine — Parallel Reviewed Workflow and Decomposition Bounds Foundation](adr/ADR-0051-leverage-engine-parallel-decomposition-foundation.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -123,7 +124,7 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Worker Service | AI社員の実行ContextからPromptを構築し、登録済みRunnerを選択して構造化結果を返す |
 | Go PromptBuilder | 構造化された会社・社員・日時・Project・Task Contextから通常Task用Promptを決定的に構築する |
 | Go Review PromptBuilder／ReviewService | 構造化Review Contextからversioned Promptを構築し、Runner結果のmarked JSONをallow-list検証する。Task変更は行わない |
-| Go CEO Plan Domain／Service | 構造化Employee inventoryから小さいIntent向けPromptを作り、RunnerのIntent JSON出力（ADR-0039）をGo Normalizerで解決・正規化してtyped Canonical Planへ変換・検証する。Employee assignment、dependency、識別子はGoが決定し、LLMは意味理解だけを担う。Vault I/O、Provider設定、適用を知らない |
+| Go CEO Plan Domain／Service | 構造化Employee inventoryから小さいIntent向けPromptを作り、RunnerのIntent JSON出力（ADR-0039）をGo Normalizerで解決・正規化してtyped Canonical Planへ変換・検証する。Employee assignment、dependency、識別子はGoが決定し、LLMは意味理解だけを担う。ADR-0051により`steps[].parallel_with_previous`（LLMが供給する唯一のfan-out/fan-in signal）から、依存グラフ形状（1層fan-out＋1層fan-in）もGoが構造的に構築する。`MaxGeneratedTasks`（既定5）がPlan生成側のLoopGuardとしてTask数超過を型付き拒否する。Vault I/O、Provider設定、適用を知らない |
 | Go Vault Review Store | ADR-0010に従いcanonical JSONを先行commitし、Markdown projectionとpartial failureを保存する |
 | Go Review Orchestration Service | Review実行、artifact保存、`review.completed`発行の順序を調停し、Task状態やAudit形式を知らない |
 | Go Revision Orchestration Service | immutable intent、TaskService.Create、`revision.created`の順序とpartial failureを調停する |
@@ -149,7 +150,7 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Living Company Dashboard | daemon同一originからembed配信する薄いclient。iPhone既定のMy ActionsはInteraction Next Actionを質問／承認／Recoveryへ投影し、PC／iPad既定のCompany ViewはOrganization／Workflow／Task evidenceから社員、Maker、Reviewer、Revision、handoff、Timelineを表示する。同一Session／Versionのpollingでは操作中DOMを再生成せず、Task／Review／Revision規則を持たない |
 | First-run Workspace Setup | macOS native picker／Application Support path reference、Mac-only Keychain Adapter、redacted Workspace Statusと、明示承認・workspace Command Ledger・既存Employee writerを使うStarter Organization bootstrap。選択済み専用rootだけを扱い、path／secretをHTTPへ渡さず、既存Vault変更やCoreへの既定社員追加を行わない |
 | Go Workflow Run Service | dependency readinessを各Task後に再planし、決定的child Command IDで既存Task executionを順次調停する。Task状態やEventは変更しない |
-| Go Reviewed Workflow Run Service | 各Task後に既存Reviewを実行し、Request Changes時は既存Revisionで作成したTaskをtargeted readinessで実行・再Reviewしてから本流へ戻す |
+| Go Reviewed Workflow Run Service | 唯一のoperation `workflow.reviewed.execute`（`process.ExecuteReviewedWorkflow`）が、内部で常に`RunParallel`（ADR-0051）を駆動する。依存関係を満たした全readyタスクを1ラウンドとしてbounded goroutine poolで同時実行し、束全体が終端に達してから次ラウンドをplanする。ready Taskが1件なら実質逐次と同じ挙動、複数件ならGoが自動的に並列実行し、どちらになるかは依存グラフの形だけから毎ラウンド自動的に決まる――呼び出し元がparallel／sequential／concurrencyを選ぶ経路は存在しない。`MaxParallelTasks`／`MaxRevisionCount`（Revision Guard、branch独立counting）はAutonomy Contractから読む。既存の逐次`Run`メソッド自体は無変更のまま残置（現在の呼び出し元はテストのみ）。TaskState変更経路は既存TaskServiceだけを通る |
 | Go Scheduler Service | 承認済みone-shot Commandをoffset付き時刻で選択し、Schedule CAS後に既存Process／Command Ledgerへ配送する。Task状態やProviderは直接扱わない |
 | Go Notification／Metrics Subscriber | Runtime edgeから既存Eventへ接続し、payload-free immutable Inboxとbounded process-local counterを提供する。Task状態、Event、Auditを変更しない |
 | Go External Action Service／WordPress Adapter | 既存Deliverableをtyped intentへ変換し、明示承認、immutable request／result evidence、外部公開、`action.completed`を調停する。credentialとHTTPはAdapter edgeだけに置く |

@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/project"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
@@ -215,19 +217,30 @@ func TestReviewedWorkflowNewApprovedCommandContinuesCommittedRevisionAfterLimit(
 		Approved: true, ApprovalReference: "approval-limit", CommandID: "CMD-REVIEWED-LIMIT-001", MaxTasks: 1,
 	}
 	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL}
+	// MaxTasks bounds how many round-batch dispatches (initial branch
+	// starts) ExecuteReviewedWorkflow may spend, not how many individual
+	// Task rows get touched: TASK-001's branch runs entirely to its own
+	// terminal state (Execute -> Request Changes -> Revise -> TASK-003 ->
+	// Approve) before the round budget is even consulted again, so
+	// MaxTasks:1 still exhausts the whole TASK-001/TASK-003 branch (2
+	// Tasks, 4 Provider calls) in a single round -- it never leaves a
+	// branch mid-revision. Only the next round (TASK-002, which depends on
+	// TASK-001 and only became ready once TASK-001 completed mid-round) is
+	// what the exhausted budget actually blocks.
 	limited, err := ExecuteReviewedWorkflow(context.Background(), base, provider, server.Client())
-	if err != nil || limited.Status != "limit_reached" || limited.Next == nil || limited.Next.TaskID != "TASK-003" || calls != 2 {
+	if err != nil || limited.Status != "limit_reached" || len(limited.Tasks) != 2 ||
+		limited.Tasks[0].TaskID != "TASK-001" || limited.Tasks[1].TaskID != "TASK-003" || !limited.Tasks[1].Targeted || calls != 4 {
 		t.Fatalf("limited run = %#v, %v calls=%d", limited, err, calls)
 	}
 	plan, err := PlanReviewedWorkflow(context.Background(), base.ReviewedWorkflowPlanInput)
-	if err != nil || !plan.Next.TargetedRevision || plan.Next.TaskID != "TASK-003" || plan.Next.SourceTaskID != "TASK-001" {
+	if err != nil || !plan.Next.Ready || plan.Next.TaskID != "TASK-002" {
 		t.Fatalf("continuation plan = %#v, %v", plan, err)
 	}
 	base.CommandID = "CMD-REVIEWED-LIMIT-002"
 	base.MaxTasks = 10
 	continued, err := ExecuteReviewedWorkflow(context.Background(), base, provider, server.Client())
-	if err != nil || continued.Status != "completed" || len(continued.Tasks) != 2 ||
-		continued.Tasks[0].TaskID != "TASK-003" || !continued.Tasks[0].Targeted || continued.Tasks[1].TaskID != "TASK-002" || calls != len(outputs) {
+	if err != nil || continued.Status != "completed" || len(continued.Tasks) != 1 ||
+		continued.Tasks[0].TaskID != "TASK-002" || calls != len(outputs) {
 		t.Fatalf("continued run = %#v, %v calls=%d", continued, err, calls)
 	}
 }
@@ -423,6 +436,144 @@ func TestReviewedWorkflowReviewResultInvalidMissingFieldPropagatesParseField(t *
 		t.Fatalf("outer reviewed Workflow structured output presence = %#v, want %#v",
 			record.Failure.Details.Parse.StructuredOutputPresence, wantPresence)
 	}
+}
+
+// writeParallelReviewedWorkflowVault builds a temporary Vault with the
+// fan-out/fan-in shape ADR-0051 describes: TASK-001/002/003 are
+// independent (no dependency on each other), and TASK-004 (Synthesis)
+// depends on all three, so it can only become ready once every branch has
+// completed.
+func writeParallelReviewedWorkflowVault(t *testing.T) string {
+	t.Helper()
+	root := writePlanVault(t)
+	writePlanFile(t, filepath.Join(root, "社員", "伊藤 健太.md"), "---\nid: QA-001\ndepartment: 品質保証部\nrole: QA Engineer\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n")
+	at := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	assignee := "PLAN-001"
+	var createdIDs []string
+	for _, title := range []string{"市場調査", "競合調査"} {
+		created, err := ExecuteTaskCreation(context.Background(), TaskCreationInput{
+			VaultRoot: root, ProjectName: "ToDoアプリ", Title: title, AssigneeID: &assignee, CurrentTime: at,
+		}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		createdIDs = append(createdIDs, created.Task.ID)
+	}
+	synthesis, err := ExecuteTaskCreation(context.Background(), TaskCreationInput{
+		VaultRoot: root, ProjectName: "ToDoアプリ", Title: "統合レポート", AssigneeID: &assignee, CurrentTime: at,
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependencyPath := filepath.Join(root, "プロジェクト", "ToDoアプリ", "Task Dependencies.md")
+	if err := os.Remove(dependencyPath); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ExecuteProjectDependencies(context.Background(), ProjectDependenciesInput{
+		VaultRoot: root, ProjectName: "ToDoアプリ", CurrentTime: at,
+		Rows: []project.TaskDependency{
+			{TaskID: "TASK-001", ProposalID: "PROPOSED-001", DependsOn: []string{}, Rationale: "independent"},
+			{TaskID: createdIDs[0], ProposalID: "PROPOSED-002", DependsOn: []string{}, Rationale: "independent"},
+			{TaskID: createdIDs[1], ProposalID: "PROPOSED-003", DependsOn: []string{}, Rationale: "independent"},
+			{TaskID: synthesis.Task.ID, ProposalID: "PROPOSED-004", DependsOn: []string{"TASK-001", createdIDs[0], createdIDs[1]}, Rationale: "synthesis"},
+		},
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// parallelProviderMockServer answers concurrently-arriving Provider calls by
+// inspecting the request shape (output_config present => a structured
+// Review call, expecting a verdict; absent => a Task execution call,
+// expecting Markdown) rather than a sequential counter, since parallel
+// dispatch means requests do not arrive in any fixed order.
+func parallelProviderMockServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	calls := 0
+	return httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		var decoded map[string]any
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			t.Errorf("decode Provider request: %v", err)
+		}
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		var output string
+		if _, structured := decoded["output_config"]; structured {
+			output = reviewProviderOutput(review.VerdictApprove)
+		} else {
+			output = "# deliverable\n\n本文"
+		}
+		encoded, _ := json.Marshal(map[string]any{
+			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": output}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+		response.Header().Set("content-type", "application/json")
+		_, _ = response.Write(encoded)
+	}))
+}
+
+// TestExecuteReviewedWorkflowRunsIndependentTasksThenSynthesis is the
+// end-to-end proof (real temporary Vault, real concurrent HTTP, real Command
+// Ledger) that ADR-0051's production wiring actually works: the single
+// production entry point, ExecuteReviewedWorkflow -- the same function every
+// existing caller (Interaction, HTTP, CLI) already uses, with no separate
+// operation and no caller-visible "parallel" flag -- automatically dispatches
+// three independent Tasks through genuinely concurrent Provider calls, all
+// Approve, and only then lets the Synthesis Task (dependent on all three)
+// become ready and execute. The same Command ID replays the identical stored
+// result without a second round of Provider calls.
+func TestExecuteReviewedWorkflowRunsIndependentTasksThenSynthesis(t *testing.T) {
+	root := writeParallelReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	server := parallelProviderMockServer(t)
+	defer server.Close()
+
+	input := ExecuteReviewedWorkflowInput{
+		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
+			WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+			ReviewerID:        "QA-001",
+		},
+		Approved: true, ApprovalReference: "approval-parallel", CommandID: "CMD-PARALLEL-WORKFLOW-001",
+		MaxTasks: 10, Autonomy: autonomy.Contract{MaxParallelTasks: 3},
+	}
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL}
+	result, err := ExecuteReviewedWorkflow(context.Background(), input, provider, server.Client())
+	if err != nil || result.Status != "completed" || len(result.Tasks) != 4 {
+		t.Fatalf("ExecuteReviewedWorkflow() = %#v, %v", result, err)
+	}
+	byID := map[string]ReviewedWorkflowTaskResultForTest{}
+	for _, current := range result.Tasks {
+		byID[current.TaskID] = ReviewedWorkflowTaskResultForTest{Verdict: string(current.Verdict)}
+	}
+	for _, taskID := range []string{"TASK-001", "TASK-002", "TASK-003", "TASK-004"} {
+		if entry, ok := byID[taskID]; !ok || entry.Verdict != "Approve" {
+			t.Fatalf("Task %s result = %#v (ok=%v), want an Approve verdict", taskID, entry, ok)
+		}
+	}
+	store, _ := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: root, ProjectName: "ToDoアプリ"})
+	for _, taskID := range []string{"TASK-001", "TASK-002", "TASK-003", "TASK-004"} {
+		stored, getErr := store.Get(context.Background(), taskID)
+		if getErr != nil || stored.Status != task.StatusCompleted {
+			t.Fatalf("Task %s = %#v, %v", taskID, stored, getErr)
+		}
+	}
+
+	beforeReplay := planVaultSnapshot(t, root)
+	replayed, err := ExecuteReviewedWorkflow(context.Background(), input, provider, server.Client())
+	if err != nil || !reflect.DeepEqual(result.Status, replayed.Status) || len(replayed.Tasks) != 4 || !reflect.DeepEqual(beforeReplay, planVaultSnapshot(t, root)) {
+		t.Fatalf("ExecuteReviewedWorkflow() replay = %#v, %v", replayed, err)
+	}
+}
+
+// ReviewedWorkflowTaskResultForTest is a minimal projection used only to
+// keep the assertions above readable.
+type ReviewedWorkflowTaskResultForTest struct {
+	Verdict string
 }
 
 func writeReviewedWorkflowVault(t *testing.T) string {

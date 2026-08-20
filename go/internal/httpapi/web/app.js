@@ -1891,6 +1891,23 @@ function planStepCopy(task, index) {
   return `${index + 1}. ${roleLabel(task.required_role)}が${planTaskDisplayTitle(task)}`;
 }
 
+// planTaskDependencyHint gives the CEO a plain-language read of the
+// dependency shape WorkCairn already decided (dependency_ids), without a
+// DAG diagram: a Task with 2+ dependencies is integrating multiple prior
+// results, and a Task with no dependencies that shares that with another
+// Task in the same Plan can proceed alongside it. Purely additive read of
+// data the Plan payload already carries -- no new field, no parallel/
+// sequential choice offered to the CEO.
+function planTaskDependencyHint(task, allTasks) {
+  const dependencyCount = task?.dependency_ids?.length || 0;
+  if (dependencyCount >= 2) return `${dependencyCount}件の作業結果をまとめます`;
+  if (dependencyCount === 0) {
+    const hasParallelSibling = allTasks.some((other) => other !== task && (other?.dependency_ids?.length || 0) === 0);
+    if (hasParallelSibling) return "他の作業と並行して進められます";
+  }
+  return "";
+}
+
 function renderPlanApproval(next) {
   const current = currentPlan();
   if (!current) return showError(new Error("Plan evidence is missing"));
@@ -2704,9 +2721,11 @@ function planEmbedNode(plan) {
       node("ul", { class: "msg-attach-list" }, ...plan.proposed_tasks.map((task) => {
         const identity = planTaskAssigneeIdentity(task);
         const title = planTaskDisplayTitle(task);
+        const dependencyHint = planTaskDependencyHint(task, plan.proposed_tasks);
         return node("li", {},
           node("strong", {}, identity.name),
           title ? node("span", { class: "msg-attach-task-title" }, title) : null,
+          dependencyHint ? node("span", { class: "msg-attach-task-dependency" }, dependencyHint) : null,
         );
       })),
     ),

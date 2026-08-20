@@ -2134,6 +2134,13 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   word-break: break-word;
 }
 
+.msg-attach-task-dependency {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .msg-attach-preview {
   margin: 0 0 8px;
   color: var(--ink);

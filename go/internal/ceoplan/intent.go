@@ -93,6 +93,18 @@ type IntentStep struct {
 	// NormalizeIntent resolves it to a specific employee, never the LLM.
 	// Not required for kind "review", which produces no task.
 	RequiredRole string `json:"required_role,omitempty"`
+	// ParallelWithPrevious is the one small, semantic signal the LLM
+	// supplies for fan-out/fan-in (ADR-0051): "can this step start at the
+	// same time as the step immediately before it, or does it need that
+	// step's output first?" Only the LLM can judge this from the request's
+	// content; Go still decides the resulting dependency *graph*
+	// structurally from step order plus this one flag (see
+	// NormalizeIntent) — the LLM never authors a dependency ID or graph
+	// shape directly, matching ADR-0039's existing "structural, not
+	// LLM-authored" dependency principle. Absent/false (the JSON zero
+	// value) means "sequential", which reproduces the original pre-fan-out
+	// linear-chain behavior exactly — this field is purely additive.
+	ParallelWithPrevious bool `json:"parallel_with_previous,omitempty"`
 }
 
 // Intent is the small, provider-neutral contract the LLM returns instead of
@@ -122,9 +134,10 @@ type Intent struct {
 }
 
 type candidateIntentStep struct {
-	Kind         IntentStepKind  `json:"kind"`
-	Description  string          `json:"description"`
-	RequiredRole json.RawMessage `json:"required_role"`
+	Kind                 IntentStepKind  `json:"kind"`
+	Description          string          `json:"description"`
+	RequiredRole         json.RawMessage `json:"required_role"`
+	ParallelWithPrevious bool            `json:"parallel_with_previous"`
 }
 
 type candidateIntent struct {
@@ -214,7 +227,10 @@ func ParseIntent(content string) (Intent, error) {
 		if kind == IntentStepReview && rolePresent && requiredRole == "" {
 			return Intent{}, newIntentFieldParseError(IntentParseMissingRequiredField, "steps.required_role", fmt.Errorf("%w: steps[%d].required_role", ErrInvalidIntent, index))
 		}
-		steps = append(steps, IntentStep{Kind: kind, Description: description, RequiredRole: requiredRole})
+		steps = append(steps, IntentStep{
+			Kind: kind, Description: description, RequiredRole: requiredRole,
+			ParallelWithPrevious: candidateStep.ParallelWithPrevious,
+		})
 	}
 
 	questions, err := requiredStringList(candidate.CEOQuestions, "ceo_questions")

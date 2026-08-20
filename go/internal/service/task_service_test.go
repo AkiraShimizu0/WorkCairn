@@ -35,6 +35,12 @@ func (publisher *recordingEventPublisher) types() []event.Type {
 	return types
 }
 
+func (publisher *recordingEventPublisher) snapshot() []event.Event {
+	publisher.mu.Lock()
+	defer publisher.mu.Unlock()
+	return append([]event.Event(nil), publisher.events...)
+}
+
 type failingTaskStore struct {
 	createErr error
 	updateErr error
@@ -194,6 +200,38 @@ func TestTaskServiceConcurrentStartHasOneWinner(t *testing.T) {
 	}
 	if successes != 1 || rejections != 1 {
 		t.Fatalf("concurrent Start results = success:%d rejected:%d", successes, rejections)
+	}
+}
+
+// TestTaskServiceStampsEventsWithCorrelationFromContext pins ADR-0051's
+// lineage wiring: a ctx carrying an event.Correlation must appear on every
+// Event the mutation publishes, and a ctx with none attached must publish
+// Events with both IDs empty exactly as before this round.
+func TestTaskServiceStampsEventsWithCorrelationFromContext(t *testing.T) {
+	service, publisher := activeTaskService(t)
+	correlated := event.WithCorrelation(context.Background(), event.Correlation{
+		CorrelationID: "CMD-ROOT", CausationID: "CMD-CHILD-A",
+	})
+	if _, err := service.Create(correlated, task.CreateInput{ID: "TASK-001", Title: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Start(correlated, "TASK-001"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Complete(context.Background(), "TASK-001"); err != nil {
+		t.Fatal(err)
+	}
+	published := publisher.snapshot()
+	if len(published) != 3 {
+		t.Fatalf("published %d events, want 3", len(published))
+	}
+	for _, current := range published[:2] {
+		if current.CorrelationID != "CMD-ROOT" || current.CausationID != "CMD-CHILD-A" {
+			t.Fatalf("event %s correlation = %q/%q, want CMD-ROOT/CMD-CHILD-A", current.Type, current.CorrelationID, current.CausationID)
+		}
+	}
+	if last := published[2]; last.CorrelationID != "" || last.CausationID != "" {
+		t.Fatalf("event %s published with plain context.Background() got correlation = %q/%q, want empty", last.Type, last.CorrelationID, last.CausationID)
 	}
 }
 

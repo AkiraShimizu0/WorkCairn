@@ -111,18 +111,30 @@ func TestBrowserProviderReviewFixturesMatchTypedDecisionContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Scenario values are json.RawMessage, not a fixed struct, because not
+	// every scenario shares one shape: ADR-0051's parallel_synthesis
+	// scenario is a {mode: "shape_queue", structured: [...], unstructured:
+	// [...]} object (real concurrent dispatch means a single positional
+	// array cannot script Provider responses safely), while every other
+	// scenario -- including happy_path, the only one this test reads -- is
+	// still the original flat array. Decoding lazily here means this test
+	// only needs to understand the one scenario it actually asserts on.
 	var fixture struct {
-		Scenarios map[string][]struct {
-			Name string `json:"name"`
-			Body struct {
-				Content []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"body"`
-		} `json:"scenarios"`
+		Scenarios map[string]json.RawMessage `json:"scenarios"`
 	}
 	if err := json.Unmarshal(content, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	var happyPath []struct {
+		Name string `json:"name"`
+		Body struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"body"`
+	}
+	if err := json.Unmarshal(fixture.Scenarios["happy_path"], &happyPath); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]Verdict{
@@ -130,7 +142,7 @@ func TestBrowserProviderReviewFixturesMatchTypedDecisionContract(t *testing.T) {
 		"re_review_approve":      VerdictApprove,
 	}
 	seen := map[string]bool{}
-	for _, response := range fixture.Scenarios["happy_path"] {
+	for _, response := range happyPath {
 		verdict, reviewFixture := want[response.Name]
 		if !reviewFixture {
 			continue

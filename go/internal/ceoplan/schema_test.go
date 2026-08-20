@@ -75,7 +75,7 @@ func TestIntentJSONSchemaShape(t *testing.T) {
 			t.Fatalf("steps item %d schema = %#v", index, stepSchema)
 		}
 		stepProperties := stepSchema["properties"].(map[string]any)
-		for _, field := range []string{"kind", "description", "required_role"} {
+		for _, field := range []string{"kind", "description", "required_role", "parallel_with_previous"} {
 			if _, exists := stepProperties[field]; !exists {
 				t.Fatalf("steps item %d schema is missing field %q", index, field)
 			}
@@ -108,7 +108,7 @@ func TestIntentJSONSchemaShape(t *testing.T) {
 		case kindSchema["enum"] != nil:
 			enum := kindSchema["enum"].([]string)
 			if !equalStringSlices(enum, []string{"write", "research", "analyze", "implement"}) ||
-				!equalStringSlices(required, []string{"kind", "description", "required_role"}) {
+				!equalStringSlices(required, []string{"kind", "description", "required_role", "parallel_with_previous"}) {
 				t.Fatalf("non-review kind/required = %#v / %#v", enum, required)
 			}
 		default:

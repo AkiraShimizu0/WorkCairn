@@ -10,6 +10,7 @@ import (
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
 	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
@@ -17,6 +18,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/workflow"
 )
 
 var (
@@ -48,7 +50,29 @@ type ExecuteReviewedWorkflowInput struct {
 	ApprovalReference string
 	CommandID         string
 	MaxTasks          int
-	EventObservers    []event.Observer
+	// Autonomy carries the Workflow's already Go-decided
+	// workcairn-autonomy.v1 Contract (ADR-0035), including the ADR-0051
+	// LoopGuard fields MaxParallelTasks/MaxRevisionCount this Command reads
+	// to bound its own automatic parallel dispatch. It is optional: the
+	// zero value autonomy.Contract{} resolves both fields to their safe
+	// defaults via EffectiveMaxParallelTasks/EffectiveMaxRevisionCount, so
+	// direct/CLI/HTTP callers that do not construct a Contract at all keep
+	// working unchanged. This field is never CEO/browser input -- every
+	// production caller (interaction.plan.approve_and_execute,
+	// interaction.workflow.execute) sources it from
+	// process.resolveAutonomyContract, which Go alone computes.
+	Autonomy autonomy.Contract
+	// CorrelationID is the root business-lineage ID this Workflow's Task
+	// Events should share (ADR-0051): the outermost Command a caller wants
+	// traced -- e.g. interaction.plan.approve_and_execute's own Command ID
+	// when this Command is reached through that chain, so CorrelationID
+	// covers the CEO's whole single approval, not just this one child
+	// Command. Optional: blank means this Command is its own root (the
+	// existing behavior for a direct/CLI/HTTP caller with no further outer
+	// wrapper), matching the same additive/backward-compatible pattern as
+	// Autonomy above.
+	CorrelationID  string
+	EventObservers []event.Observer
 }
 
 func PlanReviewedWorkflow(ctx context.Context, input ReviewedWorkflowPlanInput) (ReviewedWorkflowPlan, error) {
@@ -116,6 +140,8 @@ func ExecuteReviewedWorkflow(
 	if input.MaxTasks <= 0 || input.MaxTasks > service.MaxWorkflowTasks {
 		return service.ReviewedWorkflowRunResult{}, fmt.Errorf("reviewed Workflow Task limit must be between 1 and %d", service.MaxWorkflowTasks)
 	}
+	maxParallelTasks := input.Autonomy.EffectiveMaxParallelTasks()
+	maxRevisionCount := input.Autonomy.EffectiveMaxRevisionCount()
 	claim, err := claimProjectCommand(ctx, input.VaultRoot, input.ProjectName, input.CommandID, "workflow.reviewed.execute", input.ProjectID, struct {
 		ProjectID         string    `json:"project_id"`
 		ProjectName       string    `json:"project_name"`
@@ -123,11 +149,20 @@ func ExecuteReviewedWorkflow(
 		CurrentTime       time.Time `json:"current_time"`
 		ApprovalReference string    `json:"approval_reference,omitempty"`
 		MaxTasks          int       `json:"max_tasks"`
-		ProviderModel     string    `json:"provider_model,omitempty"`
-		MaxTokens         int       `json:"max_tokens,omitempty"`
+		// MaxParallelTasks/MaxRevisionCount join the claim digest so a
+		// retried request whose effective LoopGuard values would differ
+		// (e.g. a replayed outer Command computing a different Autonomy
+		// Contract than the one that originally ran) is treated as a
+		// genuinely different request rather than silently replayed under
+		// the old bounds (Command idempotency, ADR-0021/0049).
+		MaxParallelTasks int    `json:"max_parallel_tasks"`
+		MaxRevisionCount int    `json:"max_revision_count"`
+		ProviderModel    string `json:"provider_model,omitempty"`
+		MaxTokens        int    `json:"max_tokens,omitempty"`
 	}{
 		input.ProjectID, input.ProjectName, strings.TrimSpace(input.ReviewerID), input.CurrentTime,
-		strings.TrimSpace(input.ApprovalReference), input.MaxTasks, strings.TrimSpace(provider.ProviderModel), provider.MaxTokens,
+		strings.TrimSpace(input.ApprovalReference), input.MaxTasks, maxParallelTasks, maxRevisionCount,
+		strings.TrimSpace(provider.ProviderModel), provider.MaxTokens,
 	})
 	if err != nil {
 		return service.ReviewedWorkflowRunResult{}, err
@@ -138,8 +173,18 @@ func ExecuteReviewedWorkflow(
 	if _, err := PlanReviewedWorkflow(ctx, input.ReviewedWorkflowPlanInput); err != nil {
 		return service.ReviewedWorkflowRunResult{}, finishDurableCommand(ctx, claim, service.ReviewedWorkflowRunResult{}, err, "REVIEWED_WORKFLOW_PREFLIGHT_FAILED", "preflight", false)
 	}
+	// planner is required by NewReviewedWorkflowRunService's constructor but
+	// is never invoked by RunParallel (only by the sequential Run, which
+	// this Command no longer calls) -- passing planReviewedWorkflowStep
+	// keeps this a genuinely inert, unused dependency rather than a new nil
+	// special-case in the constructor. It stays available for PlanReviewedWorkflow's
+	// own preflight preview above and for the still-supported sequential
+	// Run() path any future/operator caller may construct directly.
 	planner := workflowPlannerFunc(func(runContext context.Context) (service.WorkflowStepPlan, error) {
 		return planReviewedWorkflowStep(runContext, input.WorkflowPlanInput)
+	})
+	batchPlanner := workflowBatchPlannerFunc(func(runContext context.Context) (service.WorkflowBatchPlan, error) {
+		return planReviewedWorkflowBatch(runContext, input.WorkflowPlanInput)
 	})
 	executor := reviewedWorkflowTaskExecutorFunc(func(runContext context.Context, taskID, childCommandID string, targeted bool) (execution.Result, error) {
 		mode := ExecutionReadinessSequential
@@ -185,7 +230,21 @@ func ExecuteReviewedWorkflow(
 	if err != nil {
 		return service.ReviewedWorkflowRunResult{}, finishDurableCommand(ctx, claim, service.ReviewedWorkflowRunResult{}, err, "REVIEWED_WORKFLOW_FAILED", "workflow_composition", false)
 	}
-	result, runErr := runService.Run(ctx, strings.TrimSpace(input.CommandID), input.MaxTasks)
+	// RunParallel drives dispatch for every caller of this Command, not just
+	// a caller that explicitly asked for parallel execution -- there is no
+	// such caller-visible choice (ADR-0051 Checkpoint "production wiring").
+	// A round with exactly one ready Task behaves identically to the old
+	// sequential Run: it dispatches that one Task, waits for it to reach a
+	// terminal state, then re-plans. A round with several ready Tasks
+	// dispatches all of them at once, bounded by maxParallelTasks. Which of
+	// the two happens is decided every round, automatically, purely from
+	// how many Tasks workflow.EvaluateAllReadiness reports ready right now
+	// -- never from a flag any caller sets.
+	correlationID := strings.TrimSpace(input.CorrelationID)
+	if correlationID == "" {
+		correlationID = strings.TrimSpace(input.CommandID)
+	}
+	result, runErr := runService.RunParallel(ctx, strings.TrimSpace(input.CommandID), correlationID, input.MaxTasks, maxParallelTasks, maxRevisionCount, batchPlanner)
 	stage := "workflow_reviewed_execute"
 	var typed *service.ReviewedWorkflowRunError
 	if errors.As(runErr, &typed) {
@@ -312,6 +371,92 @@ func planReviewedWorkflowStep(ctx context.Context, input WorkflowPlanInput) (ser
 		}, nil
 	}
 	return planWorkflowStep(ctx, input)
+}
+
+// --- Parallel execution (ADR-0051) -------------------------------------
+//
+// ExecuteReviewedWorkflow (above) is the only production entry point:
+// parallel dispatch is not a separate operation or caller-visible option
+// (see the "production wiring" Checkpoint in ADR-0051's Implementation
+// Notes) -- planReviewedWorkflowBatch and workflowBatchPlannerFunc below
+// exist solely to feed service.ReviewedWorkflowRunService.RunParallel,
+// which ExecuteReviewedWorkflow always drives.
+
+type workflowBatchPlannerFunc func(context.Context) (service.WorkflowBatchPlan, error)
+
+func (function workflowBatchPlannerFunc) NextBatch(ctx context.Context) (service.WorkflowBatchPlan, error) {
+	return function(ctx)
+}
+
+// planReviewedWorkflowBatch loads the current managed Task snapshot and
+// Task Dependencies once, then returns every Task workflow.EvaluateAllReadiness
+// reports ready right now -- the parallel-round counterpart of
+// planReviewedWorkflowStep/planWorkflowStep, which each return only the
+// single next Task. It deliberately does not special-case pending Revision
+// Tasks the way planReviewedWorkflowStep does: RunParallel's runBranch
+// resolves a Task's own Revision cycle entirely within that Task's branch
+// (see service.ReviewedWorkflowRunService.runBranch), so a Revision Task
+// this function might see is never independently "pending" between
+// rounds -- it is either mid-branch (not yet a Task Store row) or the round
+// containing it has already finished.
+func planReviewedWorkflowBatch(ctx context.Context, input WorkflowPlanInput) (service.WorkflowBatchPlan, error) {
+	if ctx == nil || strings.TrimSpace(input.ProjectID) == "" || input.CurrentTime.IsZero() {
+		return service.WorkflowBatchPlan{}, fmt.Errorf("Workflow Project ID, context, and time are required")
+	}
+	store, err := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: input.VaultRoot, ProjectName: input.ProjectName})
+	if err != nil {
+		return service.WorkflowBatchPlan{}, err
+	}
+	tasks, err := store.InspectAll(ctx)
+	if err != nil {
+		return service.WorkflowBatchPlan{}, err
+	}
+	if len(tasks) == 0 {
+		return service.WorkflowBatchPlan{BlockingReasons: []string{"no_tasks"}}, nil
+	}
+	allCompleted := true
+	anchorID := ""
+	for _, current := range tasks {
+		if current.Status != task.StatusCompleted {
+			allCompleted = false
+		}
+		if anchorID == "" && current.Status == task.StatusUnstarted {
+			anchorID = current.ID
+		}
+	}
+	if allCompleted {
+		return service.WorkflowBatchPlan{Completed: true}, nil
+	}
+	if anchorID == "" {
+		return service.WorkflowBatchPlan{BlockingReasons: []string{"no_unstarted_tasks"}}, nil
+	}
+	// Any unstarted Task with a valid assignee can anchor the shared-graph
+	// load (Tasks/Dependencies/ExistingEmployees do not depend on which
+	// Task ID is passed, only Employee resolution does -- see
+	// vault.Loader.LoadExecutionRequest) -- this mirrors the same
+	// single-anchor-load planWorkflowStep already relies on.
+	loader, err := vault.NewLoader(input.VaultRoot)
+	if err != nil {
+		return service.WorkflowBatchPlan{}, err
+	}
+	request, err := loader.LoadExecutionRequest(ctx, vault.ExecutionInput{
+		ProjectID: input.ProjectID, ProjectName: input.ProjectName, TaskID: anchorID, CurrentTime: input.CurrentTime,
+	})
+	if err != nil {
+		return service.WorkflowBatchPlan{}, err
+	}
+	ready, err := workflow.EvaluateAllReadiness(request.Tasks, request.Dependencies, request.ExistingEmployees)
+	if err != nil {
+		return service.WorkflowBatchPlan{}, err
+	}
+	taskIDs := make([]string, len(ready))
+	for index, current := range ready {
+		taskIDs[index] = current.TaskID
+	}
+	if len(taskIDs) == 0 {
+		return service.WorkflowBatchPlan{BlockingReasons: []string{"dependencies_incomplete"}}, nil
+	}
+	return service.WorkflowBatchPlan{TaskIDs: taskIDs}, nil
 }
 
 type reviewedWorkflowTaskExecutorFunc func(context.Context, string, string, bool) (execution.Result, error)

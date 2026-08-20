@@ -360,3 +360,195 @@ func TestNormalizeIntentProjectNameFallbackIsDeterministicAndReplaySafe(t *testi
 		t.Fatalf("fallback ProjectName is not safe for the existing project name validation: %q", first)
 	}
 }
+
+// --- Fan-out / fan-in (ADR-0051) ----------------------------------------
+
+func fanOutStep(description string, parallelWithPrevious bool) IntentStep {
+	return IntentStep{Kind: IntentStepWrite, Description: description, RequiredRole: "Content Writer", ParallelWithPrevious: parallelWithPrevious}
+}
+
+// TestNormalizeIntentBuildsFanOutFanInDependencyGraph proves the exact
+// shape from ADR-0051's motivating example: A/B/C independent, one
+// Synthesis step depending on all three. The LLM only ever supplied one
+// boolean per step (ParallelWithPrevious) — Go alone derived every
+// dependency ID, reusing NormalizeCandidate's existing dependency
+// construction/validation, matching ADR-0039's "structural, not
+// LLM-authored" principle for the new fan-out/fan-in shape too.
+func TestNormalizeIntentBuildsFanOutFanInDependencyGraph(t *testing.T) {
+	intent := Intent{
+		ProjectName: "P", Objective: "O", Summary: "S",
+		Steps: []IntentStep{
+			fanOutStep("市場調査", false),
+			fanOutStep("競合調査", true),
+			fanOutStep("顧客分析", true),
+			fanOutStep("販売戦略統合", false),
+		},
+		CEOQuestions: []string{},
+	}
+	plan, err := NormalizeIntent(intent, normalizeIntentEmployees(), IntentContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.ProposedTasks) != 4 {
+		t.Fatalf("proposed_tasks = %#v", plan.ProposedTasks)
+	}
+	a, b, c, synthesis := plan.ProposedTasks[0], plan.ProposedTasks[1], plan.ProposedTasks[2], plan.ProposedTasks[3]
+	for _, branch := range []ProposedTask{a, b, c} {
+		if len(branch.DependencyIDs) != 0 {
+			t.Fatalf("independent branch %s must have no dependencies, got %#v", branch.ProposalID, branch.DependencyIDs)
+		}
+	}
+	wantSynthesisDeps := map[string]bool{a.ProposalID: true, b.ProposalID: true, c.ProposalID: true}
+	if len(synthesis.DependencyIDs) != 3 {
+		t.Fatalf("synthesis dependencies = %#v, want exactly the 3 branch IDs", synthesis.DependencyIDs)
+	}
+	for _, dependencyID := range synthesis.DependencyIDs {
+		if !wantSynthesisDeps[dependencyID] {
+			t.Fatalf("synthesis depends on unexpected ID %q (deps=%#v)", dependencyID, synthesis.DependencyIDs)
+		}
+	}
+	// The constructed graph must pass the exact same, unmodified dependency
+	// validation every other Plan shape goes through — no second cycle
+	// detector, no bespoke fan-out/fan-in validation path.
+	if _, err := ValidateApprovedPlan(plan, normalizeIntentEmployees()); err != nil {
+		t.Fatalf("fan-out/fan-in Plan failed the existing dependency graph validation: %v", err)
+	}
+}
+
+// TestNormalizeIntentParallelWithPreviousOnFirstStepIsIgnored proves Go
+// treats a stray true on the very first step as a root (there is no prior
+// group to join yet) rather than erroring — the LLM's signal is only ever
+// a hint Go structurally interprets, never trusted at face value.
+func TestNormalizeIntentParallelWithPreviousOnFirstStepIsIgnored(t *testing.T) {
+	intent := Intent{
+		ProjectName: "P", Objective: "O", Summary: "S",
+		Steps: []IntentStep{
+			fanOutStep("最初のstep", true),
+			fanOutStep("次のstep", false),
+		},
+		CEOQuestions: []string{},
+	}
+	plan, err := NormalizeIntent(intent, normalizeIntentEmployees(), IntentContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.ProposedTasks) != 2 || len(plan.ProposedTasks[0].DependencyIDs) != 0 {
+		t.Fatalf("first task must be a root regardless of ParallelWithPrevious: %#v", plan.ProposedTasks)
+	}
+	if len(plan.ProposedTasks[1].DependencyIDs) != 1 || plan.ProposedTasks[1].DependencyIDs[0] != plan.ProposedTasks[0].ProposalID {
+		t.Fatalf("second task must depend on the first: %#v", plan.ProposedTasks[1])
+	}
+}
+
+// TestNormalizeIntentAllFalseParallelWithPreviousReproducesLinearChain is a
+// regression pin: every step declining to run in parallel must build the
+// exact same one-dependency-on-the-immediate-predecessor chain the
+// pre-fan-out normalizer always built, byte for byte.
+func TestNormalizeIntentAllFalseParallelWithPreviousReproducesLinearChain(t *testing.T) {
+	intent := Intent{
+		ProjectName: "P", Objective: "O", Summary: "S",
+		Steps: []IntentStep{
+			fanOutStep("A", false), fanOutStep("B", false), fanOutStep("C", false),
+		},
+		CEOQuestions: []string{},
+	}
+	plan, err := NormalizeIntent(intent, normalizeIntentEmployees(), IntentContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, current := range plan.ProposedTasks {
+		if index == 0 {
+			if len(current.DependencyIDs) != 0 {
+				t.Fatalf("root task must have no dependencies: %#v", current)
+			}
+			continue
+		}
+		previous := plan.ProposedTasks[index-1]
+		if len(current.DependencyIDs) != 1 || current.DependencyIDs[0] != previous.ProposalID {
+			t.Fatalf("task %d must depend only on its immediate predecessor: %#v", index, current)
+		}
+	}
+}
+
+// TestNormalizeIntentSecondFanOutAfterSynthesisStartsAFreshGroup proves the
+// mechanism naturally supports a Synthesis Task itself becoming the shared
+// upstream of a later fan-out, without any special-casing -- useful
+// headroom, though this Checkpoint's own tests stop at the single
+// fan-out/fan-in layer ADR-0051 scopes for this round. C and D here both
+// declare themselves siblings of each other (D's ParallelWithPrevious is
+// true), so both take on C's own dependency -- S1 -- rather than D
+// depending on C: "parallel with the previous step" means "runs alongside
+// it," never "runs after it."
+func TestNormalizeIntentSecondFanOutAfterSynthesisStartsAFreshGroup(t *testing.T) {
+	intent := Intent{
+		ProjectName: "P", Objective: "O", Summary: "S",
+		Steps: []IntentStep{
+			fanOutStep("A", false), fanOutStep("B", true), // fan-out 1
+			fanOutStep("S1", false), // fan-in 1: depends on A and B
+			fanOutStep("C", false),  // depends on S1, opens a fresh group
+			fanOutStep("D", true),   // sibling of C: also depends on S1, not on C
+		},
+		CEOQuestions: []string{},
+	}
+	plan, err := NormalizeIntent(intent, normalizeIntentEmployees(), IntentContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.ProposedTasks) != 5 {
+		t.Fatalf("proposed_tasks = %#v", plan.ProposedTasks)
+	}
+	s1, c, d := plan.ProposedTasks[2], plan.ProposedTasks[3], plan.ProposedTasks[4]
+	if len(c.DependencyIDs) != 1 || c.DependencyIDs[0] != s1.ProposalID {
+		t.Fatalf("C must depend only on S1: %#v", c)
+	}
+	if len(d.DependencyIDs) != 1 || d.DependencyIDs[0] != s1.ProposalID {
+		t.Fatalf("D must depend only on S1 (C's own shared upstream), not on C itself: %#v", d)
+	}
+}
+
+// --- MaxGeneratedTasks (ADR-0051 LoopGuard) -----------------------------
+
+// TestNormalizeIntentRejectsExcessiveGeneratedTaskCount proves Go, not the
+// Provider, enforces the ceiling on how many Tasks one CEO Plan
+// decomposition may propose, and rejects before any Task identity,
+// Employee assignment, or dependency graph is constructed.
+func TestNormalizeIntentRejectsExcessiveGeneratedTaskCount(t *testing.T) {
+	steps := make([]IntentStep, 0, MaxGeneratedTasks+1)
+	for index := 0; index < MaxGeneratedTasks+1; index++ {
+		steps = append(steps, fanOutStep("step", false))
+	}
+	intent := Intent{ProjectName: "P", Objective: "O", Summary: "S", Steps: steps, CEOQuestions: []string{}}
+	_, err := NormalizeIntent(intent, normalizeIntentEmployees(), IntentContext{})
+	var normErr *NormalizationError
+	if !errors.As(err, &normErr) || normErr.Reason != NormalizationExcessiveTaskCount {
+		t.Fatalf("NormalizeIntent(%d steps) error = %v, want NormalizationExcessiveTaskCount", len(steps), err)
+	}
+}
+
+// TestNormalizeIntentAllowsExactlyMaxGeneratedTasks pins the boundary: the
+// limit itself is accepted, only strictly-over is rejected.
+func TestNormalizeIntentAllowsExactlyMaxGeneratedTasks(t *testing.T) {
+	steps := make([]IntentStep, 0, MaxGeneratedTasks)
+	for index := 0; index < MaxGeneratedTasks; index++ {
+		steps = append(steps, fanOutStep("step", false))
+	}
+	intent := Intent{ProjectName: "P", Objective: "O", Summary: "S", Steps: steps, CEOQuestions: []string{}}
+	plan, err := NormalizeIntent(intent, normalizeIntentEmployees(), IntentContext{})
+	if err != nil || len(plan.ProposedTasks) != MaxGeneratedTasks {
+		t.Fatalf("NormalizeIntent(%d steps) = %#v, %v, want exactly %d Tasks accepted", len(steps), plan, err, MaxGeneratedTasks)
+	}
+}
+
+// TestNormalizeIntentMaxGeneratedTasksIgnoresReviewSteps proves review
+// steps (which never become Tasks) do not count toward the ceiling.
+func TestNormalizeIntentMaxGeneratedTasksIgnoresReviewSteps(t *testing.T) {
+	steps := make([]IntentStep, 0, MaxGeneratedTasks+3)
+	for index := 0; index < MaxGeneratedTasks; index++ {
+		steps = append(steps, fanOutStep("step", false), IntentStep{Kind: IntentStepReview, Description: "確認する"})
+	}
+	intent := Intent{ProjectName: "P", Objective: "O", Summary: "S", Steps: steps, CEOQuestions: []string{}}
+	plan, err := NormalizeIntent(intent, normalizeIntentEmployees(), IntentContext{})
+	if err != nil || len(plan.ProposedTasks) != MaxGeneratedTasks {
+		t.Fatalf("NormalizeIntent with %d interleaved review steps = %#v, %v, want exactly %d Tasks accepted", MaxGeneratedTasks, plan, err, MaxGeneratedTasks)
+	}
+}

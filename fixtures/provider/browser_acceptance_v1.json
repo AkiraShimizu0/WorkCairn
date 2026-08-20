@@ -7,43 +7,133 @@
         "name": "ceo_intent_clarification",
         "delay_ms": 700,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_ceo_clarify_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Browser Acceptance Project\",\"objective\":\"Public Betaの依頼を成果物として完成する\",\"summary\":\"Content Writerが作成しQA Engineerが確認する\",\"steps\":[{\"kind\":\"write\",\"description\":\"Public Beta向けの紹介文を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[\"読者は初めてWorkCairnを使う人ですか？\"]}"}], "usage": {"input_tokens": 18, "output_tokens": 42}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_ceo_clarify_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Browser Acceptance Project\",\"objective\":\"Public Betaの依頼を成果物として完成する\",\"summary\":\"Content Writerが作成しQA Engineerが確認する\",\"steps\":[{\"kind\":\"write\",\"description\":\"Public Beta向けの紹介文を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[\"読者は初めてWorkCairnを使う人ですか？\"]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 18,
+            "output_tokens": 42
+          }
+        }
       },
       {
         "name": "ceo_intent_success",
         "delay_ms": 500,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_ceo_final_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Browser Acceptance Project\",\"objective\":\"Public Betaの依頼を成果物として完成する\",\"summary\":\"初めての利用者向け紹介文を作成し独立Reviewする\",\"steps\":[{\"kind\":\"write\",\"description\":\"初めての利用者向け紹介文を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 21, "output_tokens": 39}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_ceo_final_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Browser Acceptance Project\",\"objective\":\"Public Betaの依頼を成果物として完成する\",\"summary\":\"初めての利用者向け紹介文を作成し独立Reviewする\",\"steps\":[{\"kind\":\"write\",\"description\":\"初めての利用者向け紹介文を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 21,
+            "output_tokens": 39
+          }
+        }
       },
       {
         "name": "task_execution_success",
         "delay_ms": 700,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_task_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# WorkCairn紹介文\n\nWorkCairnは、必要な判断だけを人に返し、AI社員が計画・作成・確認を進める、自分専用のAI会社です。"}], "usage": {"input_tokens": 24, "output_tokens": 31}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_task_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "# WorkCairn紹介文\n\nWorkCairnは、必要な判断だけを人に返し、AI社員が計画・作成・確認を進める、自分専用のAI会社です。"
+            }
+          ],
+          "usage": {
+            "input_tokens": 24,
+            "output_tokens": 31
+          }
+        }
       },
       {
         "name": "review_request_changes",
         "delay_ms": 700,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_review_changes_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"初めての利用者が次に何をすればよいかが不明確です。\",\"suggested_action\":\"最初の依頼を入力する案内を追記してください。\"}],\"summary\":\"利用開始の案内を追加すると目的を満たします。\"}"}], "usage": {"input_tokens": 30, "output_tokens": 38}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_review_changes_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"初めての利用者が次に何をすればよいかが不明確です。\",\"suggested_action\":\"最初の依頼を入力する案内を追記してください。\"}],\"summary\":\"利用開始の案内を追加すると目的を満たします。\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 30,
+            "output_tokens": 38
+          }
+        }
       },
       {
         "name": "revision_success",
         "delay_ms": 700,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_revision_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# WorkCairn紹介文\n\nWorkCairnは、必要な判断だけを人に返し、AI社員が計画・作成・確認を進める、自分専用のAI会社です。まず自然な言葉で、会社に任せたい仕事を入力してください。"}], "usage": {"input_tokens": 34, "output_tokens": 36}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_revision_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "# WorkCairn紹介文\n\nWorkCairnは、必要な判断だけを人に返し、AI社員が計画・作成・確認を進める、自分専用のAI会社です。まず自然な言葉で、会社に任せたい仕事を入力してください。"
+            }
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "output_tokens": 36
+          }
+        }
       },
       {
         "name": "re_review_approve",
         "delay_ms": 700,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_review_approve_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"利用開始の案内が追加され、要件を満たしています。\"}"}], "usage": {"input_tokens": 27, "output_tokens": 22}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_review_approve_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"利用開始の案内が追加され、要件を満たしています。\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 27,
+            "output_tokens": 22
+          }
+        }
       }
     ],
     "clarification_three": [
@@ -51,29 +141,89 @@
         "name": "ceo_intent_clarification_three",
         "delay_ms": 500,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_ceo_clarify_three_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Browser Clarification Project\",\"objective\":\"3問clarificationのPresentationを確認する\",\"summary\":\"Content Writerが作成しQA Engineerが確認する\",\"steps\":[{\"kind\":\"write\",\"description\":\"clarification確認用の短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[\"Browser Gate質問1：対象読者は誰ですか？\",\"Browser Gate質問2：希望する文体は？\",\"Browser Gate質問3：掲載先はどこですか？\"]}"}], "usage": {"input_tokens": 18, "output_tokens": 42}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_ceo_clarify_three_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Browser Clarification Project\",\"objective\":\"3問clarificationのPresentationを確認する\",\"summary\":\"Content Writerが作成しQA Engineerが確認する\",\"steps\":[{\"kind\":\"write\",\"description\":\"clarification確認用の短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[\"Browser Gate質問1：対象読者は誰ですか？\",\"Browser Gate質問2：希望する文体は？\",\"Browser Gate質問3：掲載先はどこですか？\"]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 18,
+            "output_tokens": 42
+          }
+        }
       },
       {
         "name": "ceo_intent_success",
         "delay_ms": 500,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_ceo_final_three_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Browser Clarification Project\",\"objective\":\"3問clarificationのPresentationを確認する\",\"summary\":\"clarification確認用の短い成果物を作成する\",\"steps\":[{\"kind\":\"write\",\"description\":\"clarification確認用の短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 21, "output_tokens": 39}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_ceo_final_three_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Browser Clarification Project\",\"objective\":\"3問clarificationのPresentationを確認する\",\"summary\":\"clarification確認用の短い成果物を作成する\",\"steps\":[{\"kind\":\"write\",\"description\":\"clarification確認用の短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 21,
+            "output_tokens": 39
+          }
+        }
       },
       {
         "name": "task_execution_success",
         "delay_ms": 500,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_task_three_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# Clarification Gate\n\n3問clarificationのPresentation確認用成果物です。"}], "usage": {"input_tokens": 24, "output_tokens": 31}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_task_three_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "# Clarification Gate\n\n3問clarificationのPresentation確認用成果物です。"
+            }
+          ],
+          "usage": {
+            "input_tokens": 24,
+            "output_tokens": 31
+          }
+        }
       },
       {
         "name": "re_review_approve",
         "delay_ms": 500,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_review_three_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"clarification gate用の成果物として問題ありません。\"}"}], "usage": {"input_tokens": 27, "output_tokens": 22}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_review_three_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"clarification gate用の成果物として問題ありません。\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 27,
+            "output_tokens": 22
+          }
+        }
       }
     ],
     "provider_failure": [
@@ -81,22 +231,61 @@
         "name": "ceo_intent_success",
         "delay_ms": 300,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_failure_ceo_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Browser Failure Project\",\"objective\":\"Provider failureを安全に表示する\",\"summary\":\"成果物作成後のReview failureを確認する\",\"steps\":[{\"kind\":\"write\",\"description\":\"診断用の短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"成果物を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 14, "output_tokens": 28}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_failure_ceo_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Browser Failure Project\",\"objective\":\"Provider failureを安全に表示する\",\"summary\":\"成果物作成後のReview failureを確認する\",\"steps\":[{\"kind\":\"write\",\"description\":\"診断用の短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"成果物を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 14,
+            "output_tokens": 28
+          }
+        }
       },
       {
         "name": "task_execution_success",
         "delay_ms": 300,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_failure_task_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# 診断用成果物\n\nReview前までcommitされる固定成果物です。"}], "usage": {"input_tokens": 10, "output_tokens": 12}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_failure_task_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "# 診断用成果物\n\nReview前までcommitされる固定成果物です。"
+            }
+          ],
+          "usage": {
+            "input_tokens": 10,
+            "output_tokens": 12
+          }
+        }
       },
       {
         "name": "provider_typed_failure",
         "delay_ms": 300,
         "status": 429,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_rate_limit_001"},
-        "body": {"type": "error", "error": {"type": "rate_limit_error", "message": "sanitized fixture failure"}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_rate_limit_001"
+        },
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "rate_limit_error",
+            "message": "sanitized fixture failure"
+          }
+        }
       }
     ],
     "ceo_plan_steps_description_failure": [
@@ -104,8 +293,23 @@
         "name": "ceo_intent_bad_step_descriptions",
         "delay_ms": 300,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_steps_shape_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Steps Shape Gate\",\"objective\":\"steps.description shape diagnosticを確認する\",\"summary\":\"Browser Gate用\",\"steps\":[{\"kind\":\"write\",\"description\":\"\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"required_role\":\"QA Engineer\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 14, "output_tokens": 28}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_steps_shape_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Steps Shape Gate\",\"objective\":\"steps.description shape diagnosticを確認する\",\"summary\":\"Browser Gate用\",\"steps\":[{\"kind\":\"write\",\"description\":\"\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"required_role\":\"QA Engineer\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 14,
+            "output_tokens": 28
+          }
+        }
       }
     ],
     "deliverable_markdown_table": [
@@ -113,41 +317,627 @@
         "name": "ceo_intent_success",
         "delay_ms": 300,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_table_ceo_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Deliverable Table Gate\",\"objective\":\"Markdown tableを含む成果物を確認する\",\"summary\":\"表付きの成果物を作成し独立Reviewする\",\"steps\":[{\"kind\":\"write\",\"description\":\"表を含む短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 16, "output_tokens": 30}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_table_ceo_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Deliverable Table Gate\",\"objective\":\"Markdown tableを含む成果物を確認する\",\"summary\":\"表付きの成果物を作成し独立Reviewする\",\"steps\":[{\"kind\":\"write\",\"description\":\"表を含む短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 16,
+            "output_tokens": 30
+          }
+        }
       },
       {
         "name": "task_execution_table",
         "delay_ms": 300,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_table_task_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# 比較表\n\n表形式で内容をまとめます。\n\n| 項目 | 内容 |\n|---|---|\n| A | B |\n| C | D |"}], "usage": {"input_tokens": 12, "output_tokens": 20}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_table_task_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "# 比較表\n\n表形式で内容をまとめます。\n\n| 項目 | 内容 |\n|---|---|\n| A | B |\n| C | D |"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
       },
       {
         "name": "review_approve",
         "delay_ms": 300,
         "status": 200,
-        "headers": {"content-type": "application/json", "request-id": "req_browser_table_review_001"},
-        "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"表の内容は要件を満たしています。\"}"}], "usage": {"input_tokens": 20, "output_tokens": 14}}
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_table_review_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"表の内容は要件を満たしています。\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 20,
+            "output_tokens": 14
+          }
+        }
       }
     ],
     "session_list_overflow": [
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_000"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 0\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_001"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 1\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_002"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 2\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_003"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 3\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_004"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 4\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_005"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 5\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_006"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 6\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_007"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 7\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_008"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 8\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_009"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 9\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_010"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 10\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_011"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 11\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_012"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 12\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_013"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 13\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_014"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 14\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}},
-      {"name": "ceo_intent_success", "delay_ms": 40, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_scroll_015"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"project_name\":\"Scroll Gate Project 15\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"}], "usage": {"input_tokens": 12, "output_tokens": 20}}}
-    ]
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_000"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 0\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_001"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 1\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_002"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 2\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_003"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 3\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_004"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 4\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_005"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 5\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_006"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 6\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_007"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 7\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_008"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 8\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_009"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 9\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_010"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 10\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_011"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 11\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_012"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 12\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_013"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 13\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_014"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 14\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "name": "ceo_intent_success",
+        "delay_ms": 40,
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "request-id": "req_browser_scroll_015"
+        },
+        "body": {
+          "model": "claude-sonnet-5",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"project_name\":\"Scroll Gate Project 15\",\"objective\":\"scrollbarとmenu overlapを確認する\",\"summary\":\"Browser Gate用の短い依頼です\",\"steps\":[{\"kind\":\"write\",\"description\":\"短い成果物を作成する\",\"required_role\":\"Content Writer\"},{\"kind\":\"review\",\"description\":\"内容を独立して確認する\"}],\"ceo_questions\":[]}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 20
+          }
+        }
+      }
+    ],
+    "parallel_synthesis": {
+      "mode": "shape_queue",
+      "structured": [
+        {
+          "name": "ceo_intent_parallel_success",
+          "delay_ms": 300,
+          "status": 200,
+          "headers": {
+            "content-type": "application/json",
+            "request-id": "req_browser_ceo_parallel_001"
+          },
+          "body": {
+            "model": "claude-sonnet-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"project_name\": \"Parallel Synthesis Project\", \"objective\": \"3つの調査を並行して実施し、結果を統合する\", \"summary\": \"市場調査・競合調査・顧客分析を並行し、販売戦略へ統合する\", \"steps\": [{\"kind\": \"research\", \"description\": \"市場動向を調査する\", \"required_role\": \"Content Writer\", \"parallel_with_previous\": false}, {\"kind\": \"research\", \"description\": \"競合サービスを調査する\", \"required_role\": \"Content Writer\", \"parallel_with_previous\": true}, {\"kind\": \"analyze\", \"description\": \"既存顧客の傾向を分析する\", \"required_role\": \"Content Writer\", \"parallel_with_previous\": true}, {\"kind\": \"write\", \"description\": \"3つの調査結果を統合し販売戦略を作成する\", \"required_role\": \"Content Writer\", \"parallel_with_previous\": false}], \"ceo_questions\": []}"
+              }
+            ],
+            "usage": {
+              "input_tokens": 30,
+              "output_tokens": 60
+            }
+          }
+        },
+        {
+          "name": "review_approve_parallel",
+          "delay_ms": 300,
+          "status": 200,
+          "headers": {
+            "content-type": "application/json",
+            "request-id": "req_browser_review_parallel_001"
+          },
+          "body": {
+            "model": "claude-sonnet-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"問題ありません。\"}"
+              }
+            ],
+            "usage": {
+              "input_tokens": 20,
+              "output_tokens": 15
+            }
+          }
+        },
+        {
+          "name": "review_approve_parallel",
+          "delay_ms": 300,
+          "status": 200,
+          "headers": {
+            "content-type": "application/json",
+            "request-id": "req_browser_review_parallel_001"
+          },
+          "body": {
+            "model": "claude-sonnet-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"問題ありません。\"}"
+              }
+            ],
+            "usage": {
+              "input_tokens": 20,
+              "output_tokens": 15
+            }
+          }
+        },
+        {
+          "name": "review_approve_parallel",
+          "delay_ms": 300,
+          "status": 200,
+          "headers": {
+            "content-type": "application/json",
+            "request-id": "req_browser_review_parallel_001"
+          },
+          "body": {
+            "model": "claude-sonnet-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"問題ありません。\"}"
+              }
+            ],
+            "usage": {
+              "input_tokens": 20,
+              "output_tokens": 15
+            }
+          }
+        },
+        {
+          "name": "review_approve_parallel",
+          "delay_ms": 300,
+          "status": 200,
+          "headers": {
+            "content-type": "application/json",
+            "request-id": "req_browser_review_parallel_001"
+          },
+          "body": {
+            "model": "claude-sonnet-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"問題ありません。\"}"
+              }
+            ],
+            "usage": {
+              "input_tokens": 20,
+              "output_tokens": 15
+            }
+          }
+        }
+      ],
+      "unstructured": [
+        {
+          "name": "task_execution_parallel",
+          "delay_ms": 400,
+          "status": 200,
+          "headers": {
+            "content-type": "application/json",
+            "request-id": "req_browser_task_parallel_001"
+          },
+          "body": {
+            "model": "claude-sonnet-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "# 調査結果\n\n本文です。"
+              }
+            ],
+            "usage": {
+              "input_tokens": 20,
+              "output_tokens": 20
+            }
+          }
+        },
+        {
+          "name": "task_execution_parallel",
+          "delay_ms": 400,
+          "status": 200,
+          "headers": {
+            "content-type": "application/json",
+            "request-id": "req_browser_task_parallel_001"
+          },
+          "body": {
+            "model": "claude-sonnet-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "# 調査結果\n\n本文です。"
+              }
+            ],
+            "usage": {
+              "input_tokens": 20,
+              "output_tokens": 20
+            }
+          }
+        },
+        {
+          "name": "task_execution_parallel",
+          "delay_ms": 400,
+          "status": 200,
+          "headers": {
+            "content-type": "application/json",
+            "request-id": "req_browser_task_parallel_001"
+          },
+          "body": {
+            "model": "claude-sonnet-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "# 調査結果\n\n本文です。"
+              }
+            ],
+            "usage": {
+              "input_tokens": 20,
+              "output_tokens": 20
+            }
+          }
+        },
+        {
+          "name": "task_execution_parallel",
+          "delay_ms": 400,
+          "status": 200,
+          "headers": {
+            "content-type": "application/json",
+            "request-id": "req_browser_task_parallel_001"
+          },
+          "body": {
+            "model": "claude-sonnet-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "# 調査結果\n\n本文です。"
+              }
+            ],
+            "usage": {
+              "input_tokens": 20,
+              "output_tokens": 20
+            }
+          }
+        }
+      ]
+    }
   }
 }

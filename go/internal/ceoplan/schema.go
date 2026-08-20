@@ -70,6 +70,14 @@ func IntentJSONSchema(allowedRoles []string) (map[string]any, error) {
 		"type": "string", "enum": allowedRoles,
 		"description": "The exact Organization role required for this step.",
 	}
+	parallelWithPreviousSchema := map[string]any{
+		"type": "boolean",
+		"description": "True only if this step can start at the same time as the step immediately before it " +
+			"(their work does not depend on each other). False (the default) means this step needs the previous " +
+			"step's result first, or this is the first step. Set true for independent branches of work that could " +
+			"run side by side (e.g. separate research angles); set it back to false on a later step that needs to " +
+			"combine or build on those parallel steps' results.",
+	}
 	stepProperties := func(kind map[string]any) map[string]any {
 		return map[string]any{
 			"kind": kind,
@@ -82,8 +90,9 @@ func IntentJSONSchema(allowedRoles []string) (map[string]any, error) {
 			// instruction stays a short, non-duplicated pointer at this
 			// same rule -- this description is the one place the full
 			// wording lives.
-			"description":   intentString("The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value."),
-			"required_role": roleSchema,
+			"description":            intentString("The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value."),
+			"required_role":          roleSchema,
+			"parallel_with_previous": parallelWithPreviousSchema,
 		}
 	}
 	nonReviewStep := map[string]any{
@@ -91,7 +100,7 @@ func IntentJSONSchema(allowedRoles []string) (map[string]any, error) {
 		"properties": stepProperties(map[string]any{
 			"type": "string", "enum": []string{"write", "research", "analyze", "implement"},
 		}),
-		"required":             []string{"kind", "description", "required_role"},
+		"required":             []string{"kind", "description", "required_role", "parallel_with_previous"},
 		"additionalProperties": false,
 	}
 	reviewStep := map[string]any{

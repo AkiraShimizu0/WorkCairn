@@ -11,6 +11,37 @@ import (
 
 const SchemaVersion = "workcairn-autonomy.v1"
 
+// DefaultMaxParallelTasks is the Go-decided ceiling on how many
+// dependency-ready Tasks a Workflow may dispatch at once (ADR-0051). It is
+// conservative on purpose: Public Beta runs one Provider connection per
+// Mac, and 3 concurrent Provider calls is enough to make the CEO's example
+// shape (independent research/analysis branches) visibly parallel without
+// saturating a single personal machine's one Provider key. This is not
+// caller-configurable input -- like every other field on this fixed-floor
+// Contract, Go decides it.
+const DefaultMaxParallelTasks = 3
+
+// MaxParallelTasksCeiling bounds MaxParallelTasks even if a future caller
+// path raises it above DefaultMaxParallelTasks -- it must never exceed a
+// small, defensible number regardless of how the value is sourced.
+const MaxParallelTasksCeiling = 10
+
+// DefaultMaxRevisionCount is the Go-decided ceiling on how many times one
+// Task's own Request Changes -> Revision cycle may repeat before Reviewed
+// Workflow execution stops creating further Revision Tasks for it (Revision
+// Guard, ADR-0051). It exists because parallel dispatch means several
+// branches can each independently churn through Revision cycles at once,
+// multiplying Provider calls in a way a single sequential Workflow never
+// could -- two revisions (three attempts total: the original plus two
+// Request Changes rounds) is enough to let a genuinely fixable Deliverable
+// converge without letting one stuck branch consume an unbounded share of
+// the Workflow's Provider budget.
+const DefaultMaxRevisionCount = 2
+
+// MaxRevisionCountCeiling bounds MaxRevisionCount even if a future caller
+// path raises it above DefaultMaxRevisionCount.
+const MaxRevisionCountCeiling = 5
+
 var ErrInvalidContract = errors.New("invalid Autonomy Contract")
 
 type Permission string
@@ -35,6 +66,17 @@ type Contract struct {
 	AllowedEmployeeIDs []string   `json:"allowed_employee_ids"`
 	AllowedModels      []string   `json:"allowed_models"`
 	ExecutionLimit     int        `json:"execution_limit"`
+	// MaxParallelTasks bounds how many dependency-ready Tasks a Workflow may
+	// dispatch at once (ADR-0051, additive). Like every other field on this
+	// Contract it is Go-decided, never caller input: NewStandard always sets
+	// it to DefaultMaxParallelTasks.
+	MaxParallelTasks int `json:"max_parallel_tasks,omitempty"`
+	// MaxRevisionCount bounds how many Request Changes -> Revision cycles one
+	// Task's own branch may repeat before Reviewed Workflow execution stops
+	// creating further Revision Tasks for it (ADR-0051 Revision Guard,
+	// additive). Go-decided like MaxParallelTasks; NewStandard always sets it
+	// to DefaultMaxRevisionCount.
+	MaxRevisionCount int `json:"max_revision_count,omitempty"`
 }
 
 func NewStandard(employeeIDs, models []string, executionLimit int) (Contract, error) {
@@ -42,6 +84,7 @@ func NewStandard(employeeIDs, models []string, executionLimit int) (Contract, er
 		SchemaVersion: SchemaVersion, TaskExecution: PermissionDelegated, Review: PermissionRequired,
 		Revision: PermissionDelegated, ExternalPublish: PermissionSeparateApprove, Spending: PermissionForbidden,
 		AllowedEmployeeIDs: canonical(employeeIDs), AllowedModels: canonical(models), ExecutionLimit: executionLimit,
+		MaxParallelTasks: DefaultMaxParallelTasks, MaxRevisionCount: DefaultMaxRevisionCount,
 	}
 	return contract, contract.Validate()
 }
@@ -51,10 +94,40 @@ func (contract Contract) Validate() error {
 		contract.Review != PermissionRequired || contract.Revision != PermissionDelegated ||
 		contract.ExternalPublish != PermissionSeparateApprove || contract.Spending != PermissionForbidden ||
 		contract.ExecutionLimit < 1 || contract.ExecutionLimit > 100 ||
+		// 0 is accepted as "unset" (a Contract persisted before this field
+		// existed, or decoded from a pre-ADR-0051 record) and treated as
+		// DefaultMaxParallelTasks by EffectiveMaxParallelTasks -- only a
+		// negative or over-ceiling value is actually invalid.
+		contract.MaxParallelTasks < 0 || contract.MaxParallelTasks > MaxParallelTasksCeiling ||
+		// Same "0 is unset/legacy" backward-compatible rule as
+		// MaxParallelTasks: a Contract persisted before MaxRevisionCount
+		// existed decodes with the field absent (Go zero value 0), which
+		// EffectiveMaxRevisionCount treats as DefaultMaxRevisionCount.
+		contract.MaxRevisionCount < 0 || contract.MaxRevisionCount > MaxRevisionCountCeiling ||
 		!canonicalList(contract.AllowedEmployeeIDs) || !canonicalList(contract.AllowedModels) {
 		return ErrInvalidContract
 	}
 	return nil
+}
+
+// EffectiveMaxParallelTasks is what callers should dispatch against: an
+// unset (zero-value / pre-ADR-0051) Contract behaves as
+// DefaultMaxParallelTasks, never as "0 concurrency allowed".
+func (contract Contract) EffectiveMaxParallelTasks() int {
+	if contract.MaxParallelTasks <= 0 {
+		return DefaultMaxParallelTasks
+	}
+	return contract.MaxParallelTasks
+}
+
+// EffectiveMaxRevisionCount is what callers should enforce per Task branch:
+// an unset (zero-value / pre-Revision-Guard) Contract behaves as
+// DefaultMaxRevisionCount, never as "0 revisions allowed".
+func (contract Contract) EffectiveMaxRevisionCount() int {
+	if contract.MaxRevisionCount <= 0 {
+		return DefaultMaxRevisionCount
+	}
+	return contract.MaxRevisionCount
 }
 
 func (contract Contract) AllowsEmployee(employeeID string) bool {

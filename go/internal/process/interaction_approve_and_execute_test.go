@@ -5,19 +5,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 // writeApproveAndExecuteVault creates a fresh temporary Vault with a
@@ -77,6 +83,313 @@ func writeApprovalRequiredSession(t *testing.T, root, sessionID, projectName str
 		t.Fatal(err)
 	}
 	return withPlan, digest
+}
+
+// writeApproveAndExecuteParallelPlan is the fan-out/fan-in shape ADR-0051's
+// production wiring targets: PROPOSED-001/002/003 are mutually independent,
+// PROPOSED-004 (Synthesis) depends on all three -- exactly the shape
+// ceoplan.NormalizeIntent now builds from parallel_with_previous (proven
+// separately at the ceoplan package level); this Plan is constructed
+// directly here so this test can focus on what happens *after* a Plan with
+// this shape already exists: single approval, automatic parallel dispatch,
+// Synthesis gating, correlation, and idempotency through the real
+// interaction.plan.approve_and_execute production path.
+func writeApproveAndExecuteParallelPlan(projectName string) ceoplan.Plan {
+	assignee := "PLAN-001"
+	return ceoplan.Plan{
+		ProjectName: projectName, Objective: "販売戦略をまとめる", Summary: "概要",
+		RequiredDepartments: []string{"企画部"}, RequiredRoles: []string{"Product Manager"},
+		AssignedExistingEmployees: []string{assignee}, MissingRoles: []string{},
+		ProposedTasks: []ceoplan.ProposedTask{
+			{ProposalID: "PROPOSED-001", Title: "市場調査を実施する", AssigneeID: &assignee, DependencyIDs: []string{}, Rationale: "必要"},
+			{ProposalID: "PROPOSED-002", Title: "競合調査を実施する", AssigneeID: &assignee, DependencyIDs: []string{}, Rationale: "必要"},
+			{ProposalID: "PROPOSED-003", Title: "顧客分析を実施する", AssigneeID: &assignee, DependencyIDs: []string{}, Rationale: "必要"},
+			{
+				ProposalID: "PROPOSED-004", Title: "販売戦略へ統合する", AssigneeID: &assignee,
+				DependencyIDs: []string{"PROPOSED-001", "PROPOSED-002", "PROPOSED-003"}, Rationale: "必要",
+			},
+		},
+		Risks: []string{}, CEOQuestions: []string{}, PlanOnly: true,
+	}
+}
+
+// writeApprovalRequiredSessionWithPlan generalizes writeApprovalRequiredSession
+// to accept an arbitrary Canonical Plan (e.g. the fan-out/fan-in shape
+// above), for tests exercising Plan shapes beyond the single-Task default.
+func writeApprovalRequiredSessionWithPlan(t *testing.T, root, sessionID string, plan ceoplan.Plan, at time.Time) (interaction.Record, string) {
+	t.Helper()
+	record, err := interaction.New(sessionID, "販売戦略をまとめて", "Claude Sonnet 5", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withPlan, err := record.RecordPlan(plan, at.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, digest, _ := withPlan.CurrentPlan()
+	store, err := vault.NewInteractionStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(context.Background(), withPlan, record.Version); err != nil {
+		t.Fatal(err)
+	}
+	return withPlan, digest
+}
+
+// parallelApproveAndExecuteMockServer answers by inspecting the request
+// shape (output_config present => a structured Review call, absent => a
+// Task execution call) rather than a sequential counter, since parallel
+// dispatch means requests do not arrive in any fixed order. It is safe for
+// concurrent use. If failOnContains is non-empty, a Task execution request
+// whose prompt content contains that substring (i.e. names one specific
+// Task by its title) fails with a 503 instead of succeeding.
+func parallelApproveAndExecuteMockServer(t *testing.T, failOnContains string) (*httptest.Server, func() int) {
+	t.Helper()
+	var mu sync.Mutex
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		var decoded struct {
+			OutputConfig json.RawMessage `json:"output_config"`
+			Messages     []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+			System string `json:"system"`
+		}
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			t.Errorf("decode Provider request: %v", err)
+		}
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		structured := len(decoded.OutputConfig) > 0
+		if !structured && failOnContains != "" {
+			combined := decoded.System
+			for _, message := range decoded.Messages {
+				combined += message.Content
+			}
+			if strings.Contains(combined, failOnContains) {
+				response.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = response.Write([]byte(`{"error":{"type":"overloaded_error","message":"unavailable"}}`))
+				return
+			}
+		}
+		var output string
+		if structured {
+			output = reviewProviderOutput(review.VerdictApprove)
+		} else {
+			output = "# deliverable\n\n本文"
+		}
+		encoded, _ := json.Marshal(map[string]any{
+			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": output}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+		response.Header().Set("content-type", "application/json")
+		_, _ = response.Write(encoded)
+	}))
+	return server, func() int { mu.Lock(); defer mu.Unlock(); return calls }
+}
+
+// TestInteractionPlanApproveAndExecuteAutomaticallyParallelizesIndependentTasksThenSynthesis
+// is the production-wiring proof (ADR-0051 Checkpoint): the CEO's single
+// "この内容で進める" approval -- exactly the same interaction.plan.approve_and_execute
+// Command ADR-0049 already established, no new operation, no parallel/
+// sequential/concurrency choice exposed anywhere -- reaches a Plan with an
+// independent-branch + Synthesis shape, and WorkCairn decides on its own,
+// from the dependency graph alone, to dispatch the three independent Tasks
+// concurrently through real HTTP before letting Synthesis run. It also
+// proves the whole chain -- interaction.plan.approve_and_execute (root) ->
+// ceo_plan.apply -> workflow.reviewed.execute -> Task A/B/C -> Synthesis --
+// shares one CorrelationID, and that replaying the same outer Command ID
+// never re-dispatches (idempotent, not automatic retry).
+func TestInteractionPlanApproveAndExecuteAutomaticallyParallelizesIndependentTasksThenSynthesis(t *testing.T) {
+	root := writeApproveAndExecuteVault(t)
+	at := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
+	sessionID, projectName := "SESSION-APPROVE-PARALLEL-001", "並列販売戦略アプリ"
+	_, digest := writeApprovalRequiredSessionWithPlan(t, root, sessionID, writeApproveAndExecuteParallelPlan(projectName), at)
+
+	server, callCount := parallelApproveAndExecuteMockServer(t, "")
+	defer server.Close()
+
+	var correlationMu sync.Mutex
+	var taskEvents []event.Event
+	observer := event.Observer{
+		Types: []event.Type{event.TaskStarted, event.TaskCompleted},
+		Handler: func(_ context.Context, published event.Event) error {
+			correlationMu.Lock()
+			taskEvents = append(taskEvents, published)
+			correlationMu.Unlock()
+			return nil
+		},
+	}
+
+	outerCommandID := "CMD-APPROVE-PARALLEL-001"
+	input := InteractionApplyInput{
+		VaultRoot: root, SessionID: sessionID, ExpectedVersion: 2, ProjectID: "PROJECT-PARALLEL-001",
+		PlanDigest: digest, CurrentTime: at.Add(2 * time.Minute), CommandID: outerCommandID,
+		EventObservers: []event.Observer{observer},
+	}
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL}
+	result, err := ExecuteInteractionPlanApproveAndExecute(context.Background(), input, provider, server.Client(), true)
+	if err != nil || result.Apply.Status != "applied" || result.Workflow.Status != "completed" ||
+		!result.SessionCommitted || result.Session.State != interaction.StateCompleted || len(result.Workflow.Tasks) != 4 {
+		t.Fatalf("approve_and_execute = %#v, %v", result, err)
+	}
+	store, err := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: root, ProjectName: projectName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, taskID := range []string{"TASK-001", "TASK-002", "TASK-003", "TASK-004"} {
+		stored, getErr := store.Get(context.Background(), taskID)
+		if getErr != nil || stored.Status != task.StatusCompleted {
+			t.Fatalf("Task %s = %#v, %v", taskID, stored, getErr)
+		}
+	}
+
+	// Correlation: every Task Event this single CEO approval produced --
+	// across ceo_plan.apply-created Tasks and both parallel-round dispatch
+	// rounds (the 3 branches, then Synthesis) -- shares the outer
+	// interaction.plan.approve_and_execute Command ID as CorrelationID, not
+	// the nearer workflow.reviewed.execute child.
+	correlationMu.Lock()
+	capturedEvents := append([]event.Event(nil), taskEvents...)
+	correlationMu.Unlock()
+	if len(capturedEvents) == 0 {
+		t.Fatal("no Task Started/Completed Events observed")
+	}
+	causationByTask := map[string]map[string]bool{}
+	for _, current := range capturedEvents {
+		if current.CorrelationID != outerCommandID {
+			t.Fatalf("event %s (%s) CorrelationID = %q, want the outer approve_and_execute Command ID %q",
+				current.Type, current.AggregateID, current.CorrelationID, outerCommandID)
+		}
+		if current.CausationID == "" {
+			t.Fatalf("event %s (%s) has empty CausationID", current.Type, current.AggregateID)
+		}
+		if causationByTask[current.AggregateID] == nil {
+			causationByTask[current.AggregateID] = map[string]bool{}
+		}
+		causationByTask[current.AggregateID][current.CausationID] = true
+	}
+	if len(causationByTask) != 4 {
+		t.Fatalf("observed Task Events for %d distinct Tasks, want 4: %#v", len(causationByTask), causationByTask)
+	}
+	seenCausation := map[string]bool{}
+	for taskID, causations := range causationByTask {
+		if len(causations) != 1 {
+			t.Fatalf("Task %s had %d distinct CausationIDs, want exactly 1: %#v", taskID, len(causations), causations)
+		}
+		for id := range causations {
+			if seenCausation[id] {
+				t.Fatalf("CausationID %q reused across Tasks -- parallel branches must not mix identities", id)
+			}
+			seenCausation[id] = true
+		}
+	}
+
+	// Idempotency: replaying the same outer Command ID must not re-dispatch
+	// any Task, re-call the Provider, or produce a different result.
+	callsAfterFirst := callCount()
+	beforeReplay := planVaultSnapshot(t, root)
+	replayed, replayErr := ExecuteInteractionPlanApproveAndExecute(context.Background(), input, provider, server.Client(), true)
+	if replayErr != nil || callCount() != callsAfterFirst || !reflect.DeepEqual(beforeReplay, planVaultSnapshot(t, root)) ||
+		replayed.Workflow.Status != result.Workflow.Status || len(replayed.Workflow.Tasks) != 4 {
+		t.Fatalf("replay = %#v, %v calls=%d (want %d)", replayed, replayErr, callCount(), callsAfterFirst)
+	}
+}
+
+// TestInteractionPlanApproveAndExecuteBranchFailurePreservesOtherBranchesAndNeverFalselyCompletesSynthesis
+// is the conservative branch-failure policy proof: when one of three
+// independent Tasks fails, the other two are not lost, the Workflow is
+// never reported as a plain success, and Synthesis -- which depends on all
+// three -- is never dispatched at all (the round that would have produced
+// its readiness never completes).
+func TestInteractionPlanApproveAndExecuteBranchFailurePreservesOtherBranchesAndNeverFalselyCompletesSynthesis(t *testing.T) {
+	root := writeApproveAndExecuteVault(t)
+	at := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
+	sessionID, projectName := "SESSION-APPROVE-PARALLEL-FAIL-001", "並列販売戦略障害アプリ"
+	_, digest := writeApprovalRequiredSessionWithPlan(t, root, sessionID, writeApproveAndExecuteParallelPlan(projectName), at)
+
+	// TASK-002 ("競合調査を実施する") fails every attempt; TASK-001/TASK-003
+	// succeed, and TASK-004 (Synthesis) must never even be attempted.
+	server, _ := parallelApproveAndExecuteMockServer(t, "競合調査を実施する")
+	defer server.Close()
+
+	outerCommandID := "CMD-APPROVE-PARALLEL-FAIL-001"
+	input := InteractionApplyInput{
+		VaultRoot: root, SessionID: sessionID, ExpectedVersion: 2, ProjectID: "PROJECT-PARALLEL-FAIL-001",
+		PlanDigest: digest, CurrentTime: at.Add(2 * time.Minute), CommandID: outerCommandID,
+	}
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL}
+	result, err := ExecuteInteractionPlanApproveAndExecute(context.Background(), input, provider, server.Client(), true)
+	if err == nil {
+		t.Fatal("a failed branch must not be reported as overall success")
+	}
+	if result.Workflow.Status == "completed" {
+		t.Fatalf("Workflow.Status = completed, want a failure/partial status: %#v", result.Workflow)
+	}
+	byID := map[string]service.ReviewedWorkflowTaskResult{}
+	for _, current := range result.Workflow.Tasks {
+		byID[current.TaskID] = current
+	}
+	if _, ok := byID["TASK-001"]; !ok {
+		t.Fatalf("TASK-001's (independent, successful) result was lost: %#v", result.Workflow.Tasks)
+	}
+	if _, ok := byID["TASK-003"]; !ok {
+		t.Fatalf("TASK-003's (independent, successful) result was lost: %#v", result.Workflow.Tasks)
+	}
+	if _, ok := byID["TASK-004"]; ok {
+		t.Fatalf("Synthesis (TASK-004) must never be dispatched when a dependency branch failed: %#v", result.Workflow.Tasks)
+	}
+	store, err := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: root, ProjectName: projectName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, taskID := range []string{"TASK-001", "TASK-003"} {
+		stored, getErr := store.Get(context.Background(), taskID)
+		if getErr != nil || stored.Status != task.StatusCompleted {
+			t.Fatalf("independent Task %s must have completed despite TASK-002's failure: %#v, %v", taskID, stored, getErr)
+		}
+	}
+	if stored, getErr := store.Get(context.Background(), "TASK-004"); getErr != nil || stored.Status == task.StatusCompleted {
+		t.Fatalf("Synthesis Task must remain unstarted, not falsely completed: %#v, %v", stored, getErr)
+	}
+}
+
+// TestInteractionPlanApproveAndExecuteAlreadyCancelledContextDispatchesNothing
+// proves cancellation propagates through the full production chain: a
+// context cancelled before the call starts must stop before any Task is
+// dispatched or any Provider call is made, and must never guess a Task into
+// a completed state.
+func TestInteractionPlanApproveAndExecuteAlreadyCancelledContextDispatchesNothing(t *testing.T) {
+	root := writeApproveAndExecuteVault(t)
+	at := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
+	sessionID, projectName := "SESSION-APPROVE-PARALLEL-CANCEL-001", "並列販売戦略キャンセルアプリ"
+	_, digest := writeApprovalRequiredSessionWithPlan(t, root, sessionID, writeApproveAndExecuteParallelPlan(projectName), at)
+
+	server, callCount := parallelApproveAndExecuteMockServer(t, "")
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	outerCommandID := "CMD-APPROVE-PARALLEL-CANCEL-001"
+	input := InteractionApplyInput{
+		VaultRoot: root, SessionID: sessionID, ExpectedVersion: 2, ProjectID: "PROJECT-PARALLEL-CANCEL-001",
+		PlanDigest: digest, CurrentTime: at.Add(2 * time.Minute), CommandID: outerCommandID,
+	}
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL}
+	_, err := ExecuteInteractionPlanApproveAndExecute(ctx, input, provider, server.Client(), true)
+	if err == nil {
+		t.Fatal("ExecuteInteractionPlanApproveAndExecute() with an already-cancelled context must fail, not silently succeed")
+	}
+	if calls := callCount(); calls != 0 {
+		t.Fatalf("Provider calls = %d, want 0 (no dispatch after cancellation)", calls)
+	}
 }
 
 // TestInteractionPlanApproveAndExecuteSucceedsAndRecordsBothChildLedgers is

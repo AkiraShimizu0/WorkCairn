@@ -321,16 +321,18 @@ mobile attention表示は現在outer／child Command IDとLedger stateまでで�
 - Vault path、秘密情報、Prompt、Provider responseをclientへ出さない
 - normal Workflowのbusiness ruleやSession stateを変更しない
 
-## Next 2 — Leverage Engine Foundation (Design)
+## Completed — Leverage Engine Foundation and Production Wiring
 
-ADR-0051で、1回のCEO依頼から複数Taskを安全に並列実行し統合するLeverage Engineの最小設計を確定しました。調査の結果、Decomposition Planner（`ceoplan`）、Dependency model（`workflow`／`project`）、単一承認chain（ADR-0049）は既に実装済みであり、新規実装が必要なのは以下だけです。
+ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全に自動並列実行され、Synthesisで統合されるところまでを、Public Betaの実際のCommand経路（`interaction.plan.approve_and_execute`）へ配線しました。
 
-- `go/internal/workflow.EvaluateAllReadiness`: 依存関係を満たした全Readyタスクを返す純粋関数（既存`EvaluateReadiness`の兄弟）
-- `ReviewedWorkflowRunService`の並列dispatch拡張（bounded goroutine、既存`ExecuteTask → ExecuteReview → 条件付きExecuteRevision`分岐を束単位で実行）
-- Autonomy Contract（`workcairn-autonomy.v1`）へのadditive LoopGuard／Budget Safetyフィールド（`MaxGeneratedTasks`／`MaxParallelTasks`／`MaxRevisionCount`等）
-- `event.Event`の既存`CorrelationID`／`CausationID`フィールドの初回活用（lineage、Task Domain自体は無変更）
+- `go/internal/workflow.EvaluateAllReadiness`: 依存関係を満たした全Readyタスクを返す純粋関数（既存`EvaluateReadiness`の兄弟、既存`ValidateDependencies`を再利用）
+- `ReviewedWorkflowRunService.RunParallel`: bounded goroutine poolによる並列dispatch（束＝1ラウンド単位で終端を待って次ラウンドへ）。唯一のoperation`workflow.reviewed.execute`（`process.ExecuteReviewedWorkflow`）が常にこれを駆動し、readyなTaskが1件なら逐次相当、複数件ならGoが自動的に並列実行する。**parallel／sequential／concurrencyを選ぶ経路はどこにも存在しない**。新operationは追加していない（前段Checkpointで追加した`workflow.reviewed.execute.parallel`は削除し、既存operationへ統合した）
+- `ceoplan.IntentStep.ParallelWithPrevious`: LLMが供給する唯一のfan-out/fan-in signal（「直前のstepと同時に着手できるか」の1 boolean）。Go（`NormalizeIntent`）がこの signalの列から依存グラフを構造的に構築する（1層fan-out＋1層fan-in）。LLMは依存関係IDやグラフ構造を一切出力しない
+- Autonomy Contract（`workcairn-autonomy.v1`）への`MaxParallelTasks`（既定3）／`MaxRevisionCount`（既定2、Revision Guard、branch独立counting）追加。`ceoplan.MaxGeneratedTasks`（既定5、Plan生成側のLoopGuard、Autonomy Contractとは別のライフサイクルとして意図的に分離）
+- `event.Event.CorrelationID`は`interaction.plan.approve_and_execute`の外側Command IDを一貫してroot、`CausationID`は各段階の子Command ID
+- Synthesis（複数branch統合Task）は新Serviceを持たず、依存関係を持つ通常のTaskとして、実Command経路・実HTTPのEnd-to-EndテストとBrowser Gateで動作確認済み
 
-最初のvertical sliceは並列dispatchの実行側（decomposition側は既存流用）に限定し、再帰分解、Specialist Routing実装、No Progress Detector実装、Budget Guardの実測強制は含めません。
+対象外のまま（将来の別ADR候補）：再帰分解（Taskが自分の子Taskを動的生成すること）、Specialist Routingの実装、No Progress Detectorの実装、Budget Guard（`MaxTokens`/`MaxCost`/`MaxRuntime`/`MaxToolCalls`）の実測・強制、`MaxChildTasksPerTask`/`MaxTaskDepth`、DEGRADE Policy。詳細は[ADR-0051](adr/ADR-0051-leverage-engine-parallel-decomposition-foundation.md)を参照してください。
 
 ## Completed — Public Beta Go Only Repository
 

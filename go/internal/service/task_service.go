@@ -92,7 +92,7 @@ func (service *TaskService) Create(ctx context.Context, input task.CreateInput) 
 	if err != nil {
 		return task.Task{}, err
 	}
-	published, err := newTaskEvent(event.TaskCreated, created, "")
+	published, err := newTaskEvent(ctx, event.TaskCreated, created, "")
 	if err != nil {
 		return task.Task{}, err
 	}
@@ -184,7 +184,7 @@ func (service *TaskService) mutate(
 	if err != nil {
 		return task.Task{}, err
 	}
-	published, err := newTaskEvent(eventType, next, reason)
+	published, err := newTaskEvent(ctx, eventType, next, reason)
 	if err != nil {
 		return task.Task{}, err
 	}
@@ -215,7 +215,7 @@ type taskEventPayload struct {
 	Reason     string      `json:"reason,omitempty"`
 }
 
-func newTaskEvent(eventType event.Type, current task.Task, reason string) (event.Event, error) {
+func newTaskEvent(ctx context.Context, eventType event.Type, current task.Task, reason string) (event.Event, error) {
 	payload, err := json.Marshal(taskEventPayload{
 		TaskID:     current.ID,
 		Title:      current.Title,
@@ -227,7 +227,18 @@ func newTaskEvent(eventType event.Type, current task.Task, reason string) (event
 	if err != nil {
 		return event.Event{}, fmt.Errorf("encode task event: %w", err)
 	}
-	return event.New(eventType, "task", current.ID, payload)
+	built, err := event.New(eventType, "task", current.ID, payload)
+	if err != nil {
+		return event.Event{}, err
+	}
+	// Lineage (ADR-0051): a ctx carrying an event.Correlation (attached by a
+	// caller such as ReviewedWorkflowRunService) stamps this Event with which
+	// Root Command produced it and which immediate Command caused it. A ctx
+	// with none attached leaves both fields empty, identical to today.
+	correlation := event.CorrelationFrom(ctx)
+	built.CorrelationID = correlation.CorrelationID
+	built.CausationID = correlation.CausationID
+	return built, nil
 }
 
 func newEventPublicationError(current task.Task, published event.Event, err error) error {

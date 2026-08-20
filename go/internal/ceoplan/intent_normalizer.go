@@ -49,7 +49,29 @@ const (
 	// already rejects an empty required_role on a non-review step, so this
 	// should be unreachable in practice.
 	NormalizationAssignmentRequirementMissing NormalizationFailureReason = "assignment_requirement_missing"
+	// NormalizationExcessiveTaskCount means the Intent's non-review steps
+	// would generate more Tasks than MaxGeneratedTasks allows (ADR-0051
+	// LoopGuard). Rejected before any Task identity or dependency is ever
+	// constructed — one CEO request can propose a plan, but cannot make the
+	// Provider single-handedly decide how large a decomposition Go commits
+	// to executing.
+	NormalizationExcessiveTaskCount NormalizationFailureReason = "excessive_task_count"
 )
+
+// MaxGeneratedTasks bounds how many Tasks a single CEO Plan decomposition
+// may propose (ADR-0051 LoopGuard). It is enforced here, in ceoplan, rather
+// than as a field on autonomy.Contract: Contract's lifecycle is Workflow
+// *execution* scope (ADR-0035) and is not constructed until after a Plan
+// already exists and Tasks are being readied for a Reviewed Workflow run,
+// whereas this limit must reject during Plan *generation* itself, before
+// any Task, Employee assignment, or dependency graph exists. Forcing a
+// premature or empty Workflow-scoped Contract into existence just to carry
+// this one Plan-generation-time constant would couple two lifecycles that
+// do not otherwise overlap. Like every other Go-decided limit in this
+// codebase (see process.defaultWorkflowMaxTasks), it is not caller input:
+// the LLM never sees or influences this number, and Go rejects before any
+// canonical Task is created.
+const MaxGeneratedTasks = 5
 
 // NormalizationError pairs ErrAssignmentUnresolved with a sanitized
 // NormalizationFailureReason, following the same pattern as
@@ -86,18 +108,47 @@ func NormalizeIntent(intent Intent, employees []organization.Identity, context I
 		return Plan{}, err
 	}
 
+	generatedTaskCount := 0
+	for _, step := range intent.Steps {
+		if step.Kind != IntentStepReview {
+			generatedTaskCount++
+		}
+	}
+	if generatedTaskCount > MaxGeneratedTasks {
+		return Plan{}, newNormalizationError(NormalizationExcessiveTaskCount,
+			fmt.Errorf("%w: intent proposes %d Tasks, exceeding MaxGeneratedTasks (%d)", ErrAssignmentUnresolved, generatedTaskCount, MaxGeneratedTasks))
+	}
+
 	tasks := make([]candidateTask, 0, len(intent.Steps))
 	assignedEmployees := make([]string, 0, len(intent.Steps))
 	departments := make([]string, 0, len(intent.Steps))
-	previousProposalID := ""
+	// groupMembers holds the ProposalIDs of every Task in the currently
+	// "open" fan-out group; groupUpstream holds the dependency set every
+	// member of that group shares. A step with ParallelWithPrevious==true
+	// joins the current group (taking on the same groupUpstream every other
+	// member has, so parallel siblings never depend on each other) without
+	// closing it. Any other step (ParallelWithPrevious==false, or the very
+	// first step, or a group of exactly one) depends on every current
+	// member of the open group — for a plain sequential chain that is
+	// always exactly one Task, reproducing the original linear-chain
+	// behavior byte-for-byte; for a step arriving after two or more
+	// parallel siblings, that is a genuine fan-in (Synthesis) depending on
+	// all of them — and then opens a brand-new one-member group seeded by
+	// this step, so a later step can fan out from *it* in turn. This stays
+	// Go-decided and structural throughout: the LLM only ever supplies one
+	// boolean per step (ParallelWithPrevious), never a dependency ID or
+	// graph shape (ADR-0039's existing principle, extended to fan-out/
+	// fan-in per ADR-0051).
+	var groupMembers []string
+	var groupUpstream []string
 
 	for _, step := range intent.Steps {
 		if step.Kind == IntentStepReview {
 			// Review is already automatic per Task via the existing
 			// Reviewed Workflow (ADR-0024); an explicit CEO Plan review
 			// task would duplicate that with no independent meaning. It
-			// contributes nothing to the dependency chain either — the
-			// next real step still depends on the last real step.
+			// never joins or closes a fan-out group either — the next real
+			// step's grouping is unaffected by a review step in between.
 			continue
 		}
 
@@ -130,12 +181,20 @@ func NormalizeIntent(intent Intent, employees []organization.Identity, context I
 			departments = append(departments, department)
 		}
 
-		dependencyIDs := []string{}
-		if previousProposalID != "" {
-			dependencyIDs = []string{previousProposalID}
-		}
 		proposalID := fmt.Sprintf("PROPOSED-%03d", len(tasks)+1)
-		previousProposalID = proposalID
+		joinsOpenGroup := step.ParallelWithPrevious && len(groupMembers) > 0
+		var dependencyIDs []string
+		if joinsOpenGroup {
+			dependencyIDs = append([]string{}, groupUpstream...)
+			groupMembers = append(groupMembers, proposalID)
+		} else {
+			dependencyIDs = append([]string{}, groupMembers...)
+			groupUpstream = dependencyIDs
+			groupMembers = []string{proposalID}
+		}
+		if dependencyIDs == nil {
+			dependencyIDs = []string{}
+		}
 
 		assigneeID := employeeID
 		tasks = append(tasks, candidateTask{
