@@ -2,21 +2,25 @@ package process
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
 // InteractionRecoverRevisionInput is the CEO's explicit recovery action
-// after a Revision Limit stop (ADR-0051 Revision Guard leaves the Session
-// in StateWorkflowAttentionRequired with no automatic continuation). This
+// after a Revision Limit, No Progress, or recoverable Budget stop leaves
+// the Session in StateWorkflowAttentionRequired. This
 // is deliberately its own outer Command, distinct from
 // interaction.plan.approve_and_execute: it is a fresh, explicitly approved
 // human decision, never something the Reviewed Workflow's own automatic
@@ -25,13 +29,10 @@ type InteractionRecoverRevisionInput struct {
 	VaultRoot       string
 	SessionID       string
 	ExpectedVersion uint64
-	// TaskID names the specific stalled Task (Request Changes verdict, no
-	// follow-up Revision) the CEO wants revised again. The client already
-	// knows this ID from Conversation Projection / Next().EligibleTaskIDs;
-	// Go re-validates it independently via the existing PlanRevision
-	// preflight (source_task_not_completed / review_does_not_request_changes /
-	// revision_for_review_already_exists) -- no separate classification is
-	// duplicated here.
+	// TaskID is the one evidence-derived target Next().EligibleTaskIDs
+	// exposes. For Revision Limit/No Progress it is the stalled source Task;
+	// for Budget continuation it is the already-created Revision Task. Go
+	// re-validates either shape independently before changing Session state.
 	TaskID string
 	// AdditionalGuidance is optional: a fresh CEO instruction folded into
 	// the new Revision Task's Title (see revision.Intent.AdditionalGuidance).
@@ -42,24 +43,22 @@ type InteractionRecoverRevisionInput struct {
 }
 
 type InteractionRecoverRevisionResult struct {
-	Session           interaction.Record                `json:"session"`
-	SessionCommitted  bool                              `json:"session_committed"`
-	RevisionCommandID string                            `json:"revision_command_id,omitempty"`
-	Revision          revision.Result                   `json:"revision,omitempty"`
-	WorkflowCommandID string                            `json:"workflow_command_id,omitempty"`
-	Workflow          service.ReviewedWorkflowRunResult `json:"workflow,omitempty"`
+	Session            interaction.Record                `json:"session"`
+	SessionCommitted   bool                              `json:"session_committed"`
+	RevisionCommandID  string                            `json:"revision_command_id,omitempty"`
+	Revision           revision.Result                   `json:"revision,omitempty"`
+	ContinuationTaskID string                            `json:"continuation_task_id,omitempty"`
+	WorkflowCommandID  string                            `json:"workflow_command_id,omitempty"`
+	Workflow           service.ReviewedWorkflowRunResult `json:"workflow,omitempty"`
 }
 
-// ExecuteInteractionRecoverRevision is Revision Limit Recovery's single
-// explicit Command: it durably records the CEO's recovery decision (which
-// Task, what fresh guidance), creates exactly one new Revision Task via the
-// existing, unmodified revision.execute Command, then resumes the Reviewed
-// Workflow via the same runInteractionWorkflowChain
-// interaction.plan.approve_and_execute already uses -- so an already-ready
-// Synthesis Task, or any other already-Completed branch, is never
-// re-executed: workflow.EvaluateAllReadiness (ADR-0051) simply sees the new
-// Revision Task as the only newly-ready work, exactly like resuming after a
-// MaxTasks limit_reached.
+// ExecuteInteractionRecoverRevision is the shared CEO-facing recovery
+// Command. Revision Limit/No Progress still create one new Revision Task.
+// Budget continuation instead validates and executes the one Revision Task
+// already committed before the stop; it never invokes ExecuteRevision a
+// second time. That existing Task is forced through the Reviewed Workflow
+// first, then ordinary EvaluateAllReadiness resumes Synthesis and later
+// rounds without re-executing completed sibling branches.
 //
 // Both children are independently Ledger-tracked with deterministic child
 // Command IDs derived from this outer Command's own ID
@@ -120,6 +119,23 @@ func ExecuteInteractionRecoverRevision(
 		result := InteractionRecoverRevisionResult{Session: record}
 		return result, finishDurableCommand(ctx, claim, result, ErrInteractionPrecondition, "INTERACTION_RECOVER_REVISION_FAILED", "interaction_preflight", false)
 	}
+	nextAction, nextErr := record.Next()
+	if nextErr != nil || nextAction.Operation != "interaction.workflow.recover_revision" || len(nextAction.EligibleTaskIDs) != 1 || nextAction.EligibleTaskIDs[0] != input.TaskID {
+		result := InteractionRecoverRevisionResult{Session: record}
+		return result, finishDurableCommand(ctx, claim, result, ErrInteractionPrecondition, "INTERACTION_RECOVER_REVISION_FAILED", "interaction_recovery_target", false)
+	}
+	workflowEvidence, workflowOK := record.LatestWorkflow()
+	if !workflowOK || workflowEvidence.Failure == nil {
+		result := InteractionRecoverRevisionResult{Session: record}
+		return result, finishDurableCommand(ctx, claim, result, ErrInteractionPrecondition, "INTERACTION_RECOVER_REVISION_FAILED", "interaction_recovery_target", false)
+	}
+	budgetContinuation := workflowEvidence.Failure.Code == "BUDGET_EXCEEDED"
+	if budgetContinuation {
+		if err := validateBudgetRevisionContinuation(ctx, input.VaultRoot, projectName, workflowEvidence, input.TaskID); err != nil {
+			result := InteractionRecoverRevisionResult{Session: record}
+			return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_RECOVER_REVISION_FAILED", "interaction_budget_continuation_preflight", false)
+		}
+	}
 
 	next, err := record.RecordRevisionRecoveryStarted(input.TaskID, input.AdditionalGuidance, input.CurrentTime)
 	if err != nil {
@@ -132,26 +148,30 @@ func ExecuteInteractionRecoverRevision(
 		return result, finishDurableCommand(ctx, claim, result, commitErr, "INTERACTION_RECOVER_REVISION_FAILED", "interaction_state_commit", false)
 	}
 
-	// Child 1: exactly the same standalone revision.execute Command the
+	// Child 1 for Revision Limit / No Progress: exactly the same standalone revision.execute Command the
 	// automatic path would have claimed had the Revision Guard allowed
 	// another attempt -- the only difference is this Command ID is derived
 	// from a human-approved outer Command instead of being chained
 	// automatically, and it may carry the CEO's fresh guidance.
-	revisionCommandID, err := commandledger.DeriveChildCommandID(input.CommandID, "revision.execute:"+input.TaskID)
-	if err != nil {
-		return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_RECOVER_REVISION_FAILED", "command_identity", true)
-	}
-	revised, revisionErr := ExecuteRevision(ctx, ExecuteRevisionInput{
-		RevisionPlanInput: RevisionPlanInput{
-			VaultRoot: input.VaultRoot, ProjectID: projectID, ProjectName: projectName,
-			SourceTaskID: input.TaskID, AdditionalGuidance: input.AdditionalGuidance, CurrentTime: input.CurrentTime,
-		},
-		Approved: true, CommandID: revisionCommandID, EventObservers: input.EventObservers,
-	})
-	result.RevisionCommandID, result.Revision = revisionCommandID, revised
-	if revisionErr != nil {
-		code, stage := revisionCommandFailure(revisionErr, revised)
-		return result, finishDurableCommand(ctx, claim, result, revisionErr, code, stage, true)
+	if budgetContinuation {
+		result.ContinuationTaskID = input.TaskID
+	} else {
+		revisionCommandID, identityErr := commandledger.DeriveChildCommandID(input.CommandID, "revision.execute:"+input.TaskID)
+		if identityErr != nil {
+			return result, finishDurableCommand(ctx, claim, result, identityErr, "INTERACTION_RECOVER_REVISION_FAILED", "command_identity", true)
+		}
+		revised, revisionErr := ExecuteRevision(ctx, ExecuteRevisionInput{
+			RevisionPlanInput: RevisionPlanInput{
+				VaultRoot: input.VaultRoot, ProjectID: projectID, ProjectName: projectName,
+				SourceTaskID: input.TaskID, AdditionalGuidance: input.AdditionalGuidance, CurrentTime: input.CurrentTime,
+			},
+			Approved: true, CommandID: revisionCommandID, EventObservers: input.EventObservers,
+		})
+		result.RevisionCommandID, result.Revision = revisionCommandID, revised
+		if revisionErr != nil {
+			code, stage := revisionCommandFailure(revisionErr, revised)
+			return result, finishDurableCommand(ctx, claim, result, revisionErr, code, stage, true)
+		}
 	}
 
 	// Child 2: reuse the exact same Reviewed Workflow continuation chain
@@ -168,10 +188,18 @@ func ExecuteInteractionRecoverRevision(
 		envelope.Partial, envelope.RecoveryRequired = true, true
 		return result, finishDurableCommandWithEnvelope(ctx, claim, result, err, &envelope, true)
 	}
-	workflowResult, envelope, workflowErr := runInteractionWorkflowChain(
+	chainOptions := interactionWorkflowChainOptions{}
+	if budgetContinuation {
+		chainOptions.CorrelationID = workflowEvidence.CommandID
+		chainOptions.Continuation = &ReviewedWorkflowContinuation{
+			RevisionTaskID: input.TaskID, AdditionalGuidance: input.AdditionalGuidance,
+		}
+	}
+	workflowResult, envelope, workflowErr := runInteractionWorkflowChainWithOptions(
 		ctx, input.VaultRoot, workflowPlan, commit.Record.Version, defaultWorkflowMaxTasks, input.CurrentTime,
 		input.CommandID, "interaction.workflow.recover_revision:"+input.CommandID,
 		"INTERACTION_RECOVER_REVISION_FAILED", provider, httpClient, input.EventObservers,
+		chainOptions,
 	)
 	result.WorkflowCommandID, result.Workflow = workflowResult.WorkflowCommandID, workflowResult.Workflow
 	result.Session, result.SessionCommitted = workflowResult.Session, workflowResult.SessionCommitted
@@ -179,4 +207,61 @@ func ExecuteInteractionRecoverRevision(
 		return result, finishDurableCommandWithEnvelope(ctx, claim, result, workflowErr, envelope, true)
 	}
 	return result, finishDurableCommand(ctx, claim, result, nil, "", "", false)
+}
+
+// validateBudgetRevisionContinuation proves that the UI's evidence-derived
+// target is the same canonical, unstarted Revision Task committed by the
+// failed Workflow. It is intentionally read-only: no adoption, repair, or
+// lifecycle transition occurs here.
+func validateBudgetRevisionContinuation(
+	ctx context.Context,
+	vaultRoot, projectName string,
+	workflow interaction.WorkflowEvidence,
+	revisionTaskID string,
+) error {
+	sourceTaskID := ""
+	for _, current := range workflow.Tasks {
+		if current.RevisionTaskID == revisionTaskID && current.RevisionCommandID != "" && current.Verdict == review.VerdictRequestChanges {
+			if sourceTaskID != "" {
+				return ErrInteractionPrecondition
+			}
+			sourceTaskID = current.TaskID
+		}
+		if current.TaskID == revisionTaskID {
+			return ErrInteractionPrecondition
+		}
+	}
+	if sourceTaskID == "" {
+		return ErrInteractionPrecondition
+	}
+	tasks, err := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: vaultRoot, ProjectName: projectName})
+	if err != nil {
+		return err
+	}
+	source, err := tasks.Inspect(ctx, sourceTaskID)
+	if err != nil || source.Status != task.StatusCompleted {
+		return fmt.Errorf("budget continuation source Task: %w", ErrInteractionPrecondition)
+	}
+	continuation, err := tasks.Inspect(ctx, revisionTaskID)
+	if err != nil || continuation.Status != task.StatusUnstarted {
+		return fmt.Errorf("budget continuation Revision Task: %w", ErrInteractionPrecondition)
+	}
+	intents, err := vault.NewRevisionIntentStore(vaultRoot, projectName)
+	if err != nil {
+		return err
+	}
+	references, err := intents.ListReferences(ctx)
+	if err != nil {
+		return err
+	}
+	matches := 0
+	for _, reference := range references {
+		if reference.SourceTaskID == sourceTaskID && reference.RevisionTaskID == revisionTaskID {
+			matches++
+		}
+	}
+	if matches != 1 {
+		return fmt.Errorf("budget continuation Revision intent: %w", ErrInteractionPrecondition)
+	}
+	return nil
 }

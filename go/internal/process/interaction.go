@@ -596,7 +596,12 @@ type InteractionApplyInput struct {
 	PlanDigest      string
 	CurrentTime     time.Time
 	CommandID       string
-	EventObservers  []event.Observer
+	// ProviderFixtureMaxCalls is a browser-acceptance harness override. It
+	// is never decoded from a public Command payload and is accepted by the
+	// daemon only with an explicit loopback Provider fixture flag. Zero is
+	// the production path and preserves the Go-owned standard Budget.
+	ProviderFixtureMaxCalls int
+	EventObservers          []event.Observer
 }
 
 func ExecuteInteractionPlanApply(ctx context.Context, input InteractionApplyInput, approved bool) (InteractionApplyResult, error) {

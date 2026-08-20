@@ -15,8 +15,10 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
 	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/policy"
+	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
 	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
 var (
@@ -69,7 +71,12 @@ type ExecuteTaskInput struct {
 	ApprovalReference string
 	ExecutionID       string
 	CommandID         string
-	EventObservers    []event.Observer
+	// RecoveryGuidance is optional CEO guidance for one explicit
+	// continuation of an already-created Revision Task. It is not Task
+	// state and never authorizes execution by itself; approval, targeted
+	// readiness, and the Command Ledger remain mandatory.
+	RecoveryGuidance string
+	EventObservers   []event.Observer
 }
 
 // ExecuteTask composes the concrete Vault Adapters and Go Runtime only after
@@ -92,8 +99,12 @@ func ExecuteTask(
 		return execution.Result{}, err
 	}
 	approvalSource := strings.TrimSpace(input.ApprovalSource)
+	input.RecoveryGuidance = strings.TrimSpace(input.RecoveryGuidance)
 	if approvalSource == "" {
 		return execution.Result{}, fmt.Errorf("execute Task: approval source is required")
+	}
+	if strings.ContainsAny(input.RecoveryGuidance, "\r\n") || len(input.RecoveryGuidance) > revision.MaxAdditionalGuidanceLength {
+		return execution.Result{}, fmt.Errorf("execute Task: Recovery guidance is invalid")
 	}
 	claim, err := claimExecutionCommand(ctx, input, provider, approvalSource)
 	if err != nil {
@@ -197,12 +208,14 @@ func claimExecutionCommand(
 		ProviderModel     string                 `json:"provider_model,omitempty"`
 		MaxTokens         int                    `json:"max_tokens,omitempty"`
 		ReadinessMode     ExecutionReadinessMode `json:"readiness_mode,omitempty"`
+		RecoveryGuidance  string                 `json:"recovery_guidance,omitempty"`
 	}{
 		ProjectID: input.ProjectID, ProjectName: input.ProjectName, TaskID: input.TaskID,
 		CurrentTime: input.CurrentTime, ApprovalSource: approvalSource,
 		ApprovalReference: strings.TrimSpace(input.ApprovalReference), ExecutionID: strings.TrimSpace(input.ExecutionID),
 		ProviderModel: strings.TrimSpace(provider.ProviderModel), MaxTokens: provider.MaxTokens,
-		ReadinessMode: digestReadinessMode(input.ReadinessMode),
+		ReadinessMode:    digestReadinessMode(input.ReadinessMode),
+		RecoveryGuidance: strings.TrimSpace(input.RecoveryGuidance),
 	})
 	if err != nil {
 		return executionCommandClaim{}, err
@@ -302,6 +315,10 @@ func executeClaimedTask(
 	if err != nil {
 		return execution.Result{}, fmt.Errorf("execute Task context: %w", err)
 	}
+	metadata := map[string]string(nil)
+	if input.RecoveryGuidance != "" {
+		metadata = map[string]string{worker.MetadataCEORecoveryGuidance: input.RecoveryGuidance}
+	}
 	request, err := loader.LoadExecutionRequest(ctx, vault.ExecutionInput{
 		ProjectID: input.ProjectID, ProjectName: input.ProjectName, TaskID: input.TaskID,
 		Approval: &policy.ApprovalEvidence{
@@ -309,6 +326,7 @@ func executeClaimedTask(
 		},
 		CurrentTime: input.CurrentTime, ExecutionID: strings.TrimSpace(input.ExecutionID),
 		CommandID: strings.TrimSpace(input.CommandID), IdempotencyKey: strings.TrimSpace(input.CommandID),
+		Metadata: metadata,
 	})
 	if err != nil {
 		return execution.Result{}, fmt.Errorf("execute Task context: %w", err)

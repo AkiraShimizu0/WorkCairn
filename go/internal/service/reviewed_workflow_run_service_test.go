@@ -657,6 +657,133 @@ func TestRunParallelSynthesisTaskWaitsForAllBranches(t *testing.T) {
 	}
 }
 
+func TestResumeRevisionRunsCommittedRevisionBeforeSynthesisAndUsesFreshBudget(t *testing.T) {
+	// Original Workflow scope: exactly enough capacity to execute/review the
+	// source Task and commit its Revision intent/Task, but not to execute the
+	// newly-created Revision Task.
+	originalExecutor := &concurrencyTrackingExecutorFake{}
+	originalReviewer := &scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{
+		"TASK-001": review.VerdictRequestChanges,
+	}}
+	originalReviser := &scriptedRevisionChainReviserFake{next: map[string]string{"TASK-001": "TASK-002"}}
+	originalPlanner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-001"}}}}
+	original, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, originalExecutor, originalReviewer, originalReviser)
+	original.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxProviderCalls: 2})
+	original.SetBudgetLimits(2, 0)
+	stopped, stopErr := original.RunParallel(context.Background(), "CMD-BUDGET-ORIGINAL", "CMD-BUDGET-ROOT", 10, 3, 2, originalPlanner)
+	if !errors.Is(stopErr, ErrProviderCallBudgetExceeded) || len(stopped.Tasks) != 1 ||
+		stopped.Tasks[0].Revision == nil || stopped.Tasks[0].Revision.Task == nil || stopped.Tasks[0].Revision.Task.ID != "TASK-002" {
+		t.Fatalf("original RunParallel() = %#v, %v", stopped, stopErr)
+	}
+	if _, started := originalExecutor.snapshot(); !reflect.DeepEqual(started, []string{"TASK-001"}) {
+		t.Fatalf("original execution order = %#v, want source only", started)
+	}
+
+	// Explicit Recovery is a new Command/new Budget scope. Even though its
+	// planner already reports Synthesis ready (the original A/B/C sources
+	// are complete), ResumeRevision must force TASK-002 first and consult
+	// ordinary readiness only after that branch Approves.
+	recoveryExecutor := &concurrencyTrackingExecutorFake{}
+	recoveryReviewer := &scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{
+		"TASK-002": review.VerdictApprove,
+		"TASK-004": review.VerdictApprove,
+	}}
+	recoveryPlanner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{
+		{TaskIDs: []string{"TASK-004"}},
+		{Completed: true},
+	}}
+	recovery, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, recoveryExecutor, recoveryReviewer, &noopReviserFake{t: t})
+	recovery.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxProviderCalls: 4})
+	recovery.SetBudgetLimits(4, 0)
+	completed, recoverErr := recovery.ResumeRevision(context.Background(), "CMD-BUDGET-RECOVERY", "CMD-BUDGET-ROOT", "TASK-002", 10, 3, 2, recoveryPlanner)
+	if recoverErr != nil || completed.Status != "completed" || len(completed.Tasks) != 2 {
+		t.Fatalf("ResumeRevision() = %#v, %v", completed, recoverErr)
+	}
+	_, started := recoveryExecutor.snapshot()
+	if !reflect.DeepEqual(started, []string{"TASK-002", "TASK-004"}) {
+		t.Fatalf("recovery execution order = %#v, want Revision then Synthesis", started)
+	}
+	if !completed.Tasks[0].Targeted || completed.Tasks[1].Targeted {
+		t.Fatalf("targeted flags = %#v, want [true false]", []bool{completed.Tasks[0].Targeted, completed.Tasks[1].Targeted})
+	}
+}
+
+func TestResumeRevisionCancellationDoesNotDispatchSynthesis(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{delay: 200 * time.Millisecond}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-004"}}, {Completed: true}}}
+	runService, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, &approvingReviewerFake{}, &noopReviserFake{t: t})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	result, err := runService.ResumeRevision(ctx, "CMD-RECOVERY-CANCEL", "CMD-ROOT-CANCEL", "TASK-002", 10, 2, 2, planner)
+	if !errors.Is(err, context.Canceled) || result.Status == "completed" {
+		t.Fatalf("ResumeRevision() = %#v, %v", result, err)
+	}
+	_, started := executor.snapshot()
+	if !reflect.DeepEqual(started, []string{"TASK-002"}) {
+		t.Fatalf("started = %#v, Synthesis must not dispatch after cancellation", started)
+	}
+}
+
+func TestResumeRevisionUsesFreshRuntimeBudgetAfterCreatedRevisionStop(t *testing.T) {
+	start := time.Date(2026, time.August, 21, 9, 0, 0, 0, time.UTC)
+	clockCalls := 0
+	clock := func() time.Time {
+		clockCalls++
+		if clockCalls >= 4 {
+			return start.Add(2 * time.Minute)
+		}
+		return start
+	}
+	originalExecutor := &concurrencyTrackingExecutorFake{}
+	originalReviewer := &scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{"TASK-001": review.VerdictRequestChanges}}
+	originalReviser := &scriptedRevisionChainReviserFake{next: map[string]string{"TASK-001": "TASK-002"}}
+	original, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, originalExecutor, originalReviewer, originalReviser)
+	original.SetClock(clock)
+	original.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxRuntime: time.Minute})
+	original.SetBudgetLimits(0, time.Minute)
+	stopped, stopErr := original.RunParallel(context.Background(), "CMD-RUNTIME-ORIGINAL", "CMD-RUNTIME-ROOT", 10, 1, 2,
+		&scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-001"}}}})
+	if !errors.Is(stopErr, ErrRuntimeBudgetExceeded) || len(stopped.Tasks) != 1 || stopped.Tasks[0].Revision == nil ||
+		stopped.Tasks[0].Revision.Task == nil || stopped.Tasks[0].Revision.Task.ID != "TASK-002" {
+		t.Fatalf("runtime-stopped RunParallel() = %#v, %v", stopped, stopErr)
+	}
+
+	recoveryExecutor := &concurrencyTrackingExecutorFake{}
+	recovery, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, recoveryExecutor,
+		&scriptedVerdictReviewerFake{verdicts: map[string]review.Verdict{"TASK-002": review.VerdictApprove}}, &noopReviserFake{t: t})
+	recovery.SetClock(func() time.Time { return start })
+	recovery.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxRuntime: time.Minute})
+	recovery.SetBudgetLimits(0, time.Minute)
+	completed, recoverErr := recovery.ResumeRevision(context.Background(), "CMD-RUNTIME-RECOVERY", "CMD-RUNTIME-ROOT", "TASK-002", 10, 1, 2,
+		&scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{Completed: true}}})
+	if recoverErr != nil || completed.Status != "completed" || len(completed.Tasks) != 1 || !completed.Tasks[0].Targeted {
+		t.Fatalf("runtime ResumeRevision() = %#v, %v", completed, recoverErr)
+	}
+}
+
+func TestResumeRevisionBudgetFailureStopsWithoutDispatchingSynthesisOrAutoRecovery(t *testing.T) {
+	executor := &concurrencyTrackingExecutorFake{}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-004"}}, {Completed: true}}}
+	runService, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, &approvingReviewerFake{}, &noopReviserFake{t: t})
+	// One call permits the resumed Revision execution but stops before its
+	// Review. The service must return the new Budget failure as-is; it must
+	// not dispatch Synthesis or start another Recovery scope automatically.
+	runService.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxProviderCalls: 1})
+	runService.SetBudgetLimits(1, 0)
+	result, err := runService.ResumeRevision(context.Background(), "CMD-RECOVERY-BUDGET-AGAIN", "CMD-ORIGINAL-ROOT", "TASK-002", 10, 2, 2, planner)
+	if !errors.Is(err, ErrProviderCallBudgetExceeded) || result.Status != "partial_failure" || len(result.Tasks) != 1 ||
+		result.Tasks[0].TaskID != "TASK-002" || !result.Tasks[0].Targeted || result.Tasks[0].Review != nil {
+		t.Fatalf("ResumeRevision() = %#v, %v", result, err)
+	}
+	_, started := executor.snapshot()
+	if !reflect.DeepEqual(started, []string{"TASK-002"}) {
+		t.Fatalf("started = %#v, want only the resumed Revision", started)
+	}
+}
+
 func TestRunParallelValidatesInput(t *testing.T) {
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, &concurrencyTrackingExecutorFake{}, &approvingReviewerFake{}, &noopReviserFake{t: t})
 	if _, err := service.RunParallel(nil, "CMD-X", "CMD-X", 10, 2, 5, &scriptedBatchPlannerFake{}); err == nil {

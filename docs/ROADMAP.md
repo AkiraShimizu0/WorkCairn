@@ -371,9 +371,23 @@ ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全�
 - `worker.TokenUsage`の既存nilable設計（`*int`、unknown≠0）をそのまま利用したToken集計。v1ではゲーティングに使わず観測用のみ。Cost Budgetは未実装（価格tableが存在しないため、`ProviderCallCount × 仮単価`のような計算はどこにも作っていない）
 - FailureEnvelope: 単一Code `BUDGET_EXCEEDED` + `Category`（`"runtime"`/`"provider_call"`）で区別。実装中に見つけた実バグ（`runBranch`内部ループのcontext deadline判定が常に汎用的な`"cancelled"`へ分類されていた）を修正し、専用の回帰テストで検証
 - 並列Branch（A成功／B Budget停止／C成功）でA/Cの結果を失わず、Synthesisを誤って完了扱いにせず、replayが新しいProvider呼び出しをゼロにすることを、実HTTP mock・実Command Ledgerを通した統合テストで確認
-- Recovery UX: 既存の`interaction.workflow.recover_revision`は意図的に配線していません——Budget停止が残す状態は既存のstalled-task検出（Request Changes verdict＋未Revision）と構造的に一致しないため、無意味なdead UIを提示するより、CEOには完了済み成果の閲覧のみを提示する設計判断です（詳細はADR-0054）
+- Recovery UX（ADR-0054時点）: Budget停止が残す「既存Revision Task作成済み・未実行」の状態は、Revision Limit用のstalled-task検出と構造的に一致しないため、BudgetGuard v1単体ではRecoveryを配線しなかった。このgapは次節のADR-0055で、既存Revisionを二重作成しないContinuationとして解消済み
 
-対象外のまま（将来の別Checkpoint候補）：Budget停止に対するRecovery Command（完了済み成果からの「必要な部分だけ続ける」再開）、Recovery時のBudget reset/inherit決定、Cost Budget／価格table、outer CEO Command全体を対象にしたBudget（CEO Plan生成・Recoveryを含む）、durable/Ledgerベースの予約、Metrics集計（provider-calls-per-command等）。詳細は[ADR-0054](adr/ADR-0054-budgetguard-v1.md)を参照してください。
+対象外のまま（将来の別Checkpoint候補）：Cost Budget／価格table、outer CEO Command全体を対象にしたdurable root Budget（CEO Plan生成と複数Recoveryの合計を含む）、durable/Ledgerベースの予約、Metrics集計（provider-calls-per-command等）。詳細は[ADR-0054](adr/ADR-0054-budgetguard-v1.md)を参照してください。
+
+## Completed — BudgetGuard Recovery Continuation
+
+[ADR-0055](adr/ADR-0055-budget-recovery-continuation.md)（Accepted）により、BudgetGuard停止時に既に作成済みだったRevision Taskを、CEOの1回の明示操作と新しいCommandで安全に続行できるようにしました。これはProvider callのretryでも、元Task／Workflowの再実行でもありません。
+
+- `interaction.workflow.recover_revision`を共通のCEO-facing operationとして維持。Revision Limit／No Progressでは従来どおり新しいRevisionを作り、`BUDGET_EXCEEDED`ではcanonical evidenceから一意に導出・再検証した既存Unstarted Revision Taskだけを続行する
+- `ReviewedWorkflowRunService.ResumeRevision`: pending Revisionを最初のtargeted roundとして必ず先に実行し、成功後だけ既存`EvaluateAllReadiness`へ戻る最小Continuation primitive。Synthesis専用resume logic、新Domain、新Task状態ownerは追加しない
+- Recoveryは新しいCommand ID／Ledger claim／deterministic child IDs／Interaction Session CASが必須。同じCommand replay、元Workflow replay、stale画面からの再送はいずれもProvider callゼロ。異なるRecovery Commandの同時送信も1件だけがCASを通る
+- Recoveryごとに通常のsafe default（Provider calls 60、Runtime 30分）を持つ新しいbounded Workflow Budget scopeを開始。CEOへBudget counter／concurrency／resume modeを入力させない。繰り返す人間承認Recoveryを含むdurable root Budgetは未実装
+- 元Workflow CommandをTask Eventの`CorrelationID`、新しいdeterministic child Commandを`CausationID`として保持。既存Task ID、Revision intent、Interaction recovery Turn、Command Ledgerだけでlineageを追跡し、新しい永続lineage IDは追加しない
+- Browser Acceptance専用の小さいBudgetは、明示loopback Provider fixtureに限るdaemon edge optionから注入。production default、public Command JSON、`.env`、CEO UIは変更しない
+- actual daemon + temporary Vault + fixed Provider fixture + Chromium/WebKitで、A/C成果保持、Budget停止、任意指示、明示Recovery、duplicate click防止、BのRevisionだけ再開、Synthesis、リアルタイム完了までを検証。Go統合テストではProvider-call／Runtime両方、fresh Budget、replay、同時Recovery、cancellationを検証
+
+対象外のまま：durable root-command Budget、`MaxRecoveryCount`、Cost accounting／pricing registry、Budget Metrics、Scheduler連携、automatic retry／Recovery、streaming。
 
 ## Completed — Public Beta Go Only Repository
 

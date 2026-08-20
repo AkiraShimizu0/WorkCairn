@@ -44,3 +44,25 @@ func TestDaemonEnvironmentOverrideDoesNotReadKeychain(t *testing.T) {
 		t.Fatalf("override resolution loads=%d", store.loads)
 	}
 }
+
+func TestLoopbackProviderFixtureURLDefaultDeniesNonLoopbackEndpoints(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "IPv4", raw: "http://127.0.0.1:8080/v1/messages", want: true},
+		{name: "IPv6", raw: "http://[::1]:8080/v1/messages", want: true},
+		{name: "localhost", raw: "http://localhost:8080/v1/messages", want: true},
+		{name: "production Provider", raw: "https://api.anthropic.com/v1/messages", want: false},
+		{name: "non HTTP scheme", raw: "ftp://localhost:8080/v1/messages", want: false},
+		{name: "missing scheme", raw: "127.0.0.1:8080", want: false},
+		{name: "empty", raw: "", want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := loopbackProviderFixtureURL(test.raw); got != test.want {
+				t.Fatalf("loopbackProviderFixtureURL(%q) = %v, want %v", test.raw, got, test.want)
+			}
+		})
+	}
+}

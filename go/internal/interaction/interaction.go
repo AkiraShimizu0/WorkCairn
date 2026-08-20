@@ -230,18 +230,23 @@ type CommandReference struct {
 }
 
 type NextAction struct {
-	Kind             NextActionKind     `json:"kind"`
-	Operation        string             `json:"operation,omitempty"`
-	SessionID        string             `json:"session_id"`
-	ExpectedVersion  uint64             `json:"expected_version"`
-	ApprovalRequired bool               `json:"approval_required"`
-	RequiredFields   []string           `json:"required_fields"`
-	Questions        []string           `json:"questions,omitempty"`
-	PlanDigest       string             `json:"plan_digest,omitempty"`
-	ProjectID        string             `json:"project_id,omitempty"`
-	ProjectName      string             `json:"project_name,omitempty"`
-	EligibleTaskIDs  []string           `json:"eligible_task_ids,omitempty"`
-	Commands         []CommandReference `json:"commands,omitempty"`
+	Kind             NextActionKind `json:"kind"`
+	Operation        string         `json:"operation,omitempty"`
+	SessionID        string         `json:"session_id"`
+	ExpectedVersion  uint64         `json:"expected_version"`
+	ApprovalRequired bool           `json:"approval_required"`
+	RequiredFields   []string       `json:"required_fields"`
+	Questions        []string       `json:"questions,omitempty"`
+	PlanDigest       string         `json:"plan_digest,omitempty"`
+	ProjectID        string         `json:"project_id,omitempty"`
+	ProjectName      string         `json:"project_name,omitempty"`
+	EligibleTaskIDs  []string       `json:"eligible_task_ids,omitempty"`
+	// EvidenceTaskID is the Task whose already-committed Deliverable/Review
+	// explains a Recovery action. It can differ from the executable target:
+	// Budget continuation executes an already-created Revision Task while
+	// presenting its completed source Task's evidence.
+	EvidenceTaskID string             `json:"evidence_task_id,omitempty"`
+	Commands       []CommandReference `json:"commands,omitempty"`
 }
 
 func New(sessionID, request, model string, createdAt time.Time) (Record, error) {
@@ -569,6 +574,40 @@ func stalledRevisionTaskID(tasks []WorkflowTaskEvidence) (string, bool) {
 	return "", false
 }
 
+// budgetContinuationTaskID identifies exactly one Revision Task that was
+// committed by this Workflow result but never executed by it. A Revision
+// Task appears first as RevisionTaskID on its source attempt and, once
+// execution starts, as a later TaskID. Set subtraction therefore derives
+// the pending continuation from canonical Workflow evidence without asking
+// the UI to choose or infer a target. Ambiguous (zero or multiple) states
+// are default-denied.
+func budgetContinuationTask(tasks []WorkflowTaskEvidence) (revisionTaskID, sourceTaskID string, found bool) {
+	executed := make(map[string]bool, len(tasks))
+	candidates := make(map[string]string)
+	candidateCount := make(map[string]int)
+	for _, current := range tasks {
+		executed[current.TaskID] = true
+		if current.Verdict == review.VerdictRequestChanges && current.RevisionCommandID != "" && current.RevisionTaskID != "" {
+			candidates[current.RevisionTaskID] = current.TaskID
+			candidateCount[current.RevisionTaskID]++
+		}
+	}
+	for taskID := range executed {
+		delete(candidates, taskID)
+		delete(candidateCount, taskID)
+	}
+	if len(candidates) != 1 {
+		return "", "", false
+	}
+	for taskID, sourceID := range candidates {
+		if candidateCount[taskID] != 1 {
+			return "", "", false
+		}
+		return taskID, sourceID, true
+	}
+	return "", "", false
+}
+
 func (record Record) RecordWorkflow(evidence WorkflowEvidence, at time.Time) (Record, error) {
 	projectID, projectName, ok := record.AppliedProject()
 	if record.Validate() != nil || record.State != StateReadyToExecute || !ok || at.IsZero() ||
@@ -591,8 +630,9 @@ func (record Record) RecordWorkflow(evidence WorkflowEvidence, at time.Time) (Re
 }
 
 // RecordRevisionRecoveryStarted is the CEO's own explicit recovery action
-// after a Revision Limit stop (StateWorkflowAttentionRequired): it durably
-// records which Task the CEO wants revised again and any fresh instruction,
+// after a Revision Limit, No Progress, or recoverable Budget stop
+// (StateWorkflowAttentionRequired): it durably records which source or
+// already-created Revision Task is continued and any fresh instruction,
 // then reopens the Session for exactly one more Reviewed Workflow round --
 // mirroring how WorkflowStatusBlocked/LimitReached already leave the
 // Session in StateReadyToExecute for the same "continue via a new Command"
@@ -791,35 +831,26 @@ func (record Record) Next() (NextAction, error) {
 			{Scope: "workspace", CommandID: workflow.CommandID},
 			{Scope: "project", ProjectName: workflow.ProjectName, CommandID: workflow.WorkflowCommandID},
 		}
-		// Revision Limit Recovery (additive): only when the stop is
-		// specifically the Revision Guard or the No-Progress Foundation's
-		// own stop -- never for an unrelated partial failure (a Provider
-		// error, a structural failure) -- and only when a stalled Task
-		// actually exists (a Review verdict of Request Changes with no
-		// follow-up Revision recorded for it, exactly the state either
-		// guard leaves behind and the only state PlanRevision itself will
-		// ever treat as executable). This never asks the CEO to pick a
-		// recovery mechanism; it only appears when it genuinely applies.
-		//
-		// BUDGET_EXCEEDED (BudgetGuard v1, ADR-0054) is deliberately NOT
-		// included here: runBranch always records RevisionCommandID in the
-		// very same synchronous step it records the Request Changes verdict
-		// (no Budget reservation happens in between), so a Budget stop can
-		// never actually leave behind the "Request Changes, no follow-up
-		// Revision" shape stalledRevisionTaskID looks for -- the state this
-		// mechanism was built to find is unreachable from a Budget stop.
-		// The realistic state a Budget stop leaves mid-Revision-chain is a
-		// freshly created, never-executed Revision Task, which needs plain
-		// Workflow continuation, not another PlanRevision call -- offering
-		// this operation for a state it can never match would be dead,
-		// misleading UI. Left as a documented v1 gap (see ADR-0054); a CEO
-		// facing BUDGET_EXCEEDED sees the partial result only (Option A),
-		// with resuming the stopped work (Option B) deferred.
-		if workflow.Failure != nil && (workflow.Failure.Code == "REVISION_LIMIT_REACHED" || workflow.Failure.Code == "NO_PROGRESS_DETECTED") {
-			if stalledTaskID, found := stalledRevisionTaskID(workflow.Tasks); found {
+		// Recovery is offered only when the recorded stop has exactly one
+		// evidence-derived target. Revision Limit / No Progress create a new
+		// Revision from the stalled source Task; Budget continuation resumes
+		// the one already-created Revision Task that this Workflow never
+		// executed. Both share one CEO-facing operation and composer, while
+		// the process layer validates and executes their distinct semantics.
+		if workflow.Failure != nil {
+			taskID, evidenceTaskID, found := "", "", false
+			switch workflow.Failure.Code {
+			case "REVISION_LIMIT_REACHED", "NO_PROGRESS_DETECTED":
+				taskID, found = stalledRevisionTaskID(workflow.Tasks)
+				evidenceTaskID = taskID
+			case "BUDGET_EXCEEDED":
+				taskID, evidenceTaskID, found = budgetContinuationTask(workflow.Tasks)
+			}
+			if found {
 				next.Operation, next.ApprovalRequired = "interaction.workflow.recover_revision", true
 				next.RequiredFields = []string{"task_id", "command_id", "current_time"}
-				next.EligibleTaskIDs = []string{stalledTaskID}
+				next.EligibleTaskIDs = []string{taskID}
+				next.EvidenceTaskID = evidenceTaskID
 			}
 		}
 	case StateCompleted:

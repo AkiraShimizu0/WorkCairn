@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
@@ -46,17 +47,23 @@ func main() {
 func run() error {
 	var vaultRoot, address string
 	var providerTimeout, shutdownTimeout, schedulerInterval time.Duration
+	var providerFixtureMaxCalls int
 	var mobile bool
 	flag.StringVar(&vaultRoot, "vault", "", "Vault root")
 	flag.StringVar(&address, "listen", "127.0.0.1:8787", "HTTP listen address")
 	flag.DurationVar(&providerTimeout, "provider-timeout", workspaceruntime.DefaultProviderRequestTimeout, "Provider request timeout")
 	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "graceful shutdown timeout")
 	flag.DurationVar(&schedulerInterval, "scheduler-interval", time.Second, "one-shot Schedule polling interval")
+	flag.IntVar(&providerFixtureMaxCalls, "provider-fixture-max-calls", 0, "Browser acceptance only: Provider-call Budget for a loopback fixture (0 uses production default)")
 	flag.BoolVar(&mobile, "mobile", false, "serve the paired Web UI on a trusted local network")
 	flag.Parse()
 	managedFirstRun := strings.TrimSpace(vaultRoot) == ""
-	if providerTimeout <= 0 || shutdownTimeout <= 0 || schedulerInterval <= 0 {
+	providerBaseURL := strings.TrimSpace(os.Getenv("WORKCAIRN_CLAUDE_BASE_URL"))
+	if providerTimeout <= 0 || shutdownTimeout <= 0 || schedulerInterval <= 0 || providerFixtureMaxCalls < 0 {
 		return errors.New("positive timeouts are required")
+	}
+	if providerFixtureMaxCalls > 0 && !loopbackProviderFixtureURL(providerBaseURL) {
+		return errors.New("provider-fixture-max-calls requires an explicit loopback Provider base URL")
 	}
 	if vaultRoot == "" {
 		var err error
@@ -73,12 +80,12 @@ func run() error {
 	}
 	credentialStore := localos.NewClaudeCredentialStore()
 	credential := resolveClaudeCredential(context.Background(), os.Getenv("ANTHROPIC_API_KEY"), credentialStore)
-	executor, err := httpapi.NewProcessExecutorWithActionConfig(vaultRoot, workspaceprocess.ClaudeProcessConfig{
-		APIKey: credential, BaseURL: os.Getenv("WORKCAIRN_CLAUDE_BASE_URL"),
+	executor, err := httpapi.NewProcessExecutorWithActionConfigAndOptions(vaultRoot, workspaceprocess.ClaudeProcessConfig{
+		APIKey: credential, BaseURL: providerBaseURL,
 	}, workspaceprocess.WordPressProcessConfig{
 		TargetID: os.Getenv("WORKCAIRN_WORDPRESS_TARGET_ID"), BaseURL: os.Getenv("WORKCAIRN_WORDPRESS_BASE_URL"),
 		Username: os.Getenv("WORKCAIRN_WORDPRESS_USERNAME"), ApplicationPassword: os.Getenv("WORKCAIRN_WORDPRESS_APPLICATION_PASSWORD"),
-	}, workspaceruntime.NewProviderHTTPClient(providerTimeout))
+	}, workspaceruntime.NewProviderHTTPClient(providerTimeout), httpapi.ProcessExecutorOptions{ProviderFixtureMaxCalls: providerFixtureMaxCalls})
 	if err != nil {
 		return err
 	}
@@ -185,6 +192,18 @@ func run() error {
 		return nil
 	}
 	return err
+}
+
+func loopbackProviderFixtureURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+		return false
+	}
+	if strings.EqualFold(parsed.Hostname(), "localhost") {
+		return true
+	}
+	address := net.ParseIP(parsed.Hostname())
+	return address != nil && address.IsLoopback()
 }
 
 func resolveClaudeCredential(ctx context.Context, environmentOverride string, store localos.ClaudeCredentialStore) string {

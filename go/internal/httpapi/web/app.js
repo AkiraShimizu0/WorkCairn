@@ -561,21 +561,23 @@ function conversationHasFailureEntry() {
   );
 }
 
-// isRevisionRecoveryNext distinguishes Revision Limit Recovery's own
-// eligible state from every other "workflow attention required" state that
-// shares the same NextActionKind ("inspect_workflow_recovery"): only when
-// Go's own Next() decided a stalled Task genuinely exists (see
-// interaction.stalledRevisionTaskID) does it also set Operation to
-// interaction.workflow.recover_revision -- the client never guesses this
-// from the Failure Code alone.
+// isRevisionRecoveryNext distinguishes the shared explicit Recovery state
+// from every other "workflow attention required" state. Only Go's Next()
+// can expose interaction.workflow.recover_revision after deriving a unique
+// Revision Limit, No Progress, or Budget continuation target; the client
+// never guesses capability from Task state.
 function isRevisionRecoveryNext(next) {
   return next?.operation === "interaction.workflow.recover_revision";
+}
+
+function isBudgetRecoveryNext(next) {
+  return isRevisionRecoveryNext(next) && state.lastError?.code === "BUDGET_EXCEEDED";
 }
 
 function composerFieldText(next) {
   if (isArchivedRecord()) return "削除済みの依頼です。元に戻すと再び操作できます。";
   if (state.pendingAttentionTitle) return state.pendingAttentionTitle;
-  // Revision Limit Recovery takes priority over the generic lastError
+  // Explicit Revision Recovery takes priority over the generic lastError
   // branch below: Go's own Next() already decided a stalled Task is
   // safely recoverable, so the composer becomes an editable "additional
   // instruction" field rather than the generic disabled failure copy --
@@ -625,7 +627,7 @@ function composerCapabilities(next) {
   if (isArchivedRecord()) {
     return { enabled: false, placeholder: "削除済みの依頼です", mode: "archived" };
   }
-  // Revision Limit Recovery: the composer accepts input only in this one
+  // Explicit Revision Recovery: the composer accepts input only in this one
   // specific state (an additional CEO instruction is genuinely optional
   // and, when given, becomes part of the new explicit Recovery Command --
   // never a second processing-status surface, see inFlightCopy/liveStatusNode).
@@ -764,6 +766,8 @@ function inFlightCopy(operation) {
   case "interaction.plan.approve_and_execute":
   case "interaction.workflow.execute":
     return { message: "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。" };
+  case "interaction.workflow.recover_revision":
+    return { message: "停止した作業だけ続けています。完了済みの成果はそのまま保持します。" };
   default:
     return { message: "承認済みの処理をMacで安全に続けています。" };
   }
@@ -1756,7 +1760,7 @@ function renderNext(force = false) {
   if (next.kind !== "answer_clarifications") resetClarificationDraft();
   clearActionSurface();
   renderComposerState(next);
-  // Revision Limit Recovery takes priority over the generic remembered-error
+  // Explicit Revision Recovery takes priority over the generic remembered-error
   // screen: a commandledger Failure record legitimately exists for this same
   // stop (the workflow.reviewed.execute child genuinely failed), but Go's
   // own Next() already decided a stalled Task is safely recoverable here --
@@ -1764,7 +1768,7 @@ function renderNext(force = false) {
   // Review + optional additional instruction), not the generic "処理を完了
   // できませんでした" card.
   if (state.lastError && !isRevisionRecoveryNext(next)) return renderRememberedError(state.lastError);
-  if (isRevisionRecoveryNext(next)) return renderRevisionLimitRecovery(next);
+  if (isRevisionRecoveryNext(next)) return renderRevisionRecovery(next);
   switch (next.kind) {
   case "approve_plan_generation": return renderPlanGeneration(next);
   case "answer_clarifications": return renderQuestions(next);
@@ -1907,13 +1911,13 @@ function submitClarificationAnswers(next) {
   }, "回答を保存しています", "回答後に進め方を準備します。");
 }
 
-// submitRevisionRecovery is Revision Limit Recovery's single explicit CEO
-// action (ADR-0052): the additional instruction is optional (an empty
+// submitRevisionRecovery is the shared explicit CEO Recovery action
+// (ADR-0052/0055): the additional instruction is optional (an empty
 // composer is a valid, common submission -- "just try again with the same
 // findings" is still a genuinely new, human-approved decision, never an
 // automatic retry) and becomes interaction.workflow.recover_revision's own
-// AdditionalGuidance, folded server-side into the new Revision Task's
-// Title. This is never a second submission for the same stalled attempt:
+// AdditionalGuidance. This is never a second submission for the same
+// stalled attempt:
 // executeNextCommand always mints a fresh Command ID (commandID()), and
 // the server derives its own deterministic child Command IDs from that --
 // never the failed workflow.reviewed.execute Command's own ID.
@@ -1923,13 +1927,15 @@ function submitRevisionRecovery(next) {
   if (!taskId) return toast("対象のTaskを確認できませんでした。状態を更新してください。");
   ui.composerInput.value = "";
   state.composerDraft = "";
+  const budgetContinuation = isBudgetRecoveryNext(next);
   return executeNextCommand(next, {
     session_id: next.session_id,
     expected_version: next.expected_version,
     task_id: taskId,
     additional_guidance: guidance,
     current_time: now(),
-  }, "追加の指示を反映して修正を続けています", "AI社員がRevisionを作成し、QA担当がレビューします。");
+  }, budgetContinuation ? "停止した作業だけ続けています" : "追加の指示を反映して修正を続けています",
+  budgetContinuation ? "完了済みの作業はそのままに、停止したRevisionを担当AIが続けます。" : "AI社員がRevisionを作成し、QA担当がレビューします。");
 }
 
 function currentPlan() {
@@ -2067,7 +2073,8 @@ function renderDone() {
   renderTimeline();
 }
 
-// renderRevisionLimitRecovery presents Revision Limit Recovery (ADR-0052):
+// renderRevisionRecovery presents Revision Limit / No Progress Recovery or
+// Budget Continuation (ADR-0052/0055):
 // the CEO must be able to see *why* the automatic Review/Revision loop
 // stopped -- the stalled Task's own canonical Deliverable and latest
 // Review verdict/findings, via the exact same taskEvidenceBlock/
@@ -2079,11 +2086,13 @@ function renderDone() {
 // message; the explanatory copy here is presentation-only, layered over
 // the same canonical Failure/Task/Review evidence the timeline's own
 // failure entry already renders (see interactionErrorGuidance).
-async function renderRevisionLimitRecovery(next) {
+async function renderRevisionRecovery(next) {
   const sessionId = next.session_id;
   const taskId = next.eligible_task_ids?.[0];
+  const evidenceTaskId = next.evidence_task_id || taskId;
+  const budgetContinuation = isBudgetRecoveryNext(next);
   setQuickReplies([
-    button("この指摘を踏まえて修正を続ける", "primary chip", () => submitRevisionRecovery(next)),
+    button(budgetContinuation ? "必要な部分だけ続ける" : "この指摘を踏まえて修正を続ける", "primary chip", () => submitRevisionRecovery(next)),
     button("状態を更新", "quiet chip", () => refreshCurrent()),
   ]);
   ui.activeCard.hidden = false;
@@ -2091,14 +2100,22 @@ async function renderRevisionLimitRecovery(next) {
   renderComposerState(next);
   state.forceScrollToBottom = true;
   renderTimeline();
-  if (!taskId || !next.project_name) {
+  if (!taskId || !evidenceTaskId || !next.project_name) {
     ui.activeCard.replaceChildren(node("p", { class: "warning" }, "対象のTaskを確認できませんでした。状態を更新してください。"));
     return;
   }
   try {
-    const evidence = await requestJSON(`/v1/projects/${encodeURIComponent(next.project_name)}/tasks/${encodeURIComponent(taskId)}/evidence`);
+    const evidence = await requestJSON(`/v1/projects/${encodeURIComponent(next.project_name)}/tasks/${encodeURIComponent(evidenceTaskId)}/evidence`);
     if (state.record?.session_id !== sessionId || !isRevisionRecoveryNext(state.next)) return;
-    ui.activeCard.replaceChildren(taskEvidenceBlock(evidence, next.project_name));
+    const evidenceBlock = taskEvidenceBlock(evidence, next.project_name);
+    if (budgetContinuation) {
+      ui.activeCard.replaceChildren(
+        node("p", { class: "supporting" }, "追加の指示を送ると、完了済みの成果を保ったまま停止した作業だけ続けます。"),
+        evidenceBlock,
+      );
+    } else {
+      ui.activeCard.replaceChildren(evidenceBlock);
+    }
   } catch (error) {
     if (state.record?.session_id !== sessionId || !isRevisionRecoveryNext(state.next)) return;
     ui.activeCard.replaceChildren(node("p", { class: "warning" }, `直前の成果物を取得できませんでした: ${error.message}`));

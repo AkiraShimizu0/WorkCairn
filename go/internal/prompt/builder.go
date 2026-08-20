@@ -78,6 +78,9 @@ func (Builder) build(ctx context.Context, input worker.PromptInput, outputInstru
 			"担当社員ID: " + assigneeID,
 		}, "\n"),
 	}
+	if guidance := strings.TrimSpace(input.Metadata[worker.MetadataCEORecoveryGuidance]); guidance != "" {
+		sections = append(sections, "## CEOからの追加指示\n"+guidance)
+	}
 
 	return worker.Prompt{
 		System: strings.Join(sections, "\n\n"),

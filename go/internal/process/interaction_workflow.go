@@ -261,11 +261,40 @@ func runInteractionWorkflowChain(
 	httpClient claude.HTTPDoer,
 	eventObservers []event.Observer,
 ) (InteractionWorkflowResult, *failure.Envelope, error) {
+	return runInteractionWorkflowChainWithOptions(
+		ctx, vaultRoot, currentPlan, expectedVersion, maxTasks, currentTime,
+		parentCommandID, approvalReference, genericFailureCode, provider, httpClient, eventObservers,
+		interactionWorkflowChainOptions{},
+	)
+}
+
+type interactionWorkflowChainOptions struct {
+	CorrelationID string
+	Continuation  *ReviewedWorkflowContinuation
+}
+
+func runInteractionWorkflowChainWithOptions(
+	ctx context.Context,
+	vaultRoot string,
+	currentPlan InteractionWorkflowPlan,
+	expectedVersion uint64,
+	maxTasks int,
+	currentTime time.Time,
+	parentCommandID, approvalReference, genericFailureCode string,
+	provider ClaudeProcessConfig,
+	httpClient claude.HTTPDoer,
+	eventObservers []event.Observer,
+	options interactionWorkflowChainOptions,
+) (InteractionWorkflowResult, *failure.Envelope, error) {
 	workflowCommandID, err := commandledger.DeriveChildCommandID(parentCommandID, "workflow.reviewed.execute:"+currentPlan.SessionID)
 	if err != nil {
 		envelope := failure.New(genericFailureCode, "command_identity")
 		envelope.Partial, envelope.RecoveryRequired = true, true
 		return InteractionWorkflowResult{}, &envelope, err
+	}
+	correlationID := strings.TrimSpace(options.CorrelationID)
+	if correlationID == "" {
+		correlationID = parentCommandID
 	}
 	workflowResult, workflowErr := ExecuteReviewedWorkflow(ctx, ExecuteReviewedWorkflowInput{
 		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
@@ -283,7 +312,8 @@ func runInteractionWorkflowChain(
 		// ID when reached through ADR-0049's chain), not workflowCommandID
 		// itself. This is what makes the CEO's single approval traceable as
 		// one correlation chain end to end (ADR-0051).
-		CorrelationID:  parentCommandID,
+		CorrelationID:  correlationID,
+		Continuation:   options.Continuation,
 		EventObservers: eventObservers,
 	}, provider, httpClient)
 	result := InteractionWorkflowResult{WorkflowCommandID: workflowCommandID, Workflow: workflowResult}

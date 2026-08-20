@@ -375,6 +375,46 @@ func (service *ReviewedWorkflowRunService) RunParallel(
 	maxRevisionCount int,
 	batchPlanner WorkflowRunBatchPlanner,
 ) (ReviewedWorkflowRunResult, error) {
+	return service.runParallel(ctx, parentCommandID, correlationID, maxTasks, maxParallelTasks, maxRevisionCount, batchPlanner, "")
+}
+
+// ResumeRevision continues one already-committed, still-unstarted Revision
+// Task before returning to ordinary dependency readiness. It is deliberately
+// not a retry primitive: the caller supplies a new parent Command ID, and the
+// first Provider invocation belongs to a fresh deterministic child Command.
+// Running the Revision Task before consulting batchPlanner prevents a
+// Synthesis Task whose original dependencies are already complete from
+// racing ahead of the pending Revision. Once the Revision branch reaches a
+// terminal outcome, every later round is planned by the same
+// WorkflowRunBatchPlanner/EvaluateAllReadiness path RunParallel uses.
+func (service *ReviewedWorkflowRunService) ResumeRevision(
+	ctx context.Context,
+	parentCommandID string,
+	correlationID string,
+	revisionTaskID string,
+	maxTasks int,
+	maxParallelTasks int,
+	maxRevisionCount int,
+	batchPlanner WorkflowRunBatchPlanner,
+) (ReviewedWorkflowRunResult, error) {
+	revisionTaskID = strings.TrimSpace(revisionTaskID)
+	if _, err := task.ParseTaskID(revisionTaskID); err != nil {
+		result := ReviewedWorkflowRunResult{Status: "running", Tasks: []ReviewedWorkflowTaskResult{}}
+		return result, reviewedWorkflowFailure(&result, "validation", err)
+	}
+	return service.runParallel(ctx, parentCommandID, correlationID, maxTasks, maxParallelTasks, maxRevisionCount, batchPlanner, revisionTaskID)
+}
+
+func (service *ReviewedWorkflowRunService) runParallel(
+	ctx context.Context,
+	parentCommandID string,
+	correlationID string,
+	maxTasks int,
+	maxParallelTasks int,
+	maxRevisionCount int,
+	batchPlanner WorkflowRunBatchPlanner,
+	firstRevisionTaskID string,
+) (ReviewedWorkflowRunResult, error) {
 	result := ReviewedWorkflowRunResult{Status: "running", Tasks: []ReviewedWorkflowTaskResult{}}
 	if ctx == nil || commandledger.ValidateCommandID(parentCommandID) != nil ||
 		commandledger.ValidateCommandID(correlationID) != nil || maxTasks <= 0 || maxTasks > MaxWorkflowTasks {
@@ -411,6 +451,7 @@ func (service *ReviewedWorkflowRunService) RunParallel(
 
 	var mu sync.Mutex // protects result.Tasks and remaining across goroutines
 	remaining := maxTasks
+	forcedRevisionTaskID := strings.TrimSpace(firstRevisionTaskID)
 
 	for {
 		if err := budgetCtx.Err(); err != nil {
@@ -419,9 +460,18 @@ func (service *ReviewedWorkflowRunService) RunParallel(
 			}
 			return result, reviewedWorkflowFailure(&result, "cancelled", err)
 		}
-		batch, err := batchPlanner.NextBatch(budgetCtx)
-		if err != nil {
-			return result, reviewedWorkflowFailure(&result, "plan", err)
+		batch := WorkflowBatchPlan{}
+		forcedRound := false
+		if forcedRevisionTaskID != "" {
+			batch.TaskIDs = []string{forcedRevisionTaskID}
+			forcedRevisionTaskID = ""
+			forcedRound = true
+		} else {
+			var err error
+			batch, err = batchPlanner.NextBatch(budgetCtx)
+			if err != nil {
+				return result, reviewedWorkflowFailure(&result, "plan", err)
+			}
 		}
 		if batch.Completed {
 			result.Status = "completed"
@@ -440,6 +490,7 @@ func (service *ReviewedWorkflowRunService) RunParallel(
 		roundExhausted := false
 
 		for _, taskID := range batch.TaskIDs {
+			startTargeted := forcedRound && taskID == firstRevisionTaskID
 			mu.Lock()
 			if remaining <= 0 {
 				roundExhausted = true
@@ -451,17 +502,17 @@ func (service *ReviewedWorkflowRunService) RunParallel(
 
 			semaphore <- struct{}{}
 			waitGroup.Add(1)
-			go func(taskID string) {
+			go func(taskID string, startTargeted bool) {
 				defer waitGroup.Done()
 				defer func() { <-semaphore }()
-				branchResults, branchErr := service.runBranch(budgetCtx, parentCommandID, taskID, correlationID, maxRevisionCount, tracker)
+				branchResults, branchErr := service.runBranch(budgetCtx, parentCommandID, taskID, correlationID, maxRevisionCount, tracker, startTargeted)
 				mu.Lock()
 				result.Tasks = append(result.Tasks, branchResults...)
 				mu.Unlock()
 				if branchErr != nil {
 					firstErrOnce.Do(func() { firstErr = branchErr })
 				}
-			}(taskID)
+			}(taskID, startTargeted)
 		}
 		waitGroup.Wait()
 
@@ -704,6 +755,7 @@ func (service *ReviewedWorkflowRunService) runBranch(
 	correlationID string,
 	maxRevisionCount int,
 	tracker *budgetTracker,
+	startTargeted bool,
 ) ([]ReviewedWorkflowTaskResult, error) {
 	var branchResults []ReviewedWorkflowTaskResult
 	currentTaskID := startTaskID
@@ -721,7 +773,7 @@ func (service *ReviewedWorkflowRunService) runBranch(
 	// targeted mode is the existing mechanism (built for Revision Tasks,
 	// ADR-0024) that validates exactly that: one named Task's own
 	// readiness, not its position in the table.
-	isRevisionContinuation := false
+	isRevisionContinuation := startTargeted
 	revisionCount := 0
 	// previousFeedback/consecutiveSameFeedback track this branch's own
 	// lineage locally (never persisted, never a new Task field): the

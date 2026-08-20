@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+// MetadataCEORecoveryGuidance is the typed, provider-neutral metadata key
+// used only when a CEO explicitly continues an already-created Revision
+// Task after a guarded stop. The durable source remains the Interaction
+// recovery Turn; this key only carries that instruction into the one Worker
+// prompt executed by the new Recovery Command.
+const MetadataCEORecoveryGuidance = "ceo_recovery_guidance"
+
 // PromptInput is intentionally separate from ExecutionRequest so future
 // company policy, prior decisions, and deliverables can be added at this port.
 type PromptInput struct {

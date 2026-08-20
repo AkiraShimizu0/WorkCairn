@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -422,6 +423,72 @@ func TestWorkflowFailureRequiresTypedEvidenceAndStopsSession(t *testing.T) {
 	invalid := interactionWorkflowEvidence(WorkflowStatusFailed)
 	if _, err := ready.RecordWorkflow(invalid, at.Add(3*time.Minute)); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("missing failure evidence error = %v", err)
+	}
+}
+
+func TestBudgetFailureNextOffersOnlyUniqueUnexecutedRevisionContinuation(t *testing.T) {
+	at := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	ready := interactionReadyRecord(t, at)
+	failed := interactionWorkflowEvidence(WorkflowStatusPartialFailure)
+	failed.Failure = &WorkflowFailure{Code: "BUDGET_EXCEEDED", Stage: "budget", Partial: true}
+	failed.Tasks = []WorkflowTaskEvidence{
+		{TaskID: "TASK-001", ExecutionCommandID: "CMD-TASK-001", ReviewCommandID: "CMD-REVIEW-001", Verdict: review.VerdictRequestChanges, RevisionCommandID: "CMD-REVISION-001", RevisionTaskID: "TASK-004"},
+		{TaskID: "TASK-002", ExecutionCommandID: "CMD-TASK-002", ReviewCommandID: "CMD-REVIEW-002", Verdict: review.VerdictApprove},
+		{TaskID: "TASK-003", ExecutionCommandID: "CMD-TASK-003", ReviewCommandID: "CMD-REVIEW-003", Verdict: review.VerdictApprove},
+	}
+	attention, err := ready.RecordWorkflow(failed, at.Add(3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := attention.Next()
+	if err != nil || next.Operation != "interaction.workflow.recover_revision" || !next.ApprovalRequired ||
+		!reflect.DeepEqual(next.EligibleTaskIDs, []string{"TASK-004"}) || next.EvidenceTaskID != "TASK-001" {
+		t.Fatalf("Next() = %#v, %v", next, err)
+	}
+
+	// If evidence is ambiguous, Go must not guess which Revision to run.
+	ambiguous := failed
+	ambiguous.Tasks = append(append([]WorkflowTaskEvidence(nil), failed.Tasks...), WorkflowTaskEvidence{
+		TaskID: "TASK-005", ExecutionCommandID: "CMD-TASK-005", ReviewCommandID: "CMD-REVIEW-005",
+		Verdict: review.VerdictRequestChanges, RevisionCommandID: "CMD-REVISION-005", RevisionTaskID: "TASK-006",
+	})
+	ambiguousAttention, err := ready.RecordWorkflow(ambiguous, at.Add(4*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguousNext, err := ambiguousAttention.Next()
+	if err != nil || ambiguousNext.Operation != "" || len(ambiguousNext.EligibleTaskIDs) != 0 {
+		t.Fatalf("ambiguous Next() = %#v, %v, want default deny", ambiguousNext, err)
+	}
+	// A corrupt projection that points two source attempts at one Revision
+	// ID is also ambiguous even though set cardinality alone would be one.
+	duplicateReference := failed
+	duplicateReference.Tasks = append(append([]WorkflowTaskEvidence(nil), failed.Tasks...), WorkflowTaskEvidence{
+		TaskID: "TASK-005", ExecutionCommandID: "CMD-TASK-005", ReviewCommandID: "CMD-REVIEW-005",
+		Verdict: review.VerdictRequestChanges, RevisionCommandID: "CMD-REVISION-005", RevisionTaskID: "TASK-004",
+	})
+	duplicateAttention, err := ready.RecordWorkflow(duplicateReference, at.Add(4*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicateNext, err := duplicateAttention.Next()
+	if err != nil || duplicateNext.Operation != "" {
+		t.Fatalf("duplicate-reference Next() = %#v, %v, want default deny", duplicateNext, err)
+	}
+
+	// Once the Revision Task itself appears as executed evidence it is not a
+	// continuation target, even if an old browser still remembers the stop.
+	alreadyExecuted := failed
+	alreadyExecuted.Tasks = append(append([]WorkflowTaskEvidence(nil), failed.Tasks...), WorkflowTaskEvidence{
+		TaskID: "TASK-004", TargetedRevision: true, ExecutionCommandID: "CMD-TASK-004", ReviewCommandID: "CMD-REVIEW-004", Verdict: review.VerdictApprove,
+	})
+	executedAttention, err := ready.RecordWorkflow(alreadyExecuted, at.Add(5*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	executedNext, err := executedAttention.Next()
+	if err != nil || executedNext.Operation != "" {
+		t.Fatalf("executed Next() = %#v, %v, want no recovery", executedNext, err)
 	}
 }
 

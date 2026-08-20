@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
@@ -64,16 +65,18 @@ func ExecuteInteractionPlanApproveAndExecute(
 	}
 	input.SessionID, input.ProjectID, input.PlanDigest = strings.TrimSpace(input.SessionID), strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.PlanDigest)
 	if interaction.ValidateSessionID(input.SessionID) != nil || input.ExpectedVersion == 0 || input.ProjectID == "" || input.PlanDigest == "" ||
-		input.CurrentTime.IsZero() || commandledger.ValidateCommandID(input.CommandID) != nil {
+		input.CurrentTime.IsZero() || commandledger.ValidateCommandID(input.CommandID) != nil ||
+		input.ProviderFixtureMaxCalls < 0 || input.ProviderFixtureMaxCalls > autonomy.MaxProviderCallsCeiling {
 		return InteractionApproveAndExecuteResult{}, ErrInteractionPrecondition
 	}
 	claim, err := claimWorkspaceCommand(ctx, input.VaultRoot, input.CommandID, "interaction.plan.approve_and_execute", input.SessionID, struct {
-		SessionID       string    `json:"session_id"`
-		ExpectedVersion uint64    `json:"expected_version"`
-		ProjectID       string    `json:"project_id"`
-		PlanDigest      string    `json:"plan_digest"`
-		CurrentTime     time.Time `json:"current_time"`
-	}{input.SessionID, input.ExpectedVersion, input.ProjectID, input.PlanDigest, input.CurrentTime})
+		SessionID               string    `json:"session_id"`
+		ExpectedVersion         uint64    `json:"expected_version"`
+		ProjectID               string    `json:"project_id"`
+		PlanDigest              string    `json:"plan_digest"`
+		CurrentTime             time.Time `json:"current_time"`
+		ProviderFixtureMaxCalls int       `json:"provider_fixture_max_calls,omitempty"`
+	}{input.SessionID, input.ExpectedVersion, input.ProjectID, input.PlanDigest, input.CurrentTime, input.ProviderFixtureMaxCalls})
 	if err != nil {
 		return InteractionApproveAndExecuteResult{}, err
 	}
@@ -138,10 +141,24 @@ func ExecuteInteractionPlanApproveAndExecute(
 	// without asking again. Reviewer, Autonomy Contract, and Task budget are
 	// all derived the same way the standalone command's own preview always
 	// has -- the CEO never customized them even under the pre-CP4 flow.
-	workflowPlan, err := PlanInteractionWorkflow(ctx, InteractionWorkflowPlanInput{
+	workflowPlanInput := InteractionWorkflowPlanInput{
 		VaultRoot: input.VaultRoot, SessionID: input.SessionID, ExpectedVersion: commit.Record.Version,
 		CurrentTime: input.CurrentTime, MaxTasks: defaultWorkflowMaxTasks,
-	})
+	}
+	if input.ProviderFixtureMaxCalls > 0 {
+		standardPlan, planErr := PlanInteractionWorkflow(ctx, workflowPlanInput)
+		if planErr != nil {
+			err = planErr
+		} else {
+			fixtureContract := standardPlan.Autonomy.Clone()
+			fixtureContract.MaxProviderCalls = input.ProviderFixtureMaxCalls
+			workflowPlanInput.Autonomy = &fixtureContract
+		}
+	}
+	var workflowPlan InteractionWorkflowPlan
+	if err == nil {
+		workflowPlan, err = PlanInteractionWorkflow(ctx, workflowPlanInput)
+	}
 	if err != nil {
 		envelope := failure.New("INTERACTION_APPROVE_AND_EXECUTE_FAILED", "interaction_workflow_plan")
 		envelope.Partial, envelope.RecoveryRequired = true, true

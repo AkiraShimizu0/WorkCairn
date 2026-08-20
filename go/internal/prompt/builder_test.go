@@ -138,6 +138,28 @@ func TestBuilderConvertsInjectedTimeToJST(t *testing.T) {
 	}
 }
 
+func TestBuilderIncludesExplicitCEORecoveryGuidanceOnlyWhenProvided(t *testing.T) {
+	fixture := loadTaskExecutionFixture(t)
+	input := fixture.Input
+	input.Metadata = map[string]string{worker.MetadataCEORecoveryGuidance: "既存の成果を保ち、導入例だけ補ってください"}
+	built, err := NewBuilder().Build(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(built.System, "## CEOからの追加指示\n既存の成果を保ち、導入例だけ補ってください") {
+		t.Fatalf("recovery guidance is missing from prompt: %q", built.System)
+	}
+	withoutGuidance := fixture.Input
+	withoutGuidance.Metadata = map[string]string{"unrelated": "value"}
+	plain, err := NewBuilder().Build(context.Background(), withoutGuidance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain.System, "## CEOからの追加指示") {
+		t.Fatalf("ordinary Task prompt gained recovery guidance: %q", plain.System)
+	}
+}
+
 func TestBuilderRejectsMissingRequiredContext(t *testing.T) {
 	fixture := loadTaskExecutionFixture(t)
 	for _, test := range []struct {

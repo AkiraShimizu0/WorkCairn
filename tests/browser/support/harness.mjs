@@ -133,7 +133,7 @@ async function waitForReady(baseURL, processHandle, output) {
   throw new Error(`workcairn-daemon readiness timed out: ${output.stderr.join("")}`);
 }
 
-async function startDaemon({ vaultRoot, providerURL }) {
+async function startDaemon({ vaultRoot, providerURL, providerFixtureMaxCalls = 0 }) {
   const binary = process.env.WORKCAIRN_DAEMON_BINARY || defaultDaemonBinary;
   await stat(binary);
   const port = await reservePort();
@@ -145,14 +145,18 @@ async function startDaemon({ vaultRoot, providerURL }) {
     pairingResolve = resolvePairing;
     pairingReject = rejectPairing;
   });
-  const child = spawn(binary, [
+  const args = [
     "-vault", vaultRoot,
     "-listen", address,
     "-mobile",
     "-provider-timeout", "10s",
     "-shutdown-timeout", "5s",
     "-scheduler-interval", "1h"
-  ], {
+  ];
+  if (providerFixtureMaxCalls > 0) {
+    args.push("-provider-fixture-max-calls", String(providerFixtureMaxCalls));
+  }
+  const child = spawn(binary, args, {
     cwd: repositoryRoot,
     env: {
       PATH: process.env.PATH,
@@ -200,12 +204,13 @@ async function stopDaemon(daemon) {
   }
 }
 
-export async function startBrowserEnvironment(scenario) {
+export async function startBrowserEnvironment(scenario, options = {}) {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "workcairn-browser-"));
   const vaultRoot = join(temporaryRoot, "vault");
   await mkdir(vaultRoot, { recursive: true });
   const provider = await startProviderMock(scenario);
-  let daemon = await startDaemon({ vaultRoot, providerURL: provider.url });
+  const providerFixtureMaxCalls = Number(options.providerFixtureMaxCalls || 0);
+  let daemon = await startDaemon({ vaultRoot, providerURL: provider.url, providerFixtureMaxCalls });
   return {
     scenario,
     temporaryRoot,
@@ -214,7 +219,7 @@ export async function startBrowserEnvironment(scenario) {
     get daemon() { return daemon; },
     async restartDaemon() {
       await stopDaemon(daemon);
-      daemon = await startDaemon({ vaultRoot, providerURL: provider.url });
+      daemon = await startDaemon({ vaultRoot, providerURL: provider.url, providerFixtureMaxCalls });
       return daemon;
     },
     async stop() {

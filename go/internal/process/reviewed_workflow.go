@@ -72,8 +72,19 @@ type ExecuteReviewedWorkflowInput struct {
 	// existing behavior for a direct/CLI/HTTP caller with no further outer
 	// wrapper), matching the same additive/backward-compatible pattern as
 	// Autonomy above.
-	CorrelationID  string
+	CorrelationID string
+	// Continuation is set only by the explicit Budget Recovery command. It
+	// names an existing canonical Revision Task that must run before normal
+	// batch readiness is consulted. It never creates a Task or changes
+	// lifecycle state; the ordinary ExecuteTask/TaskService path still owns
+	// those transitions.
+	Continuation   *ReviewedWorkflowContinuation
 	EventObservers []event.Observer
+}
+
+type ReviewedWorkflowContinuation struct {
+	RevisionTaskID     string `json:"revision_task_id"`
+	AdditionalGuidance string `json:"additional_guidance,omitempty"`
 }
 
 func PlanReviewedWorkflow(ctx context.Context, input ReviewedWorkflowPlanInput) (ReviewedWorkflowPlan, error) {
@@ -143,6 +154,18 @@ func ExecuteReviewedWorkflow(
 	}
 	maxParallelTasks := input.Autonomy.EffectiveMaxParallelTasks()
 	maxRevisionCount := input.Autonomy.EffectiveMaxRevisionCount()
+	var continuation *ReviewedWorkflowContinuation
+	if input.Continuation != nil {
+		candidate := ReviewedWorkflowContinuation{
+			RevisionTaskID:     strings.TrimSpace(input.Continuation.RevisionTaskID),
+			AdditionalGuidance: strings.TrimSpace(input.Continuation.AdditionalGuidance),
+		}
+		if _, parseErr := task.ParseTaskID(candidate.RevisionTaskID); parseErr != nil ||
+			strings.ContainsAny(candidate.AdditionalGuidance, "\r\n") || len(candidate.AdditionalGuidance) > revision.MaxAdditionalGuidanceLength {
+			return service.ReviewedWorkflowRunResult{}, ErrInteractionWorkflowPrecondition
+		}
+		continuation = &candidate
+	}
 	claim, err := claimProjectCommand(ctx, input.VaultRoot, input.ProjectName, input.CommandID, "workflow.reviewed.execute", input.ProjectID, struct {
 		ProjectID         string    `json:"project_id"`
 		ProjectName       string    `json:"project_name"`
@@ -156,14 +179,16 @@ func ExecuteReviewedWorkflow(
 		// Contract than the one that originally ran) is treated as a
 		// genuinely different request rather than silently replayed under
 		// the old bounds (Command idempotency, ADR-0021/0049).
-		MaxParallelTasks int    `json:"max_parallel_tasks"`
-		MaxRevisionCount int    `json:"max_revision_count"`
-		ProviderModel    string `json:"provider_model,omitempty"`
-		MaxTokens        int    `json:"max_tokens,omitempty"`
+		MaxParallelTasks int                           `json:"max_parallel_tasks"`
+		MaxRevisionCount int                           `json:"max_revision_count"`
+		ProviderModel    string                        `json:"provider_model,omitempty"`
+		MaxTokens        int                           `json:"max_tokens,omitempty"`
+		Continuation     *ReviewedWorkflowContinuation `json:"continuation,omitempty"`
 	}{
 		input.ProjectID, input.ProjectName, strings.TrimSpace(input.ReviewerID), input.CurrentTime,
 		strings.TrimSpace(input.ApprovalReference), input.MaxTasks, maxParallelTasks, maxRevisionCount,
 		strings.TrimSpace(provider.ProviderModel), provider.MaxTokens,
+		continuation,
 	})
 	if err != nil {
 		return service.ReviewedWorkflowRunResult{}, err
@@ -171,8 +196,12 @@ func ExecuteReviewedWorkflow(
 	if replayed, ok, replayErr := replayDurableCommand[service.ReviewedWorkflowRunResult](claim); ok {
 		return replayed, replayErr
 	}
-	if _, err := PlanReviewedWorkflow(ctx, input.ReviewedWorkflowPlanInput); err != nil {
+	reviewedPlan, err := PlanReviewedWorkflow(ctx, input.ReviewedWorkflowPlanInput)
+	if err != nil {
 		return service.ReviewedWorkflowRunResult{}, finishDurableCommand(ctx, claim, service.ReviewedWorkflowRunResult{}, err, "REVIEWED_WORKFLOW_PREFLIGHT_FAILED", "preflight", false)
+	}
+	if continuation != nil && (!reviewedPlan.Next.TargetedRevision || reviewedPlan.Next.TaskID != continuation.RevisionTaskID || !reviewedPlan.Next.Ready) {
+		return service.ReviewedWorkflowRunResult{}, finishDurableCommand(ctx, claim, service.ReviewedWorkflowRunResult{}, ErrInteractionWorkflowPrecondition, "REVIEWED_WORKFLOW_PREFLIGHT_FAILED", "continuation_preflight", false)
 	}
 	// planner is required by NewReviewedWorkflowRunService's constructor but
 	// is never invoked by RunParallel (only by the sequential Run, which
@@ -192,13 +221,17 @@ func ExecuteReviewedWorkflow(
 		if targeted {
 			mode = ExecutionReadinessTargeted
 		}
+		guidance := ""
+		if continuation != nil && taskID == continuation.RevisionTaskID {
+			guidance = continuation.AdditionalGuidance
+		}
 		return ExecuteTask(runContext, ExecuteTaskInput{
 			ExecutionPlanInput: ExecutionPlanInput{
 				VaultRoot: input.VaultRoot, ProjectID: input.ProjectID, ProjectName: input.ProjectName,
 				TaskID: taskID, CurrentTime: input.CurrentTime, ReadinessMode: mode,
 			},
 			Approved: true, ApprovalSource: "reviewed-workflow", ApprovalReference: strings.TrimSpace(input.ApprovalReference),
-			ExecutionID: childCommandID, CommandID: childCommandID, EventObservers: input.EventObservers,
+			ExecutionID: childCommandID, CommandID: childCommandID, RecoveryGuidance: guidance, EventObservers: input.EventObservers,
 		}, provider, httpClient)
 	})
 	reviewer := reviewedWorkflowReviewerFunc(func(runContext context.Context, taskID, childCommandID string) (review.OrchestrationResult, error) {
@@ -269,7 +302,13 @@ func ExecuteReviewedWorkflow(
 	if correlationID == "" {
 		correlationID = strings.TrimSpace(input.CommandID)
 	}
-	result, runErr := runService.RunParallel(ctx, strings.TrimSpace(input.CommandID), correlationID, input.MaxTasks, maxParallelTasks, maxRevisionCount, batchPlanner)
+	var result service.ReviewedWorkflowRunResult
+	var runErr error
+	if continuation != nil {
+		result, runErr = runService.ResumeRevision(ctx, strings.TrimSpace(input.CommandID), correlationID, continuation.RevisionTaskID, input.MaxTasks, maxParallelTasks, maxRevisionCount, batchPlanner)
+	} else {
+		result, runErr = runService.RunParallel(ctx, strings.TrimSpace(input.CommandID), correlationID, input.MaxTasks, maxParallelTasks, maxRevisionCount, batchPlanner)
+	}
 	stage := "workflow_reviewed_execute"
 	var typed *service.ReviewedWorkflowRunError
 	if errors.As(runErr, &typed) {

@@ -1161,6 +1161,64 @@
         }
       }
     ],
+    "budget_recovery_continuation": {
+      "mode": "shape_queue",
+      "structured": [
+        {
+          "name": "ceo_intent_budget_continuation",
+          "delay_ms": 200,
+          "status": 200,
+          "headers": {"content-type": "application/json", "request-id": "req_browser_budget_plan_001"},
+          "body": {
+            "model": "claude-sonnet-5",
+            "content": [{"type": "text", "text": "{\"project_name\":\"Budget Recovery Project\",\"objective\":\"3つの調査結果を安全に統合する\",\"summary\":\"独立した調査を進め、確認後に統合する\",\"steps\":[{\"kind\":\"research\",\"description\":\"市場動向を調査する\",\"required_role\":\"Content Writer\",\"parallel_with_previous\":false},{\"kind\":\"research\",\"description\":\"競合サービスを調査する\",\"required_role\":\"Content Writer\",\"parallel_with_previous\":true},{\"kind\":\"analyze\",\"description\":\"顧客傾向を分析する\",\"required_role\":\"Content Writer\",\"parallel_with_previous\":true},{\"kind\":\"write\",\"description\":\"3つの結果を統合する\",\"required_role\":\"Content Writer\",\"parallel_with_previous\":false}],\"ceo_questions\":[]}"}],
+            "usage": {"input_tokens": 30, "output_tokens": 60}
+          }
+        },
+        {
+          "name": "review_approve_budget_branch_a",
+          "delay_ms": 250,
+          "status": 200,
+          "headers": {"content-type": "application/json", "request-id": "req_browser_budget_review_a"},
+          "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"要件を満たしています。\"}"}], "usage": {"input_tokens": 20, "output_tokens": 15}}
+        },
+        {
+          "name": "review_request_changes_budget_branch",
+          "delay_ms": 250,
+          "status": 200,
+          "headers": {"content-type": "application/json", "request-id": "req_browser_budget_review_changes"},
+          "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"判断根拠が不足しています。\",\"suggested_action\":\"根拠を1点追加してください。\"}],\"summary\":\"根拠を追加すると目的を満たします。\"}"}], "usage": {"input_tokens": 20, "output_tokens": 20}}
+        },
+        {
+          "name": "review_approve_budget_branch_c",
+          "delay_ms": 250,
+          "status": 200,
+          "headers": {"content-type": "application/json", "request-id": "req_browser_budget_review_c"},
+          "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"要件を満たしています。\"}"}], "usage": {"input_tokens": 20, "output_tokens": 15}}
+        },
+        {
+          "name": "review_approve_budget_revision",
+          "delay_ms": 250,
+          "status": 200,
+          "headers": {"content-type": "application/json", "request-id": "req_browser_budget_revision_review"},
+          "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"指摘が反映されています。\"}"}], "usage": {"input_tokens": 20, "output_tokens": 15}}
+        },
+        {
+          "name": "review_approve_budget_synthesis",
+          "delay_ms": 250,
+          "status": 200,
+          "headers": {"content-type": "application/json", "request-id": "req_browser_budget_synthesis_review"},
+          "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"統合結果は要件を満たしています。\"}"}], "usage": {"input_tokens": 20, "output_tokens": 15}}
+        }
+      ],
+      "unstructured": [
+        {"name": "task_execution_budget_branch_a", "delay_ms": 300, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_budget_task_a"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# 調査A\n\n市場動向の調査結果です。"}], "usage": {"input_tokens": 20, "output_tokens": 20}}},
+        {"name": "task_execution_budget_branch_b", "delay_ms": 300, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_budget_task_b"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# 調査B\n\n競合調査の結果です。"}], "usage": {"input_tokens": 20, "output_tokens": 20}}},
+        {"name": "task_execution_budget_branch_c", "delay_ms": 300, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_budget_task_c"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# 調査C\n\n顧客分析の結果です。"}], "usage": {"input_tokens": 20, "output_tokens": 20}}},
+        {"name": "task_execution_budget_revision", "delay_ms": 300, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_budget_revision"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# 修正版\n\n判断根拠を追加した成果です。"}], "usage": {"input_tokens": 20, "output_tokens": 20}}},
+        {"name": "task_execution_budget_synthesis", "delay_ms": 300, "status": 200, "headers": {"content-type": "application/json", "request-id": "req_browser_budget_synthesis"}, "body": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "# 統合結果\n\n3つの結果を統合しました。"}], "usage": {"input_tokens": 20, "output_tokens": 20}}}
+      ]
+    },
     "no_progress_v1": [
       {
         "name": "ceo_intent_clarification",

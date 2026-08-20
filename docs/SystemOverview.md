@@ -192,7 +192,7 @@ ADR-0029では、適用済みSessionからreviewer、Task上限、次step、Sess
 
 ADR-0030のExternal Action handoffは任意です。completed Workflowに含まれる明示Taskとlogical targetだけをread-only Action planへ渡し、Deliverable source SHA-256への別承認後に既存WordPress Action child Commandを実行します。自然言語や本文から公開を推測せず、Action不要のSessionは`completed`のまま終了します。
 
-`interaction-next`／HTTP next endpointは、Sessionのstateと最新turnだけから次のoperation、expected Version、必要field、質問、承認要否、Recoveryで確認するouter／child Ledgerを返します。これはread-only projectionであり、自動承認、自動実行、自動Recoveryを行いません。
+`interaction-next`／HTTP next endpointは、Sessionのstateと最新turnだけから次のoperation、expected Version、必要field、質問、承認要否、Recoveryで確認するouter／child Ledgerを返します。これはread-only projectionであり、自動承認、自動実行、自動Recoveryを行いません。Budget停止でRequest Changes後のRevision Taskが既にcommit済み・未実行の場合だけ、canonical Workflow evidenceから一意に導出した対象を`interaction.workflow.recover_revision`として提示します（ADR-0055）。CEOの新CommandがそのRevisionだけを先に続行し、完了済みbranchを再実行せず既存readinessからSynthesisへ進みます。Recoveryごとに新しいbounded Budget scopeを開始しますが、root request全体のdurable Budgetは未実装です。
 
 ## Go Only Repository and Runtime
 

@@ -36,14 +36,22 @@ type Inspector interface {
 }
 
 type ProcessExecutor struct {
-	vaultRoot     string
-	providerMu    sync.RWMutex
-	provider      workspaceprocess.ClaudeProcessConfig
-	actionConfig  workspaceprocess.WordPressProcessConfig
-	httpClient    claude.HTTPDoer
-	metrics       *metrics.Subscriber
-	notifications *vault.NotificationSubscriber
-	observers     []event.Observer
+	vaultRoot               string
+	providerMu              sync.RWMutex
+	provider                workspaceprocess.ClaudeProcessConfig
+	actionConfig            workspaceprocess.WordPressProcessConfig
+	httpClient              claude.HTTPDoer
+	metrics                 *metrics.Subscriber
+	notifications           *vault.NotificationSubscriber
+	observers               []event.Observer
+	providerFixtureMaxCalls int
+}
+
+// ProcessExecutorOptions contains Adapter-edge acceptance configuration.
+// ProviderFixtureMaxCalls is never a Command payload or CEO setting; the
+// daemon only supplies it for a loopback Provider fixture in Browser Gate.
+type ProcessExecutorOptions struct {
+	ProviderFixtureMaxCalls int
 }
 
 var starterOrganization = []organization.EmployeeCandidate{
@@ -57,7 +65,11 @@ func NewProcessExecutor(vaultRoot string, provider workspaceprocess.ClaudeProces
 }
 
 func NewProcessExecutorWithActionConfig(vaultRoot string, provider workspaceprocess.ClaudeProcessConfig, actionConfig workspaceprocess.WordPressProcessConfig, httpClient claude.HTTPDoer) (*ProcessExecutor, error) {
-	if strings.TrimSpace(vaultRoot) == "" || httpClient == nil {
+	return NewProcessExecutorWithActionConfigAndOptions(vaultRoot, provider, actionConfig, httpClient, ProcessExecutorOptions{})
+}
+
+func NewProcessExecutorWithActionConfigAndOptions(vaultRoot string, provider workspaceprocess.ClaudeProcessConfig, actionConfig workspaceprocess.WordPressProcessConfig, httpClient claude.HTTPDoer, options ProcessExecutorOptions) (*ProcessExecutor, error) {
+	if strings.TrimSpace(vaultRoot) == "" || httpClient == nil || options.ProviderFixtureMaxCalls < 0 || options.ProviderFixtureMaxCalls > autonomy.MaxProviderCallsCeiling {
 		return nil, fmt.Errorf("Vault root and HTTP client are required")
 	}
 	vaultRoot = strings.TrimSpace(vaultRoot)
@@ -76,7 +88,8 @@ func NewProcessExecutorWithActionConfig(vaultRoot string, provider workspaceproc
 	}
 	return &ProcessExecutor{
 		vaultRoot: vaultRoot, provider: provider, actionConfig: actionConfig, httpClient: httpClient,
-		metrics: metricSubscriber, notifications: notifications,
+		providerFixtureMaxCalls: options.ProviderFixtureMaxCalls,
+		metrics:                 metricSubscriber, notifications: notifications,
 		observers: []event.Observer{
 			{Types: observedTypes, Handler: notifications.Handler()},
 			{Types: observedTypes, Handler: metricSubscriber.Handler()},
@@ -487,7 +500,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		return workspaceprocess.ExecuteInteractionPlanApproveAndExecute(ctx, workspaceprocess.InteractionApplyInput{
 			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, ExpectedVersion: payload.ExpectedVersion,
 			ProjectID: payload.ProjectID, PlanDigest: payload.PlanDigest, CurrentTime: payload.CurrentTime,
-			CommandID: command.CommandID, EventObservers: executor.observers,
+			CommandID: command.CommandID, ProviderFixtureMaxCalls: executor.providerFixtureMaxCalls, EventObservers: executor.observers,
 		}, executor.providerConfig(), executor.httpClient, true)
 	case "interaction.workflow.recover_revision":
 		var payload interactionRecoverRevisionPayload
