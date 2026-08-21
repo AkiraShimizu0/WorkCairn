@@ -194,6 +194,16 @@ func ExecuteInteractionRecoverRevision(
 		chainOptions.Continuation = &ReviewedWorkflowContinuation{
 			RevisionTaskID: input.TaskID, AdditionalGuidance: input.AdditionalGuidance,
 		}
+	} else if result.Revision.Task != nil {
+		// Revision Limit and No-Progress recovery also create a canonical,
+		// unstarted Revision Task before this chain begins. Force that Task
+		// through the existing ResumeRevision boundary before ordinary batch
+		// readiness is consulted. Otherwise an original Synthesis Task whose
+		// dependencies are already Completed can race the newly created
+		// Revision and observe stale evidence.
+		chainOptions.Continuation = &ReviewedWorkflowContinuation{
+			RevisionTaskID: result.Revision.Task.ID, AdditionalGuidance: input.AdditionalGuidance,
+		}
 	}
 	workflowResult, envelope, workflowErr := runInteractionWorkflowChainWithOptions(
 		ctx, input.VaultRoot, workflowPlan, commit.Record.Version, defaultWorkflowMaxTasks, input.CurrentTime,

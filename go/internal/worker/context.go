@@ -33,10 +33,11 @@ type TaskContext struct {
 // ExecutionRequest is the complete, immutable input for one Worker execution.
 // Metadata is optional and reserved for correlation and Adapter information.
 type ExecutionRequest struct {
-	Employee    EmployeeContext   `json:"employee"`
-	Task        TaskContext       `json:"task"`
-	CurrentTime time.Time         `json:"current_datetime"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Employee           EmployeeContext      `json:"employee"`
+	Task               TaskContext          `json:"task"`
+	DependencyEvidence []DependencyEvidence `json:"dependency_evidence,omitempty"`
+	CurrentTime        time.Time            `json:"current_datetime"`
+	Metadata           map[string]string    `json:"metadata,omitempty"`
 }
 
 func (employee EmployeeContext) Validate() error {
@@ -73,6 +74,9 @@ func (request ExecutionRequest) Validate() error {
 		return err
 	}
 	if err := request.Task.Validate(); err != nil {
+		return err
+	}
+	if err := ValidateDependencyEvidence(request.DependencyEvidence); err != nil {
 		return err
 	}
 	if request.CurrentTime.IsZero() {

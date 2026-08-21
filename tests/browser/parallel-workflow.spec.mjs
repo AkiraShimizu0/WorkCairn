@@ -84,6 +84,18 @@ test("single approval automatically parallelizes independent Tasks then Synthesi
     await expect(page.locator("#activity-timeline")).toContainText("3つの調査結果を統合し販売戦略を作成する");
     await expect(page.locator("#proof-of-work")).toContainText("4件の仕事");
 
+    // The fixed Provider fixture refuses the Synthesis call unless its
+    // actual prompt contains all three canonical branch Deliverables. The
+    // final artifact then proves the result remained visible through the
+    // ordinary read-only evidence projection rather than only inside the
+    // Provider mock.
+    const synthesisToggle = page.locator("#activity-timeline").getByRole("button", { name: "成果物を見る" }).last();
+    await synthesisToggle.click();
+    const synthesisViewer = page.locator("#activity-timeline .deliverable-viewer").last();
+    for (const evidence of ["市場A", "競合B", "顧客C"]) {
+      await expect(synthesisViewer).toContainText(evidence);
+    }
+
     // No fabricated "並列実行中です"-style canonical Turn was ever written
     // to Go, and once the terminal state lands, the ephemeral live-status
     // sentence used while running must not remain in the timeline.

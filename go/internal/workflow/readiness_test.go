@@ -173,6 +173,13 @@ func TestEvaluateAllReadinessMultipleDependenciesRequireAllComplete(t *testing.T
 	assertReadyIDs(t, ready, []string{"TASK-004"})
 }
 
+func TestValidateDependenciesRejectsDuplicateDirectDependency(t *testing.T) {
+	tasks := []Task{{ID: "TASK-001"}, {ID: "TASK-002"}}
+	if _, err := ValidateDependencies(tasks, []Dependency{{TaskID: "TASK-002", DependsOn: []string{"TASK-001", "TASK-001"}}}); err == nil {
+		t.Fatal("ValidateDependencies() accepted duplicate direct dependency evidence")
+	}
+}
+
 // TestEvaluateAllReadinessSynthesisFansIn is the direct fan-out/fan-in shape
 // ADR-0051 describes: A/B/C run independently, and only once all three are
 // complete does the Synthesis Task (S, depending on all three) become ready.

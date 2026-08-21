@@ -341,6 +341,10 @@ func executeClaimedTask(
 	if err != nil {
 		return execution.Result{}, fmt.Errorf("execute Deliverable Store: %w", err)
 	}
+	dependencyEvidence, err := vault.NewDependencyEvidenceCollector(input.VaultRoot, input.ProjectName)
+	if err != nil {
+		return execution.Result{}, fmt.Errorf("execute Dependency Evidence: %w", err)
+	}
 	audit, err := vault.NewAuditSubscriber(input.VaultRoot, input.ProjectName)
 	if err != nil {
 		return execution.Result{}, fmt.Errorf("execute Audit: %w", err)
@@ -353,7 +357,8 @@ func executeClaimedTask(
 		},
 	}, workspaceruntime.Dependencies{
 		HTTPClient: httpClient, TaskStore: taskStore,
-		Deliverables: deliverables, AuditHandler: audit.Handler(), Observers: input.EventObservers,
+		Deliverables: deliverables, DependencyEvidence: dependencyEvidence,
+		AuditHandler: audit.Handler(), Observers: input.EventObservers,
 		Readiness: executionReadinessService(input.ExecutionPlanInput),
 	})
 	if err != nil {

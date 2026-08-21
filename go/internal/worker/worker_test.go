@@ -53,6 +53,24 @@ func TestExecutionRequestValidation(t *testing.T) {
 	}
 }
 
+func TestDependencyEvidenceValidationRejectsDuplicateSourceAndMissingProvenance(t *testing.T) {
+	valid := DependencyEvidence{
+		SourceTaskID: "TASK-002", SourceTitle: "市場調査", TaskID: "TASK-005", Title: "市場調査を修正",
+		EmployeeID: "RESEARCH-001", Content: "canonical evidence",
+	}
+	if err := ValidateDependencyEvidence([]DependencyEvidence{valid}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDependencyEvidence([]DependencyEvidence{valid, valid}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("duplicate source validation = %v", err)
+	}
+	missing := valid
+	missing.Content = ""
+	if err := ValidateDependencyEvidence([]DependencyEvidence{missing}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("missing content validation = %v", err)
+	}
+}
+
 func TestPromptValidation(t *testing.T) {
 	if err := (Prompt{System: "system", User: "user"}).Validate(); err != nil {
 		t.Fatal(err)

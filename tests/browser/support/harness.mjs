@@ -104,6 +104,25 @@ async function startProviderMock(scenario) {
       response.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "unexpected browser fixture request" } }));
       return;
     }
+    // Fixed fixture assertions inspect the provider-bound prompt without
+    // recording it in calls or deriving a response from it. This prevents
+    // the Browser Gate from becoming a mirror mock while still proving the
+    // actual daemon sent every required canonical dependency Deliverable to
+    // the Synthesis invocation.
+    const promptText = [
+      typeof payload?.system === "string" ? payload.system : "",
+      ...(Array.isArray(payload?.messages)
+        ? payload.messages.map((message) => typeof message?.content === "string" ? message.content : "")
+        : []),
+    ].join("\n");
+    const missingPromptEvidence = Array.isArray(current.required_prompt_contains)
+      ? current.required_prompt_contains.filter((expected) => !promptText.includes(expected))
+      : [];
+    if (missingPromptEvidence.length > 0) {
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "fixed fixture prompt evidence missing" } }));
+      return;
+    }
     if (current.delay_ms) await new Promise((resolveDelay) => setTimeout(resolveDelay, current.delay_ms));
     response.writeHead(current.status, current.headers);
     response.end(JSON.stringify(current.body));

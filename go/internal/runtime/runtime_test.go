@@ -136,7 +136,8 @@ func TestRuntimeObserverFailurePreservesCompletedTaskAndReturnsPartialFailure(t 
 		ModelValue: "Claude Sonnet 5",
 		Claude:     claude.Config{APIKey: "fake-api-key", ProviderModel: "claude-sonnet-5", BaseURL: server.URL},
 	}, Dependencies{
-		HTTPClient: server.Client(), TaskStore: store, Deliverables: deliverablestore.NewInMemory(), AuditHandler: discardAudit,
+		HTTPClient: server.Client(), TaskStore: store, Deliverables: deliverablestore.NewInMemory(),
+		DependencyEvidence: emptyDependencyEvidenceCollector{}, AuditHandler: discardAudit,
 		Observers: []event.Observer{
 			{Types: []event.Type{event.TaskCompleted}, Handler: func(context.Context, event.Event) error { return observerFailure }},
 			{Types: []event.Type{event.TaskCompleted}, Handler: metricSubscriber.Handler()},
@@ -173,7 +174,8 @@ func TestRuntimeRequiresExplicitConfigAndDependencies(t *testing.T) {
 		},
 	}
 	validDependencies := Dependencies{
-		HTTPClient: client, TaskStore: store, Deliverables: deliverablestore.NewInMemory(), AuditHandler: discardAudit,
+		HTTPClient: client, TaskStore: store, Deliverables: deliverablestore.NewInMemory(),
+		DependencyEvidence: emptyDependencyEvidenceCollector{}, AuditHandler: discardAudit,
 	}
 	if _, err := New(Config{}, validDependencies); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("missing model error = %v", err)
@@ -232,7 +234,7 @@ func configuredRuntime(t *testing.T, store task.Store, server *httptest.Server) 
 		},
 	}, Dependencies{
 		HTTPClient: server.Client(), TaskStore: store,
-		Deliverables: deliverablestore.NewInMemory(), AuditHandler: discardAudit,
+		Deliverables: deliverablestore.NewInMemory(), DependencyEvidence: emptyDependencyEvidenceCollector{}, AuditHandler: discardAudit,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -241,6 +243,12 @@ func configuredRuntime(t *testing.T, store task.Store, server *httptest.Server) 
 }
 
 func discardAudit(context.Context, event.Event) error { return nil }
+
+type emptyDependencyEvidenceCollector struct{}
+
+func (emptyDependencyEvidenceCollector) Collect(context.Context, execution.Request) ([]worker.DependencyEvidence, error) {
+	return []worker.DependencyEvidence{}, nil
+}
 
 func seededTaskStore(t *testing.T) *taskstore.InMemory {
 	t.Helper()

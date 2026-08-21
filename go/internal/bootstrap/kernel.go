@@ -30,10 +30,11 @@ type WorkerRuntime struct {
 // KernelDependencies contains replaceable Adapter ports needed by the
 // composition root. Provider and storage configuration stay outside Kernel.
 type KernelDependencies struct {
-	WorkerRuntime WorkerRuntime
-	TaskStore     task.Store
-	Deliverables  deliverable.Store
-	Readiness     service.ReadinessService
+	WorkerRuntime      WorkerRuntime
+	TaskStore          task.Store
+	Deliverables       deliverable.Store
+	Readiness          service.ReadinessService
+	DependencyEvidence service.DependencyEvidenceCollector
 }
 
 // NewDefaultKernel registers production services without starting the Kernel.
@@ -109,6 +110,11 @@ func NewKernelWithDependencies(version string, dependencies KernelDependencies) 
 	)
 	if err != nil {
 		return nil, err
+	}
+	if dependencies.DependencyEvidence != nil {
+		if err := executionService.SetDependencyEvidenceCollector(dependencies.DependencyEvidence); err != nil {
+			return nil, err
+		}
 	}
 	if err := workspaceKernel.RegisterExecutionService(executionService); err != nil {
 		return nil, err

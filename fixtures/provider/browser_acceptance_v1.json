@@ -850,7 +850,7 @@
       ],
       "unstructured": [
         {
-          "name": "task_execution_parallel",
+          "name": "task_execution_parallel_market",
           "delay_ms": 400,
           "status": 200,
           "headers": {
@@ -862,7 +862,7 @@
             "content": [
               {
                 "type": "text",
-                "text": "# 調査結果\n\n本文です。"
+                "text": "# 市場調査\n\n市場Aではlocal-firstなAI業務支援への関心が高まっています。"
               }
             ],
             "usage": {
@@ -872,7 +872,7 @@
           }
         },
         {
-          "name": "task_execution_parallel",
+          "name": "task_execution_parallel_competitor",
           "delay_ms": 400,
           "status": 200,
           "headers": {
@@ -884,7 +884,7 @@
             "content": [
               {
                 "type": "text",
-                "text": "# 調査結果\n\n本文です。"
+                "text": "# 競合調査\n\n競合Bは細かなAgent管理を中心にしています。"
               }
             ],
             "usage": {
@@ -894,7 +894,7 @@
           }
         },
         {
-          "name": "task_execution_parallel",
+          "name": "task_execution_parallel_customer",
           "delay_ms": 400,
           "status": 200,
           "headers": {
@@ -906,7 +906,7 @@
             "content": [
               {
                 "type": "text",
-                "text": "# 調査結果\n\n本文です。"
+                "text": "# 顧客分析\n\n顧客Cは必要な判断だけを求められる体験を重視しています。"
               }
             ],
             "usage": {
@@ -916,7 +916,8 @@
           }
         },
         {
-          "name": "task_execution_parallel",
+          "name": "task_execution_parallel_synthesis",
+          "required_prompt_contains": ["市場A", "競合B", "顧客C"],
           "delay_ms": 400,
           "status": 200,
           "headers": {
@@ -928,7 +929,7 @@
             "content": [
               {
                 "type": "text",
-                "text": "# 調査結果\n\n本文です。"
+                "text": "# 統合販売戦略\n\n市場Aの需要に対し、競合Bとの差を明確にし、顧客Cが重視する『必要な判断だけ』を中心価値として訴求します。"
               }
             ],
             "usage": {

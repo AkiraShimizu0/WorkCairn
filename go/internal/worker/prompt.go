@@ -17,16 +17,28 @@ const MetadataCEORecoveryGuidance = "ceo_recovery_guidance"
 // PromptInput is intentionally separate from ExecutionRequest so future
 // company policy, prior decisions, and deliverables can be added at this port.
 type PromptInput struct {
-	Employee    EmployeeContext   `json:"employee"`
-	Task        TaskContext       `json:"task"`
-	CurrentTime time.Time         `json:"current_datetime"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Employee           EmployeeContext      `json:"employee"`
+	Task               TaskContext          `json:"task"`
+	DependencyEvidence []DependencyEvidence `json:"dependency_evidence,omitempty"`
+	CurrentTime        time.Time            `json:"current_datetime"`
+	Metadata           map[string]string    `json:"metadata,omitempty"`
+}
+
+// DependencyEvidenceUsage is internal prompt-build observability. It is not
+// sent to a Provider, persisted to Audit/Ledger, or exposed through the public
+// JSON Contract. Canonical Deliverables remain the source of truth.
+type DependencyEvidenceUsage struct {
+	TaskIDs       []string `json:"task_ids"`
+	Count         int      `json:"count"`
+	IncludedBytes int      `json:"included_bytes"`
+	Truncated     bool     `json:"truncated"`
 }
 
 // Prompt is the provider-neutral input generated for a Runner.
 type Prompt struct {
-	System string `json:"system"`
-	User   string `json:"user"`
+	System                  string                   `json:"system"`
+	User                    string                   `json:"user"`
+	DependencyEvidenceUsage *DependencyEvidenceUsage `json:"dependency_evidence_usage,omitempty"`
 }
 
 // PromptBuilder is a port. Prompt content remains outside WorkerService and is

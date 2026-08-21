@@ -58,7 +58,7 @@ one-shot Scheduler、Notification／Metrics inspection、WordPress External Acti
 2. Provider出力は未知field、未知社員、不正な依存、循環依存をGoで拒否します。生成と適用は分離され、LLM出力を直接Vaultへ書きません。
 3. 承認済みplanだけがGo Project／Task writerへ渡り、Project、Task、Task Dependenciesを作成します。承認済みReviewed Workflow commandはdependency readinessをTaskごとに再planし、各TaskをReviewして、Request ChangesならRevision Taskを実行・再Reviewしてから本流へ戻ります。
 4. 通常Taskはread-only planで対象、依存、既存成果物を確認した後、別の明示承認で実行します。主要な副作用commandは、Command IDを指定すると副作用前にdurable claimを保存し、同一requestの完了応答を再送しても処理を重複実行しません。
-5. Workerは構造化ContextからPromptを作り、Runner RegistryがProvider Adapterを選びます。RunnerはTask状態や保存形式を知りません。
+5. Workerは構造化ContextからPromptを作り、Runner RegistryがProvider Adapterを選びます。依存を持つSynthesisでは、ExecutionServiceがTask開始前に直接依存のcanonical Deliverableを収集し、PromptBuilderがprovenance付きの参照専用Contextとして加えます（ADR-0056）。RunnerはTask状態や保存形式を知りません。
 6. 成果物を保存してからTaskを完了します。Reviewはcanonical JSON、Markdown表示、Eventの順で成立させます。
 7. Reviewが修正を要求した場合は、immutable Revision intentを保存してからTaskServiceで修正Taskを作成します。
 
@@ -193,6 +193,8 @@ ADR-0029では、適用済みSessionからreviewer、Task上限、次step、Sess
 ADR-0030のExternal Action handoffは任意です。completed Workflowに含まれる明示Taskとlogical targetだけをread-only Action planへ渡し、Deliverable source SHA-256への別承認後に既存WordPress Action child Commandを実行します。自然言語や本文から公開を推測せず、Action不要のSessionは`completed`のまま終了します。
 
 `interaction-next`／HTTP next endpointは、Sessionのstateと最新turnだけから次のoperation、expected Version、必要field、質問、承認要否、Recoveryで確認するouter／child Ledgerを返します。これはread-only projectionであり、自動承認、自動実行、自動Recoveryを行いません。Budget停止でRequest Changes後のRevision Taskが既にcommit済み・未実行の場合だけ、canonical Workflow evidenceから一意に導出した対象を`interaction.workflow.recover_revision`として提示します（ADR-0055）。CEOの新CommandがそのRevisionだけを先に続行し、完了済みbranchを再実行せず既存readinessからSynthesisへ進みます。Recoveryごとに新しいbounded Budget scopeを開始しますが、root request全体のdurable Budgetは未実装です。
+
+Synthesisのdependency contextはADR-0056に従い、Vault Adapterがcanonical dependency graphの直接依存とimmutable Revision lineageからread-onlyに構築します。最新のterminal Revisionを含む全dependency Deliverableが揃わない限り、`DEPENDENCY_EVIDENCE_MISSING`としてTask開始／Provider呼び出し前に停止します。Evidenceは決定的な順序とbyte上限でPromptのUser Contextへ入り、Review履歴、Conversation、Plan、非依存Taskは混ぜません。
 
 ## Go Only Repository and Runtime
 

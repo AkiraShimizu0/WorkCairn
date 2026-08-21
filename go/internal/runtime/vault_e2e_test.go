@@ -48,13 +48,18 @@ func TestRuntimeCompletesTemporaryVaultExecutionWithDeliverableAndAudit(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	dependencyEvidence, err := vault.NewDependencyEvidenceCollector(root, "ToDoアプリ")
+	if err != nil {
+		t.Fatal(err)
+	}
 	workspaceRuntime, err := New(Config{
 		ModelValue: "Claude Sonnet 5",
 		Claude: claude.Config{
 			APIKey: "fake-api-key", ProviderModel: "claude-sonnet-5", BaseURL: server.URL,
 		},
 	}, Dependencies{
-		HTTPClient: server.Client(), TaskStore: taskStore, Deliverables: deliverables, AuditHandler: audit.Handler(),
+		HTTPClient: server.Client(), TaskStore: taskStore, Deliverables: deliverables,
+		DependencyEvidence: dependencyEvidence, AuditHandler: audit.Handler(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -137,13 +142,18 @@ func TestRuntimeDoesNotAdoptOrOverwriteExistingDeliverable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dependencyEvidence, err := vault.NewDependencyEvidenceCollector(root, "ToDoアプリ")
+	if err != nil {
+		t.Fatal(err)
+	}
 	workspaceRuntime, err := New(Config{
 		ModelValue: "Claude Sonnet 5",
 		Claude: claude.Config{
 			APIKey: "fake-api-key", ProviderModel: "claude-sonnet-5", BaseURL: server.URL,
 		},
 	}, Dependencies{
-		HTTPClient: server.Client(), TaskStore: taskStore, Deliverables: deliverables, AuditHandler: audit.Handler(),
+		HTTPClient: server.Client(), TaskStore: taskStore, Deliverables: deliverables,
+		DependencyEvidence: dependencyEvidence, AuditHandler: audit.Handler(),
 	})
 	if err != nil {
 		t.Fatal(err)

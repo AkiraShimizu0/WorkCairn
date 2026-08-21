@@ -36,12 +36,13 @@ type Config struct {
 
 // Dependencies are effectful ports supplied by the process composition root.
 type Dependencies struct {
-	HTTPClient   claude.HTTPDoer
-	TaskStore    task.Store
-	Deliverables deliverable.Store
-	AuditHandler event.Handler
-	Observers    []event.Observer
-	Readiness    service.ReadinessService
+	HTTPClient         claude.HTTPDoer
+	TaskStore          task.Store
+	Deliverables       deliverable.Store
+	DependencyEvidence service.DependencyEvidenceCollector
+	AuditHandler       event.Handler
+	Observers          []event.Observer
+	Readiness          service.ReadinessService
 }
 
 // Runtime owns one composed Kernel lifecycle and exposes the typed single-Task
@@ -64,6 +65,9 @@ func New(config Config, dependencies Dependencies) (*Runtime, error) {
 	}
 	if isNilDependency(dependencies.Deliverables) {
 		return nil, fmt.Errorf("%w: Deliverable Store is required", ErrInvalidDependencies)
+	}
+	if isNilDependency(dependencies.DependencyEvidence) {
+		return nil, fmt.Errorf("%w: Dependency Evidence collector is required", ErrInvalidDependencies)
 	}
 	if dependencies.AuditHandler == nil {
 		return nil, fmt.Errorf("%w: Audit handler is required", ErrInvalidDependencies)
@@ -88,9 +92,10 @@ func New(config Config, dependencies Dependencies) (*Runtime, error) {
 				PromptBuilder: promptbuilder.NewBuilder(),
 				Runners:       registry,
 			},
-			TaskStore:    dependencies.TaskStore,
-			Deliverables: dependencies.Deliverables,
-			Readiness:    dependencies.Readiness,
+			TaskStore:          dependencies.TaskStore,
+			Deliverables:       dependencies.Deliverables,
+			Readiness:          dependencies.Readiness,
+			DependencyEvidence: dependencies.DependencyEvidence,
 		},
 	)
 	if err != nil {

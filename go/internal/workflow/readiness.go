@@ -83,10 +83,15 @@ func ValidateDependencies(
 		}
 		seenDependencyRows[dependency.TaskID] = struct{}{}
 		graph[dependency.TaskID] = append([]string(nil), dependency.DependsOn...)
+		seenDirect := make(map[string]struct{}, len(dependency.DependsOn))
 		for _, dependencyID := range dependency.DependsOn {
 			if _, exists := taskIDs[dependencyID]; !exists {
 				return nil, fmt.Errorf("%w: %s", ErrUnknownDependency, dependencyID)
 			}
+			if _, exists := seenDirect[dependencyID]; exists {
+				return nil, fmt.Errorf("duplicate dependency for %s: %s", dependency.TaskID, dependencyID)
+			}
+			seenDirect[dependencyID] = struct{}{}
 		}
 	}
 

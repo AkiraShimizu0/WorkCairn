@@ -105,13 +105,24 @@ func recoveryScenarioMockServer(t *testing.T, watchTaskID string, varyDeliverabl
 		default:
 			ownTaskID, titleLine := taskIdentityFromPrompt(combined, "タスクID: ", "タイトル: ")
 			mu.Lock()
-			partOfWatchedLineage := !forceApprove && (watched[ownTaskID] || watchedTitleReferencesLineage(titleLine, watched))
+			approvalForced := forceApprove
+			partOfWatchedLineage := !approvalForced && (watched[ownTaskID] || watchedTitleReferencesLineage(titleLine, watched))
 			if partOfWatchedLineage {
 				executionCount++
 			}
 			attempt := executionCount
 			mu.Unlock()
 			switch {
+			case strings.Contains(combined, "タイトル: 販売戦略へ統合する"):
+				if !strings.Contains(combined, "回復済みの競合B") {
+					t.Errorf("Synthesis prompt did not use the terminal recovery Revision Deliverable")
+				}
+				if strings.Contains(combined, "本文（実行") || strings.Contains(combined, "本文（内容は変化しません）") {
+					t.Errorf("Synthesis prompt retained stale pre-recovery branch evidence")
+				}
+				output = "# synthesis\n\n回復済みの競合Bを含む統合結果"
+			case approvalForced && strings.Contains(combined, "## CEOからの追加指示"):
+				output = "# deliverable\n\n回復済みの競合B"
 			case partOfWatchedLineage && varyDeliverableContent:
 				output = fmt.Sprintf("# deliverable\n\n本文（実行%d回目の内容です）", attempt)
 			case partOfWatchedLineage:

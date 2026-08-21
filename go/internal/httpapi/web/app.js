@@ -1164,6 +1164,9 @@ function interactionErrorGuidance(code, stage = "") {
   if (code === "BUDGET_EXCEEDED") {
     return "この依頼は設定された実行上限に達したため、自動処理を停止しました。完了済みの成果は保存されています。";
   }
+  if (code === "DEPENDENCY_EVIDENCE_MISSING") {
+    return "統合に必要な前段の成果物を確認できなかったため、作業を開始していません。完了済みの成果物を確認してください。";
+  }
   return "成立済みの記録を推測で変更せず、現在の状態を確認してください。";
 }
 

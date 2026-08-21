@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -108,6 +109,19 @@ type orchestrationWorker struct {
 	execute func(context.Context, worker.ExecutionRequest) (worker.ExecutionResult, error)
 	calls   int
 	request worker.ExecutionRequest
+}
+
+type orchestrationDependencyEvidence struct {
+	evidence []worker.DependencyEvidence
+	err      error
+	calls    int
+	request  execution.Request
+}
+
+func (fake *orchestrationDependencyEvidence) Collect(_ context.Context, request execution.Request) ([]worker.DependencyEvidence, error) {
+	fake.calls++
+	fake.request = request
+	return append([]worker.DependencyEvidence(nil), fake.evidence...), fake.err
 }
 
 type orchestrationDeliverables struct {
@@ -273,6 +287,74 @@ func TestExecutionServiceSuccessfulFlow(t *testing.T) {
 		workers.request.Task.AssigneeID == nil || *workers.request.Task.AssigneeID != "PLAN-001" ||
 		workers.request.Employee.EmployeeID != "PLAN-001" {
 		t.Fatalf("worker request = %#v", workers.request)
+	}
+}
+
+func TestExecutionServiceCollectsDependencyEvidenceBeforeTaskStartAndPassesItToWorker(t *testing.T) {
+	readiness, tasks, workers, approvals, failures := defaultExecutionFakes()
+	readiness.result.Dependencies = []string{"TASK-002"}
+	collector := &orchestrationDependencyEvidence{evidence: []worker.DependencyEvidence{{
+		SourceTaskID: "TASK-002", SourceTitle: "市場を調べる", TaskID: "TASK-005", Title: "市場調査を修正する",
+		EmployeeID: "RESEARCH-001", Content: "canonical evidence",
+	}}}
+	configured, err := NewExecutionService(readiness, tasks, workers, deliverablestore.NewInMemory(), approvals, failures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := configured.SetDependencyEvidenceCollector(collector); err != nil {
+		t.Fatal(err)
+	}
+	if err := configured.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	request := executionRequest(true)
+	request.Tasks = append(request.Tasks, workflow.Task{ID: "TASK-002", Title: "市場を調べる", Status: workflow.StatusCompleted})
+	request.Dependencies = []workflow.Dependency{{TaskID: "TASK-001", DependsOn: []string{"TASK-002"}}}
+	if _, err := configured.Execute(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if collector.calls != 1 || !reflect.DeepEqual(workers.request.DependencyEvidence, collector.evidence) {
+		t.Fatalf("collector=%d worker evidence=%#v", collector.calls, workers.request.DependencyEvidence)
+	}
+	_, calls, _ := tasks.snapshot()
+	if !equalStrings(calls, []string{"start", "complete"}) {
+		t.Fatalf("Task lifecycle calls = %v", calls)
+	}
+}
+
+func TestExecutionServiceFailsClosedBeforeTaskStartWhenDependencyEvidenceIsUnavailable(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		collector DependencyEvidenceCollector
+	}{
+		{"missing collector", nil},
+		{"collector failure", &orchestrationDependencyEvidence{err: &DependencyEvidenceError{TaskID: "TASK-002", Reason: "deliverable_missing"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			readiness, tasks, workers, approvals, failures := defaultExecutionFakes()
+			readiness.result.Dependencies = []string{"TASK-002"}
+			configured, err := NewExecutionService(readiness, tasks, workers, deliverablestore.NewInMemory(), approvals, failures)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.collector != nil {
+				if err := configured.SetDependencyEvidenceCollector(test.collector); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := configured.Activate(); err != nil {
+				t.Fatal(err)
+			}
+			request := executionRequest(true)
+			request.Tasks = append(request.Tasks, workflow.Task{ID: "TASK-002", Title: "市場を調べる", Status: workflow.StatusCompleted})
+			request.Dependencies = []workflow.Dependency{{TaskID: "TASK-001", DependsOn: []string{"TASK-002"}}}
+			result, err := configured.Execute(context.Background(), request)
+			assertExecutionError(t, err, execution.StageDependencyEvidence, execution.ErrorDependencyEvidenceMissing)
+			_, calls, _ := tasks.snapshot()
+			if len(calls) != 0 || workers.calls != 0 || result.FinalTaskStatus != task.StatusUnstarted {
+				t.Fatalf("dependency failure caused effects: calls=%v worker=%d result=%#v", calls, workers.calls, result)
+			}
+		})
 	}
 }
 

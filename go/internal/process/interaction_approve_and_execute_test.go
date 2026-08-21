@@ -167,11 +167,11 @@ func parallelApproveAndExecuteMockServer(t *testing.T, failOnContains string) (*
 		calls++
 		mu.Unlock()
 		structured := len(decoded.OutputConfig) > 0
+		combined := decoded.System
+		for _, message := range decoded.Messages {
+			combined += message.Content
+		}
 		if !structured && failOnContains != "" {
-			combined := decoded.System
-			for _, message := range decoded.Messages {
-				combined += message.Content
-			}
 			if strings.Contains(combined, failOnContains) {
 				response.WriteHeader(http.StatusServiceUnavailable)
 				_, _ = response.Write([]byte(`{"error":{"type":"overloaded_error","message":"unavailable"}}`))
@@ -182,7 +182,23 @@ func parallelApproveAndExecuteMockServer(t *testing.T, failOnContains string) (*
 		if structured {
 			output = reviewProviderOutput(review.VerdictApprove)
 		} else {
-			output = "# deliverable\n\n本文"
+			switch {
+			case strings.Contains(combined, "タイトル: 市場調査を実施する"):
+				output = "# 市場調査\n\n市場A"
+			case strings.Contains(combined, "タイトル: 競合調査を実施する"):
+				output = "# 競合調査\n\n競合B"
+			case strings.Contains(combined, "タイトル: 顧客分析を実施する"):
+				output = "# 顧客分析\n\n顧客C"
+			case strings.Contains(combined, "タイトル: 販売戦略へ統合する"):
+				for _, expected := range []string{"市場A", "競合B", "顧客C"} {
+					if !strings.Contains(combined, expected) {
+						t.Errorf("Synthesis prompt is missing canonical dependency evidence %q", expected)
+					}
+				}
+				output = "# 統合戦略\n\n市場A・競合B・顧客Cを統合した戦略"
+			default:
+				output = "# deliverable\n\n本文"
+			}
 		}
 		encoded, _ := json.Marshal(map[string]any{
 			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": output}},
@@ -247,6 +263,20 @@ func TestInteractionPlanApproveAndExecuteAutomaticallyParallelizesIndependentTas
 		stored, getErr := store.Get(context.Background(), taskID)
 		if getErr != nil || stored.Status != task.StatusCompleted {
 			t.Fatalf("Task %s = %#v, %v", taskID, stored, getErr)
+		}
+	}
+	synthesisEvidence, err := vault.InspectTaskEvidence(context.Background(), root, projectName, "TASK-004")
+	if err != nil || synthesisEvidence.Deliverable == nil {
+		t.Fatalf("Synthesis evidence = %#v, %v", synthesisEvidence, err)
+	}
+	for _, expected := range []string{"市場A", "競合B", "顧客C"} {
+		if !strings.Contains(synthesisEvidence.Deliverable.Content, expected) {
+			t.Fatalf("Synthesis Deliverable does not integrate %q: %#v", expected, synthesisEvidence.Deliverable)
+		}
+	}
+	for _, current := range result.Workflow.Tasks {
+		if current.TaskID == "TASK-004" && (current.Execution.Usage.InputTokens == nil || *current.Execution.Usage.InputTokens != 1) {
+			t.Fatalf("Synthesis token usage regressed: %#v", current.Execution.Usage)
 		}
 	}
 

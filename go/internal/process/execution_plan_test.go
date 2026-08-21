@@ -19,6 +19,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
 	"github.com/AkiraShimizu0/workcairn/go/internal/recovery"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
@@ -202,6 +203,19 @@ func TestExecuteTaskRecordsRedactedProviderFailureBeforeDeliverable(t *testing.T
 	var stored execution.Result
 	if json.Unmarshal(record.Result, &stored) != nil || stored.ProviderFailure == nil || stored.ProviderFailure.RequestID != "req_task_safe" {
 		t.Fatalf("stored Provider failure = %#v", stored.ProviderFailure)
+	}
+}
+
+func TestDependencyEvidenceFailureEnvelopePreservesTypedDefaultDeny(t *testing.T) {
+	typed := &execution.ExecutionError{
+		Stage: execution.StageDependencyEvidence,
+		Kind:  execution.ErrorDependencyEvidenceMissing,
+		Err:   &service.DependencyEvidenceError{TaskID: "TASK-002", Reason: "deliverable_missing"},
+	}
+	envelope := executionFailureEnvelope(typed, nil, execution.Result{})
+	if envelope.Code != "DEPENDENCY_EVIDENCE_MISSING" || envelope.Stage != "dependency_evidence" ||
+		envelope.Partial || envelope.RecoveryRequired || envelope.Provider != nil || envelope.Parse != nil {
+		t.Fatalf("executionFailureEnvelope() = %#v", envelope)
 	}
 }
 

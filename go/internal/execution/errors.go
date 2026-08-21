@@ -10,34 +10,36 @@ var ErrInvalidRequest = errors.New("invalid workflow execution request")
 type Stage string
 
 const (
-	StageValidation    Stage = "validation"
-	StageReadiness     Stage = "readiness"
-	StageApproval      Stage = "approval"
-	StageTaskStart     Stage = "task_start"
-	StageWorker        Stage = "worker"
-	StageDeliverable   Stage = "deliverable_save"
-	StageTaskComplete  Stage = "task_complete"
-	StageTaskFail      Stage = "task_fail"
-	StageFailurePolicy Stage = "failure_policy"
-	StageTaskHold      Stage = "task_hold"
+	StageValidation         Stage = "validation"
+	StageReadiness          Stage = "readiness"
+	StageApproval           Stage = "approval"
+	StageDependencyEvidence Stage = "dependency_evidence"
+	StageTaskStart          Stage = "task_start"
+	StageWorker             Stage = "worker"
+	StageDeliverable        Stage = "deliverable_save"
+	StageTaskComplete       Stage = "task_complete"
+	StageTaskFail           Stage = "task_fail"
+	StageFailurePolicy      Stage = "failure_policy"
+	StageTaskHold           Stage = "task_hold"
 )
 
 type ErrorKind string
 
 const (
-	ErrorInvalidRequest          ErrorKind = "INVALID_REQUEST"
-	ErrorTaskNotReady            ErrorKind = "TASK_NOT_READY"
-	ErrorApprovalRejected        ErrorKind = "APPROVAL_REJECTED"
-	ErrorPolicyFailed            ErrorKind = "POLICY_FAILED"
-	ErrorTaskStartFailed         ErrorKind = "TASK_START_FAILED"
-	ErrorWorkerFailed            ErrorKind = "WORKER_FAILED"
-	ErrorDeliverableSaveFailed   ErrorKind = "DELIVERABLE_SAVE_FAILED"
-	ErrorTaskCompleteFailed      ErrorKind = "TASK_COMPLETE_FAILED"
-	ErrorTaskFailRecordFailed    ErrorKind = "TASK_FAIL_RECORD_FAILED"
-	ErrorTaskHoldFailed          ErrorKind = "TASK_HOLD_FAILED"
-	ErrorEventPublicationPartial ErrorKind = "EVENT_PUBLICATION_PARTIAL"
-	ErrorCanceled                ErrorKind = "CANCELED"
-	ErrorTimeout                 ErrorKind = "TIMEOUT"
+	ErrorInvalidRequest            ErrorKind = "INVALID_REQUEST"
+	ErrorTaskNotReady              ErrorKind = "TASK_NOT_READY"
+	ErrorApprovalRejected          ErrorKind = "APPROVAL_REJECTED"
+	ErrorPolicyFailed              ErrorKind = "POLICY_FAILED"
+	ErrorDependencyEvidenceMissing ErrorKind = "DEPENDENCY_EVIDENCE_MISSING"
+	ErrorTaskStartFailed           ErrorKind = "TASK_START_FAILED"
+	ErrorWorkerFailed              ErrorKind = "WORKER_FAILED"
+	ErrorDeliverableSaveFailed     ErrorKind = "DELIVERABLE_SAVE_FAILED"
+	ErrorTaskCompleteFailed        ErrorKind = "TASK_COMPLETE_FAILED"
+	ErrorTaskFailRecordFailed      ErrorKind = "TASK_FAIL_RECORD_FAILED"
+	ErrorTaskHoldFailed            ErrorKind = "TASK_HOLD_FAILED"
+	ErrorEventPublicationPartial   ErrorKind = "EVENT_PUBLICATION_PARTIAL"
+	ErrorCanceled                  ErrorKind = "CANCELED"
+	ErrorTimeout                   ErrorKind = "TIMEOUT"
 )
 
 // ExecutionError identifies the exact failed stage and carries the structured

@@ -19,14 +19,15 @@ import (
 const defaultRecoveryTimeout = 5 * time.Second
 
 var (
-	ErrExecutionServiceAlreadyActive = errors.New("execution service is already active")
-	ErrExecutionServiceNotActive     = errors.New("execution service is not active")
-	ErrInvalidReadinessService       = errors.New("readiness service is required")
-	ErrInvalidTaskLifecycleService   = errors.New("task lifecycle service is required")
-	ErrInvalidWorkerExecutionService = errors.New("worker execution service is required")
-	ErrInvalidDeliverableStore       = errors.New("Deliverable Store is required")
-	ErrInvalidApprovalPolicy         = errors.New("approval policy is required")
-	ErrInvalidExecutionPolicy        = errors.New("execution policy is required")
+	ErrExecutionServiceAlreadyActive      = errors.New("execution service is already active")
+	ErrExecutionServiceNotActive          = errors.New("execution service is not active")
+	ErrInvalidReadinessService            = errors.New("readiness service is required")
+	ErrInvalidTaskLifecycleService        = errors.New("task lifecycle service is required")
+	ErrInvalidWorkerExecutionService      = errors.New("worker execution service is required")
+	ErrInvalidDeliverableStore            = errors.New("Deliverable Store is required")
+	ErrInvalidApprovalPolicy              = errors.New("approval policy is required")
+	ErrInvalidExecutionPolicy             = errors.New("execution policy is required")
+	ErrInvalidDependencyEvidenceCollector = errors.New("dependency evidence collector is required")
 )
 
 type ReadinessService interface {
@@ -51,15 +52,16 @@ type WorkerExecutionService interface {
 // ExecutionService deterministically coordinates one ready Task. Task state
 // changes remain exclusively owned by TaskLifecycleService.
 type ExecutionService struct {
-	mu              sync.RWMutex
-	active          bool
-	readiness       ReadinessService
-	tasks           TaskLifecycleService
-	workers         WorkerExecutionService
-	deliverables    deliverable.Store
-	approvalPolicy  policy.ApprovalPolicy
-	executionPolicy policy.ExecutionPolicy
-	recoveryTimeout time.Duration
+	mu                 sync.RWMutex
+	active             bool
+	readiness          ReadinessService
+	tasks              TaskLifecycleService
+	workers            WorkerExecutionService
+	deliverables       deliverable.Store
+	approvalPolicy     policy.ApprovalPolicy
+	executionPolicy    policy.ExecutionPolicy
+	dependencyEvidence DependencyEvidenceCollector
+	recoveryTimeout    time.Duration
 }
 
 func NewExecutionService(
@@ -95,6 +97,23 @@ func NewExecutionService(
 		executionPolicy: executionPolicy,
 		recoveryTimeout: defaultRecoveryTimeout,
 	}, nil
+}
+
+// SetDependencyEvidenceCollector installs the read-only dependency evidence
+// port before activation. Product Runtime always supplies it; keeping the
+// setter optional preserves lower-level dependency-free Kernel composition
+// without inventing a fallback evidence source.
+func (service *ExecutionService) SetDependencyEvidenceCollector(collector DependencyEvidenceCollector) error {
+	if serviceDependencyIsNil(collector) {
+		return ErrInvalidDependencyEvidenceCollector
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if service.active {
+		return ErrExecutionServiceAlreadyActive
+	}
+	service.dependencyEvidence = collector
+	return nil
 }
 
 func (service *ExecutionService) Activate() error {
@@ -167,6 +186,16 @@ func (service *ExecutionService) Execute(ctx context.Context, request execution.
 		return result, executionFailure(execution.StageApproval, execution.ErrorApprovalRejected, result, nil)
 	}
 
+	var dependencyEvidence []worker.DependencyEvidence
+	if service.dependencyEvidence != nil {
+		dependencyEvidence, err = service.dependencyEvidence.Collect(ctx, request)
+		if err != nil {
+			return result, executionFailure(execution.StageDependencyEvidence, execution.ErrorDependencyEvidenceMissing, result, err)
+		}
+	} else if len(readiness.Dependencies) > 0 {
+		return result, executionFailure(execution.StageDependencyEvidence, execution.ErrorDependencyEvidenceMissing, result, ErrDependencyEvidenceMissing)
+	}
+
 	started, err := service.tasks.Start(ctx, request.TaskID)
 	if started.Status.Valid() {
 		result.FinalTaskStatus = started.Status
@@ -185,8 +214,9 @@ func (service *ExecutionService) Execute(ctx context.Context, request execution.
 			ProjectOverview: request.ProjectOverview,
 			AssigneeID:      readiness.AssigneeID,
 		},
-		CurrentTime: request.CurrentTime,
-		Metadata:    cloneMetadata(request.Metadata),
+		DependencyEvidence: append([]worker.DependencyEvidence(nil), dependencyEvidence...),
+		CurrentTime:        request.CurrentTime,
+		Metadata:           cloneMetadata(request.Metadata),
 	})
 	if workerErr == nil && strings.TrimSpace(workerResult.Content) == strings.TrimSpace(readiness.Title) {
 		workerErr = fmt.Errorf("%w: content echoed task title", worker.ErrInvalidRunnerResult)

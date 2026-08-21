@@ -104,10 +104,11 @@ func (service *WorkerService) Execute(ctx context.Context, request worker.Execut
 	}
 
 	prompt, err := service.builder.Build(ctx, worker.PromptInput{
-		Employee:    request.Employee,
-		Task:        request.Task,
-		CurrentTime: request.CurrentTime,
-		Metadata:    cloneMetadata(request.Metadata),
+		Employee:           request.Employee,
+		Task:               request.Task,
+		DependencyEvidence: append([]worker.DependencyEvidence(nil), request.DependencyEvidence...),
+		CurrentTime:        request.CurrentTime,
+		Metadata:           cloneMetadata(request.Metadata),
 	})
 	if err != nil {
 		if contextErr := classifyContextError(ctx, err); contextErr != nil {
