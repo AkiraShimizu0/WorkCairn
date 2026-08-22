@@ -196,6 +196,8 @@ ADR-0030のExternal Action handoffは任意です。completed Workflowに含ま�
 
 Synthesisのdependency contextはADR-0056に従い、Vault Adapterがcanonical dependency graphの直接依存とimmutable Revision lineageからread-onlyに構築します。最新のterminal Revisionを含む全dependency Deliverableが揃わない限り、`DEPENDENCY_EVIDENCE_MISSING`としてTask開始／Provider呼び出し前に停止します。Evidenceは決定的な順序とbyte上限でPromptのUser Contextへ入り、Review履歴、Conversation、Plan、非依存Taskは混ぜません。
 
+ADR-0057のSynthesis Quality Acceptanceは、固定日本語A/B/Cをtemporary Vaultへcanonicalに準備し、同じReviewed Workflow／BudgetGuard／Deliverable経路から得た最終成果を決定的rubricでread-only評価します。fake-good／fake-bad baselineとClaude dry-runは実API不要です。実Claude runは別の明示`EXECUTE=1`が必要で、1 external Synthesis call、no retry、no fallbackに限定されます。
+
 ## Go Only Repository and Runtime
 
 製品のbuild、plan、CEO plan、Project／Task管理、Organization／Identity、Task execution、Review、Revision、Deliverable、Audit、one-shot Scheduler、Notification／Metrics、External Action、Local Web UIはGoだけで構成されます。CLIに加え、loopback既定の`workcairn-daemon`は必須Command IDの`workspace-command.v1`を同じGo process／Serviceへ渡します。

@@ -13,7 +13,7 @@ RELEASE_GOARCH ?= $(shell cd $(GO_DIR) && go env GOARCH)
 DIST_DIR ?= dist
 PUBLIC_BETA_VERSION := $(shell sed -n '1p' VERSION)
 
-.PHONY: go-build go-test public-beta-smoke public-beta-browser-setup public-beta-browser-gate public-beta-build-matrix v1-release-gate release-package verify-release-package test check-ui-fast check-ui-changed check-ui-full
+.PHONY: go-build go-test public-beta-smoke public-beta-browser-setup public-beta-browser-gate public-beta-build-matrix v1-release-gate release-package verify-release-package test check-ui-fast check-ui-changed check-ui-full synthesis-acceptance
 
 go-build:
 	mkdir -p bin
@@ -33,6 +33,15 @@ public-beta-smoke:
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/httpapi -run '^TestMobileInteractionHTTPFlowMalformedCEOPlanResponseClassifiesOuterCommand$$'
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/runtime -run '^TestRuntimeCompletesTemporaryVaultExecutionWithDeliverableAndAudit$$'
 	cd $(GO_DIR) && GOTELEMETRY=off go test -count=1 ./internal/process -run '^TestReviewedWorkflowTemporaryVaultRequestChangesRevisionReReviewAndReplay$$'
+
+# Synthesis quality is measured separately from the release and browser gates.
+# Fake baselines execute by default. A real Claude request requires the human
+# to opt in explicitly with both PROVIDER=claude and EXECUTE=1; credentials
+# are loaded through the existing environment/Keychain path, never argv.
+PROVIDER ?= fake-good
+EXECUTE ?= 0
+synthesis-acceptance:
+	cd $(GO_DIR) && GOTELEMETRY=off go run ./cmd/workcairn-synthesis-acceptance --provider '$(PROVIDER)' $(if $(filter fake-good fake-bad,$(PROVIDER)),--execute,$(if $(filter 1 true yes,$(EXECUTE)),--execute,))
 
 # Node and Playwright are test-only dependencies for the actual-daemon browser
 # acceptance harness. They are intentionally absent from Go modules, product

@@ -403,6 +403,19 @@ ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全�
 
 対象外のまま：transitive／deep DAG evidence、意味的圧縮、LLM summarization、競合解消・debate、巨大contextのProvider別最適化、skill system、semantic routing。Review履歴もv1 Promptへは含めず、canonical Deliverableを最小の統合Evidenceとします。
 
+## Completed — Synthesis Quality Acceptance Foundation
+
+[ADR-0057](adr/ADR-0057-synthesis-quality-acceptance.md)（Accepted）により、「SynthesisへEvidenceが届いた」だけでなく「単純連結より価値のある統合結果になったか」を、実Provider呼び出しなしで先に測れる基盤を追加しました。
+
+- cross-dependencyと軽い矛盾を含む固定日本語scenario、6項目×0–2点（12点）のdeterministic rubric、A/B/C全件coverage必須、unsupported claim拒否を実装
+- fixed good Provider fixtureは12/12でpassし、A/B/C本文をそのまま連結したbad fixtureはcoverageが満点でもcross-synthesis／矛盾調停／優先順位でfailする。Evidence欠落、矛盾無視、priority欠落、unsupported claimも個別に回帰検証
+- temporary VaultへA/B/CをTaskService／Deliverable Store経由でcanonical commitし、既存Reviewed Workflow／BudgetGuardがSynthesisを実行、canonical DeliverableをEvaluatorがread-only採点するproduction-path integration
+- Prompt observationはsystem/user byte数、Evidence順序、dependencyごとのtruncation、安全instructionだけをmemory内で保持。credential、Authorization header、raw user data、Provider responseをAcceptance artifactとして永続化しない
+- `make synthesis-acceptance PROVIDER=fake-good`でFake baseline、`PROVIDER=claude`でnetwork/credential不要dry-run。actual Claudeは人間が別途`EXECUTE=1`を明示したときだけ1 Synthesis callを許可し、Reviewは固定fixture、Budgetは2 calls／10分、retry／fallbackなし
+- ResultはProvider／model／logical route、rubric、TokenUsage、duration、prompt shape、call数、canonical commit有無をsafe JSONで出す。結果とtemporary Vaultは自動保存／Git追加しない
+
+未完了：actual real-provider benchmark、複数Provider／model比較、Provider-specific prompt tuning、role-based model routing、反復run集計、semantic evaluator／LLM-as-Judge、pricingを含むCost比較。Provider-specific policyは再現可能なAcceptance差が得られるまで導入しません。
+
 ## Completed — Public Beta Go Only Repository
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。

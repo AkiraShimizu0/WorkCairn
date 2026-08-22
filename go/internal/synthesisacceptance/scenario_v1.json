@@ -1,0 +1,104 @@
+{
+  "schema_version": "workcairn-synthesis-acceptance.v1",
+  "scenario_id": "public-beta-product-growth-ja-v1",
+  "language": "ja",
+  "project_name": "WorkCairn Synthesis Acceptance",
+  "project_objective": "WorkCairnをより多くの人が継続利用できるようにする改善案を作る",
+  "synthesis_task": "3つの分析を比較・統合し、矛盾を調停した優先順位付き改善計画を作成する",
+  "evidence": [
+    {
+      "id": "A",
+      "task_id": "TASK-001",
+      "title": "ユーザー調査",
+      "employee_id": "SYNTH-001",
+      "content": "ユーザーはCEOとのシンプルな会話で仕事を頼める点を高く評価する。初期セットアップの複雑さはオンボーディングを阻害する。作業の進捗と根拠が観測できると信頼が高まる。一部のユーザーは判断前に詳細な説明も確認したい。",
+      "key_concept_groups": [
+        ["シンプルな会話", "CEOとの会話"],
+        ["初期セットアップ", "オンボーディング"],
+        ["観測", "透明性", "信頼"]
+      ]
+    },
+    {
+      "id": "B",
+      "task_id": "TASK-002",
+      "title": "競合・参考製品分析",
+      "employee_id": "SYNTH-001",
+      "content": "専門AIへの役割分担は複雑な仕事の品質を高める。一方で会社ダッシュボードへ管理項目を増やしすぎるとUXが複雑になる。依頼を再起動後も追跡できる永続的なオーケストレーションには明確な価値がある。",
+      "key_concept_groups": [
+        ["専門AI", "役割分担"],
+        ["ダッシュボード", "UXが複雑"],
+        ["永続的", "再起動後", "オーケストレーション"]
+      ]
+    },
+    {
+      "id": "C",
+      "task_id": "TASK-003",
+      "title": "プロダクト指標分析",
+      "employee_id": "SYNTH-001",
+      "content": "初回アクティベーションが弱い。最初のWorkflowを完了したユーザーは継続率が高い。承認ステップが多いほど完了率が下がり、長いPlanを最初から表示すると承認率も下がる。",
+      "key_concept_groups": [
+        ["アクティベーション", "初回"],
+        ["最初のWorkflow", "継続率"],
+        ["承認ステップ", "承認率", "完了率"]
+      ]
+    }
+  ],
+  "expected_cross_evidence_insights": [
+    {
+      "id": "visible_without_micromanagement",
+      "concept_groups": [
+        ["観測", "透明性", "進捗"],
+        ["ダッシュボード", "管理画面"],
+        ["会話内", "段階的開示", "折りたたみ", "要約"]
+      ]
+    },
+    {
+      "id": "first_workflow_activation",
+      "concept_groups": [
+        ["セットアップ", "オンボーディング"],
+        ["承認", "判断"],
+        ["最初のWorkflow", "初回完了", "アクティベーション"],
+        ["一続き", "最短導線"]
+      ]
+    }
+  ],
+  "conflict": {
+    "description": "詳細を確認したい需要と、長いPlanが承認率を下げる事実を両立させる",
+    "side_a": ["詳細な説明", "詳細"],
+    "side_b": ["長いPlan", "承認率"],
+    "resolution_markers": ["両立", "要約", "折りたたみ", "段階的開示"]
+  },
+  "priority_markers": ["最優先", "優先順位", "P0", "P1", "第1", "第一"],
+  "action_markers": ["実施", "短縮", "追加", "削減", "測定", "検証", "導入"],
+  "measurement_markers": ["アクティベーション率", "完了率", "継続率", "承認率", "指標", "KPI"],
+  "forbidden_claims": ["売上が30%増加する", "解約率が半減する", "全ユーザーが支持している"],
+  "provider_baselines": {
+    "good": {
+      "status": 200,
+      "headers": {"content-type": "application/json", "request-id": "req_synthesis_good_fixture"},
+      "body": {
+        "model": "claude-sonnet-5",
+        "content": [{"type": "text", "text": "# 優先順位付き改善計画\n\n## 最優先: 初回Workflow完了までを短縮する\n初期セットアップと承認ステップを削減し、CEOとのシンプルな会話から最初のWorkflow完了までを一続きにする。アクティベーション率と初回完了率を測定する。\n\n## P1: 見えるが管理させない進捗体験\n作業の観測可能性は信頼に必要だが、複雑なダッシュボードを増やさない。会話内では要約を先に示し、詳細な説明は折りたたみで段階的開示する。これにより詳細を確認したい需要と、長いPlanで承認率が下がる問題を両立する。\n\n## P2: 専門AIの役割分担と永続性を価値として示す\n専門AIの役割分担を保ち、再起動後も仕事を追跡できる永続的なオーケストレーションを明示する。継続率と承認率を検証し、改善が確認できた順に導入範囲を広げる。"}],
+        "usage": {"input_tokens": 420, "output_tokens": 180}
+      }
+    },
+    "bad_concatenation": {
+      "status": 200,
+      "headers": {"content-type": "application/json", "request-id": "req_synthesis_bad_fixture"},
+      "body": {
+        "model": "claude-sonnet-5",
+        "content": [{"type": "text", "text": "# 調査結果\n\nユーザーはCEOとのシンプルな会話を評価し、初期セットアップがオンボーディングを阻害し、観測できると信頼が高まる。\n\n専門AIの役割分担は品質を高め、ダッシュボードはUXを複雑にし、永続的なオーケストレーションには価値がある。\n\nアクティベーションが弱く、最初のWorkflow完了は継続率を高め、承認ステップと長いPlanは承認率と完了率を下げる。"}],
+        "usage": {"input_tokens": 420, "output_tokens": 100}
+      }
+    },
+    "review_approve": {
+      "status": 200,
+      "headers": {"content-type": "application/json", "request-id": "req_synthesis_review_fixture"},
+      "body": {
+        "model": "claude-sonnet-5",
+        "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"Acceptance用の固定Review判定\"}"}],
+        "usage": {"input_tokens": 20, "output_tokens": 10}
+      }
+    }
+  }
+}
