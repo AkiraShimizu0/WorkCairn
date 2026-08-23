@@ -21,6 +21,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
 	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
 	"github.com/AkiraShimizu0/workcairn/go/internal/project"
+	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
@@ -192,7 +193,7 @@ func Run(ctx context.Context, config Config) (Result, error) {
 		},
 		Approved: true, ApprovalReference: "synthesis-quality-acceptance", CommandID: "CMD-SYNTHESIS-ACCEPTANCE-001",
 		MaxTasks: 1, Autonomy: contract, CorrelationID: "CMD-SYNTHESIS-ACCEPTANCE-001",
-	}, workspaceprocess.ClaudeProcessConfig{APIKey: apiKey}, provider)
+	}, workspaceprocess.ClaudeProcessConfig{APIKey: apiKey, MaxTokens: workspaceruntime.DefaultClaudeMaxTokens}, provider)
 	result.Executed = true
 	result.ProviderInvocations, result.ExternalProviderCalls = provider.counts()
 	// StopReason/TokenUsage/Duration are extracted here, before any early

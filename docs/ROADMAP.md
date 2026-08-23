@@ -441,9 +441,23 @@ ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全�
 
 対象外のまま（future candidate、本Checkpointとは意図的に分離）：
 
-- **output token default policy**: `defaultMaxTokens=3000`自体の変更判断、値の選定、ADR-0045に倣ったRuntime composition levelでの明示override機構の実装。
-- **Prompt compression**: token ceilingを増やさずtruncationを避けるための、priority数の明示制限やoutput構造のcompact化。
-- **Cross-Evidence evaluator再検討**: truncationが解消され再測定できるまで保留。
+- **output token default policy**: `defaultMaxTokens=3000`自体の変更判断、値の選定、ADR-0045に倣ったRuntime composition levelでの明示override機構の実装。次節のClaude Output Token Policyで対応済み
+- **Prompt compression**: token ceilingを増やさずtruncationを避けるための、priority数の明示制限やoutput構造のcompact化。引き続き未着手
+- **Cross-Evidence evaluator再検討**: truncationが解消され再測定できるまで保留。引き続き保留（次のreal Acceptance再実行の結果待ち）
+
+## Completed — Claude Output Token Policy
+
+[ADR-0059](adr/ADR-0059-claude-output-token-policy.md)（Accepted）により、`internal/adapter/claude`のprivate defaultとして暗黙的だったoutput token ceilingを、Runtime composition-owned・明示的なpolicyへ整理しました。ADR-0058（Provider output completeness、truncation自体をどう扱うか）とは別概念であることを明確化——本CheckpointはProvider output allowance policy（`max_tokens`に何を設定するか）だけを扱います。
+
+- `internal/runtime.DefaultClaudeMaxTokens`（新規、`internal/runtime/claude_output_policy.go`、既定6000）を、ADR-0045の`DefaultProviderRequestTimeout`と同じ構造のRuntime composition-owned canonical policyとして追加
+- `cmd/workcairn`（全10箇所）、`cmd/workcairn-daemon`、`internal/synthesisacceptance`のAcceptance harnessが、すべて同一のこの定数を`ClaudeProcessConfig.MaxTokens`へ明示的に渡す。Acceptance専用の別値は使わない（`TestHarnessUsesTheSameProductionMaxTokensPolicyNotATestOnlySpecialValue`で検証）
+- `internal/adapter/claude`の既存`defaultMaxTokens=3000`は変更せず、MaxTokens未設定（0）のcaller向けdefensive fallbackとしての位置づけに限定。二重source-of-truthにはならない
+- 6000という値は、実測v2 one-shot benchmarkのtruncation地点（3000、生成内容から全体の40〜50%程度と推定）を主要根拠とし、単純な2倍という追跡しやすい係数で決定。Claudeモデル自体のtoken capabilityやrequest timeoutとの関係は外部知識として参考にしたが、real API呼び出しによる検証はしていないことをADRで明記
+- Task-type別のspeculative routing（Synthesisだけ別値等）は、証拠が単一の実測truncationのみで根拠が不足しているため見送り、単一共有default（Option A）を採用
+- CLI／daemonへの明示override flagは、明確な運用ユースケースが無いため追加していない。既存plumbingにより将来の追加コストは小さい
+- Go unit/integration test（`ExecuteTask`のconfig propagation、Adapter defensive fallbackの独立test、Acceptance parity、ADR-0058のmax_tokens typed failure regressionが値変更後も維持されること）で検証。実Provider呼び出しはこのCheckpointでも行っていない
+
+対象外のまま（future candidate）：CLI override flag、task-type別policy、Prompt compression、Cross-Evidence evaluator再検討、Cost/pricing、real Claude Acceptanceの再実行（次Checkpoint候補）。
 
 ## Completed — Public Beta Go Only Repository
 

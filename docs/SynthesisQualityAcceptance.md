@@ -28,6 +28,8 @@ make synthesis-acceptance PROVIDER=claude EXECUTE=1
 
 The command loads the existing Claude connection from `ANTHROPIC_API_KEY` or macOS Keychain; the value never appears in argv or the report. It uses the same fixed scenario and canonical production path. BudgetGuard permits at most two workflow Provider invocations: one real Synthesis request and one local fixed Review response. There is no retry or Provider fallback.
 
+The Synthesis request's own `max_tokens` is `internal/runtime.DefaultClaudeMaxTokens` (ADR-0059) — the identical Runtime composition-owned policy value every production Claude call uses, not an Acceptance-only override. This gate never measures a different output-token ceiling than production actually ships.
+
 The report includes:
 
 - scenario, Provider, logical route, and concrete model;

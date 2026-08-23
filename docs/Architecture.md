@@ -104,6 +104,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0056: Dependency Evidence Context for Synthesis](adr/ADR-0056-dependency-evidence-context.md)
 - [ADR-0057: Synthesis Quality Acceptance — Deterministic-First Provider Evaluation](adr/ADR-0057-synthesis-quality-acceptance.md)
 - [ADR-0058: Provider Output Completeness Policy — Truncated Output Is Never Silent Success](adr/ADR-0058-provider-output-completeness-policy.md)
+- [ADR-0059: Claude Output Token Policy — a Single, Documented, Runtime-owned Default](adr/ADR-0059-claude-output-token-policy.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -402,5 +403,7 @@ Provider固有のLLM呼び出し、Schedule永続形式、Obsidian I/OはKernel�
 ## Runner拡張
 
 Go製品Runtimeは論理model値を`runner.Registry`でRunner Adapterへ解決し、未知のモデル値や未登録Runnerを安全に拒否します。Claudeの`workcairn-auto`はAdapter edgeのversioned policyが具体Provider modelへ解決し、APIキーとHTTP timeoutはRuntimeからconstructorへ注入します。ADR-0045によりProvider requestはRuntime compositionが作る単一のbounded HTTP clientを共有し、Public Beta defaultは5分、CLI／daemonの明示overrideは維持します。具体model ID、APIキー、HTTP timeoutをKernel、WorkerService、Employee Contextへ持ち込みません。Adapterは自動retry、Task状態変更、成果物保存、Auditを行いません。
+
+ADR-0059により、Claude output token ceiling（`max_tokens`）も同じ構造を採ります——`internal/runtime.DefaultClaudeMaxTokens`（既定6000）がRuntime composition-owned canonical policyで、全productionのcomposition root（`cmd/workcairn`、`cmd/workcairn-daemon`）と`internal/synthesisacceptance`のAcceptance harnessが同一の値を`ClaudeProcessConfig.MaxTokens`へ明示的に渡します。`internal/adapter/claude`の既存`defaultMaxTokens`（3000）はMaxTokens未設定（0）のcaller向けdefensive fallbackとしてのみ残り、二重source-of-truthではありません。CLI／daemonへの明示override flagは、明確な運用ユースケースが無いため今回は追加していません。これは**Provider output completeness**（ADR-0058: `max_tokens`到達時にTaskを黙って成功にしない）と**Provider output allowance policy**（ADR-0059: その`max_tokens`自体に何を設定するか）という別概念です——前者はtruncationをどう扱うか、後者はtruncationがどれだけ起きやすいかを決めます。
 
 OpenAI、Gemini、Ollamaなどは、同じ`run()`契約を実装して登録する拡張を想定しています。

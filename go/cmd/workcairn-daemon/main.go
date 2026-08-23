@@ -81,7 +81,7 @@ func run() error {
 	credentialStore := localos.NewClaudeCredentialStore()
 	credential := resolveClaudeCredential(context.Background(), os.Getenv("ANTHROPIC_API_KEY"), credentialStore)
 	executor, err := httpapi.NewProcessExecutorWithActionConfigAndOptions(vaultRoot, workspaceprocess.ClaudeProcessConfig{
-		APIKey: credential, BaseURL: providerBaseURL,
+		APIKey: credential, BaseURL: providerBaseURL, MaxTokens: workspaceruntime.DefaultClaudeMaxTokens,
 	}, workspaceprocess.WordPressProcessConfig{
 		TargetID: os.Getenv("WORKCAIRN_WORDPRESS_TARGET_ID"), BaseURL: os.Getenv("WORKCAIRN_WORDPRESS_BASE_URL"),
 		Username: os.Getenv("WORKCAIRN_WORDPRESS_USERNAME"), ApplicationPassword: os.Getenv("WORKCAIRN_WORDPRESS_APPLICATION_PASSWORD"),

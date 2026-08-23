@@ -19,6 +19,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/event"
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
 	"github.com/AkiraShimizu0/workcairn/go/internal/recovery"
+	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
@@ -97,6 +98,53 @@ func TestRunningCommandClaimBlocksAutomaticResumeAndIsRecoveryVisible(t *testing
 	stored, err := store.Get(context.Background(), "TASK-001")
 	if err != nil || stored.Status != task.StatusUnstarted || stored.Version != 1 {
 		t.Fatalf("running replay changed Task: %#v, %v", stored, err)
+	}
+}
+
+// TestExecuteTaskPropagatesConfiguredMaxTokensToTheRealRequestOverAdapterDefault
+// is the ADR-0059 config-propagation proof: the production MaxTokens policy
+// value (workspaceruntime.DefaultClaudeMaxTokens, the same constant every
+// production composition root and the Synthesis Acceptance harness use) must
+// reach the real Claude request's own max_tokens field unchanged, and must
+// win over the Claude Adapter's own private defensive fallback (3000) --
+// there is only one production source of truth for this value.
+func TestExecuteTaskPropagatesConfiguredMaxTokensToTheRealRequestOverAdapterDefault(t *testing.T) {
+	root := writePlanVault(t)
+	var observedMaxTokens int
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		var decoded struct {
+			MaxTokens int `json:"max_tokens"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&decoded); err != nil {
+			t.Fatal(err)
+		}
+		observedMaxTokens = decoded.MaxTokens
+		response.Header().Set("content-type", "application/json")
+		_, _ = response.Write([]byte(`{"model":"claude-sonnet-5","content":[{"type":"text","text":"# 完成した仕様書\n\n本文"}],"usage":{"input_tokens":10,"output_tokens":10}}`))
+	}))
+	defer server.Close()
+
+	input := ExecuteTaskInput{
+		ExecutionPlanInput: planInput(root), Approved: true,
+		ApprovalSource: "process-test", ApprovalReference: "approval-max-tokens-propagation",
+		ExecutionID: "EXEC-MAX-TOKENS-PROP", CommandID: "CMD-MAX-TOKENS-PROP",
+	}
+	provider := ClaudeProcessConfig{
+		APIKey: "fake-api-key", ProviderModel: "claude-sonnet-5", BaseURL: server.URL,
+		MaxTokens: workspaceruntime.DefaultClaudeMaxTokens,
+	}
+	result, err := ExecuteTask(context.Background(), input, provider, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != execution.StatusCompleted {
+		t.Fatalf("ExecuteTask() = %#v", result)
+	}
+	if observedMaxTokens != workspaceruntime.DefaultClaudeMaxTokens {
+		t.Fatalf("request max_tokens = %d, want the configured production policy value %d (not the Adapter's own defensive default)", observedMaxTokens, workspaceruntime.DefaultClaudeMaxTokens)
+	}
+	if observedMaxTokens == 3000 {
+		t.Fatal("request used the Claude Adapter's private defensive default (3000) instead of the explicit Runtime policy value -- the explicit value must always win")
 	}
 }
 

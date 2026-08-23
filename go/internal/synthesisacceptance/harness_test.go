@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
+	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
 )
 
 func TestHarnessRunsGoodSynthesisThroughCanonicalProductionPath(t *testing.T) {
@@ -101,6 +103,63 @@ func TestClaudeDryRunBuildsPromptWithoutCredentialOrExternalCall(t *testing.T) {
 		result.ExternalProviderCalls != 0 || len(result.Prompt.EvidenceTaskIDs) != 3 || result.Prompt.UserBytes == 0 {
 		t.Fatalf("result = %#v, err=%v", result, err)
 	}
+}
+
+// TestHarnessUsesTheSameProductionMaxTokensPolicyNotATestOnlySpecialValue is
+// the ADR-0059 Acceptance-parity proof: the real Synthesis call this harness
+// makes must carry exactly workspaceruntime.DefaultClaudeMaxTokens -- the
+// identical production Runtime policy value every composition root uses --
+// never a larger Acceptance-only override that would measure a different
+// configuration than production actually ships.
+func TestHarnessUsesTheSameProductionMaxTokensPolicyNotATestOnlySpecialValue(t *testing.T) {
+	capture := &maxTokensCapturingHTTPDoer{}
+	result, err := Run(context.Background(), Config{
+		Provider: ProviderClaude, Execute: true, APIKey: "acceptance-test-only",
+		HTTPClient: capture, VaultRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Passed {
+		t.Fatalf("result = %#v", result)
+	}
+	observed := capture.observed()
+	if observed != workspaceruntime.DefaultClaudeMaxTokens {
+		t.Fatalf("Synthesis request max_tokens = %d, want the production policy value %d (Acceptance-only overrides are not permitted)", observed, workspaceruntime.DefaultClaudeMaxTokens)
+	}
+}
+
+type maxTokensCapturingHTTPDoer struct {
+	mu        sync.Mutex
+	maxTokens int
+}
+
+func (capture *maxTokensCapturingHTTPDoer) Do(request *http.Request) (*http.Response, error) {
+	var decoded struct {
+		MaxTokens int `json:"max_tokens"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&decoded); err != nil {
+		return nil, err
+	}
+	capture.mu.Lock()
+	capture.maxTokens = decoded.MaxTokens
+	capture.mu.Unlock()
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{
+			"model":"claude-sonnet-5",
+			"content":[{"type":"text","text":"# 優先順位付き改善計画\n\n## 最優先: 初回Workflow完了までを短縮する\n初期セットアップと承認ステップを削減し、CEOとのシンプルな会話から最初のWorkflow完了までを一続きにする。アクティベーション率と初回完了率を測定する。\n\n## P1: 見えるが管理させない進捗体験\n作業の観測可能性は信頼に必要だが、複雑なダッシュボードを増やさない。会話内では要約を先に示し、詳細な説明は折りたたみで段階的開示する。これにより詳細を確認したい需要と、長いPlanで承認率が下がる問題を両立する。\n\n## P2: 専門AIの役割分担と永続性を価値として示す\n専門AIの役割分担を保ち、再起動後も仕事を追跡できる永続的なオーケストレーションを明示する。継続率と承認率を検証し、改善が確認できた順に導入範囲を広げる。"}],
+			"usage":{"input_tokens":420,"output_tokens":180},
+			"stop_reason":"end_turn"
+		}`)),
+	}, nil
+}
+
+func (capture *maxTokensCapturingHTTPDoer) observed() int {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return capture.maxTokens
 }
 
 func TestHarnessAttributesExternalTransportFailureToProvider(t *testing.T) {
