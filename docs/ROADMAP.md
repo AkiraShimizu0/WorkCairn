@@ -425,7 +425,25 @@ ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全�
 - Synthesis Quality Acceptanceのsafe reportへ`stop_reason`／`output_truncated`（max_tokensのときだけtrue）を追加し、明示`ArtifactPath`設定時だけcanonical Synthesis Deliverable全文をGit外・実Vault外のファイルへ書き出すHuman Review Artifactを追加（既定では何も書かない）
 - Evidence Coverage／Conflict Handling／Prioritization／Unsupported Claims（既に満点だった4項目）とrubric・threshold（10/12）は無変更。deterministic keyword-group評価戦略も変更なし
 
-未確認：この変更後の実Claude再実行によるスコア改善の確認（本Checkpointではexternal Provider呼び出しを行っていません）。次のCheckpointでの`make synthesis-acceptance PROVIDER=claude EXECUTE=1`実行が推奨される次のステップです。
+実測結果（`claude-sonnet-5`、1回のexternal call、one-shot、retry/fallbackなし）：Score 8/12（FAIL、baseline比 -2）、Cross-Evidence Synthesisは1/2で変化なし、Actionabilityは1/2→0/2で悪化。`StopReason=max_tokens`／`OutputTruncated=true`——出力は最優先項目のExpected Effect途中で打ち切られ、validation methodおよび後続の優先度には到達しませんでした。Human Reviewでは、生存しているprose自体はEvidence間の関連付けを既に相応に行っていることを確認——スコアの主因はEvaluatorの厳格さではなくoutput truncationである可能性が高いことが分かりました。この実測結果を受けて調査・実装したのが次節のProvider Output Completeness Policyです。
+
+## Completed — Provider Output Completeness Policy
+
+[ADR-0058](adr/ADR-0058-provider-output-completeness-policy.md)（Accepted）により、Provider呼び出し自体の成功（HTTP成功、`claude.Error`なし）と、Task deliverableとしての完全性を別の問いとして扱うようにしました。目的はSynthesis品質改善ではなく、`Failure / Partial Completion Observability`の欠落を閉じることです。
+
+- `internal/execution`へ`ErrorOutputIncomplete`（`OUTPUT_INCOMPLETE`、既存stage `worker`を再利用）をadditiveに追加。`ExecutionService.Execute()`は`workerResult.StopReason == worker.StopReasonMaxTokens`を検出した時点でDeliverable保存へ進まず、既存の`recoverExecutionFailure`（TaskService.Fail→既存`policy.ExecutionPolicy`によるHold判断→TaskService.Hold）へ分岐する。新しいTask state・新しいRecovery機構は追加していない
+- Runner／WorkerServiceは無変更——判断はExecutionServiceだけが行い、Provider呼び出しの成否とDeliverable完全性の判断を混同しない
+- truncated contentはcanonical Deliverableとして確定保存されない。生成された部分本文は`execution.Result.WorkerResult.Content`（既存field）を通じて診断目的にのみ残る
+- `executionFailureEnvelope`（ADR-0041が確立した既存の唯一の分類地点）が新しいKindを1つ扱うだけで、Reviewed Workflow／Command Ledger／HTTP／UIへの伝播ロジックは無変更のまま新しい失敗がそのまま流れる
+- Synthesis Acceptance harnessの`StopReason`/`OutputTruncated`抽出を、`ExecuteReviewedWorkflow`失敗時の早期returnより前へ移動——truncated attemptでもこれらが安全reportから観測可能なままになるよう回帰を防いだ。新しい`FailureOutputIncomplete`カテゴリを既存`FailureProvider`判定より先にチェックし、誤ってProvider失敗として分類しないようにした
+- `defaultMaxTokens=3000`は変更していない。CLIでの値変更機能も追加していない——`ClaudeProcessConfig.MaxTokens`のoverride plumbing自体は既に存在するため、将来必要になった場合の新規実装コストは小さい
+- Go unit/integration test（ExecutionService単体、`ExecuteTask`の実Command chain end-to-end、`RunParallel`での並列branch保存、Synthesis Acceptance harness）で、completed／stop_sequence／unknownは既存成功経路のまま変更なし、max_tokensだけが新しい経路を通ることを確認。実Provider呼び出しはこのCheckpointでは行っていない
+
+対象外のまま（future candidate、本Checkpointとは意図的に分離）：
+
+- **output token default policy**: `defaultMaxTokens=3000`自体の変更判断、値の選定、ADR-0045に倣ったRuntime composition levelでの明示override機構の実装。
+- **Prompt compression**: token ceilingを増やさずtruncationを避けるための、priority数の明示制限やoutput構造のcompact化。
+- **Cross-Evidence evaluator再検討**: truncationが解消され再測定できるまで保留。
 
 ## Completed — Public Beta Go Only Repository
 

@@ -40,6 +40,14 @@ const (
 	ErrorEventPublicationPartial   ErrorKind = "EVENT_PUBLICATION_PARTIAL"
 	ErrorCanceled                  ErrorKind = "CANCELED"
 	ErrorTimeout                   ErrorKind = "TIMEOUT"
+	// ErrorOutputIncomplete means the Provider call itself succeeded (no
+	// transport/HTTP/API error) but its own output was cut off before
+	// completion (e.g. the Provider's own output token ceiling), so the
+	// generated content is not accepted as a finished Task deliverable.
+	// This is deliberately distinct from ErrorWorkerFailed: the Runner did
+	// not fail, the output is simply incomplete -- Provider call success
+	// and Deliverable completeness are different questions (ADR-0058).
+	ErrorOutputIncomplete ErrorKind = "OUTPUT_INCOMPLETE"
 )
 
 // ExecutionError identifies the exact failed stage and carries the structured

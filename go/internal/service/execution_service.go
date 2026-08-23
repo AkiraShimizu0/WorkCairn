@@ -28,6 +28,12 @@ var (
 	ErrInvalidApprovalPolicy              = errors.New("approval policy is required")
 	ErrInvalidExecutionPolicy             = errors.New("execution policy is required")
 	ErrInvalidDependencyEvidenceCollector = errors.New("dependency evidence collector is required")
+	// ErrProviderOutputIncomplete means the Provider call itself succeeded
+	// but its own output was cut off (worker.StopReasonMaxTokens) before
+	// completion. Provider call success and Deliverable completeness are
+	// different questions (ADR-0058): this is never classified as a
+	// Runner/Provider failure.
+	ErrProviderOutputIncomplete = errors.New("provider output was truncated before completion")
 )
 
 type ReadinessService interface {
@@ -228,6 +234,24 @@ func (service *ExecutionService) Execute(ctx context.Context, request execution.
 		result.Usage = workerResult.Usage
 		result.Duration = workerResult.Duration
 		result.StopReason = workerResult.StopReason
+		// ADR-0058: a Provider call that succeeds but was cut off by its
+		// own output ceiling (StopReasonMaxTokens) is never accepted as a
+		// normal completion -- the Provider call itself did not fail, so
+		// this is deliberately not routed through recoverWorkerFailure
+		// (which classifies actual Runner/Provider failures). It uses the
+		// same recoverExecutionFailure -> TaskService.Fail/Hold path every
+		// other execution failure already uses; no new Task state, no new
+		// recovery mechanism. StopReasonCompleted, StopReasonStopSequence
+		// (a legitimate normal termination), and StopReasonUnknown (never
+		// guessed to be incomplete) all continue to the ordinary success
+		// path below unchanged.
+		if workerResult.StopReason == worker.StopReasonMaxTokens {
+			return service.recoverExecutionFailure(
+				ctx, request, result, execution.StageWorker,
+				string(execution.ErrorOutputIncomplete), "provider_output_incomplete_max_tokens",
+				execution.ErrorOutputIncomplete, ErrProviderOutputIncomplete,
+			)
+		}
 		record, saveErr := service.deliverables.Save(ctx, deliverable.Document{
 			ProjectID:   request.ProjectID,
 			ProjectName: request.ProjectName,

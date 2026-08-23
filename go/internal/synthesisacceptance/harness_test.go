@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -111,6 +112,45 @@ func TestHarnessAttributesExternalTransportFailureToProvider(t *testing.T) {
 		result.CanonicalDeliverable || len(result.Prompt.EvidenceTaskIDs) != 3 {
 		t.Fatalf("result = %#v, err=%v", result, err)
 	}
+}
+
+// TestHarnessClassifiesMaxTokensOutputAsIncompleteNotProviderFailureOrQuality
+// is the ADR-0058 proof at the Synthesis Acceptance harness boundary: an
+// external Claude response that succeeds (HTTP 200, non-empty content) but
+// reports stop_reason "max_tokens" must be classified as
+// FailureOutputIncomplete -- distinct from a genuine Provider failure (the
+// call succeeded) and distinct from a quality failure (the Evaluator never
+// even runs; there is no canonical Deliverable to score). StopReason and
+// OutputTruncated must still be observable in the safe report despite the
+// early failure return -- this Checkpoint's own point is that a truncated
+// attempt must never become invisible, including inside this harness.
+func TestHarnessClassifiesMaxTokensOutputAsIncompleteNotProviderFailureOrQuality(t *testing.T) {
+	result, err := Run(context.Background(), Config{
+		Provider: ProviderClaude, Execute: true, APIKey: "acceptance-test-only",
+		HTTPClient: maxTokensHTTPDoer{}, VaultRoot: t.TempDir(),
+	})
+	if err == nil || result.FailureCategory != FailureOutputIncomplete ||
+		result.ExternalProviderCalls != 1 || result.CanonicalDeliverable || result.Evaluation != nil {
+		t.Fatalf("result = %#v, err=%v", result, err)
+	}
+	if result.StopReason != "max_tokens" || !result.OutputTruncated {
+		t.Fatalf("StopReason/OutputTruncated = %q, %v, want observable even on failure", result.StopReason, result.OutputTruncated)
+	}
+}
+
+type maxTokensHTTPDoer struct{}
+
+func (maxTokensHTTPDoer) Do(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{
+			"model":"claude-sonnet-5",
+			"content":[{"type":"text","text":"# 途中の統合結果\n\nここまでしか生成されませんでした"}],
+			"usage":{"input_tokens":1339,"output_tokens":3000},
+			"stop_reason":"max_tokens"
+		}`)),
+	}, nil
 }
 
 type panicHTTPDoer struct{ t *testing.T }

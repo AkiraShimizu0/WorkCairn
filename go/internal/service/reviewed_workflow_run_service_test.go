@@ -375,6 +375,72 @@ func TestRunParallelMaxParallelTasksBoundsConcurrency(t *testing.T) {
 // failure observability: A and C succeed, B fails -- the round must not be
 // reported as a plain success, and A/C's successful results must still be
 // present (not discarded because B failed).
+// outputIncompleteExecutorFake reports execution.ErrorOutputIncomplete
+// (ADR-0058) for one named Task, exactly as ExecutionService now does for a
+// real StopReasonMaxTokens response -- Held status, no Deliverable, a typed
+// *execution.ExecutionError -- and completes every other Task normally.
+// Used to prove RunParallel forwards this new failure kind through its
+// existing generic "task_execute" stage classification with no special
+// handling, and that it never affects sibling branches or Budget
+// accounting.
+type outputIncompleteExecutorFake struct {
+	mu               sync.Mutex
+	incompleteTaskID string
+	calls            int
+}
+
+func (fake *outputIncompleteExecutorFake) Execute(_ context.Context, taskID, _ string, _ bool) (execution.Result, error) {
+	fake.mu.Lock()
+	fake.calls++
+	fake.mu.Unlock()
+	if taskID == fake.incompleteTaskID {
+		result := execution.Result{
+			TaskID: taskID, Status: execution.StatusHeld, Held: true,
+			FinalTaskStatus: task.StatusOnHold, StopReason: worker.StopReasonMaxTokens,
+		}
+		return result, &execution.ExecutionError{Stage: execution.StageWorker, Kind: execution.ErrorOutputIncomplete, Result: result}
+	}
+	return execution.Result{TaskID: taskID, Status: execution.StatusCompleted}, nil
+}
+
+func TestRunParallelOutputIncompleteBranchIsPartialFailureNotSilentSuccess(t *testing.T) {
+	executor := &outputIncompleteExecutorFake{incompleteTaskID: "TASK-B"}
+	reviewer := &approvingReviewerFake{}
+	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A", "TASK-B", "TASK-C"}}}}
+	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
+
+	result, err := service.RunParallel(context.Background(), "CMD-OUTPUT-INCOMPLETE", "CMD-OUTPUT-INCOMPLETE", 10, 3, 5, planner)
+
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "task_execute" || result.Status != "partial_failure" {
+		t.Fatalf("RunParallel() = %#v, %v, want task_execute-staged partial_failure", result, err)
+	}
+	var executionErr *execution.ExecutionError
+	if !errors.As(err, &executionErr) || executionErr.Kind != execution.ErrorOutputIncomplete {
+		t.Fatalf("error kind = %v, want ErrorOutputIncomplete", err)
+	}
+	if len(result.Tasks) != 3 {
+		t.Fatalf("result.Tasks = %#v, want all 3 branches observable", result.Tasks)
+	}
+	byID := map[string]ReviewedWorkflowTaskResult{}
+	for _, current := range result.Tasks {
+		byID[current.TaskID] = current
+	}
+	if byID["TASK-A"].Execution.Status != execution.StatusCompleted || byID["TASK-C"].Execution.Status != execution.StatusCompleted {
+		t.Fatalf("sibling branches were not preserved: %#v", byID)
+	}
+	if byID["TASK-B"].Execution.Status != execution.StatusHeld || byID["TASK-B"].Execution.Deliverable != nil ||
+		byID["TASK-B"].Execution.StopReason != worker.StopReasonMaxTokens {
+		t.Fatalf("incomplete-output branch not observable as such: %#v", byID["TASK-B"])
+	}
+	// Reviewer must never have been reached for the incomplete branch --
+	// Execute's own error stops that branch before Review, exactly like
+	// any other task_execute-stage failure.
+	if executor.calls != 3 {
+		t.Fatalf("worker calls = %d, want exactly 3 (one per Task, no retry)", executor.calls)
+	}
+}
+
 func TestRunParallelBranchFailureIsNotHiddenAsOverallSuccess(t *testing.T) {
 	executor := &concurrencyTrackingExecutorFake{delay: 5 * time.Millisecond, failTasks: map[string]bool{"TASK-B": true}}
 	reviewer := &approvingReviewerFake{}

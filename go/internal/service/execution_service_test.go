@@ -247,7 +247,12 @@ func defaultExecutionFakes() (*orchestrationReadiness, *orchestrationTasks, *orc
 			Runner: "FakeRunner", Model: "Fake Model",
 			Usage:    worker.TokenUsage{InputTokens: &inputTokens, OutputTokens: &outputTokens},
 			Duration: 250 * time.Millisecond, Status: worker.StatusCompleted,
-			StopReason: worker.StopReasonMaxTokens,
+			// StopSequence (not MaxTokens) is the default here deliberately:
+			// it is a legitimate normal Provider termination (ADR-0058) and
+			// lets every one of this fixture's ~16 callers keep exercising
+			// the ordinary success path. The MaxTokens-specific behavior
+			// has its own dedicated tests below.
+			StopReason: worker.StopReasonStopSequence,
 		}},
 		&orchestrationApprovalPolicy{decision: policy.ApprovalDecision{Outcome: policy.OutcomeApproved, Reason: "approved", Policy: "fake"}},
 		&orchestrationExecutionPolicy{decision: policy.FailureDecision{Hold: true, Reason: "hold_after_execution_failure", Policy: "fake"}}
@@ -280,8 +285,8 @@ func TestExecutionServiceSuccessfulFlow(t *testing.T) {
 	if result.Runner != "FakeRunner" || result.Model != "Fake Model" || result.Usage.InputTokens == nil || *result.Usage.InputTokens != 11 || result.Duration != 250*time.Millisecond {
 		t.Fatalf("worker data = %#v", result)
 	}
-	if result.StopReason != worker.StopReasonMaxTokens {
-		t.Fatalf("StopReason = %q, want %q (must flow from worker.ExecutionResult unchanged)", result.StopReason, worker.StopReasonMaxTokens)
+	if result.StopReason != worker.StopReasonStopSequence {
+		t.Fatalf("StopReason = %q, want %q (must flow from worker.ExecutionResult unchanged)", result.StopReason, worker.StopReasonStopSequence)
 	}
 	_, calls, _ := tasks.snapshot()
 	if !equalStrings(calls, []string{"start", "complete"}) || workers.calls != 1 || deliverables.calls != 1 || failures.calls != 0 {
@@ -490,6 +495,88 @@ func TestExecutionServiceWorkerFailureIsRecordedAndHeld(t *testing.T) {
 	}
 	if !equalStrings(calls, []string{"start", "fail", "hold"}) || failures.calls != 1 || failures.input.FailureCode != string(WorkerErrorRunnerFailed) {
 		t.Fatalf("calls/policy = %v, %#v", calls, failures)
+	}
+}
+
+// TestExecutionServiceMaxTokensOutputIsNeverAcceptedAsNormalCompletion is the
+// central ADR-0058 proof: a Provider call that succeeds (workerErr == nil,
+// Content non-empty) but was cut off by its own output ceiling
+// (worker.StopReasonMaxTokens) must never be treated as normal completion.
+// Provider call success and Deliverable completeness are different
+// questions -- this is deliberately NOT classified as ErrorWorkerFailed
+// (the Runner did not fail), routes through the exact same
+// recoverExecutionFailure -> TaskService.Fail/Hold path every other
+// execution failure already uses (no new Task state, no special recovery
+// mechanism), and never reaches Deliverable Save at all -- the truncated
+// content is never committed as a canonical Deliverable. The generated
+// (partial) text remains observable only via result.WorkerResult.Content,
+// never as result.Deliverable.
+func TestExecutionServiceMaxTokensOutputIsNeverAcceptedAsNormalCompletion(t *testing.T) {
+	readiness, tasks, workers, approvals, failures := defaultExecutionFakes()
+	workers.result.StopReason = worker.StopReasonMaxTokens
+	workers.result.Content = "# 途中で切れた成果物\n\nここまでしか生成されませんでした"
+	deliverables := &orchestrationDeliverables{record: deliverable.Record{TaskID: "TASK-001", RelativePath: "Deliverables/TASK-001.md"}}
+	service := activeExecutionServiceWithDeliverables(t, readiness, tasks, workers, deliverables, approvals, failures)
+
+	result, err := service.Execute(context.Background(), executionRequest(true))
+
+	assertExecutionError(t, err, execution.StageWorker, execution.ErrorOutputIncomplete)
+	status, calls, _ := tasks.snapshot()
+	if result.Status != execution.StatusHeld || !result.Held || status != task.StatusOnHold || result.FinalTaskStatus != task.StatusOnHold {
+		t.Fatalf("Execute() = %#v, status=%s", result, status)
+	}
+	if !equalStrings(calls, []string{"start", "fail", "hold"}) {
+		t.Fatalf("Task lifecycle calls = %v, want start/fail/hold via TaskService alone", calls)
+	}
+	if result.Deliverable != nil {
+		t.Fatalf("truncated output was committed as a canonical Deliverable: %#v", result.Deliverable)
+	}
+	if deliverables.calls != 0 {
+		t.Fatalf("Deliverable Store was invoked for incomplete output: %d calls", deliverables.calls)
+	}
+	if result.WorkerResult == nil || result.WorkerResult.Content != workers.result.Content {
+		t.Fatalf("partial generated content was not preserved for diagnostic observability: %#v", result.WorkerResult)
+	}
+	if result.StopReason != worker.StopReasonMaxTokens {
+		t.Fatalf("StopReason = %q, want max_tokens", result.StopReason)
+	}
+	if workers.calls != 1 {
+		t.Fatalf("worker calls = %d, want exactly 1 (no automatic retry)", workers.calls)
+	}
+}
+
+// TestExecutionServiceOnlyMaxTokensStopReasonIsTreatedAsIncomplete proves the
+// narrow scope of the ADR-0058 check: StopReasonCompleted and
+// StopReasonStopSequence (both legitimate normal Provider terminations) and
+// StopReasonUnknown (an absent/unrecognized value, never guessed to mean
+// truncated) must all continue to the ordinary success path -- Deliverable
+// saved, Task completed -- exactly as before this Checkpoint.
+func TestExecutionServiceOnlyMaxTokensStopReasonIsTreatedAsIncomplete(t *testing.T) {
+	for _, stopReason := range []worker.StopReason{worker.StopReasonCompleted, worker.StopReasonStopSequence, worker.StopReasonUnknown} {
+		t.Run(string(stopReason)+"_or_unknown", func(t *testing.T) {
+			if stopReason == "" {
+				t.Log("StopReasonUnknown (empty string) case")
+			}
+			readiness, tasks, workers, approvals, failures := defaultExecutionFakes()
+			workers.result.StopReason = stopReason
+			deliverables := &orchestrationDeliverables{record: deliverable.Record{TaskID: "TASK-001", RelativePath: "Deliverables/TASK-001.md"}}
+			service := activeExecutionServiceWithDeliverables(t, readiness, tasks, workers, deliverables, approvals, failures)
+
+			result, err := service.Execute(context.Background(), executionRequest(true))
+
+			if err != nil {
+				t.Fatalf("Execute() error = %v, want normal completion for StopReason %q", err, stopReason)
+			}
+			if result.Status != execution.StatusCompleted || result.Held || result.Deliverable == nil {
+				t.Fatalf("Execute() = %#v, want a normal completed Deliverable for StopReason %q", result, stopReason)
+			}
+			if deliverables.calls != 1 {
+				t.Fatalf("Deliverable Store calls = %d, want exactly 1", deliverables.calls)
+			}
+			if result.StopReason != stopReason {
+				t.Fatalf("StopReason = %q, want %q preserved unchanged", result.StopReason, stopReason)
+			}
+		})
 	}
 }
 

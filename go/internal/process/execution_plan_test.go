@@ -21,6 +21,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/recovery"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
 )
 
 func TestExecuteTaskRequiresApprovalBeforeCompositionOrEffects(t *testing.T) {
@@ -203,6 +204,74 @@ func TestExecuteTaskRecordsRedactedProviderFailureBeforeDeliverable(t *testing.T
 	var stored execution.Result
 	if json.Unmarshal(record.Result, &stored) != nil || stored.ProviderFailure == nil || stored.ProviderFailure.RequestID != "req_task_safe" {
 		t.Fatalf("stored Provider failure = %#v", stored.ProviderFailure)
+	}
+}
+
+// TestExecuteTaskMaxTokensOutputRecordsTypedIncompleteFailureNotDeliverable
+// is the ADR-0058 end-to-end proof through the real production Command
+// path: a Claude response that succeeds (HTTP 200, non-empty content) but
+// reports stop_reason "max_tokens" must never be committed as a canonical
+// Deliverable. It is recorded as a typed OUTPUT_INCOMPLETE failure -- never
+// classified as a Provider/Runner failure (ProviderFailure stays nil, this
+// is not what happened) -- and the Task ends Held via the same
+// TaskService.Fail/Hold path every other execution failure already uses.
+func TestExecuteTaskMaxTokensOutputRecordsTypedIncompleteFailureNotDeliverable(t *testing.T) {
+	root := writePlanVault(t)
+	client := httpDoerFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{
+				"model":"claude-sonnet-5",
+				"content":[{"type":"text","text":"# 途中の成果物\n\nここまでしか"}],
+				"usage":{"input_tokens":120,"output_tokens":3000},
+				"stop_reason":"max_tokens"
+			}`)),
+		}, nil
+	})
+	input := ExecuteTaskInput{
+		ExecutionPlanInput: planInput(root), Approved: true, ApprovalSource: "process-test",
+		ApprovalReference: "approval-max-tokens", ExecutionID: "EXEC-MAX-TOKENS", CommandID: "CMD-MAX-TOKENS",
+	}
+	result, err := ExecuteTask(context.Background(), input, ClaudeProcessConfig{
+		APIKey: "fake-api-key", ProviderModel: "claude-sonnet-5", BaseURL: "https://provider.invalid",
+	}, client)
+
+	if err == nil || result.ProviderFailure != nil || result.Deliverable != nil ||
+		result.FinalTaskStatus != task.StatusOnHold || !result.Held ||
+		result.StopReason != worker.StopReasonMaxTokens {
+		t.Fatalf("max_tokens output result = %#v, %v", result, err)
+	}
+	if result.WorkerResult == nil || !strings.Contains(result.WorkerResult.Content, "途中の成果物") {
+		t.Fatalf("partial generated content missing from diagnostic WorkerResult: %#v", result.WorkerResult)
+	}
+	if result.Failure == nil || result.Failure.Code != "OUTPUT_INCOMPLETE" || result.Failure.Stage != "worker" ||
+		result.Failure.Category != "max_tokens" || result.Failure.Provider != nil {
+		t.Fatalf("Envelope = %#v, want Code=OUTPUT_INCOMPLETE Stage=worker Category=max_tokens no Provider diagnostic", result.Failure)
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, ledgerErr := ledger.Get(context.Background(), input.CommandID)
+	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil ||
+		record.Failure.Code != "OUTPUT_INCOMPLETE" || record.Failure.Stage != "worker" {
+		t.Fatalf("max_tokens Ledger record = %#v, %v", record, ledgerErr)
+	}
+	if record.Failure.Details == nil || record.Failure.Details.Category != "max_tokens" {
+		t.Fatalf("Ledger Details = %#v", record.Failure.Details)
+	}
+	store, err := vault.NewTaskStore(vault.TaskStoreConfig{VaultRoot: root, ProjectName: "ToDoアプリ"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.Get(context.Background(), "TASK-001")
+	if err != nil || stored.Status != task.StatusOnHold {
+		t.Fatalf("stored Task = %#v, %v, want on_hold via TaskService alone", stored, err)
+	}
+	deliverablePath := filepath.Join(root, "プロジェクト", "ToDoアプリ", "Deliverables", "TASK-001.md")
+	if _, statErr := os.Stat(deliverablePath); !os.IsNotExist(statErr) {
+		t.Fatalf("truncated output was written as a canonical Deliverable file: stat error = %v", statErr)
 	}
 }
 

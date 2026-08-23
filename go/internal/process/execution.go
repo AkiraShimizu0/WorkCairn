@@ -151,6 +151,13 @@ func executionFailureEnvelope(executionErr error, providerFailure *execution.Pro
 			ProviderType: providerFailure.ProviderType, RequestID: providerFailure.RequestID,
 		}
 	}
+	// ADR-0058: OUTPUT_INCOMPLETE is never a Provider-call failure (no
+	// claude.Error exists, providerFailure is always nil here), so it
+	// carries its own Provider-neutral Category from the already-typed
+	// worker.StopReason instead -- never a raw Provider string.
+	if typed != nil && typed.Kind == execution.ErrorOutputIncomplete {
+		envelope.Category = string(result.StopReason)
+	}
 	envelope.Partial = partial
 	envelope.RecoveryRequired = partial
 	if result.Deliverable != nil || result.FinalTaskStatus != "" {

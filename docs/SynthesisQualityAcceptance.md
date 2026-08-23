@@ -40,6 +40,10 @@ It does not include the API key, Authorization header, raw credential configurat
 
 StopReason is a Provider-neutral classification (`completed`, `max_tokens`, `stop_sequence`, or empty for unknown) derived from the Claude Adapter's own raw `stop_reason`; OutputTruncated is `true` only when StopReason is exactly `max_tokens`, never inferred from the output token count alone.
 
+### When the Provider's own output is cut off
+
+If the real Synthesis call returns `StopReason=max_tokens`, this gate does **not** treat it as a normal completion, and does not treat it as a Provider failure either — the Provider call itself succeeded. Per ADR-0058, `ExecutionService` never commits the truncated text as the canonical Synthesis Deliverable; the Task ends up recorded as a typed `OUTPUT_INCOMPLETE` failure and held, exactly like any other execution failure. This report's own `FailureCategory` becomes `OUTPUT_INCOMPLETE_FAILURE` (distinct from `PROVIDER_FAILURE` and `QUALITY_FAILURE`), and `Evaluation` is absent — there is no canonical Deliverable to score. `StopReason`/`OutputTruncated`/`TokenUsage`/`DurationMilliseconds` are still populated in the report even in this case, so a truncated attempt is never invisible.
+
 ### Optional Human Review Artifact
 
 ```bash

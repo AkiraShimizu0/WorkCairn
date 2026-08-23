@@ -18,6 +18,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/deliverable"
+	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
 	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
 	"github.com/AkiraShimizu0/workcairn/go/internal/project"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
@@ -30,10 +31,11 @@ const (
 	ProviderFakeBad  = "fake-bad"
 	ProviderClaude   = "claude"
 
-	FailureContext  = "CONTEXT_FAILURE"
-	FailureProvider = "PROVIDER_FAILURE"
-	FailureQuality  = "QUALITY_FAILURE"
-	FailureHarness  = "HARNESS_FAILURE"
+	FailureContext          = "CONTEXT_FAILURE"
+	FailureProvider         = "PROVIDER_FAILURE"
+	FailureQuality          = "QUALITY_FAILURE"
+	FailureHarness          = "HARNESS_FAILURE"
+	FailureOutputIncomplete = "OUTPUT_INCOMPLETE_FAILURE"
 
 	acceptanceMaxProviderCalls = 2
 	acceptanceMaxRuntime       = 10 * time.Minute
@@ -193,6 +195,21 @@ func Run(ctx context.Context, config Config) (Result, error) {
 	}, workspaceprocess.ClaudeProcessConfig{APIKey: apiKey}, provider)
 	result.Executed = true
 	result.ProviderInvocations, result.ExternalProviderCalls = provider.counts()
+	// StopReason/TokenUsage/Duration are extracted here, before any early
+	// return, so they remain observable in the safe report even when the
+	// Synthesis Task's own output was incomplete (ADR-0058) and
+	// ExecuteReviewedWorkflow therefore returns workflowErr != nil -- this
+	// Checkpoint's own point is that a truncated attempt must not become
+	// invisible, including inside this harness's own failure path.
+	for _, current := range workflowResult.Tasks {
+		if current.TaskID == "TASK-004" {
+			result.DurationMilliseconds = current.Execution.Duration.Milliseconds()
+			result.TokenUsage = tokenUsage(current.Execution.Usage)
+			result.StopReason = string(current.Execution.StopReason)
+			result.OutputTruncated = current.Execution.StopReason == worker.StopReasonMaxTokens
+			break
+		}
+	}
 
 	prompt, ok := provider.synthesisPrompt()
 	if !ok {
@@ -226,15 +243,6 @@ func Run(ctx context.Context, config Config) (Result, error) {
 	result.OutputBytes = len([]byte(evidence.Deliverable.Content))
 	evaluation := Evaluate(scenario, evidence.Deliverable.Content)
 	result.Evaluation = &evaluation
-	for _, current := range workflowResult.Tasks {
-		if current.TaskID == "TASK-004" {
-			result.DurationMilliseconds = current.Execution.Duration.Milliseconds()
-			result.TokenUsage = tokenUsage(current.Execution.Usage)
-			result.StopReason = string(current.Execution.StopReason)
-			result.OutputTruncated = current.Execution.StopReason == worker.StopReasonMaxTokens
-			break
-		}
-	}
 	if strings.TrimSpace(config.ArtifactPath) != "" {
 		if writeErr := writeReviewArtifact(config.ArtifactPath, ReviewArtifact{
 			ScenarioID: scenario.ScenarioID, Provider: config.Provider, Model: resolution.ProviderModel,
@@ -468,6 +476,15 @@ func tokenUsage(usage worker.TokenUsage) TokenUsage {
 
 func workflowFailureCategory(result service.ReviewedWorkflowRunResult) string {
 	for _, current := range result.Tasks {
+		// ADR-0058: an incomplete Provider output (e.g. StopReasonMaxTokens)
+		// is never a Provider/Runner failure -- the call itself succeeded --
+		// so this is checked and returned before the ProviderFailure case
+		// below, using the same typed execution.ErrorOutputIncomplete Code
+		// the production FailureEnvelope already carries, not a guessed or
+		// re-derived condition.
+		if current.Execution.Failure != nil && current.Execution.Failure.Code == string(execution.ErrorOutputIncomplete) {
+			return FailureOutputIncomplete
+		}
 		if current.Execution.ProviderFailure != nil || current.Review != nil && current.Review.ProviderFailure != nil {
 			return FailureProvider
 		}
