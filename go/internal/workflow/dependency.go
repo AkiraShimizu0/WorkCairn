@@ -2,11 +2,20 @@ package workflow
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
+
+	"github.com/AkiraShimizu0/workcairn/go/internal/task"
 )
 
-var taskIDPattern = regexp.MustCompile(`^TASK-\d+$`)
+// validTaskID reuses the Task Domain's own canonical ParseTaskID instead of
+// an independent regex, so a Task ID Dependencies Markdown accepts is
+// guaranteed to be the same one the rest of the system accepts (previously
+// this package had its own looser ^TASK-\d+$ pattern that could disagree
+// with task.ParseTaskID's stricter zero-padded, round-tripping format).
+func validTaskID(taskID string) bool {
+	_, err := task.ParseTaskID(taskID)
+	return err == nil
+}
 
 // Dependency expresses task-to-task dependencies without storage concerns.
 type Dependency struct {
@@ -35,7 +44,7 @@ func ParseDependencies(markdown string) ([]Dependency, error) {
 		}
 
 		taskID := cells[0]
-		if !taskIDPattern.MatchString(taskID) {
+		if !validTaskID(taskID) {
 			return nil, fmt.Errorf("invalid task ID in dependency table: %s", taskID)
 		}
 		if _, exists := seen[taskID]; exists {
@@ -50,7 +59,7 @@ func ParseDependencies(markdown string) ([]Dependency, error) {
 				if dependencyID == "" {
 					continue
 				}
-				if !taskIDPattern.MatchString(dependencyID) {
+				if !validTaskID(dependencyID) {
 					return nil, fmt.Errorf(
 						"invalid dependency ID in dependency table: %s",
 						dependencyID,

@@ -78,6 +78,14 @@ full Browser Gateでfailureが出た場合は、失敗したtestだけを修正�
 
 新しいUI testを追加する際は、実際にbrowser固有の確認（DOM描画、table、mobile overflow、composer pinned等）が必要な場合だけPlaywrightへ追加し、Markdown parserやrole labelのような純粋なmapping/formatting ロジックは（unit test基盤を追加する際は）より高速な層で検証することを優先してください。
 
+## AI Code Minimality
+
+このセクションはArchitecture Rule（上記）を置き換えません。生成AIがコードを書く前後で従うprocess disciplineだけを追加します。
+
+- **書く前**: (1) repository内に既存primitiveがないか検索する、(2) Go標準libraryで解決できないか、(3) 既に採用済みのdependencyで解決できないか、(4) 成熟した外部libraryが妥当か、(5) それでも必要な場合だけWorkCairn固有実装を書く。ただしTask lifecycle、Approval、LoopGuard、Progress Intelligence、BudgetGuard、Recovery、Dependency Evidence、Synthesis QualityなどのWorkspace OS固有Business Ruleは外部libraryへ丸投げしません。
+- **設計中**: 最小限の抽象化に留め、同じ事実を複数箇所へ重複させません（Single Source of Truth）。interface／factory／manager／registryは、複数実装または複数呼び出し元が実在する場合にだけ追加します。1実装・1呼び出し元ならpure functionやsmall structで足りないか検討します。将来使うかもしれない拡張点を先回りして作りません。
+- **変更後・Checkpoint前**: 新方式に置き換えられた旧実装が残っていないか、同じvalidationやduplicate stateが複数箇所に増えていないか、dead helper／exportが残っていないか、simplifyできないか、不要なdependencyを増やしていないかを確認します。
+
 ## Documentation
 
 - 現在の構造は`docs/Architecture.md`、規範は`docs/CONSTITUTION.md`、計画は`docs/ROADMAP.md`を正とします。

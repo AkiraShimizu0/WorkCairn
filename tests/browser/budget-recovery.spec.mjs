@@ -27,7 +27,13 @@ test("Budget stop preserves completed branches and explicitly continues only the
       "この依頼は設定された実行上限に達したため、自動処理を停止しました",
       { timeout: 45_000 },
     );
-    expect(environment.provider.calls).toHaveLength(7); // CEO Intent + exactly six guarded Workflow calls.
+    // Exact Provider-call arithmetic for the Budget stop (and, below, for
+    // the Recovery continuation) is Go's own responsibility --
+    // TestInteractionBudgetContinuationResumesCreatedRevisionThenSynthesisWithoutReExecutingCompletedBranches
+    // (go/internal/process/interaction_recover_revision_test.go) asserts
+    // the exact call counts and per-branch replay-safety with more rigor
+    // than this Browser layer can. This spec keeps only what a Browser Gate
+    // can uniquely prove: the CEO-visible UI/UX contract.
     expect(commands.filter((command) => command.operation === "interaction.workflow.recover_revision")).toHaveLength(0);
 
     // Canonical results from the completed sibling branches remain visible,
@@ -56,15 +62,22 @@ test("Budget stop preserves completed branches and explicitly continues only the
     await expect(page.getByRole("button", { name: "必要な部分だけ続ける" })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible({ timeout: 45_000 });
 
+    // The double-click above models an impatient duplicate tap; this proves
+    // the client's own single-flight guard sent exactly one recover_revision
+    // Command (not that the backend is safe under concurrency -- that is a
+    // CAS/Ledger property Go owns, see the double-Command race test in
+    // internal/process). It's a genuine UI/UX behavior, kept here.
     const recoveryCommands = commands.filter((command) => command.operation === "interaction.workflow.recover_revision");
     expect(recoveryCommands).toHaveLength(1);
     expect(recoveryCommands[0].payload.additional_guidance).toBe("既存の成果を保ち、指摘箇所だけ直してください");
-    expect(environment.provider.calls).toHaveLength(11);
-    for (const name of ["task_execution_budget_branch_a", "task_execution_budget_branch_b", "task_execution_budget_branch_c"]) {
-      expect(environment.provider.calls.filter((call) => call.fixture === name)).toHaveLength(1);
-    }
-    expect(environment.provider.calls.filter((call) => call.fixture === "task_execution_budget_revision")).toHaveLength(1);
-    expect(environment.provider.calls.filter((call) => call.fixture === "task_execution_budget_synthesis")).toHaveLength(1);
+    // Whether A/B/C were re-executed, and the exact revision/synthesis call
+    // counts, are Go's responsibility (see the comment above). What this
+    // Browser Gate can uniquely confirm is that the CEO-visible outcome is
+    // correct: the completed branches' own titles are still present (not
+    // replaced or duplicated in the timeline) and Synthesis completes.
+    await expect(page.locator("#activity-timeline")).toContainText("市場動向を調査する");
+    await expect(page.locator("#activity-timeline")).toContainText("競合サービスを調査する");
+    await expect(page.locator("#activity-timeline")).toContainText("顧客傾向を分析する");
     await expect(page.locator("#activity-timeline")).toContainText("3つの結果を統合する");
     await expect(page.locator(".msg-live-status")).toHaveCount(0);
     await expect(page.locator("#composer-input")).toHaveValue("完了しました");
