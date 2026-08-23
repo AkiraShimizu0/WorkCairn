@@ -226,6 +226,7 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 			OutputTokens: providerResponse.Usage.OutputTokens,
 		},
 		Duration:                             duration,
+		StopReason:                           mapStopReason(providerResponse.StopReason),
 		Metadata:                             cloneMetadata(request.Metadata),
 		StructuredOutputPresence:             structuredPresence,
 		StructuredOutputFieldShape:           structuredFieldShape,
@@ -288,6 +289,25 @@ func safeDiagnosticToken(value string, limit int) string {
 		}
 	}
 	return value
+}
+
+// mapStopReason normalizes Anthropic's own stop_reason vocabulary into the
+// Provider-neutral worker.StopReason enum so Core never receives a raw
+// Provider string. "refusal" is handled separately above (it becomes an
+// Error before this function is ever reached); every other value this
+// Adapter does not yet classify (e.g. "tool_use", "pause_turn") maps to
+// StopReasonUnknown rather than being guessed at.
+func mapStopReason(raw string) worker.StopReason {
+	switch raw {
+	case "end_turn":
+		return worker.StopReasonCompleted
+	case "max_tokens":
+		return worker.StopReasonMaxTokens
+	case "stop_sequence":
+		return worker.StopReasonStopSequence
+	default:
+		return worker.StopReasonUnknown
+	}
 }
 
 func classifyProviderFailure(status int, providerType string) FailureCategory {

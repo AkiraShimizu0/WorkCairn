@@ -227,6 +227,7 @@ func (service *ExecutionService) Execute(ctx context.Context, request execution.
 		result.Model = workerResult.Model
 		result.Usage = workerResult.Usage
 		result.Duration = workerResult.Duration
+		result.StopReason = workerResult.StopReason
 		record, saveErr := service.deliverables.Save(ctx, deliverable.Document{
 			ProjectID:   request.ProjectID,
 			ProjectName: request.ProjectName,

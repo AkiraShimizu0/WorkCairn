@@ -95,9 +95,10 @@ func TestWorkerServiceExecutesWithSelectedRunner(t *testing.T) {
 		name: "FakeRunner",
 		result: worker.RunResult{
 			Content: "# deliverable", Runner: "FakeRunner", Model: "Fake Model",
-			Usage:    worker.TokenUsage{InputTokens: &inputTokens, OutputTokens: &outputTokens},
-			Duration: 250 * time.Millisecond,
-			Metadata: map[string]string{"request_id": "REQ-001"},
+			Usage:      worker.TokenUsage{InputTokens: &inputTokens, OutputTokens: &outputTokens},
+			Duration:   250 * time.Millisecond,
+			StopReason: worker.StopReasonMaxTokens,
+			Metadata:   map[string]string{"request_id": "REQ-001"},
 		},
 	}
 	service, _ := configuredWorkerService(t, builder, fake)
@@ -110,6 +111,9 @@ func TestWorkerServiceExecutesWithSelectedRunner(t *testing.T) {
 	}
 	if result.Usage.InputTokens == nil || *result.Usage.InputTokens != 12 || result.Duration != 250*time.Millisecond {
 		t.Fatalf("usage/duration = %#v, %s", result.Usage, result.Duration)
+	}
+	if result.StopReason != worker.StopReasonMaxTokens {
+		t.Fatalf("StopReason = %q, want %q (must flow from RunResult unchanged)", result.StopReason, worker.StopReasonMaxTokens)
 	}
 	if builder.calls != 1 || builder.input.Employee.EmployeeID != "PLAN-001" || builder.input.Task.TaskID != "TASK-001" {
 		t.Fatalf("PromptBuilder input = %#v", builder.input)

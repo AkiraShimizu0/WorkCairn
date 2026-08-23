@@ -40,6 +40,7 @@ type Result struct {
 	Model           string                   `json:"model,omitempty"`
 	Usage           worker.TokenUsage        `json:"usage"`
 	Duration        time.Duration            `json:"duration"`
+	StopReason      worker.StopReason        `json:"stop_reason,omitempty"`
 	FailureReason   string                   `json:"failure_reason,omitempty"`
 	ProviderFailure *ProviderFailure         `json:"provider_failure,omitempty"`
 	Held            bool                     `json:"held"`

@@ -416,6 +416,17 @@ ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全�
 
 未完了：actual real-provider benchmark、複数Provider／model比較、Provider-specific prompt tuning、role-based model routing、反復run集計、semantic evaluator／LLM-as-Judge、pricingを含むCost比較。Provider-specific policyは再現可能なAcceptance差が得られるまで導入しません。
 
+### Prompt Quality v2 follow-up（Cross-Evidence + Actionability）
+
+実Claude baseline（`claude-sonnet-5`、10/12、Cross-Evidence Synthesisと Actionabilityがそれぞれ1/2）を受け、この2項目だけを狙った最小限のPrompt追加とobservability追加を行いました（ADR-0057 Addendum参照）。
+
+- `internal/prompt`の通常Task Prompt Builderへ、依存2件以上（Synthesis相当のfan-in）の場合だけ「複数の参照情報を関連付けて1つの結論を作る」「最優先の提案にはaction・根拠・期待効果・検証方法を含める」という方針を追加。scenario固有keywordは含まず、依存0〜1件のPromptは既存goldenとbyte-for-byte互換
+- `worker.StopReason`（completed／max_tokens／stop_sequence／unknown）をClaude Adapterの生`stop_reason`から変換し、`worker.RunResult`→`ExecutionResult`→`execution.Result`へadditiveに伝播。production dispatchの判断には使わずobservability専用
+- Synthesis Quality Acceptanceのsafe reportへ`stop_reason`／`output_truncated`（max_tokensのときだけtrue）を追加し、明示`ArtifactPath`設定時だけcanonical Synthesis Deliverable全文をGit外・実Vault外のファイルへ書き出すHuman Review Artifactを追加（既定では何も書かない）
+- Evidence Coverage／Conflict Handling／Prioritization／Unsupported Claims（既に満点だった4項目）とrubric・threshold（10/12）は無変更。deterministic keyword-group評価戦略も変更なし
+
+未確認：この変更後の実Claude再実行によるスコア改善の確認（本Checkpointではexternal Provider呼び出しを行っていません）。次のCheckpointでの`make synthesis-acceptance PROVIDER=claude EXECUTE=1`実行が推奨される次のステップです。
+
 ## Completed — Public Beta Go Only Repository
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。

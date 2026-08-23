@@ -836,6 +836,44 @@ func TestRunnerClassifiesRefusalStopReasonWithoutContent(t *testing.T) {
 	}
 }
 
+// TestRunnerNormalizesStopReasonToProviderNeutralValue proves this Adapter
+// maps Anthropic's own raw stop_reason string onto the Provider-neutral
+// worker.StopReason enum -- Core must never see "end_turn"/"max_tokens"/
+// "stop_sequence" directly. "unknown" covers both an absent stop_reason and
+// any value this Adapter does not yet classify (e.g. "tool_use").
+func TestRunnerNormalizesStopReasonToProviderNeutralValue(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want worker.StopReason
+	}{
+		{"completed", "end_turn", worker.StopReasonCompleted},
+		{"max tokens", "max_tokens", worker.StopReasonMaxTokens},
+		{"stop sequence", "stop_sequence", worker.StopReasonStopSequence},
+		{"absent", "", worker.StopReasonUnknown},
+		{"unrecognized", "tool_use", worker.StopReasonUnknown},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stopReasonField := ""
+			if test.raw != "" {
+				stopReasonField = `,"stop_reason":"` + test.raw + `"`
+			}
+			runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+				body := `{"model":"claude-sonnet-5","content":[{"type":"text","text":"ok"}],"usage":{}` + stopReasonField + `}`
+				return jsonResponse(http.StatusOK, body, "req-stop-reason"), nil
+			}))
+			result, err := runner.Run(context.Background(), validRunRequest())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.StopReason != test.want {
+				t.Fatalf("StopReason = %q, want %q", result.StopReason, test.want)
+			}
+		})
+	}
+}
+
 func jsonQuote(t *testing.T, value string) string {
 	t.Helper()
 	encoded, err := json.Marshal(value)

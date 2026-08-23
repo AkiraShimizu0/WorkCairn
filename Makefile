@@ -41,7 +41,7 @@ public-beta-smoke:
 PROVIDER ?= fake-good
 EXECUTE ?= 0
 synthesis-acceptance:
-	cd $(GO_DIR) && GOTELEMETRY=off go run ./cmd/workcairn-synthesis-acceptance --provider '$(PROVIDER)' $(if $(filter fake-good fake-bad,$(PROVIDER)),--execute,$(if $(filter 1 true yes,$(EXECUTE)),--execute,))
+	cd $(GO_DIR) && GOTELEMETRY=off go run ./cmd/workcairn-synthesis-acceptance --provider '$(PROVIDER)' $(if $(filter fake-good fake-bad,$(PROVIDER)),--execute,$(if $(filter 1 true yes,$(EXECUTE)),--execute,)) $(if $(ARTIFACT_PATH),--artifact-path '$(ARTIFACT_PATH)',)
 
 # Node and Playwright are test-only dependencies for the actual-daemon browser
 # acceptance harness. They are intentionally absent from Go modules, product

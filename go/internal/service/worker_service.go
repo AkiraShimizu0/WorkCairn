@@ -163,6 +163,7 @@ func (service *WorkerService) Execute(ctx context.Context, request worker.Execut
 		Model:      runResult.Model,
 		Usage:      runResult.Usage,
 		Duration:   runResult.Duration,
+		StopReason: runResult.StopReason,
 		Status:     worker.StatusCompleted,
 		Metadata:   cloneMetadata(runResult.Metadata),
 	}

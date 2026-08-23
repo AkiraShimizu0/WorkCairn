@@ -20,6 +20,7 @@ type ExecutionResult struct {
 	Model      string            `json:"model"`
 	Usage      TokenUsage        `json:"usage"`
 	Duration   time.Duration     `json:"duration"`
+	StopReason StopReason        `json:"stop_reason,omitempty"`
 	Status     ExecutionStatus   `json:"status"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 }

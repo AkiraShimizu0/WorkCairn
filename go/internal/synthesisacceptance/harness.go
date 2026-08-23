@@ -50,6 +50,31 @@ type Config struct {
 	APIKey     string
 	HTTPClient claude.HTTPDoer
 	VaultRoot  string
+	// ArtifactPath, when non-empty, writes a Human Review Artifact (see
+	// ReviewArtifact) to this exact file path once a canonical Synthesis
+	// Deliverable exists. Empty by default -- no artifact is ever written
+	// unless a caller explicitly opts in. The caller is responsible for
+	// choosing a path outside the Git working tree and outside any real
+	// Vault; this package does not restrict or default the path itself.
+	ArtifactPath string
+}
+
+// ReviewArtifact is the optional, explicitly-requested-only file a human
+// reviewer can inspect after a real acceptance run: the canonical Synthesis
+// Deliverable full text alongside the same safe metadata already in Result.
+// It is written only when Config.ArtifactPath is set (see Run), and never
+// contains a credential, Authorization header, or raw Provider request --
+// the same safety boundary ADR-0057 already established for Result.
+type ReviewArtifact struct {
+	ScenarioID           string     `json:"scenario_id"`
+	Provider             string     `json:"provider"`
+	Model                string     `json:"model"`
+	Evaluation           Evaluation `json:"evaluation"`
+	Deliverable          string     `json:"deliverable"`
+	TokenUsage           TokenUsage `json:"token_usage"`
+	DurationMilliseconds int64      `json:"duration_ms"`
+	StopReason           string     `json:"stop_reason,omitempty"`
+	OutputTruncated      bool       `json:"output_truncated"`
 }
 
 type TokenUsage struct {
@@ -59,25 +84,34 @@ type TokenUsage struct {
 }
 
 type Result struct {
-	ScenarioID             string            `json:"scenario_id"`
-	Provider               string            `json:"provider"`
-	LogicalRoute           string            `json:"logical_route"`
-	Model                  string            `json:"model"`
-	Executed               bool              `json:"executed"`
-	Ready                  bool              `json:"ready"`
-	Passed                 bool              `json:"passed"`
-	Status                 string            `json:"status"`
-	FailureCategory        string            `json:"failure_category,omitempty"`
-	Evaluation             *Evaluation       `json:"evaluation,omitempty"`
-	Prompt                 PromptObservation `json:"prompt"`
-	OutputBytes            int               `json:"output_bytes,omitempty"`
-	TokenUsage             TokenUsage        `json:"token_usage"`
-	DurationMilliseconds   int64             `json:"duration_ms"`
-	CanonicalDeliverable   bool              `json:"canonical_deliverable"`
-	ProviderInvocations    int               `json:"provider_invocations"`
-	ExternalProviderCalls  int               `json:"external_provider_calls"`
-	MaxProviderCalls       int               `json:"max_provider_calls"`
-	MaxRuntimeMilliseconds int64             `json:"max_runtime_ms"`
+	ScenarioID           string            `json:"scenario_id"`
+	Provider             string            `json:"provider"`
+	LogicalRoute         string            `json:"logical_route"`
+	Model                string            `json:"model"`
+	Executed             bool              `json:"executed"`
+	Ready                bool              `json:"ready"`
+	Passed               bool              `json:"passed"`
+	Status               string            `json:"status"`
+	FailureCategory      string            `json:"failure_category,omitempty"`
+	Evaluation           *Evaluation       `json:"evaluation,omitempty"`
+	Prompt               PromptObservation `json:"prompt"`
+	OutputBytes          int               `json:"output_bytes,omitempty"`
+	TokenUsage           TokenUsage        `json:"token_usage"`
+	DurationMilliseconds int64             `json:"duration_ms"`
+	// StopReason and OutputTruncated are observational only (this
+	// Checkpoint changes no production dispatch decision): StopReason is
+	// the Provider-neutral worker.StopReason the Synthesis Task's own
+	// Runner reported, and OutputTruncated is true only when StopReason is
+	// exactly "max_tokens" -- never inferred from the raw output token
+	// count, which cannot distinguish "the model chose to stop near the
+	// limit" from "the model was cut off".
+	StopReason             string `json:"stop_reason,omitempty"`
+	OutputTruncated        bool   `json:"output_truncated"`
+	CanonicalDeliverable   bool   `json:"canonical_deliverable"`
+	ProviderInvocations    int    `json:"provider_invocations"`
+	ExternalProviderCalls  int    `json:"external_provider_calls"`
+	MaxProviderCalls       int    `json:"max_provider_calls"`
+	MaxRuntimeMilliseconds int64  `json:"max_runtime_ms"`
 }
 
 func Run(ctx context.Context, config Config) (Result, error) {
@@ -196,7 +230,20 @@ func Run(ctx context.Context, config Config) (Result, error) {
 		if current.TaskID == "TASK-004" {
 			result.DurationMilliseconds = current.Execution.Duration.Milliseconds()
 			result.TokenUsage = tokenUsage(current.Execution.Usage)
+			result.StopReason = string(current.Execution.StopReason)
+			result.OutputTruncated = current.Execution.StopReason == worker.StopReasonMaxTokens
 			break
+		}
+	}
+	if strings.TrimSpace(config.ArtifactPath) != "" {
+		if writeErr := writeReviewArtifact(config.ArtifactPath, ReviewArtifact{
+			ScenarioID: scenario.ScenarioID, Provider: config.Provider, Model: resolution.ProviderModel,
+			Evaluation: evaluation, Deliverable: evidence.Deliverable.Content,
+			TokenUsage: result.TokenUsage, DurationMilliseconds: result.DurationMilliseconds,
+			StopReason: result.StopReason, OutputTruncated: result.OutputTruncated,
+		}); writeErr != nil {
+			result.Ready, result.Status, result.FailureCategory = false, "failed", FailureHarness
+			return result, writeErr
 		}
 	}
 	result.Passed = evaluation.Passed
@@ -206,6 +253,20 @@ func Run(ctx context.Context, config Config) (Result, error) {
 	}
 	result.Status = "passed"
 	return result, nil
+}
+
+// writeReviewArtifact writes the Human Review Artifact as pretty-printed
+// JSON. It never restricts or defaults the path -- Run's own caller is
+// responsible for choosing a location outside the Git working tree and
+// outside a real Vault (see Config.ArtifactPath) -- and it writes nothing
+// beyond the file's own content: no credential, header, or Provider request
+// is ever part of ReviewArtifact's shape.
+func writeReviewArtifact(path string, artifact ReviewArtifact) error {
+	encoded, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, encoded, 0o644)
 }
 
 func acceptanceRoot(configured string) (string, func(), error) {

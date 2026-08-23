@@ -70,6 +70,27 @@ func TestEvaluatorRequiresJapaneseOutput(t *testing.T) {
 	}
 }
 
+// TestEvaluatorScoresActionabilityZeroWithPriorityLanguageButNoActionOrMeasurement
+// is a Synthesis Prompt Quality v2 regression fixture (Checklist B13, bad
+// fixture B): naming a priority is not the same as being actionable --
+// output that says something is most important without naming a concrete
+// action or a way to measure it must score 0 on Actionability even though
+// Prioritization itself passes.
+func TestEvaluatorScoresActionabilityZeroWithPriorityLanguageButNoActionOrMeasurement(t *testing.T) {
+	scenario, _ := LoadScenario()
+	output := "最優先の課題です。P1として扱います。第一に重要な観点だと考えます。"
+	result := Evaluate(scenario, output)
+	if scoreFor(result, RubricPrioritization) == 0 {
+		t.Fatalf("Prioritization score = %d, want > 0 (priority language is present)", scoreFor(result, RubricPrioritization))
+	}
+	if scoreFor(result, RubricActionability) != 0 {
+		t.Fatalf("Actionability score = %d, want 0 (no action or measurement marker exists)", scoreFor(result, RubricActionability))
+	}
+	if result.Passed {
+		t.Fatalf("evaluation = %#v, must not pass with a zero-valued critical item", result)
+	}
+}
+
 func scoreFor(result Evaluation, id string) int {
 	for _, item := range result.Rubric {
 		if item.ID == id {

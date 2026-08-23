@@ -33,10 +33,20 @@ The report includes:
 - scenario, Provider, logical route, and concrete model;
 - total score and each deterministic rubric item;
 - evidence order, truncation, prompt byte counts, and safety-policy presence;
-- output bytes, TokenUsage, duration, and call counts;
+- output bytes, TokenUsage, duration, call counts, StopReason, and OutputTruncated;
 - whether the canonical Synthesis Deliverable committed in the temporary Vault.
 
 It does not include the API key, Authorization header, raw credential configuration, persistent Vault path, or raw Provider metadata. The temporary result is removed when the run finishes and is not added to Git.
+
+StopReason is a Provider-neutral classification (`completed`, `max_tokens`, `stop_sequence`, or empty for unknown) derived from the Claude Adapter's own raw `stop_reason`; OutputTruncated is `true` only when StopReason is exactly `max_tokens`, never inferred from the output token count alone.
+
+### Optional Human Review Artifact
+
+```bash
+make synthesis-acceptance PROVIDER=claude EXECUTE=1 ARTIFACT_PATH=/absolute/path/outside/this/repo/review.json
+```
+
+When `ARTIFACT_PATH` (or the underlying `-artifact-path` flag) is set, a real acceptance run additionally writes the canonical Synthesis Deliverable's full text alongside the same safe metadata above to that exact file, once the Deliverable has committed. It is never written by default. The caller chooses a path outside the Git working tree and outside any real Vault; this command does not restrict, default, or clean up that path itself, and the file never contains a credential, Authorization header, or raw Provider request.
 
 ## What this does not prove
 

@@ -255,6 +255,84 @@ func TestBuilderDependencyEvidenceExactLimitDoesNotTruncateAndLimitPlusOneDoes(t
 	}
 }
 
+// TestBuilderIncludesCrossEvidenceGuidanceOnlyWithMultipleDependencies proves
+// Synthesis Prompt Quality v2's targeted instruction is scoped to genuinely
+// multi-evidence tasks (Synthesis-shaped: two or more direct dependencies),
+// not every dependent Task -- a Revision continuation or any other Task with
+// exactly one dependency has nothing to cross-reference, so the instruction
+// must not appear for it, and the existing golden/no-dependency prompt must
+// stay byte-for-byte unchanged (already proven by
+// TestBuilderMatchesGoldenFixture passing unmodified).
+func TestBuilderIncludesCrossEvidenceGuidanceOnlyWithMultipleDependencies(t *testing.T) {
+	fixture := loadTaskExecutionFixture(t)
+	heading := "## 複数の参照情報を統合する際の方針"
+
+	none := fixture.Input
+	built, err := NewBuilder().Build(context.Background(), none)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(built.System, heading) {
+		t.Fatalf("cross-evidence guidance leaked into a no-dependency prompt: %q", built.System)
+	}
+
+	one := fixture.Input
+	one.DependencyEvidence = []worker.DependencyEvidence{
+		{SourceTaskID: "TASK-001", SourceTitle: "A", TaskID: "TASK-001", Title: "A", EmployeeID: "PLAN-001", Content: "証拠A"},
+	}
+	built, err = NewBuilder().Build(context.Background(), one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(built.System, heading) {
+		t.Fatalf("cross-evidence guidance appeared with only one dependency: %q", built.System)
+	}
+
+	many := fixture.Input
+	many.DependencyEvidence = []worker.DependencyEvidence{
+		{SourceTaskID: "TASK-001", SourceTitle: "A", TaskID: "TASK-001", Title: "A", EmployeeID: "PLAN-001", Content: "証拠A"},
+		{SourceTaskID: "TASK-002", SourceTitle: "B", TaskID: "TASK-002", Title: "B", EmployeeID: "PLAN-002", Content: "証拠B"},
+	}
+	built, err = NewBuilder().Build(context.Background(), many)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		heading,
+		"2つ以上の参照情報を関連付け",
+		"最優先の提案には",
+		"参照情報にない数値目標や成果を作成しないでください",
+	} {
+		if !strings.Contains(built.System, expected) {
+			t.Fatalf("cross-evidence/actionability guidance missing %q: %s", expected, built.System)
+		}
+	}
+}
+
+// TestBuilderCrossEvidenceGuidanceNeverHardcodesScenarioKeywords is a
+// regression test for Checklist item B14: the production Prompt's own
+// wording must stay scenario-neutral -- terms like "WorkCairn",
+// "activation", "onboarding", or "dashboard" belong only in the Synthesis
+// Acceptance fixture (internal/synthesisacceptance/scenario_v1.json), never
+// hardcoded into the general-purpose Prompt every Task shares.
+func TestBuilderCrossEvidenceGuidanceNeverHardcodesScenarioKeywords(t *testing.T) {
+	fixture := loadTaskExecutionFixture(t)
+	input := fixture.Input
+	input.DependencyEvidence = []worker.DependencyEvidence{
+		{SourceTaskID: "TASK-001", SourceTitle: "A", TaskID: "TASK-001", Title: "A", EmployeeID: "PLAN-001", Content: "証拠A"},
+		{SourceTaskID: "TASK-002", SourceTitle: "B", TaskID: "TASK-002", Title: "B", EmployeeID: "PLAN-002", Content: "証拠B"},
+	}
+	built, err := NewBuilder().Build(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"WorkCairn", "activation", "アクティベーション", "onboarding", "オンボーディング", "dashboard", "ダッシュボード"} {
+		if strings.Contains(built.System, forbidden) {
+			t.Fatalf("production Prompt hardcodes scenario-specific keyword %q: %s", forbidden, built.System)
+		}
+	}
+}
+
 func TestBuilderRejectsMissingRequiredContext(t *testing.T) {
 	fixture := loadTaskExecutionFixture(t)
 	for _, test := range []struct {

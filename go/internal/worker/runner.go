@@ -48,14 +48,42 @@ type TokenUsage struct {
 	OutputTokens *int `json:"output_tokens,omitempty"`
 }
 
+// StopReason is a Provider-neutral classification of why a Runner stopped
+// generating output. Each Adapter maps its own raw stop-reason vocabulary
+// (e.g. Anthropic's "end_turn"/"max_tokens"/"stop_sequence") onto this
+// closed set so Core never receives a Provider-specific string. It is
+// observational only in this Checkpoint -- no production dispatch decision
+// reads it; it exists so a caller can distinguish "the Provider finished
+// normally" from "the Provider was cut off by its own output limit" without
+// guessing from token counts.
+type StopReason string
+
+const (
+	// StopReasonUnknown is the zero value: either the Adapter did not
+	// report a stop reason, or it reported one this package does not yet
+	// classify. Never treated as "completed normally".
+	StopReasonUnknown StopReason = ""
+	// StopReasonCompleted means the Provider finished its own response
+	// normally (Anthropic's "end_turn").
+	StopReasonCompleted StopReason = "completed"
+	// StopReasonMaxTokens means the Provider stopped only because it hit
+	// its own configured output token ceiling -- the only reason a caller
+	// should ever infer the output was truncated.
+	StopReasonMaxTokens StopReason = "max_tokens"
+	// StopReasonStopSequence means the Provider stopped because it
+	// generated a caller-configured stop sequence.
+	StopReasonStopSequence StopReason = "stop_sequence"
+)
+
 // RunResult is returned by a Runner Adapter before Worker identity is added.
 type RunResult struct {
-	Content  string            `json:"content"`
-	Runner   string            `json:"runner"`
-	Model    string            `json:"model"`
-	Usage    TokenUsage        `json:"usage"`
-	Duration time.Duration     `json:"duration"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+	Content    string            `json:"content"`
+	Runner     string            `json:"runner"`
+	Model      string            `json:"model"`
+	Usage      TokenUsage        `json:"usage"`
+	Duration   time.Duration     `json:"duration"`
+	StopReason StopReason        `json:"stop_reason,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
 	// StructuredOutputPresence is set only when the request carried a
 	// StructuredOutput contract and the Runner could extract a JSON
 	// object from the Provider's response. Keys are exactly the schema's

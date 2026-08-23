@@ -247,6 +247,7 @@ func defaultExecutionFakes() (*orchestrationReadiness, *orchestrationTasks, *orc
 			Runner: "FakeRunner", Model: "Fake Model",
 			Usage:    worker.TokenUsage{InputTokens: &inputTokens, OutputTokens: &outputTokens},
 			Duration: 250 * time.Millisecond, Status: worker.StatusCompleted,
+			StopReason: worker.StopReasonMaxTokens,
 		}},
 		&orchestrationApprovalPolicy{decision: policy.ApprovalDecision{Outcome: policy.OutcomeApproved, Reason: "approved", Policy: "fake"}},
 		&orchestrationExecutionPolicy{decision: policy.FailureDecision{Hold: true, Reason: "hold_after_execution_failure", Policy: "fake"}}
@@ -278,6 +279,9 @@ func TestExecutionServiceSuccessfulFlow(t *testing.T) {
 	}
 	if result.Runner != "FakeRunner" || result.Model != "Fake Model" || result.Usage.InputTokens == nil || *result.Usage.InputTokens != 11 || result.Duration != 250*time.Millisecond {
 		t.Fatalf("worker data = %#v", result)
+	}
+	if result.StopReason != worker.StopReasonMaxTokens {
+		t.Fatalf("StopReason = %q, want %q (must flow from worker.ExecutionResult unchanged)", result.StopReason, worker.StopReasonMaxTokens)
 	}
 	_, calls, _ := tasks.snapshot()
 	if !equalStrings(calls, []string{"start", "complete"}) || workers.calls != 1 || deliverables.calls != 1 || failures.calls != 0 {
