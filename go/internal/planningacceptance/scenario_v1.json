@@ -1,0 +1,24 @@
+{
+  "schema_version": "workcairn-planning-acceptance.v1",
+  "scenario_id": "cross-functional-onboarding-checklist-ja-v1",
+  "language": "ja",
+  "ceo_request": "新規ユーザー向けのオンボーディングチェックリスト機能を追加したい。既存ユーザーの声や利用データから何が課題になっているかを調べ、同じような機能を持つ競合・参考製品も調べたうえで、両方の結果を踏まえた仕様を作ってから実装してほしい。QAも忘れずに。",
+  "employees": [
+    { "id": "PM-101", "department": "企画部", "role": "Product Manager", "model": "workcairn-auto", "status": "待機中" },
+    { "id": "BE-101", "department": "開発部", "role": "Backend Engineer", "model": "workcairn-auto", "status": "待機中" }
+  ],
+  "expected_intent_concept_groups": [
+    ["既存ユーザー", "ヒアリング", "利用データ", "ユーザー調査"],
+    ["競合", "参考製品"],
+    ["仕様", "統合"],
+    ["実装"]
+  ],
+  "expected_dependency_positions": [
+    [],
+    [],
+    [0, 1],
+    [2]
+  ],
+  "forbidden_claims": ["2週間以内", "完了率80%を達成", "500万円の予算"],
+  "expected_missing_information_concept_group": ["KPI", "目標", "完了率", "指標"]
+}

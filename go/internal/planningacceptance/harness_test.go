@@ -1,0 +1,158 @@
+package planningacceptance
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// claudeResponseEnvelope wraps a raw CEO Intent JSON string exactly the way
+// the real Claude Adapter's Structured Output response shape does
+// (content[0].text carries the Intent JSON as a string) -- the same
+// envelope internal/synthesisacceptance's fixtures use, confirmed against
+// internal/adapter/claude/runner.go's own content extraction.
+func claudeResponseEnvelope(intentJSON string) string {
+	escaped := strings.ReplaceAll(intentJSON, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `{"model":"claude-sonnet-5","content":[{"type":"text","text":"` + escaped + `"}],"usage":{"input_tokens":500,"output_tokens":300},"stop_reason":"end_turn"}`
+}
+
+const goodIntentJSON = `{"project_name":"オンボーディングチェックリスト機能","objective":"新規ユーザー向けのオンボーディングチェックリスト機能を追加する","summary":"既存ユーザー調査と競合調査の結果を統合して仕様を作成し、実装とレビューを行う","steps":[{"kind":"research","description":"新規ユーザーのオンボーディング体験について、既存ユーザーへのヒアリングや利用データから課題を調査する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"research","description":"類似のオンボーディングチェックリスト機能を持つ競合・参考製品を調査する","required_role":"Product Manager","parallel_with_previous":true},{"kind":"analyze","description":"ユーザー調査と競合調査の結果を統合し、オンボーディングチェックリスト機能の仕様を作成する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"implement","description":"仕様に基づいてオンボーディングチェックリスト機能を実装する","required_role":"Backend Engineer","parallel_with_previous":false},{"kind":"review","description":"実装内容と仕様の整合性をレビューする"}],"ceo_questions":["チェックリストの完了率など、成功を測る具体的なKPIの目標値は決まっていますか？"]}`
+
+// badIntentOmissionJSON drops the competitive-research and spec-integration
+// steps -- Intent Coverage should degrade, nothing else should.
+const badIntentOmissionJSON = `{"project_name":"オンボーディングチェックリスト機能","objective":"新規ユーザー向けのオンボーディングチェックリスト機能を追加する","summary":"既存ユーザー調査をもとに実装する","steps":[{"kind":"research","description":"新規ユーザーのオンボーディング体験について、既存ユーザーへのヒアリングや利用データから課題を調査する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"implement","description":"オンボーディングチェックリスト機能を実装する","required_role":"Backend Engineer","parallel_with_previous":false},{"kind":"review","description":"実装内容をレビューする"}],"ceo_questions":["チェックリストの完了率など、成功を測る具体的なKPIの目標値は決まっていますか？"]}`
+
+// badWrongParallelJSON keeps every step's text identical to goodIntentJSON
+// but marks every step sequential (parallel_with_previous:false
+// throughout), reproducing NormalizeIntent's plain linear-chain behavior
+// instead of the expected fan-out/fan-in shape.
+const badWrongParallelJSON = `{"project_name":"オンボーディングチェックリスト機能","objective":"新規ユーザー向けのオンボーディングチェックリスト機能を追加する","summary":"既存ユーザー調査と競合調査の結果を統合して仕様を作成し、実装とレビューを行う","steps":[{"kind":"research","description":"新規ユーザーのオンボーディング体験について、既存ユーザーへのヒアリングや利用データから課題を調査する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"research","description":"類似のオンボーディングチェックリスト機能を持つ競合・参考製品を調査する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"analyze","description":"ユーザー調査と競合調査の結果を統合し、オンボーディングチェックリスト機能の仕様を作成する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"implement","description":"仕様に基づいてオンボーディングチェックリスト機能を実装する","required_role":"Backend Engineer","parallel_with_previous":false},{"kind":"review","description":"実装内容と仕様の整合性をレビューする"}],"ceo_questions":["チェックリストの完了率など、成功を測る具体的なKPIの目標値は決まっていますか？"]}`
+
+// badInventedClaimJSON fabricates a deadline and a completion-rate KPI the
+// CEO request never stated.
+const badInventedClaimJSON = `{"project_name":"オンボーディングチェックリスト機能","objective":"2週間以内にチェックリスト完了率80%を達成するオンボーディング機能を追加する","summary":"既存ユーザー調査と競合調査の結果を統合して仕様を作成し、実装とレビューを行う","steps":[{"kind":"research","description":"新規ユーザーのオンボーディング体験について、既存ユーザーへのヒアリングや利用データから課題を調査する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"research","description":"類似のオンボーディングチェックリスト機能を持つ競合・参考製品を調査する","required_role":"Product Manager","parallel_with_previous":true},{"kind":"analyze","description":"ユーザー調査と競合調査の結果を統合し、オンボーディングチェックリスト機能の仕様を作成する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"implement","description":"仕様に基づいてオンボーディングチェックリスト機能を実装する","required_role":"Backend Engineer","parallel_with_previous":false},{"kind":"review","description":"実装内容と仕様の整合性をレビューする"}],"ceo_questions":["チェックリストの完了率など、成功を測る具体的なKPIの目標値は決まっていますか？"]}`
+
+// badMissingQuestionJSON asks no CEO question at all despite the same
+// unstated success-metric ambiguity as goodIntentJSON.
+const badMissingQuestionJSON = `{"project_name":"オンボーディングチェックリスト機能","objective":"新規ユーザー向けのオンボーディングチェックリスト機能を追加する","summary":"既存ユーザー調査と競合調査の結果を統合して仕様を作成し、実装とレビューを行う","steps":[{"kind":"research","description":"新規ユーザーのオンボーディング体験について、既存ユーザーへのヒアリングや利用データから課題を調査する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"research","description":"類似のオンボーディングチェックリスト機能を持つ競合・参考製品を調査する","required_role":"Product Manager","parallel_with_previous":true},{"kind":"analyze","description":"ユーザー調査と競合調査の結果を統合し、オンボーディングチェックリスト機能の仕様を作成する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"implement","description":"仕様に基づいてオンボーディングチェックリスト機能を実装する","required_role":"Backend Engineer","parallel_with_previous":false},{"kind":"review","description":"実装内容と仕様の整合性をレビューする"}],"ceo_questions":[]}`
+
+// badInvalidRoleJSON requires a role ("Designer") absent from the fixed
+// two-person roster -- this must fail at the Structural Gate
+// (NormalizeIntent's assignment resolution) and never reach the Quality
+// Evaluator at all.
+const badInvalidRoleJSON = `{"project_name":"オンボーディングチェックリスト機能","objective":"新規ユーザー向けのオンボーディングチェックリスト機能を追加する","summary":"既存ユーザー調査と競合調査の結果を統合して仕様を作成し、実装とレビューを行う","steps":[{"kind":"research","description":"新規ユーザーのオンボーディング体験について、既存ユーザーへのヒアリングや利用データから課題を調査する","required_role":"Designer","parallel_with_previous":false},{"kind":"implement","description":"仕様に基づいてオンボーディングチェックリスト機能を実装する","required_role":"Backend Engineer","parallel_with_previous":false},{"kind":"review","description":"実装内容と仕様の整合性をレビューする"}],"ceo_questions":["チェックリストの完了率など、成功を測る具体的なKPIの目標値は決まっていますか？"]}`
+
+func doerFor(intentJSON string) FixedResponseHTTPDoer {
+	return FixedResponseHTTPDoer{Body: []byte(claudeResponseEnvelope(intentJSON))}
+}
+
+func TestHarnessGoodFixtureScoresFullMarksThroughProductionPath(t *testing.T) {
+	result, err := Run(context.Background(), Config{VaultRoot: t.TempDir(), HTTPClient: doerFor(goodIntentJSON)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StructuralGate != StructuralGatePassed {
+		t.Fatalf("StructuralGate = %q, want %q: result = %#v", result.StructuralGate, StructuralGatePassed, result)
+	}
+	if result.ProviderInvocations != 1 {
+		t.Fatalf("ProviderInvocations = %d, want exactly 1", result.ProviderInvocations)
+	}
+	if result.Evaluation == nil || result.Evaluation.Score != MaxScore {
+		t.Fatalf("evaluation = %#v, want Score=%d", result.Evaluation, MaxScore)
+	}
+}
+
+func TestHarnessNeverCreatesProjectOrTaskFiles(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Run(context.Background(), Config{VaultRoot: root, HTTPClient: doerFor(goodIntentJSON)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "プロジェクト")); !os.IsNotExist(statErr) {
+		t.Fatalf("a プロジェクト directory appeared even though Run() never calls ExecuteCEOPlanApply: stat error = %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "Tasks.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("a Tasks.md file appeared even though Run() never creates a Task: stat error = %v", statErr)
+	}
+}
+
+func TestHarnessRejectsASecondProviderCall(t *testing.T) {
+	doer := &countingHTTPDoer{inner: doerFor(goodIntentJSON)}
+	if _, err := doer.Do(nil); err != nil {
+		t.Fatalf("first call must succeed: %v", err)
+	}
+	if _, err := doer.Do(nil); err == nil {
+		t.Fatal("a second call must be rejected -- no retry, no fallback")
+	}
+}
+
+func TestHarnessBadFixturesIsolateEachRubricAxis(t *testing.T) {
+	tests := []struct {
+		name            string
+		intentJSON      string
+		wantIntent      int
+		wantDependency  int
+		wantUnsupported int
+		wantMissingInfo int
+	}{
+		{"good", goodIntentJSON, 2, 2, 2, 2},
+		{"intent omission", badIntentOmissionJSON, 1, 0, 2, 2},
+		{"wrong parallel choice", badWrongParallelJSON, 2, 1, 2, 2},
+		{"invented deadline and KPI", badInventedClaimJSON, 2, 2, 0, 2},
+		{"missing CEO question", badMissingQuestionJSON, 2, 2, 2, 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := Run(context.Background(), Config{VaultRoot: t.TempDir(), HTTPClient: doerFor(test.intentJSON)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.StructuralGate != StructuralGatePassed {
+				t.Fatalf("StructuralGate = %q, want %q (this fixture is structurally valid, only quality should differ): result = %#v", result.StructuralGate, StructuralGatePassed, result)
+			}
+			if result.Evaluation == nil {
+				t.Fatal("Evaluation is nil despite a passed Structural Gate")
+			}
+			if got := scoreFor(*result.Evaluation, RubricIntentCoverage); got != test.wantIntent {
+				t.Errorf("%s: Intent Coverage = %d, want %d", test.name, got, test.wantIntent)
+			}
+			if got := scoreFor(*result.Evaluation, RubricDependencyQuality); got != test.wantDependency {
+				t.Errorf("%s: Dependency Quality = %d, want %d", test.name, got, test.wantDependency)
+			}
+			if got := scoreFor(*result.Evaluation, RubricUnsupportedAssumptions); got != test.wantUnsupported {
+				t.Errorf("%s: Unsupported Assumptions = %d, want %d", test.name, got, test.wantUnsupported)
+			}
+			if got := scoreFor(*result.Evaluation, RubricMissingInformationAwareness); got != test.wantMissingInfo {
+				t.Errorf("%s: Missing Information Awareness = %d, want %d", test.name, got, test.wantMissingInfo)
+			}
+		})
+	}
+}
+
+func TestHarnessStructurallyInvalidFixtureFailsBeforeQualityEvaluation(t *testing.T) {
+	result, err := Run(context.Background(), Config{VaultRoot: t.TempDir(), HTTPClient: doerFor(badInvalidRoleJSON)})
+	if err == nil {
+		t.Fatal("expected a Structural Gate failure, got nil error")
+	}
+	if result.StructuralGate != StructuralGateFailed {
+		t.Fatalf("StructuralGate = %q, want %q: result = %#v", result.StructuralGate, StructuralGateFailed, result)
+	}
+	if result.StructuralFailureReason == "" {
+		t.Fatal("StructuralFailureReason is empty on a Structural Gate failure")
+	}
+	if result.Evaluation != nil {
+		t.Fatalf("Evaluation = %#v, want nil -- the Quality Rubric must never run on a structurally invalid Plan", result.Evaluation)
+	}
+}
+
+func TestHarnessScenarioLoads(t *testing.T) {
+	scenario, err := LoadScenario()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scenario.ScenarioID == "" || len(scenario.Employees) < 2 || len(scenario.ExpectedIntentConceptGroups) == 0 {
+		t.Fatalf("scenario = %#v, incomplete", scenario)
+	}
+}

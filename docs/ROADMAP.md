@@ -465,6 +465,8 @@ ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全�
 
 Phase Hの追記（同ファイルAddendum）で、`synthesisacceptance.Result`／`ReviewArtifact`へ`MaxOutputTokens`（ADR-0059の`DefaultClaudeMaxTokens`をそのまま反映、additive field）を実装しました——design invention不要かつuser指定の具体的gapだったための例外的な最小実装です。`evaluator_version`／`prompt_version`／`scenario_content_hash`／`human_review_notes`は、real run数がまだ少なくversioning schemeを設計する根拠が不足しているため引き続き未実装のままです。
 
+Phase O（Synthesis）でCross-Evidence語彙calibrationをreal evidenceに基づき完了・loop closeし、Phase Pの調査を経て、Phase Qで[docs/PlanningQualityAcceptance.md](PlanningQualityAcceptance.md)（`internal/planningacceptance`）をFake Provider限定のFoundationとして追加しました。既存`process.GenerateCEOPlan`をread-onlyに再利用し、Structural Gate（既存`ceoplan`不変条件）とQuality Rubric（Intent Coverage／Dependency Quality／Unsupported Assumptions／Missing Information Awareness の4軸）を分離しています。Real Provider実行・pass threshold・Decomposition/Prioritization/Execution Readiness評価は未着手のままです。
+
 ## Completed — Public Beta Go Only Repository
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。
