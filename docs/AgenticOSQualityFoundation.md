@@ -82,7 +82,7 @@ No Scenario added, no Evaluator changed, no Prompt changed, no Model/MaxTokens c
 
 - If a future real Provider run (or accumulated runs) surfaces a concrete gap in axis A, B, or D above, treat it the same way Phase E treated Cross-Evidence: one observed failure first, minimal targeted response second — never a preemptive rubric or Scenario expansion.
 - If comparability across multiple real runs becomes actually necessary (i.e. more than the two or three data points this session has produced by hand), revisit Section 2's candidate fields as a small additive `ReviewArtifact` change.
-- Continue the already-recorded Cross-Evidence evaluator recalibration once more real-run evidence accumulates (Phase E).
+- ~~Continue the already-recorded Cross-Evidence evaluator recalibration once more real-run evidence accumulates (Phase E).~~ Done in Phase L: two runs at identical config (Phase E, Phase J) reproduced the same concept-group-4 false negative with different paraphrases, and a second, independently-observed literal-vocabulary gap appeared on Actionability — both closed with evidence-traceable additions to the existing `ConceptGroups`/`action_markers` lists, no algorithm or threshold change. Both real Deliverables now score 12/12.
 
 ## Addendum: Phase H — Benchmark History and Comparability Foundation
 
