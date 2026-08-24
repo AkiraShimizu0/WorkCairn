@@ -289,6 +289,136 @@ func TestEvaluatorRealClaude6000Run3OutputScoresFullMarks(t *testing.T) {
 	}
 }
 
+// realClaude6000TokenSynthesisOutputRun4 is the verbatim canonical
+// Deliverable from a third real, human-authorized Claude one-shot
+// Synthesis Acceptance run (Phase M; claude-sonnet-5, production
+// MaxTokens=6000, StopReason=completed, OutputTruncated=false, external
+// Provider calls=1), executed under identical Provider/Model/Scenario/
+// MaxTokens conditions as the Run 2 and Run 3 fixtures above, to test
+// whether vocabulary calibration generalizes to a fresh, independent
+// generation rather than only fitting the two artifacts it was derived
+// from. No PII, credential, or secret is present.
+const realClaude6000TokenSynthesisOutputRun4 = `# 3分析の統合と矛盾調停による優先順位付き改善計画
+
+## 1. 各分析の要点整理
+
+**ユーザー調査（TASK-001）**
+- CEOとのシンプルな会話で仕事を頼める体験が高評価
+- 初期セットアップの複雑さがオンボーディングを阻害
+- 進捗と根拠が観測できることが信頼につながる
+- 一部ユーザーは判断前に詳細説明を確認したいというニーズも存在
+
+**競合・参考製品分析（TASK-002）**
+- 専門AIへの役割分担は複雑な仕事の品質向上に寄与
+- 会社ダッシュボードの管理項目を増やしすぎるとUXが複雑化する
+- 依頼を再起動後も追跡できる永続的なオーケストレーションに明確な価値
+
+**プロダクト指標分析（TASK-003）**
+- 初回アクティベーションが弱い
+- 最初のWorkflowを完了したユーザーは継続率が高い
+- 承認ステップが多いほど完了率が下がる
+- 長いPlanを最初から表示すると承認率も下がる
+
+## 2. 分析間の関係性
+
+### 共通する根本原因：「初期接触時の認知負荷」
+セットアップの複雑さ（001）、ダッシュボードの管理項目過多（002）、長いPlanの一括表示（003）、承認ステップの多さ（003）は、いずれも「ユーザーが最初に触れる場面での情報量・操作量の多さ」という同一の根本原因に起因すると考えられる。これは弱い初回アクティベーション（003）とも整合しており、オンボーディング設計の見直しが複数の課題を同時に解消しうるポイントである。
+
+### 相互補強関係
+- 進捗・根拠の可観測性へのニーズ（001）と、永続的オーケストレーションの価値（002）は補強関係にある。再起動後も依頼状況を追跡できる仕組みは、信頼獲得（001）と製品差別化（002）の両方に寄与する。
+- 承認ステップの削減（003が示唆）は、CEOとのシンプルな会話体験の維持（001）とも方向性が一致する。
+
+### 矛盾とその調停
+
+**矛盾1：「詳細を確認したい」ニーズ vs 「長いPlan表示は承認率を下げる」データ**
+001では判断前に詳細説明を見たいユーザーの存在が示される一方、003では長いPlanを最初から表示すると承認率が下がるというデータがある。
+→ 調停案：詳細情報自体を撤廃するのではなく、**デフォルトは要約表示、詳細はユーザーの操作で展開する段階的開示**とする。これにより両方の要求を矛盾なく満たせる。
+
+**矛盾2：専門AIへの役割分担（品質向上） vs シンプルな会話体験・セットアップの容易さ**
+002は専門AI分担が品質を高めるとする一方、001はシンプルな会話とセットアップの容易さを評価している。役割分担をユーザーに見える形（設定項目や選択UI）で実装すると、001が懸念する複雑さを再現してしまう。
+→ 調停案：**役割分担はバックエンドで自動的に行い、ユーザーインターフェースは単一のシンプルな会話体験を維持する**。専門性の恩恵とシンプルさは、ユーザーへの見せ方を分離することで両立可能。
+
+**矛盾3（trade-off）：進捗可観測性の価値 vs ダッシュボード管理項目増加によるUX複雑化**
+002内で、永続追跡には価値があるとしつつ、管理項目の増加はUXを損なうとしている。これは新機能の実現方法次第で解決しうるtrade-offである。
+→ 調停案：進捗の可観測性は**新規の管理画面・項目としてではなく、既存の会話フロー内（スレッド内の更新・通知）に統合**する形で実現し、ダッシュボードの複雑化を避ける。
+
+## 3. 優先順位付き改善計画
+
+### 優先度1：オンボーディング負荷の低減（初回セットアップの簡素化）
+
+- **対応内容**：初期セットアップの手順・入力項目を必要最小限に絞り込み、最初のWorkflowを早期に完了できる導線を設計する。
+- **根拠**：001「初期セットアップの複雑さがオンボーディングを阻害する」、003「初回アクティベーションが弱い」「最初のWorkflowを完了したユーザーは継続率が高い」。両分析が同一の根本原因（初期接触時の負荷）を異なる角度から示しており、統合すると最も優先度の高い課題として浮かび上がる。
+- **期待される効果**：初回アクティベーション率の改善と、それに伴う継続率の向上（最初のWorkflow完了が継続率と関連するという指標傾向に基づく）。
+- **効果確認方法**：初回アクティベーション率、最初のWorkflow完了率、その後の継続率の推移をモニタリングし、施策前後で比較する。
+
+### 優先度2：Plan・承認フローの段階的開示化
+
+- **対応内容**：Planや判断材料をデフォルトでは要約表示し、詳細はユーザーの操作により展開できるUIに変更する。あわせて承認ステップ数を見直し、必要最小限に絞る。
+- **根拠**：001「判断前に詳細説明も確認したい」ニーズと、003「長いPlanを最初から表示すると承認率が下がる」「承認ステップが多いほど完了率が下がる」データの矛盾を、表示方法の工夫（段階的開示）で調停した結論。
+- **期待される効果**：詳細確認ニーズを満たしつつ、承認率・完了率の低下を回避する。
+- **効果確認方法**：承認率、Plan完了率の変化を段階的開示導入前後で比較する。TODO：段階的開示の具体的なUI仕様（展開トリガー、要約の粒度等）は未確定のため別途設計が必要。
+
+### 優先度3：専門AI分担のバックエンド化（ユーザー体験のシンプルさ維持）
+
+- **対応内容**：複雑な仕事に対する専門AIへの役割分担は内部処理として実装し、ユーザーには単一のシンプルな会話インターフェースを提示する。設定や選択をユーザーに要求しない。
+- **根拠**：002「専門AIへの役割分担は複雑な仕事の品質を高める」と、001「CEOとのシンプルな会話で仕事を頼める点を高く評価」「セットアップの複雑さが阻害要因」の間の矛盾を、実装レイヤーの分離によって調停。
+- **期待される効果**：仕事の品質向上と、ユーザー体験のシンプルさ維持を両立する。
+- **効果確認方法**：仕事の品質に関する定性的なユーザー評価、およびシンプルさに関する満足度・継続利用状況の変化を確認する。TODO：品質評価の具体的な測定方法は現時点の分析には含まれておらず、別途定義が必要。
+
+### 優先度4：進捗・根拠の可観測性を既存フローに統合
+
+- **対応内容**：依頼の進捗状況や根拠を、新規のダッシュボード項目としてではなく、既存の会話・スレッド内での更新表示として実装する。再起動後も進捗を追跡できる永続性を持たせる。
+- **根拠**：001「進捗と根拠が観測できると信頼が高まる」、002「永続的なオーケストレーションには明確な価値がある」一方で「管理項目を増やしすぎるとUXが複雑になる」というtrade-offを、実装場所の工夫で解決。
+- **期待される効果**：信頼感の向上と製品差別化価値の獲得を、UXの複雑化を招かずに実現する。
+- **効果確認方法**：ユーザーの信頼感・継続利用に関する定性・定量データ、および機能利用状況の変化を追跡する。
+
+## 4. 未確定事項・TODO
+
+- 段階的開示UIの具体的な仕様（要約と詳細の境界、展開操作の設計）は分析情報からは決定できず、別途ユーザーテストが必要。
+- 専門AI分担による品質向上の測定指標が現状の分析に含まれておらず、定義が必要。
+- 各優先度施策の数値的な目標値（改善幅）は参照情報に記載がないため、本計画では設定していない。目標値の設定は別途検討が必要。`
+
+// TestEvaluatorRealClaude6000Run4OutputScoresCrossEvidenceButNotPrioritization
+// pins the third real run's result after Phase O's single "早期に完了"
+// addition. Before Phase O this scored 10/12 (Cross-Evidence 1/2,
+// Prioritization 1/2): Cross-Evidence missed group 4 via a third
+// independent paraphrase, "最初のWorkflowを早期に完了できる導線を設計する"
+// -- distinct from Run 2's "導線を最短化" and Run 3's "経路を短縮". Phase O
+// added exactly the phrase "早期に完了", quoted directly from this run's
+// own text (see this file's Phase O change), not the broader speculative
+// candidates ("一気通貫"/"シームレスに"/"直結") considered and rejected for
+// having no grounding in any real run or Scenario Evidence text.
+//
+// Prioritization's 1/2 (this run used "優先度1"/"優先度2"/... instead of
+// "最優先"/"P1"/"第一") is a separate, deliberately untouched finding
+// (Phase M/N, n=1) -- NOT fixed by this Checkpoint, so this test asserts
+// Score=11, not MaxScore, and Prioritization=1, not 2.
+func TestEvaluatorRealClaude6000Run4OutputScoresCrossEvidenceButNotPrioritization(t *testing.T) {
+	scenario, err := LoadScenario()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Evaluate(scenario, realClaude6000TokenSynthesisOutputRun4)
+
+	for _, rubric := range []string{
+		RubricEvidenceCoverage, RubricCrossEvidenceSynthesis, RubricConflictHandling,
+		RubricActionability, RubricUnsupportedClaims,
+	} {
+		if scoreFor(result, rubric) != 2 {
+			t.Fatalf("%s = %d, want 2: result = %#v", rubric, scoreFor(result, rubric), result)
+		}
+	}
+	// Deliberately NOT fixed this Checkpoint (Phase M/N finding, n=1) --
+	// pinned at its known value so a future accidental change is caught,
+	// not silently absorbed.
+	if scoreFor(result, RubricPrioritization) != 1 {
+		t.Fatalf("Prioritization = %d, want 1 (known, deferred literal gap -- \"優先度1/2/3/4\" numbering vs the fixed priority_markers list; not in scope for Phase O)", scoreFor(result, RubricPrioritization))
+	}
+	if result.Score != 11 || !result.Passed {
+		t.Fatalf("evaluation = %#v, want Score=11 Passed=true", result)
+	}
+}
+
 // TestEvaluatorDoesNotCreditUnrelatedShortenLanguageForFirstWorkflowActivation
 // proves the Phase L group-4 additions ("導線を最短化", "経路を短縮") were
 // chosen as specific phrases, not the bare word "短縮" alone: a text that
