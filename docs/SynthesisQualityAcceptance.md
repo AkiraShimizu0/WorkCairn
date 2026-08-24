@@ -36,6 +36,7 @@ The report includes:
 - total score and each deterministic rubric item;
 - evidence order, truncation, prompt byte counts, and safety-policy presence;
 - output bytes, TokenUsage, duration, call counts, StopReason, and OutputTruncated;
+- MaxOutputTokens, the request's own `max_tokens` ceiling (ADR-0059), so a saved report stays self-describing if that Runtime-owned value changes later;
 - whether the canonical Synthesis Deliverable committed in the temporary Vault.
 
 It does not include the API key, Authorization header, raw credential configuration, persistent Vault path, or raw Provider metadata. The temporary result is removed when the run finishes and is not added to Git.

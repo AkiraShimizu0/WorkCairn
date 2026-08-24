@@ -463,6 +463,8 @@ ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全�
 
 [AgenticOSQualityFoundation.md](AgenticOSQualityFoundation.md)は、Synthesis Quality Acceptance（ADR-0057）を「会社型AI OS」全体の品質観測という将来観点から位置づけ直した調査記録です（ADRではなく、実装済み機能でもありません）。Benchmark artifactに現在欠けているmetadata（Evaluator version、Prompt version、Scenario content fingerprint、Human review notes）の候補一覧、Role／Planning／Execution／Memory／Governanceの5軸のうちどれが現在測定済み・未測定・「Go側で構造的に保証済みなためLLM品質questionとして測ること自体が誤り」かの分類、Skill/Role/Memory/Policy/Evidence/Approval/Evaluationの既存対応先マッピング、Agent Routingの既存トリガー条件確認を記録します。実装は伴わず、次に real evidence が蓄積した際の判断材料としてのみ機能します。
 
+Phase Hの追記（同ファイルAddendum）で、`synthesisacceptance.Result`／`ReviewArtifact`へ`MaxOutputTokens`（ADR-0059の`DefaultClaudeMaxTokens`をそのまま反映、additive field）を実装しました——design invention不要かつuser指定の具体的gapだったための例外的な最小実装です。`evaluator_version`／`prompt_version`／`scenario_content_hash`／`human_review_notes`は、real run数がまだ少なくversioning schemeを設計する根拠が不足しているため引き続き未実装のままです。
+
 ## Completed — Public Beta Go Only Repository
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。

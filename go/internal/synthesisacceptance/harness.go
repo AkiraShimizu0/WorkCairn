@@ -69,11 +69,16 @@ type Config struct {
 // contains a credential, Authorization header, or raw Provider request --
 // the same safety boundary ADR-0057 already established for Result.
 type ReviewArtifact struct {
-	ScenarioID           string     `json:"scenario_id"`
-	Provider             string     `json:"provider"`
-	Model                string     `json:"model"`
-	Evaluation           Evaluation `json:"evaluation"`
-	Deliverable          string     `json:"deliverable"`
+	ScenarioID  string     `json:"scenario_id"`
+	Provider    string     `json:"provider"`
+	Model       string     `json:"model"`
+	Evaluation  Evaluation `json:"evaluation"`
+	Deliverable string     `json:"deliverable"`
+	// MaxOutputTokens is the request's own max_tokens ceiling (ADR-0059's
+	// internal/runtime.DefaultClaudeMaxTokens), not an observed token count
+	// -- recorded so a saved artifact remains self-describing if the
+	// production-owned ceiling value changes in a later Checkpoint.
+	MaxOutputTokens      int        `json:"max_output_tokens"`
 	TokenUsage           TokenUsage `json:"token_usage"`
 	DurationMilliseconds int64      `json:"duration_ms"`
 	StopReason           string     `json:"stop_reason,omitempty"`
@@ -115,6 +120,13 @@ type Result struct {
 	ExternalProviderCalls  int    `json:"external_provider_calls"`
 	MaxProviderCalls       int    `json:"max_provider_calls"`
 	MaxRuntimeMilliseconds int64  `json:"max_runtime_ms"`
+	// MaxOutputTokens is the Synthesis request's own max_tokens ceiling
+	// (ADR-0059's internal/runtime.DefaultClaudeMaxTokens), recorded for
+	// every Result -- dry-run included, since it reflects the configured
+	// policy value rather than an observed call outcome -- so a saved
+	// report or artifact remains comparable if that Runtime-owned value
+	// changes in a later Checkpoint.
+	MaxOutputTokens int `json:"max_output_tokens"`
 }
 
 func Run(ctx context.Context, config Config) (Result, error) {
@@ -134,6 +146,7 @@ func Run(ctx context.Context, config Config) (Result, error) {
 		ScenarioID: scenario.ScenarioID, Provider: config.Provider, LogicalRoute: resolution.LogicalRoute, Model: resolution.ProviderModel,
 		Status: "dry_run_ready", Ready: true, MaxProviderCalls: acceptanceMaxProviderCalls,
 		MaxRuntimeMilliseconds: acceptanceMaxRuntime.Milliseconds(),
+		MaxOutputTokens:        workspaceruntime.DefaultClaudeMaxTokens,
 	}
 	if config.Provider != ProviderFakeGood && config.Provider != ProviderFakeBad && config.Provider != ProviderClaude {
 		result.Ready, result.Status, result.FailureCategory = false, "failed", FailureHarness
@@ -248,7 +261,8 @@ func Run(ctx context.Context, config Config) (Result, error) {
 		if writeErr := writeReviewArtifact(config.ArtifactPath, ReviewArtifact{
 			ScenarioID: scenario.ScenarioID, Provider: config.Provider, Model: resolution.ProviderModel,
 			Evaluation: evaluation, Deliverable: evidence.Deliverable.Content,
-			TokenUsage: result.TokenUsage, DurationMilliseconds: result.DurationMilliseconds,
+			MaxOutputTokens: result.MaxOutputTokens,
+			TokenUsage:      result.TokenUsage, DurationMilliseconds: result.DurationMilliseconds,
 			StopReason: result.StopReason, OutputTruncated: result.OutputTruncated,
 		}); writeErr != nil {
 			result.Ready, result.Status, result.FailureCategory = false, "failed", FailureHarness

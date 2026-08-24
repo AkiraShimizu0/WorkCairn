@@ -63,7 +63,8 @@ func TestHarnessWritesHumanReviewArtifactOnlyWhenConfigured(t *testing.T) {
 	if artifact.ScenarioID != "public-beta-product-growth-ja-v1" || artifact.Provider != ProviderFakeGood ||
 		!strings.Contains(artifact.Deliverable, "優先順位付き改善計画") || artifact.Evaluation.Score != MaxScore ||
 		!artifact.TokenUsage.Known || artifact.TokenUsage.InputTokens != 420 ||
-		artifact.StopReason != "completed" || artifact.OutputTruncated {
+		artifact.StopReason != "completed" || artifact.OutputTruncated ||
+		artifact.MaxOutputTokens != workspaceruntime.DefaultClaudeMaxTokens {
 		t.Fatalf("Human Review Artifact = %#v", artifact)
 	}
 	for _, forbidden := range []string{"ANTHROPIC_API_KEY", "Authorization", "x-api-key", "Bearer "} {
@@ -126,6 +127,9 @@ func TestHarnessUsesTheSameProductionMaxTokensPolicyNotATestOnlySpecialValue(t *
 	observed := capture.observed()
 	if observed != workspaceruntime.DefaultClaudeMaxTokens {
 		t.Fatalf("Synthesis request max_tokens = %d, want the production policy value %d (Acceptance-only overrides are not permitted)", observed, workspaceruntime.DefaultClaudeMaxTokens)
+	}
+	if result.MaxOutputTokens != observed {
+		t.Fatalf("result.MaxOutputTokens = %d, want %d to match the observed request max_tokens", result.MaxOutputTokens, observed)
 	}
 }
 
