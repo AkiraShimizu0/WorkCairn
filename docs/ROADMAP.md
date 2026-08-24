@@ -459,6 +459,10 @@ ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全�
 
 対象外のまま（future candidate）：CLI override flag、task-type別policy、Prompt compression、Cross-Evidence evaluator再検討、Cost/pricing、real Claude Acceptanceの再実行（次Checkpoint候補）。
 
+## Investigation Record — Agentic OS Quality Foundation
+
+[AgenticOSQualityFoundation.md](AgenticOSQualityFoundation.md)は、Synthesis Quality Acceptance（ADR-0057）を「会社型AI OS」全体の品質観測という将来観点から位置づけ直した調査記録です（ADRではなく、実装済み機能でもありません）。Benchmark artifactに現在欠けているmetadata（Evaluator version、Prompt version、Scenario content fingerprint、Human review notes）の候補一覧、Role／Planning／Execution／Memory／Governanceの5軸のうちどれが現在測定済み・未測定・「Go側で構造的に保証済みなためLLM品質questionとして測ること自体が誤り」かの分類、Skill/Role/Memory/Policy/Evidence/Approval/Evaluationの既存対応先マッピング、Agent Routingの既存トリガー条件確認を記録します。実装は伴わず、次に real evidence が蓄積した際の判断材料としてのみ機能します。
+
 ## Completed — Public Beta Go Only Repository
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。
