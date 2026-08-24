@@ -459,6 +459,63 @@ func TestInteractionPlanRecordsSafeParserSubstageWithoutCommittingPlan(t *testin
 	}
 }
 
+// TestInteractionPlanRecordsOutputIncompleteWithoutCommittingPlan is PHASE
+// R's end-to-end regression: a real Structured Output response cut off by
+// the Provider's own token ceiling (stop_reason=max_tokens) must be
+// classified as OUTPUT_INCOMPLETE/ceo_plan_output_incomplete -- the same
+// Provider-neutral Code Execution's identical failure already uses
+// (ADR-0058) -- not misread as an ordinary ceo_plan_intent JSON parse
+// failure, even though this fixture's Content is a syntactically valid,
+// otherwise-normalizable Intent (proving the classification happens on
+// StopReason alone). No Plan digest is ever committed to the Session, and
+// the Session stays at StatePlanGenerationApprovalRequired -- exactly the
+// same "never approvable, never applyable" outcome an ordinary parser
+// failure already has, confirming the Approval boundary needs no new code
+// of its own: returning the error early is itself sufficient.
+func TestInteractionPlanRecordsOutputIncompleteWithoutCommittingPlan(t *testing.T) {
+	fixture := loadCEOPlanFixture(t)
+	root := ceoPlanVault(t, fixture.Employees)
+	at := time.Date(2026, 8, 25, 13, 0, 0, 0, time.UTC)
+	start := InteractionStartInput{
+		VaultRoot: root, SessionID: "SESSION-PLAN-INCOMPLETE", Request: fixture.Request,
+		Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-PLAN-INCOMPLETE-START",
+	}
+	plan, err := PlanInteractionStart(context.Background(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.RequestDigest = plan.Session.RequestDigest
+	providerCalls := 0
+	// A syntactically valid, otherwise-normalizable Intent -- the point of
+	// this fixture is that stop_reason alone drives the classification, not
+	// JSON validity.
+	validIntent := `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"D","required_role":"` + fixture.Employees[0].Role + `"}],"ceo_questions":[]}`
+	providerResponse, _ := json.Marshal(map[string]any{
+		"model": "claude-sonnet-5", "content": []map[string]string{{"type": "text", "text": validIntent}},
+		"usage": map[string]int{"input_tokens": 1, "output_tokens": 1}, "stop_reason": "max_tokens",
+	})
+	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
+		providerCalls++
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
+	})
+	result, err := ExecuteInteractionStart(context.Background(), start, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
+	var recorded *RecordedCommandError
+	if !errors.As(err, &recorded) || recorded.Code != "OUTPUT_INCOMPLETE" || recorded.Stage != "ceo_plan_output_incomplete" ||
+		providerCalls != 1 || result.ProviderFailure != nil {
+		t.Fatalf("output-incomplete failure = %#v, result=%#v, calls=%d, err=%v", recorded, result, providerCalls, err)
+	}
+	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
+	record, ledgerErr := ledger.Get(context.Background(), "CMD-PLAN-INCOMPLETE-START")
+	if ledgerErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
+		record.Failure.Code != "OUTPUT_INCOMPLETE" || record.Failure.Stage != "ceo_plan_output_incomplete" {
+		t.Fatalf("output-incomplete Ledger = %#v, %v", record, ledgerErr)
+	}
+	stored, inspectErr := InspectInteraction(context.Background(), root, start.SessionID)
+	if inspectErr != nil || stored.Version != 1 || stored.State != interaction.StatePlanGenerationApprovalRequired || len(stored.Turns) != 0 {
+		t.Fatalf("output-incomplete failure committed Plan = %#v, %v", stored, inspectErr)
+	}
+}
+
 // TestInteractionPlanRecordsStepDescriptionShapeForMissingRequiredFieldFailure
 // is an end-to-end regression for the CMD-E35C1166 investigation: a real
 // Mock Provider response with steps[0].description explicit null (the

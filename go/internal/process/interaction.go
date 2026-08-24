@@ -421,6 +421,13 @@ func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, resul
 	if errors.Is(err, claude.ErrInvalidConfig) {
 		code = "PROVIDER_CONFIGURATION_REQUIRED"
 		stage = "provider_configuration"
+	} else if stage == string(service.CEOPlanOutputIncompleteStage) {
+		// Same Provider-neutral Code Execution's OUTPUT_INCOMPLETE failure
+		// already uses (ADR-0058) -- so a caller filtering Command Ledger
+		// records for incomplete-output failures finds both Task execution
+		// and Planning generation under the identical code, not a
+		// Planning-specific synonym.
+		code = "OUTPUT_INCOMPLETE"
 	} else if result.ProviderFailure != nil {
 		code = providerFailureCode(result.ProviderFailure.Category)
 	}

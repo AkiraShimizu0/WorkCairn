@@ -18,6 +18,24 @@ type CEOPlanStage string
 const (
 	CEOPlanPromptStage CEOPlanStage = "ceo_plan_prompt"
 	CEOPlanRunnerStage CEOPlanStage = "ceo_plan_runner"
+	// CEOPlanOutputIncompleteStage classifies a Runner call that itself
+	// succeeded (no transport/HTTP/API error, result.Validate() passed) but
+	// whose own output was cut off by the Provider's output token ceiling
+	// (worker.StopReasonMaxTokens) before the Structured Output JSON could
+	// finish. This is deliberately checked, and returned, before
+	// ceoplan.ParseIntent ever runs: a truncated Structured Output response
+	// is almost always also malformed JSON, and would otherwise surface as
+	// an ordinary CEOPlanIntentStage/json_decode_failed -- indistinguishable
+	// from "the LLM returned garbage". This mirrors ADR-0058's
+	// ExecutionService.Execute() check on the identical
+	// worker.RunResult.StopReason field for Task execution, extending the
+	// same Provider-call-success-vs-output-completeness distinction to
+	// Planning generation. No Task, Project, or Vault write has occurred by
+	// this point -- CEOPlanService.Generate performs none -- so this failure
+	// return is itself sufficient to keep an incomplete Plan from ever
+	// reaching approval or apply; no new Task state or recovery mechanism is
+	// introduced.
+	CEOPlanOutputIncompleteStage CEOPlanStage = "ceo_plan_output_incomplete"
 	// CEOPlanIntentStage classifies a Runner response that failed the small
 	// Intent contract (ceoplan.ParseIntent) — malformed JSON, an unknown
 	// step kind, or a missing semantic field.
@@ -111,6 +129,17 @@ func (service *CEOPlanService) Generate(ctx context.Context, input CEOPlanInput)
 	}
 	if err := result.Validate(); err != nil {
 		return CEOPlanResult{}, &CEOPlanError{Stage: CEOPlanRunnerStage, Err: err}
+	}
+	// ADR-0058, extended to Planning generation: a Provider call that
+	// succeeds but was cut off by its own output ceiling is never accepted
+	// as a normal completion. The Provider call itself did not fail (no new
+	// Provider failure classification is introduced here), and Go has not
+	// yet parsed or normalized anything -- this return is itself the
+	// Approval boundary: CEOPlanService.Generate never reaches
+	// NormalizeIntent, so no Employee assignment, dependency graph, or
+	// Task-count check ever runs against truncated content.
+	if result.StopReason == worker.StopReasonMaxTokens {
+		return CEOPlanResult{}, &CEOPlanError{Stage: CEOPlanOutputIncompleteStage, Err: ErrProviderOutputIncomplete}
 	}
 	intent, err := ceoplan.ParseIntent(result.Content)
 	if err != nil {

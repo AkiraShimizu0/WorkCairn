@@ -467,6 +467,8 @@ Phase Hの追記（同ファイルAddendum）で、`synthesisacceptance.Result`�
 
 Phase O（Synthesis）でCross-Evidence語彙calibrationをreal evidenceに基づき完了・loop closeし、Phase Pの調査を経て、Phase Qで[docs/PlanningQualityAcceptance.md](PlanningQualityAcceptance.md)（`internal/planningacceptance`）をFake Provider限定のFoundationとして追加しました。既存`process.GenerateCEOPlan`をread-onlyに再利用し、Structural Gate（既存`ceoplan`不変条件）とQuality Rubric（Intent Coverage／Dependency Quality／Unsupported Assumptions／Missing Information Awareness の4軸）を分離しています。Real Provider実行・pass threshold・Decomposition/Prioritization/Execution Readiness評価は未着手のままです。
 
+Phase Qが発見したCompany OS Governance gap（`CEOPlanService.Generate`が`worker.StopReason`を一切確認せず、truncated出力が単なるIntent parse failureとして扱われていた問題）を、Phase Rで[ADR-0058](adr/ADR-0058-provider-output-completeness-policy.md)の適用範囲拡張として最小実装しました。`CEOPlanOutputIncompleteStage`（Code `OUTPUT_INCOMPLETE`、既存`ErrProviderOutputIncomplete`sentinel再利用）を`ParseIntent`実行前に追加し、Execution側と同一のCodeで統一的に検索可能にしています。新しいTask state、Provider failure分類、recovery機構は追加していません。
+
 ## Completed — Public Beta Go Only Repository
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。

@@ -55,24 +55,55 @@ func TestCEOPlanServiceMapsRunnerIntentNormalizationAndParserFailures(t *testing
 	runnerFailure := errors.New("provider unavailable")
 	employees := []organization.Identity{{ID: "E-001", Department: "D", Role: "R"}}
 	validStep := `{"kind":"write","description":"T","required_role":"R"}`
+	validIntent := `{"project_name":"P","objective":"O","summary":"S","steps":[` + validStep + `],"ceo_questions":[]}`
 	for _, test := range []struct {
 		name, content string
 		runnerErr     error
+		stopReason    worker.StopReason
 		stage         CEOPlanStage
 	}{
-		{"runner", "", runnerFailure, CEOPlanRunnerStage},
-		{"intent malformed JSON", "not-json", nil, CEOPlanIntentStage},
-		{"intent unknown step kind", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"bogus","description":"T","required_role":"R"}],"ceo_questions":[]}`, nil, CEOPlanIntentStage},
-		{"normalization no matching employee", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"T","required_role":"Nonexistent"}],"ceo_questions":[]}`, nil, CEOPlanNormalizationStage},
-		{"canonical validation (Go-constructed project name)", `{"project_name":"a/b","objective":"O","summary":"S","steps":[` + validStep + `],"ceo_questions":[]}`, nil, CEOPlanParserStage},
+		{"runner", "", runnerFailure, "", CEOPlanRunnerStage},
+		{"intent malformed JSON", "not-json", nil, "", CEOPlanIntentStage},
+		{"intent unknown step kind", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"bogus","description":"T","required_role":"R"}],"ceo_questions":[]}`, nil, "", CEOPlanIntentStage},
+		{"normalization no matching employee", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"T","required_role":"Nonexistent"}],"ceo_questions":[]}`, nil, "", CEOPlanNormalizationStage},
+		{"canonical validation (Go-constructed project name)", `{"project_name":"a/b","objective":"O","summary":"S","steps":[` + validStep + `],"ceo_questions":[]}`, nil, "", CEOPlanParserStage},
+		// ADR-0058 extended to Planning: StopReasonMaxTokens is classified
+		// as CEOPlanOutputIncompleteStage even though this Content would
+		// otherwise parse successfully -- proving the check happens on
+		// StopReason alone, strictly before ParseIntent ever runs, not as a
+		// side effect of malformed JSON.
+		{"output incomplete (max_tokens on otherwise-valid content)", validIntent, nil, worker.StopReasonMaxTokens, CEOPlanOutputIncompleteStage},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fake := &ceoPlanFakeRunner{err: test.runnerErr, result: worker.RunResult{Content: test.content, Runner: "Fake", Model: "m"}}
+			fake := &ceoPlanFakeRunner{err: test.runnerErr, result: worker.RunResult{Content: test.content, Runner: "Fake", Model: "m", StopReason: test.stopReason}}
 			service, _ := NewCEOPlanService(fake)
 			_, err := service.Generate(context.Background(), CEOPlanInput{Request: "r", Model: "m", Employees: employees})
 			var planError *CEOPlanError
 			if !errors.As(err, &planError) || planError.Stage != test.stage {
 				t.Fatalf("err=%v, want stage %v", err, test.stage)
+			}
+			if test.stage == CEOPlanOutputIncompleteStage && !errors.Is(err, ErrProviderOutputIncomplete) {
+				t.Fatalf("err=%v, want errors.Is(err, ErrProviderOutputIncomplete)", err)
+			}
+		})
+	}
+}
+
+// TestCEOPlanServiceNeverClassifiesLegitimateStopReasonsAsIncomplete proves
+// StopReasonCompleted and StopReasonStopSequence (legitimate normal
+// termination) and StopReasonUnknown (never guessed to be incomplete) all
+// continue to the ordinary success path unchanged -- only
+// StopReasonMaxTokens triggers CEOPlanOutputIncompleteStage.
+func TestCEOPlanServiceNeverClassifiesLegitimateStopReasonsAsIncomplete(t *testing.T) {
+	employees := []organization.Identity{{ID: "E-001", Department: "D", Role: "R"}}
+	validIntent := `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"T","required_role":"R"}],"ceo_questions":[]}`
+	for _, stopReason := range []worker.StopReason{worker.StopReasonCompleted, worker.StopReasonStopSequence, worker.StopReasonUnknown} {
+		t.Run(string(stopReason)+"(empty=unknown)", func(t *testing.T) {
+			fake := &ceoPlanFakeRunner{result: worker.RunResult{Content: validIntent, Runner: "Fake", Model: "m", StopReason: stopReason}}
+			service, _ := NewCEOPlanService(fake)
+			result, err := service.Generate(context.Background(), CEOPlanInput{Request: "r", Model: "m", Employees: employees})
+			if err != nil || result.Plan.ProjectName != "P" {
+				t.Fatalf("StopReason=%q must not be classified as incomplete: result=%#v err=%v", stopReason, result, err)
 			}
 		})
 	}
