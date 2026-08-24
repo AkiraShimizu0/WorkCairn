@@ -2,6 +2,8 @@ package planningacceptance
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,5 +156,117 @@ func TestHarnessScenarioLoads(t *testing.T) {
 	}
 	if scenario.ScenarioID == "" || len(scenario.Employees) < 2 || len(scenario.ExpectedIntentConceptGroups) == 0 {
 		t.Fatalf("scenario = %#v, incomplete", scenario)
+	}
+}
+
+// TestHarnessFakeGoodProviderNameSelectsScenarioFixtureAndPopulatesMetadata
+// is PHASE T-0's core regression: with no HTTPClient supplied at all,
+// Config.Provider="fake-good" alone must resolve to the Scenario's own
+// embedded ProviderFixtures["good"] -- the same fixture Config.HTTPClient
+// injected directly in earlier tests -- and the newly-threaded metadata
+// (Runner/TokenUsage/Duration/StopReason/MaxOutputTokens) must be
+// populated from the real service.CEOPlanResult, not left at zero values.
+func TestHarnessFakeGoodProviderNameSelectsScenarioFixtureAndPopulatesMetadata(t *testing.T) {
+	result, err := Run(context.Background(), Config{Provider: ProviderFakeGood, VaultRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StructuralGate != StructuralGatePassed || result.Status != "evaluated" {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Evaluation == nil || result.Evaluation.Score != MaxScore {
+		t.Fatalf("evaluation = %#v, want Score=%d", result.Evaluation, MaxScore)
+	}
+	if result.Runner == "" || !result.TokenUsage.Known || result.TokenUsage.InputTokens == 0 ||
+		result.TokenUsage.OutputTokens == 0 || result.StopReason == "" || result.MaxOutputTokens == 0 {
+		t.Fatalf("metadata not populated: result = %#v", result)
+	}
+}
+
+// TestHarnessFakeBadProviderNameSelectsScenarioFixture proves
+// "fake-bad" resolves to a genuinely different, worse fixture (the
+// intent-omission shape), not accidentally the same as "fake-good".
+func TestHarnessFakeBadProviderNameSelectsScenarioFixture(t *testing.T) {
+	result, err := Run(context.Background(), Config{Provider: ProviderFakeBad, VaultRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StructuralGate != StructuralGatePassed || result.Evaluation == nil {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Evaluation.Score >= MaxScore {
+		t.Fatalf("evaluation = %#v, want a score below the good fixture's %d", result.Evaluation, MaxScore)
+	}
+}
+
+func TestHarnessUnsupportedProviderIsRejected(t *testing.T) {
+	if _, err := Run(context.Background(), Config{Provider: "bogus", VaultRoot: t.TempDir()}); err == nil {
+		t.Fatal("expected an error for an unsupported provider name")
+	}
+}
+
+// TestHarnessWritesReviewArtifactOnlyWhenConfigured mirrors
+// internal/synthesisacceptance's identical-purpose test: no file appears
+// anywhere by default, and the exact path is written with the canonical
+// Normalized Plan and safe metadata -- never a credential -- when a caller
+// explicitly sets ArtifactPath.
+func TestHarnessWritesReviewArtifactOnlyWhenConfigured(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "planning-review-artifact.json")
+	result, err := Run(context.Background(), Config{Provider: ProviderFakeGood, VaultRoot: t.TempDir(), ArtifactPath: artifactPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Evaluation == nil || result.Evaluation.Score != MaxScore {
+		t.Fatalf("result = %#v", result)
+	}
+	content, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatalf("Review Artifact was not written: %v", err)
+	}
+	var artifact ReviewArtifact
+	if err := json.Unmarshal(content, &artifact); err != nil {
+		t.Fatalf("decode Review Artifact: %v", err)
+	}
+	if artifact.ScenarioID == "" || artifact.Plan.ProjectName == "" || len(artifact.Plan.ProposedTasks) == 0 ||
+		artifact.Evaluation.Score != MaxScore || !artifact.TokenUsage.Known || artifact.StopReason == "" {
+		t.Fatalf("Review Artifact = %#v", artifact)
+	}
+	for _, forbidden := range []string{"ANTHROPIC_API_KEY", "Authorization", "x-api-key", "Bearer ", "planning-acceptance-fixture-key"} {
+		if strings.Contains(string(content), forbidden) {
+			t.Fatalf("Review Artifact leaked a credential-shaped token %q", forbidden)
+		}
+	}
+}
+
+func TestHarnessNeverWritesArtifactWithoutExplicitConfiguration(t *testing.T) {
+	wouldBeArtifactPath := filepath.Join(t.TempDir(), "planning-review-artifact.json")
+	result, err := Run(context.Background(), Config{Provider: ProviderFakeGood, VaultRoot: t.TempDir()})
+	if err != nil || result.Evaluation == nil {
+		t.Fatalf("result = %#v, err=%v", result, err)
+	}
+	if _, statErr := os.Stat(wouldBeArtifactPath); !os.IsNotExist(statErr) {
+		t.Fatalf("a Review Artifact appeared even though ArtifactPath was never set: stat error = %v", statErr)
+	}
+}
+
+// panicHTTPDoer proves a code path never touches the network -- mirrors
+// internal/synthesisacceptance's identical-purpose test double.
+type panicHTTPDoer struct{ t *testing.T }
+
+func (doer panicHTTPDoer) Do(*http.Request) (*http.Response, error) {
+	doer.t.Fatal("dry-run must never make an HTTP call")
+	return nil, nil
+}
+
+func TestClaudeDryRunBuildsPromptWithoutCredentialOrExternalCall(t *testing.T) {
+	result, err := Run(context.Background(), Config{Provider: ProviderClaude, Execute: false, HTTPClient: panicHTTPDoer{t: t}})
+	if err != nil || result.Status != "dry_run_ready" || result.Executed {
+		t.Fatalf("result = %#v, err=%v", result, err)
+	}
+}
+
+func TestClaudeExecuteRequiresAPIKeyAndHTTPClient(t *testing.T) {
+	if _, err := Run(context.Background(), Config{Provider: ProviderClaude, Execute: true, VaultRoot: t.TempDir()}); err == nil {
+		t.Fatal("expected an error: explicit claude execution requires APIKey and HTTPClient")
 	}
 }

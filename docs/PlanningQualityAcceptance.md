@@ -1,6 +1,6 @@
 # Planning Quality Acceptance
 
-This gate measures whether WorkCairn turns a CEO's natural-language request into a genuinely well-decomposed, dependency-correct, execution-ready Task graph — not whether Go's own Planning invariants hold (those are already exhaustively covered by `internal/ceoplan`'s own ~40 tests). It is a Foundation Checkpoint (Phase Q): Fake Provider only, no Real Claude call, no Task/Project persistence.
+This gate measures whether WorkCairn turns a CEO's natural-language request into a genuinely well-decomposed, dependency-correct, execution-ready Task graph — not whether Go's own Planning invariants hold (those are already exhaustively covered by `internal/ceoplan`'s own ~40 tests). Built across Phase Q (Structural Gate / Quality Rubric foundation), Phase R (Output Completeness), and Phase T-0 (Artifact/CLI/metadata parity with Synthesis Acceptance). Fake Provider only through all three — no Real Claude call has been made, and no Task/Project persistence ever occurs.
 
 ## Purpose
 
@@ -32,9 +32,17 @@ This mirrors `internal/synthesisacceptance`'s design in spirit, but the split is
 
 Decomposition Quality (too subjective for a deterministic gate today), Prioritization Quality (`ProposedTask` has no priority field to evaluate), Execution Readiness (the boundary against existing Go validation is not yet settled), Role Quality scoring, cost/time-aware planning, tool-aware planning. None of these are dismissed as unimportant — they are undecided, not implemented, per Phase P's investigation.
 
-## Fake-only Foundation
+## Real-Run Foundation (Phase T-0): Artifact, Metadata, CLI
 
-`Run()` takes a `claude.HTTPDoer` exactly like `internal/synthesisacceptance.Config.HTTPClient` — there is no Fake-only code branch. This Checkpoint only ever supplies a fixed-response Fake transport (`FixedResponseHTTPDoer`); no CLI or Makefile target exists yet to select a Provider or execute a real call. **Real Provider execution is out of scope for this Checkpoint, not structurally prevented** — a future Checkpoint can supply a real `claude.HTTPDoer` and credential through the same `Config` shape.
+Phase Q's `Run()` took only a `claude.HTTPDoer`; Phase T-0 brought `Config`/`Result` up to parity with `internal/synthesisacceptance`'s own shape, still Fake-only:
+
+- **`Config`** now has `Provider`/`Execute`/`APIKey`/`ArtifactPath` alongside `HTTPClient` — the same fields `synthesisacceptance.Config` has. `HTTPClient`, when set, is always used verbatim (the escape hatch every axis-isolating Go test in `harness_test.go` relies on); otherwise `Provider` selects a named fixture. `"claude"` requires an explicit `APIKey`+`HTTPClient` and `Execute=true` — nothing defaults to it, nothing falls back to it.
+- **Named fixtures** (`"fake-good"`/`"fake-bad"`) now live in `scenario_v1.json`'s `provider_fixtures`, the same shape as `synthesisacceptance.ProviderBaseline` (`status`/`headers`/`body`), because a production CLI — not just Go tests — now needs to reach them. The richer, more narrowly axis-isolating bad fixtures (wrong-parallel-choice, invented-claim, missing-question, invalid-role) stay as Go test-only constants; only the two canonical baselines are CLI-selectable, the same asymmetry Synthesis Acceptance already has.
+- **`Result`/`ReviewArtifact` metadata** — `Runner`, `TokenUsage`, `DurationMilliseconds`, `StopReason`, `MaxOutputTokens` are now populated from `service.CEOPlanResult` (which itself gained a `StopReason` field this Checkpoint, threaded from `worker.RunResult.StopReason` on the successful path only). **Known, deliberately unaddressed gap**: `*service.CEOPlanError` does not preserve `Usage`/`Duration`/`StopReason` on *any* failure path (including the Phase R output-incomplete case) — `CEOPlanResult{}` is empty on every error today, so a failed real attempt's own diagnostics would be lost. Extending `CEOPlanError` to carry partial diagnostics on failure, mirroring what ADR-0058 already does for Task execution, is a real but separate-scope improvement, not made here.
+- **`ReviewArtifact`** saves the canonical **Normalized `ceoplan.Plan`** (not the raw pre-normalization Intent) — the same "final canonical artifact, not an intermediate stage" choice `synthesisacceptance.ReviewArtifact.Deliverable` already made — plus the same safe metadata as `Result`. Written only when `Config.ArtifactPath` is set; never contains a credential, Authorization header, or raw Provider request (verified by test).
+- **`cmd/workcairn-planning-acceptance`** + `make planning-acceptance PROVIDER=... EXECUTE=... ARTIFACT_PATH=...` now exist, mirroring `workcairn-synthesis-acceptance`/`make synthesis-acceptance` exactly: credential resolution via `ANTHROPIC_API_KEY` then macOS Keychain, never in argv; `PROVIDER=claude` without `EXECUTE=1` is a dry-run (builds Prompt+Schema, makes no credential lookup and no network call); Fake modes need no credential at all. **This Checkpoint never invokes it with real credentials** — only `fake-good`, `fake-bad`, and the `claude` dry-run path were exercised, all confirmed to make zero real Provider calls.
+
+Real Provider execution remains out of scope for this Checkpoint, not structurally prevented — the exact same `Config` shape a future Checkpoint would use for a real run already exists and is already exercised end-to-end by the CLI's dry-run path.
 
 ## Planning Output Completeness (closed, Phase R)
 

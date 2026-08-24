@@ -20,11 +20,14 @@ var ErrInvalidScenario = errors.New("invalid Planning acceptance scenario")
 var scenarioV1JSON []byte
 
 // Scenario is the fixed, Provider-neutral data a Planning Acceptance run
-// checks a generated ceoplan.Plan against. It intentionally holds only what
-// the four v1 rubric axes need -- no Prompt text, no evaluator logic, no
-// Provider response fixtures (those are test-only Go string constants in
-// harness_test.go, kept separate from this rubric data on purpose -- no
-// CLI or Makefile target selects a named fixture yet).
+// checks a generated ceoplan.Plan against. It holds what the four v1 rubric
+// axes need, plus (PHASE T-0) the two named Provider response fixtures
+// ("good"/"bad") the CLI selects by name -- mirroring
+// internal/synthesisacceptance's ProviderBaselines shape exactly, since a
+// production CLI (not just Go tests) now needs to reach them. Additional,
+// more narrowly axis-isolating bad fixtures stay as Go test-only constants
+// in harness_test.go; only the two canonical baselines are CLI-selectable,
+// the same asymmetry Synthesis Acceptance already has.
 type Scenario struct {
 	SchemaVersion string            `json:"schema_version"`
 	ScenarioID    string            `json:"scenario_id"`
@@ -49,7 +52,8 @@ type Scenario struct {
 	// Information Awareness checks CEOQuestions against: this scenario
 	// deliberately never states a success metric for the feature, so a
 	// genuinely good Intent should ask about it.
-	ExpectedMissingInformationConceptGroup []string `json:"expected_missing_information_concept_group"`
+	ExpectedMissingInformationConceptGroup []string                   `json:"expected_missing_information_concept_group"`
+	ProviderFixtures                       map[string]ProviderFixture `json:"provider_fixtures"`
 }
 
 type EmployeeFixture struct {
@@ -58,6 +62,17 @@ type EmployeeFixture struct {
 	Role       string `json:"role"`
 	Model      string `json:"model"`
 	Status     string `json:"status"`
+}
+
+// ProviderFixture is a fixed Anthropic Messages API response envelope,
+// exactly the shape internal/synthesisacceptance.ProviderBaseline already
+// uses -- Body is the full response body (content/usage/stop_reason), not
+// just the unwrapped Intent JSON, so it can be served byte-for-byte by a
+// Fake HTTP transport.
+type ProviderFixture struct {
+	Status  int               `json:"status"`
+	Headers map[string]string `json:"headers"`
+	Body    json.RawMessage   `json:"body"`
 }
 
 func LoadScenario() (Scenario, error) {
@@ -97,6 +112,12 @@ func (scenario Scenario) Validate() error {
 	}
 	if !validTerms(scenario.ForbiddenClaims) || !validTerms(scenario.ExpectedMissingInformationConceptGroup) {
 		return ErrInvalidScenario
+	}
+	for _, name := range []string{"good", "bad"} {
+		fixture, ok := scenario.ProviderFixtures[name]
+		if !ok || fixture.Status < 100 || fixture.Status > 599 || len(fixture.Body) == 0 {
+			return ErrInvalidScenario
+		}
 	}
 	return nil
 }

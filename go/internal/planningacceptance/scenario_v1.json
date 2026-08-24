@@ -20,5 +20,27 @@
     [2]
   ],
   "forbidden_claims": ["2週間以内", "完了率80%を達成", "500万円の予算"],
-  "expected_missing_information_concept_group": ["KPI", "目標", "完了率", "指標"]
+  "expected_missing_information_concept_group": ["KPI", "目標", "完了率", "指標"],
+  "provider_fixtures": {
+    "good": {
+      "status": 200,
+      "headers": {"content-type": "application/json", "request-id": "req_planning_good_fixture"},
+      "body": {
+        "model": "claude-sonnet-5",
+        "content": [{"type": "text", "text": "{\"project_name\":\"オンボーディングチェックリスト機能\",\"objective\":\"新規ユーザー向けのオンボーディングチェックリスト機能を追加する\",\"summary\":\"既存ユーザー調査と競合調査の結果を統合して仕様を作成し、実装とレビューを行う\",\"steps\":[{\"kind\":\"research\",\"description\":\"新規ユーザーのオンボーディング体験について、既存ユーザーへのヒアリングや利用データから課題を調査する\",\"required_role\":\"Product Manager\",\"parallel_with_previous\":false},{\"kind\":\"research\",\"description\":\"類似のオンボーディングチェックリスト機能を持つ競合・参考製品を調査する\",\"required_role\":\"Product Manager\",\"parallel_with_previous\":true},{\"kind\":\"analyze\",\"description\":\"ユーザー調査と競合調査の結果を統合し、オンボーディングチェックリスト機能の仕様を作成する\",\"required_role\":\"Product Manager\",\"parallel_with_previous\":false},{\"kind\":\"implement\",\"description\":\"仕様に基づいてオンボーディングチェックリスト機能を実装する\",\"required_role\":\"Backend Engineer\",\"parallel_with_previous\":false},{\"kind\":\"review\",\"description\":\"実装内容と仕様の整合性をレビューする\"}],\"ceo_questions\":[\"チェックリストの完了率など、成功を測る具体的なKPIの目標値は決まっていますか？\"]}"}],
+        "usage": {"input_tokens": 500, "output_tokens": 300},
+        "stop_reason": "end_turn"
+      }
+    },
+    "bad": {
+      "status": 200,
+      "headers": {"content-type": "application/json", "request-id": "req_planning_bad_fixture"},
+      "body": {
+        "model": "claude-sonnet-5",
+        "content": [{"type": "text", "text": "{\"project_name\":\"オンボーディングチェックリスト機能\",\"objective\":\"新規ユーザー向けのオンボーディングチェックリスト機能を追加する\",\"summary\":\"既存ユーザー調査をもとに実装する\",\"steps\":[{\"kind\":\"research\",\"description\":\"新規ユーザーのオンボーディング体験について、既存ユーザーへのヒアリングや利用データから課題を調査する\",\"required_role\":\"Product Manager\",\"parallel_with_previous\":false},{\"kind\":\"implement\",\"description\":\"オンボーディングチェックリスト機能を実装する\",\"required_role\":\"Backend Engineer\",\"parallel_with_previous\":false},{\"kind\":\"review\",\"description\":\"実装内容をレビューする\"}],\"ceo_questions\":[\"チェックリストの完了率など、成功を測る具体的なKPIの目標値は決まっていますか？\"]}"}],
+        "usage": {"input_tokens": 400, "output_tokens": 180},
+        "stop_reason": "end_turn"
+      }
+    }
+  }
 }

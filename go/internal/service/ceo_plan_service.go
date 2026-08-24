@@ -81,6 +81,15 @@ type CEOPlanResult struct {
 	Model    string            `json:"model"`
 	Usage    worker.TokenUsage `json:"usage"`
 	Duration int64             `json:"duration_nanoseconds"`
+	// StopReason is the Provider-neutral worker.StopReason of the
+	// successful generation call (PHASE R/T-0). It is always "completed"
+	// or "stop_sequence" here -- StopReasonMaxTokens never reaches this
+	// return path, since Generate returns a CEOPlanOutputIncompleteStage
+	// error before constructing any CEOPlanResult in that case (see the
+	// StopReasonMaxTokens check above). Exposed only so a caller (e.g.
+	// internal/planningacceptance) can record it for observability; no
+	// production dispatch decision reads it.
+	StopReason worker.StopReason `json:"stop_reason,omitempty"`
 }
 
 type CEOPlanService struct {
@@ -166,7 +175,10 @@ func (service *CEOPlanService) Generate(ctx context.Context, input CEOPlanInput)
 		}
 		return CEOPlanResult{}, &CEOPlanError{Stage: stage, Err: err}
 	}
-	return CEOPlanResult{Plan: plan, Runner: result.Runner, Model: result.Model, Usage: result.Usage, Duration: result.Duration.Nanoseconds()}, nil
+	return CEOPlanResult{
+		Plan: plan, Runner: result.Runner, Model: result.Model, Usage: result.Usage,
+		Duration: result.Duration.Nanoseconds(), StopReason: result.StopReason,
+	}, nil
 }
 
 func nilRunner(value runner.Runner) bool {

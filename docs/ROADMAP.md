@@ -469,6 +469,8 @@ Phase O（Synthesis）でCross-Evidence語彙calibrationをreal evidenceに基�
 
 Phase Qが発見したCompany OS Governance gap（`CEOPlanService.Generate`が`worker.StopReason`を一切確認せず、truncated出力が単なるIntent parse failureとして扱われていた問題）を、Phase Rで[ADR-0058](adr/ADR-0058-provider-output-completeness-policy.md)の適用範囲拡張として最小実装しました。`CEOPlanOutputIncompleteStage`（Code `OUTPUT_INCOMPLETE`、既存`ErrProviderOutputIncomplete`sentinel再利用）を`ParseIntent`実行前に追加し、Execution側と同一のCodeで統一的に検索可能にしています。新しいTask state、Provider failure分類、recovery機構は追加していません。
 
+Phase Sの調査（Real Provider実行なし）で、Planning AcceptanceにSynthesis Acceptance相当のArtifact／metadata／CLI基盤が欠けていることを確認し、Phase T-0でFake Provider限定のまま整備しました。`internal/planningacceptance`へ`ReviewArtifact`（Normalized Planを保存、credential非含有）、`TokenUsage`/`Duration`/`StopReason`/`Runner`/`MaxOutputTokens`のResult metadata、`scenario_v1.json`内の`provider_fixtures`（good/bad named fixture、CLIから選択可能）を追加し、`cmd/workcairn-planning-acceptance`と`make planning-acceptance`を`workcairn-synthesis-acceptance`と同型で新設しました。`service.CEOPlanResult`へ`StopReason`をadditiveに追加（成功経路のみ、失敗経路の診断保持は今回対象外として明記）。Real Provider実行は0のまま、次のPhase Tでの実行判断に委ねています。
+
 ## Completed — Public Beta Go Only Repository
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。
