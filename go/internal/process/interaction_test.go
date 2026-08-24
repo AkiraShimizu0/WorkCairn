@@ -382,7 +382,7 @@ func TestInteractionPlanPersistsSanitizedTransportSubcategoryInFailureEnvelope(t
 			client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) { return nil, test.transport })
 			result, err := ExecuteInteractionStart(context.Background(), start, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
 			var recorded *RecordedCommandError
-			if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_UNAVAILABLE" || recorded.Stage != "ceo_plan_runner" ||
+			if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_UNAVAILABLE" || recorded.Stage != "ceo_plan_runner_failed" ||
 				recorded.Envelope == nil || recorded.Envelope.Substage != string(test.want) ||
 				recorded.Envelope.Provider == nil || recorded.Envelope.Provider.Subcategory != string(test.want) ||
 				result.ProviderFailure == nil || result.ProviderFailure.TransportCategory != string(test.want) ||

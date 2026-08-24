@@ -62,7 +62,8 @@ func TestCEOPlanServiceMapsRunnerIntentNormalizationAndParserFailures(t *testing
 		stopReason    worker.StopReason
 		stage         CEOPlanStage
 	}{
-		{"runner", "", runnerFailure, "", CEOPlanRunnerStage},
+		{"runner call failed", "", runnerFailure, "", CEOPlanRunnerFailedStage},
+		{"invalid runner result (empty content)", "", nil, "", CEOPlanInvalidRunnerResultStage},
 		{"intent malformed JSON", "not-json", nil, "", CEOPlanIntentStage},
 		{"intent unknown step kind", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"bogus","description":"T","required_role":"R"}],"ceo_questions":[]}`, nil, "", CEOPlanIntentStage},
 		{"normalization no matching employee", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"T","required_role":"Nonexistent"}],"ceo_questions":[]}`, nil, "", CEOPlanNormalizationStage},
@@ -82,8 +83,60 @@ func TestCEOPlanServiceMapsRunnerIntentNormalizationAndParserFailures(t *testing
 			if !errors.As(err, &planError) || planError.Stage != test.stage {
 				t.Fatalf("err=%v, want stage %v", err, test.stage)
 			}
-			if test.stage == CEOPlanOutputIncompleteStage && !errors.Is(err, ErrProviderOutputIncomplete) {
-				t.Fatalf("err=%v, want errors.Is(err, ErrProviderOutputIncomplete)", err)
+			if test.stage == CEOPlanOutputIncompleteStage {
+				if !errors.Is(err, ErrProviderOutputIncomplete) {
+					t.Fatalf("err=%v, want errors.Is(err, ErrProviderOutputIncomplete)", err)
+				}
+				// Runner/StopReason are preserved for diagnostics (parity
+				// with execution.Result on the same ADR-0058 failure) even
+				// though no CEOPlanResult -- and therefore no Plan -- was
+				// ever constructed: the Approval boundary is untouched.
+				if planError.Partial == nil || planError.Partial.Runner != "Fake" || planError.Partial.StopReason != worker.StopReasonMaxTokens ||
+					planError.Partial.Plan.ProjectName != "" {
+					t.Fatalf("planError.Partial = %#v, want Runner/StopReason preserved and Plan left zero-value", planError.Partial)
+				}
+			} else if planError.Partial != nil {
+				t.Fatalf("planError.Partial = %#v, want nil for stage %v", planError.Partial, test.stage)
+			}
+		})
+	}
+}
+
+// TestClassifyCEOPlanContextErrorChecksOnlyTheCallersOwnContext proves
+// classification is driven strictly by ctx.Err(), never by inspecting the
+// Runner error's own wrap chain: a healthy caller ctx must stay
+// unclassified (falling through to the ordinary CEOPlanRunnerFailedStage
+// path) even when the Runner error happens to wrap context.DeadlineExceeded
+// for its own internal reasons (e.g. a *claude.Error transport timeout) --
+// this is the exact false positive an earlier version of this helper had,
+// caught by TestInteractionPlanPersistsSanitizedTransportSubcategoryInFailureEnvelope.
+func TestClassifyCEOPlanContextErrorChecksOnlyTheCallersOwnContext(t *testing.T) {
+	deadlineCtx, cancelDeadline := context.WithTimeout(context.Background(), 0)
+	defer cancelDeadline()
+	<-deadlineCtx.Done()
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for _, test := range []struct {
+		name  string
+		ctx   context.Context
+		stage CEOPlanStage
+	}{
+		{"caller's own ctx deadline exceeded", deadlineCtx, CEOPlanTimeoutStage},
+		{"caller's own ctx canceled", canceledCtx, CEOPlanCanceledStage},
+		{"healthy ctx, unrelated runner error wraps DeadlineExceeded", context.Background(), ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := classifyCEOPlanContextError(test.ctx)
+			if test.stage == "" {
+				if got != nil {
+					t.Fatalf("classifyCEOPlanContextError(...) = %#v, want nil for a healthy context", got)
+				}
+				return
+			}
+			if got == nil || got.Stage != test.stage {
+				t.Fatalf("classifyCEOPlanContextError(...) = %#v, want stage %v", got, test.stage)
 			}
 		})
 	}
