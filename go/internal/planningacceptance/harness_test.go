@@ -129,8 +129,13 @@ func TestHarnessBadFixturesIsolateEachRubricAxis(t *testing.T) {
 		// text) loses the same 2 concept groups Intent Coverage does here
 		// -- both land on 1, for the same underlying reason, unlike
 		// PHASE T-8 where Objective alone kept Intent Coverage at 2 while
-		// Work Coverage fell to 0.
-		{"intent omission", badIntentOmissionJSON, 1, 1, 0, 2, 2},
+		// Work Coverage fell to 0. Dependency Quality (PHASE T-12) compares
+		// only the 2 of 4 expected positions this fixture's 2 Tasks can
+		// reach: position 0 (no dependency) matches, but the surviving
+		// "implement" step sequentially depends on it (position 1 expects
+		// no dependency at all) -- 1 of 2 compared positions match, capped
+		// below full credit by the incomplete 2/4 coverage either way.
+		{"intent omission", badIntentOmissionJSON, 1, 1, 1, 2, 2},
 		{"wrong parallel choice", badWrongParallelJSON, 2, 2, 1, 2, 2},
 		{"invented deadline and KPI", badInventedClaimJSON, 2, 2, 2, 0, 2},
 		{"missing CEO question", badMissingQuestionJSON, 2, 2, 2, 2, 0},

@@ -66,7 +66,17 @@ func TestEvaluatorIntentCoverageGivesPartialCreditWhenConceptsAreMissing(t *test
 	}
 }
 
-func TestEvaluatorDependencyQualityDetectsTaskCountMismatch(t *testing.T) {
+// TestEvaluatorDependencyQualityUnderGenerationCannotReachFullCreditButKeepsPartialCredit
+// locks PHASE T-12's common-prefix redesign: a task-count mismatch is no
+// longer an automatic 0 (PHASE T-11 found this conflated "the graph was
+// evaluated and found wrong" with "there was barely a graph to evaluate,"
+// most visibly in the real PHASE T-3/T-8 runs). Here only 2 of goodPlan's 4
+// Tasks remain; both happen to have no dependency, matching expected
+// positions 0 and 1 -- but full credit (2) requires the entire expected
+// graph was reachable for comparison, and compared=2 < expected=4, so this
+// caps at 1 regardless of how well the truncated prefix matches. The
+// diagnostic Details must make the incomplete comparison visible.
+func TestEvaluatorDependencyQualityUnderGenerationCannotReachFullCreditButKeepsPartialCredit(t *testing.T) {
 	scenario, err := LoadScenario()
 	if err != nil {
 		t.Fatal(err)
@@ -74,8 +84,15 @@ func TestEvaluatorDependencyQualityDetectsTaskCountMismatch(t *testing.T) {
 	plan := goodPlan()
 	plan.ProposedTasks = plan.ProposedTasks[:2]
 	result := Evaluate(scenario, plan)
-	if scoreFor(result, RubricDependencyQuality) != 0 {
-		t.Fatalf("Dependency Quality = %d, want 0 (task count no longer matches the expected 4-position shape): result = %#v", scoreFor(result, RubricDependencyQuality), result)
+	if scoreFor(result, RubricDependencyQuality) != 1 {
+		t.Fatalf("Dependency Quality = %d, want 1 (2 of 4 expected positions compared, both matched, but incomplete coverage caps below full credit): result = %#v", scoreFor(result, RubricDependencyQuality), result)
+	}
+	details := detailsFor(result, RubricDependencyQuality)
+	if !containsDetail(details, "task_count_mismatch:expected=4:actual=2") {
+		t.Fatalf("Dependency Quality Details = %v, want a task_count_mismatch diagnostic naming expected=4:actual=2", details)
+	}
+	if !containsDetail(details, "compared_positions:2/4") {
+		t.Fatalf("Dependency Quality Details = %v, want compared_positions:2/4", details)
 	}
 }
 
@@ -228,6 +245,50 @@ func TestEvaluatorWorkCoverageDistinguishesT3FromT8(t *testing.T) {
 	}
 }
 
+// TestEvaluatorDependencyQualityDistinguishesT3FromT8 is PHASE T-12's core
+// regression: before this Checkpoint, both real runs scored 0/2 on
+// Dependency Quality via the identical "task_count_mismatch" gate, despite
+// T-3's positions 0-3 exactly matching the expected graph (Human Review
+// good) and T-8 having essentially no graph to evaluate at all (1 Task).
+// T-3 must now reach full credit (its full expected graph was reachable and
+// matched); T-8 must land strictly below full credit (its 1-of-4 coverage
+// can never satisfy the "entire expected graph was compared" requirement),
+// and both Details must make the difference in comparison coverage visible
+// to a Human Operator rather than collapsing to the same opaque label.
+func TestEvaluatorDependencyQualityDistinguishesT3FromT8(t *testing.T) {
+	scenario, err := LoadScenario()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t3 := Evaluate(scenario, planT3RealRun())
+	if scoreFor(t3, RubricDependencyQuality) != 2 {
+		t.Fatalf("T-3: Dependency Quality = %d, want 2 (positions 0-3 exactly match the expected graph; the extra QA Task is excluded from comparison, not penalized): result = %#v",
+			scoreFor(t3, RubricDependencyQuality), t3)
+	}
+	t3Details := detailsFor(t3, RubricDependencyQuality)
+	if !containsDetail(t3Details, "compared_positions:4/4") {
+		t.Fatalf("T-3 Dependency Details = %v, want compared_positions:4/4", t3Details)
+	}
+
+	t8 := Evaluate(scenario, planT8RealRun())
+	if scoreFor(t8, RubricDependencyQuality) == 0 || scoreFor(t8, RubricDependencyQuality) == 2 {
+		t.Fatalf("T-8: Dependency Quality = %d, want a value that is neither a silent 0 (the old, ambiguous meaning) nor full credit (only 1 of 4 expected positions was even reachable): result = %#v",
+			scoreFor(t8, RubricDependencyQuality), t8)
+	}
+	t8Details := detailsFor(t8, RubricDependencyQuality)
+	if !containsDetail(t8Details, "task_count_mismatch:expected=4:actual=1") {
+		t.Fatalf("T-8 Dependency Details = %v, want task_count_mismatch:expected=4:actual=1", t8Details)
+	}
+	if !containsDetail(t8Details, "compared_positions:1/4") {
+		t.Fatalf("T-8 Dependency Details = %v, want compared_positions:1/4", t8Details)
+	}
+
+	if scoreFor(t3, RubricDependencyQuality) == scoreFor(t8, RubricDependencyQuality) {
+		t.Fatalf("T-3 and T-8 Dependency Quality scores are still identical (%d) -- the axis still cannot distinguish good graph reasoning from insufficient work to reason about",
+			scoreFor(t3, RubricDependencyQuality))
+	}
+}
+
 func scoreFor(evaluation Evaluation, id string) int {
 	for _, item := range evaluation.Rubric {
 		if item.ID == id {
@@ -235,4 +296,22 @@ func scoreFor(evaluation Evaluation, id string) int {
 		}
 	}
 	return -1
+}
+
+func detailsFor(evaluation Evaluation, id string) []string {
+	for _, item := range evaluation.Rubric {
+		if item.ID == id {
+			return item.Details
+		}
+	}
+	return nil
+}
+
+func containsDetail(details []string, want string) bool {
+	for _, detail := range details {
+		if detail == want {
+			return true
+		}
+	}
+	return false
 }

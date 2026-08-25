@@ -1,6 +1,7 @@
 package planningacceptance
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -158,18 +159,57 @@ func evaluateWorkCoverage(scenario Scenario, plan ceoplan.Plan) RubricResult {
 // matching -- a different evaluation primitive from Synthesis Acceptance's
 // term matcher, chosen because "did the LLM choose the right
 // parallel/sequential structure" is not a prose question.
+//
+// PHASE T-11 found a real problem with this axis's previous design: an
+// unconditional len(actual)!=len(expected) gate returned score 0 for ANY
+// task-count mismatch, discarding all graph-reasoning evidence -- including
+// PHASE T-3's real run, where positions 0-3 exactly matched the expected
+// graph and only a well-justified extra Task (QA) made the count differ.
+// The same 0 also fired for PHASE T-8's real run, where only 1 of 4
+// expected Tasks existed at all -- conflating "the graph was evaluated and
+// found wrong" with "there was barely a graph to evaluate". Work Coverage
+// (PHASE T-10) already measures whether expected work became Task text at
+// all; this axis no longer needs to re-detect that via a hard count gate.
+//
+// PHASE T-12 replaces the hard gate with a common-prefix comparison: the
+// first min(len(actual), len(expected)) positions are compared exactly as
+// before (index-for-index against the scenario's own canonical task order --
+// this ordering assumption is a known, unresolved limitation, not solved
+// here), and a count mismatch becomes a diagnostic Detail rather than an
+// automatic 0. Full credit (2) requires the entire expected graph was
+// actually reachable for comparison (compared == len(expected)) and every
+// compared position matched -- an under-generated Plan (fewer actual Tasks
+// than expected) can therefore never reach full credit purely by having its
+// few Tasks trivially match a truncated prefix, regardless of how well they
+// match, because the comparison was never complete. This is a general rule,
+// not a case written for either PHASE T-3 or PHASE T-8 specifically -- it
+// falls out of "no credit for a comparison you didn't fully perform".
+//
+// Concept-based node mapping, required-edge/forbidden-edge modeling, and
+// permutation-tolerant graph comparison were explicitly investigated and
+// deferred (PHASE T-11) -- this Checkpoint stays a minimal, position-based
+// refinement, not that larger redesign.
 func evaluateDependencyQuality(scenario Scenario, plan ceoplan.Plan) RubricResult {
 	expected := scenario.ExpectedDependencyPositions
-	if len(plan.ProposedTasks) != len(expected) {
-		return rubricResult(RubricDependencyQuality, 0, 2, []string{"task_count_mismatch"})
-	}
 	positionByProposalID := make(map[string]int, len(plan.ProposedTasks))
 	for index, task := range plan.ProposedTasks {
 		positionByProposalID[task.ProposalID] = index
 	}
+
+	compared := len(plan.ProposedTasks)
+	if len(expected) < compared {
+		compared = len(expected)
+	}
+
+	details := make([]string, 0, compared+2)
+	if len(plan.ProposedTasks) != len(expected) {
+		details = append(details, fmt.Sprintf("task_count_mismatch:expected=%d:actual=%d", len(expected), len(plan.ProposedTasks)))
+	}
+	details = append(details, fmt.Sprintf("compared_positions:%d/%d", compared, len(expected)))
+
 	matchedPositions := 0
-	details := make([]string, 0, len(plan.ProposedTasks))
-	for index, task := range plan.ProposedTasks {
+	for index := 0; index < compared; index++ {
+		task := plan.ProposedTasks[index]
 		actual := make([]int, 0, len(task.DependencyIDs))
 		for _, dependencyID := range task.DependencyIDs {
 			if position, ok := positionByProposalID[dependencyID]; ok {
@@ -186,9 +226,10 @@ func evaluateDependencyQuality(scenario Scenario, plan ceoplan.Plan) RubricResul
 			details = append(details, task.ProposalID+":mismatch")
 		}
 	}
+
 	score := 0
 	switch {
-	case matchedPositions == len(expected):
+	case len(expected) > 0 && compared == len(expected) && matchedPositions == compared:
 		score = 2
 	case matchedPositions > 0:
 		score = 1
