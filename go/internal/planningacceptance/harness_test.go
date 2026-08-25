@@ -24,7 +24,10 @@ func claudeResponseEnvelope(intentJSON string) string {
 const goodIntentJSON = `{"project_name":"オンボーディングチェックリスト機能","objective":"新規ユーザー向けのオンボーディングチェックリスト機能を追加する","summary":"既存ユーザー調査と競合調査の結果を統合して仕様を作成し、実装とレビューを行う","steps":[{"kind":"research","description":"新規ユーザーのオンボーディング体験について、既存ユーザーへのヒアリングや利用データから課題を調査する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"research","description":"類似のオンボーディングチェックリスト機能を持つ競合・参考製品を調査する","required_role":"Product Manager","parallel_with_previous":true},{"kind":"analyze","description":"ユーザー調査と競合調査の結果を統合し、オンボーディングチェックリスト機能の仕様を作成する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"implement","description":"仕様に基づいてオンボーディングチェックリスト機能を実装する","required_role":"Backend Engineer","parallel_with_previous":false},{"kind":"review","description":"実装内容と仕様の整合性をレビューする"}],"ceo_questions":["チェックリストの完了率など、成功を測る具体的なKPIの目標値は決まっていますか？"]}`
 
 // badIntentOmissionJSON drops the competitive-research and spec-integration
-// steps -- Intent Coverage should degrade, nothing else should.
+// steps -- both Intent Coverage and Work Coverage degrade identically here
+// (Objective/Summary carry no concepts the reduced Task list doesn't also
+// carry), unlike PHASE T-8's real run where Objective alone kept Intent
+// Coverage high while Work Coverage collapsed.
 const badIntentOmissionJSON = `{"project_name":"オンボーディングチェックリスト機能","objective":"新規ユーザー向けのオンボーディングチェックリスト機能を追加する","summary":"既存ユーザー調査をもとに実装する","steps":[{"kind":"research","description":"新規ユーザーのオンボーディング体験について、既存ユーザーへのヒアリングや利用データから課題を調査する","required_role":"Product Manager","parallel_with_previous":false},{"kind":"implement","description":"オンボーディングチェックリスト機能を実装する","required_role":"Backend Engineer","parallel_with_previous":false},{"kind":"review","description":"実装内容をレビューする"}],"ceo_questions":["チェックリストの完了率など、成功を測る具体的なKPIの目標値は決まっていますか？"]}`
 
 // badWrongParallelJSON keeps every step's text identical to goodIntentJSON
@@ -112,18 +115,25 @@ func TestHarnessRejectsASecondProviderCall(t *testing.T) {
 
 func TestHarnessBadFixturesIsolateEachRubricAxis(t *testing.T) {
 	tests := []struct {
-		name            string
-		intentJSON      string
-		wantIntent      int
-		wantDependency  int
-		wantUnsupported int
-		wantMissingInfo int
+		name             string
+		intentJSON       string
+		wantIntent       int
+		wantWorkCoverage int
+		wantDependency   int
+		wantUnsupported  int
+		wantMissingInfo  int
 	}{
-		{"good", goodIntentJSON, 2, 2, 2, 2},
-		{"intent omission", badIntentOmissionJSON, 1, 0, 2, 2},
-		{"wrong parallel choice", badWrongParallelJSON, 2, 1, 2, 2},
-		{"invented deadline and KPI", badInventedClaimJSON, 2, 2, 0, 2},
-		{"missing CEO question", badMissingQuestionJSON, 2, 2, 2, 0},
+		{"good", goodIntentJSON, 2, 2, 2, 2, 2},
+		// intent omission drops the competitive-research and
+		// spec-integration Tasks entirely, so Work Coverage (Task-only
+		// text) loses the same 2 concept groups Intent Coverage does here
+		// -- both land on 1, for the same underlying reason, unlike
+		// PHASE T-8 where Objective alone kept Intent Coverage at 2 while
+		// Work Coverage fell to 0.
+		{"intent omission", badIntentOmissionJSON, 1, 1, 0, 2, 2},
+		{"wrong parallel choice", badWrongParallelJSON, 2, 2, 1, 2, 2},
+		{"invented deadline and KPI", badInventedClaimJSON, 2, 2, 2, 0, 2},
+		{"missing CEO question", badMissingQuestionJSON, 2, 2, 2, 2, 0},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -139,6 +149,9 @@ func TestHarnessBadFixturesIsolateEachRubricAxis(t *testing.T) {
 			}
 			if got := scoreFor(*result.Evaluation, RubricIntentCoverage); got != test.wantIntent {
 				t.Errorf("%s: Intent Coverage = %d, want %d", test.name, got, test.wantIntent)
+			}
+			if got := scoreFor(*result.Evaluation, RubricWorkCoverage); got != test.wantWorkCoverage {
+				t.Errorf("%s: Work Coverage = %d, want %d", test.name, got, test.wantWorkCoverage)
 			}
 			if got := scoreFor(*result.Evaluation, RubricDependencyQuality); got != test.wantDependency {
 				t.Errorf("%s: Dependency Quality = %d, want %d", test.name, got, test.wantDependency)

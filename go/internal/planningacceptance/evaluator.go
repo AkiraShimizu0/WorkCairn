@@ -9,22 +9,36 @@ import (
 
 const (
 	RubricIntentCoverage              = "intent_coverage"
+	RubricWorkCoverage                = "work_coverage"
 	RubricDependencyQuality           = "dependency_quality"
 	RubricUnsupportedAssumptions      = "unsupported_assumptions"
 	RubricMissingInformationAwareness = "missing_information_awareness"
-	MaxScore                          = 8
+	MaxScore                          = 10
 )
 
-// PHASE Q v1 deliberately implements only these four axes. Decomposition
-// Quality, Prioritization Quality, Execution Readiness, Role Quality,
-// cost/time-aware planning, and tool-aware planning are out of scope this
-// Checkpoint (see docs/PlanningQualityAcceptance.md) -- not because they are
-// unimportant, but because Decomposition is too subjective for a
-// deterministic gate today, Prioritization has no Contract field to
-// evaluate yet, and Execution Readiness's boundary against existing Go
+// PHASE Q v1 deliberately implemented only four axes; PHASE T-10 added Work
+// Coverage as a fifth. Full Decomposition Quality, Prioritization Quality,
+// Execution Readiness, Role Quality, cost/time-aware planning, and
+// tool-aware planning remain out of scope (see
+// docs/PlanningQualityAcceptance.md) -- not because they are unimportant,
+// but because full Decomposition granularity/ordering judgment is still too
+// subjective for a deterministic gate, Prioritization has no Contract field
+// to evaluate yet, and Execution Readiness's boundary against existing Go
 // validation is not yet settled. Adding them "while we're here" would be
 // exactly the scope creep this session's Synthesis Acceptance work
 // repeatedly avoided.
+//
+// Work Coverage is narrower than full Decomposition Quality: it only asks
+// whether each of the scenario's expected concepts was actually turned into
+// Task text, never how many Tasks, how they're grouped, or whether the
+// split is well-sized -- those remain deferred. It exists because PHASE T-9
+// found Intent Coverage alone cannot tell "the CEO's request was understood
+// and restated" (Objective/Summary prose) apart from "the request's work
+// was converted into Tasks" -- a real Claude run (PHASE T-8) scored full
+// Intent Coverage from Objective text alone while generating only one Task
+// covering a fraction of the request. Work Coverage and Intent Coverage
+// intentionally stay separate, independently-scored axes; Intent Coverage's
+// own scope (planningText, all Plan prose) is unchanged by this addition.
 
 type RubricResult struct {
 	ID      string   `json:"id"`
@@ -55,6 +69,7 @@ type Evaluation struct {
 func Evaluate(scenario Scenario, plan ceoplan.Plan) Evaluation {
 	rubric := []RubricResult{
 		evaluateIntentCoverage(scenario, plan),
+		evaluateWorkCoverage(scenario, plan),
 		evaluateDependencyQuality(scenario, plan),
 		evaluateUnsupportedAssumptions(scenario, plan),
 		evaluateMissingInformationAwareness(scenario, plan),
@@ -81,23 +96,59 @@ func planningText(plan ceoplan.Plan) string {
 	return strings.Join(parts, "\n")
 }
 
-func evaluateIntentCoverage(scenario Scenario, plan ceoplan.Plan) RubricResult {
-	text := planningText(plan)
-	matched := []string{}
-	for _, group := range scenario.ExpectedIntentConceptGroups {
+// taskPlanningText concatenates only what the generated Task list itself
+// says -- Title and Rationale, per proposed Task -- deliberately excluding
+// Objective, Summary, and CEOQuestions. Work Coverage (evaluateWorkCoverage)
+// is the only axis that reads this; every other axis keeps using
+// planningText or CEOQuestions text as before.
+func taskPlanningText(plan ceoplan.Plan) string {
+	parts := make([]string, 0, 2*len(plan.ProposedTasks))
+	for _, task := range plan.ProposedTasks {
+		parts = append(parts, task.Title, task.Rationale)
+	}
+	return strings.Join(parts, "\n")
+}
+
+// conceptGroupScore is the scoring shape both Intent Coverage and Work
+// Coverage share: 2 when every concept group is found in text, 1 when at
+// least half are, 0 otherwise. Extracted only because two axes now need the
+// identical shape over two different text scopes -- not a generic
+// evaluator framework.
+func conceptGroupScore(groups [][]string, text string) (score int, matched []string) {
+	matched = []string{}
+	for _, group := range groups {
 		if containsAny(text, group) {
 			matched = append(matched, group[0])
 		}
 	}
-	total := len(scenario.ExpectedIntentConceptGroups)
-	score := 0
+	total := len(groups)
 	switch {
 	case len(matched) == total:
 		score = 2
 	case len(matched)*2 >= total:
 		score = 1
 	}
+	return score, matched
+}
+
+func evaluateIntentCoverage(scenario Scenario, plan ceoplan.Plan) RubricResult {
+	score, matched := conceptGroupScore(scenario.ExpectedIntentConceptGroups, planningText(plan))
 	return rubricResult(RubricIntentCoverage, score, 2, matched)
+}
+
+// evaluateWorkCoverage asks a narrower, different question than Intent
+// Coverage: not "does the Plan's prose ever mention this concept" but "did
+// this concept become Task work" -- matched only against taskPlanningText,
+// reusing the same scenario.ExpectedIntentConceptGroups (PHASE T-9 found no
+// new vocabulary is needed; the existing concept groups already name the
+// CEO request's distinct work items). It is Company OS quality signal, not
+// a Structural Gate concern: a Plan can be structurally valid (canonical
+// IDs, valid assignment, valid graph) while still failing to convert most
+// of the CEO's intent into actual committed work, which Structural
+// invariants alone cannot detect or should not judge (see PHASE T-9).
+func evaluateWorkCoverage(scenario Scenario, plan ceoplan.Plan) RubricResult {
+	score, matched := conceptGroupScore(scenario.ExpectedIntentConceptGroups, taskPlanningText(plan))
+	return rubricResult(RubricWorkCoverage, score, 2, matched)
 }
 
 // evaluateDependencyQuality compares the actual generated dependency graph
