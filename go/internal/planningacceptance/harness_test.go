@@ -47,6 +47,26 @@ const badMissingQuestionJSON = `{"project_name":"オンボーディングチェ�
 // Evaluator at all.
 const badInvalidRoleJSON = `{"project_name":"オンボーディングチェックリスト機能","objective":"新規ユーザー向けのオンボーディングチェックリスト機能を追加する","summary":"既存ユーザー調査と競合調査の結果を統合して仕様を作成し、実装とレビューを行う","steps":[{"kind":"research","description":"新規ユーザーのオンボーディング体験について、既存ユーザーへのヒアリングや利用データから課題を調査する","required_role":"Designer","parallel_with_previous":false},{"kind":"implement","description":"仕様に基づいてオンボーディングチェックリスト機能を実装する","required_role":"Backend Engineer","parallel_with_previous":false},{"kind":"review","description":"実装内容と仕様の整合性をレビューする"}],"ceo_questions":["チェックリストの完了率など、成功を測る具体的なKPIの目標値は決まっていますか？"]}`
 
+// malformedNotJSONContent is syntactically valid JSON (a bare array, so it
+// survives the real Claude Adapter's own json.Valid structured-output
+// contract check) but is not the Intent object ceoplan.ParseIntent
+// requires -- decoding it into candidateIntent fails with a Go type
+// mismatch, not an "unknown field" error, so it lands on
+// json_decode_failed. PHASE T-6's json_decode_failed replication fixture.
+const malformedNotJSONContent = `[1,2,3]`
+
+// intentJSONUnknownStepKind mirrors goodIntentJSON's shape but names a
+// step kind outside ceoplan's closed IntentStepKind set -- PHASE T-6's
+// unknown_step_kind replication fixture.
+const intentJSONUnknownStepKind = `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"bogus","description":"T","required_role":"Product Manager","parallel_with_previous":false}],"ceo_questions":["Q"]}`
+
+// intentJSONBlankStepDescription mirrors goodIntentJSON's shape but leaves
+// one step's description blank -- PHASE T-6's missing_required_field (+
+// FieldShape) replication fixture: the real Claude Adapter still computes
+// StructuredOutputStepDescriptionShape from this raw content before
+// ceoplan.ParseIntent ever rejects it.
+const intentJSONBlankStepDescription = `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"","required_role":"Product Manager","parallel_with_previous":false}],"ceo_questions":["Q"]}`
+
 func doerFor(intentJSON string) FixedResponseHTTPDoer {
 	return FixedResponseHTTPDoer{Body: []byte(claudeResponseEnvelope(intentJSON))}
 }
@@ -146,6 +166,90 @@ func TestHarnessStructurallyInvalidFixtureFailsBeforeQualityEvaluation(t *testin
 	}
 	if result.Evaluation != nil {
 		t.Fatalf("Evaluation = %#v, want nil -- the Quality Rubric must never run on a structurally invalid Plan", result.Evaluation)
+	}
+}
+
+// TestHarnessSurfacesIntentParseDiagnostic is PHASE T-6's core regression:
+// before this Checkpoint, a CEOPlanIntentStage failure only ever left
+// StructuralFailureReason == "ceo_plan_intent" in the safe Result -- the
+// same ambiguity PHASE T-4's real run actually hit. Result.Parse now
+// reuses the existing, ADR-0041 failure.ParseDiagnostic (the identical
+// typed diagnostic the production Interaction flow already surfaces for
+// this failure) to distinguish which of ceoplan's closed
+// IntentParseFailureReason values actually occurred, entirely from
+// ceoplan.IntentParseError's own safe fields -- never from raw Provider
+// content.
+func TestHarnessSurfacesIntentParseDiagnostic(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		content        string
+		wantReason     string
+		wantField      string
+		wantFieldShape bool
+	}{
+		{"json_decode_failed", malformedNotJSONContent, "json_decode_failed", "", false},
+		{"unknown_step_kind", intentJSONUnknownStepKind, "unknown_step_kind", "steps.kind", false},
+		{"missing_required_field with FieldShape", intentJSONBlankStepDescription, "missing_required_field", "steps.description", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := Run(context.Background(), Config{VaultRoot: t.TempDir(), HTTPClient: doerFor(test.content)})
+			if err == nil {
+				t.Fatal("expected a Structural Gate failure, got nil error")
+			}
+			if result.StructuralGate != StructuralGateFailed || result.StructuralFailureReason != "ceo_plan_intent" {
+				t.Fatalf("StructuralGate = %q, StructuralFailureReason = %q, want failed/ceo_plan_intent: result = %#v",
+					result.StructuralGate, result.StructuralFailureReason, result)
+			}
+			if result.Parse == nil {
+				t.Fatal("Parse is nil on a CEOPlanIntentStage failure")
+			}
+			if result.Parse.Domain != "ceo_plan_intent" || result.Parse.Reason != test.wantReason || result.Parse.Field != test.wantField {
+				t.Fatalf("Parse = %#v, want Domain=ceo_plan_intent Reason=%q Field=%q", result.Parse, test.wantReason, test.wantField)
+			}
+			if test.wantFieldShape && len(result.Parse.StructuredOutputFieldShape) == 0 {
+				t.Fatalf("Parse.StructuredOutputFieldShape is empty, want a populated content-blind shape diagnostic: Parse = %#v", result.Parse)
+			}
+			marshaled, marshalErr := json.Marshal(result)
+			if marshalErr != nil {
+				t.Fatalf("json.Marshal(result) failed: %v", marshalErr)
+			}
+			if !strings.Contains(string(marshaled), `"parse":{`) || !strings.Contains(string(marshaled), `"reason":"`+test.wantReason+`"`) {
+				t.Fatalf("marshaled Result does not carry the parse diagnostic: %s", marshaled)
+			}
+			if strings.Contains(string(marshaled), test.content) {
+				t.Fatalf("marshaled Result leaks raw Provider content: %s", marshaled)
+			}
+		})
+	}
+}
+
+// TestHarnessNonIntentFailureLeavesParseNil proves Parse stays nil for a
+// Structural Gate failure that never produces a *ceoplan.IntentParseError
+// -- here, NormalizeIntent's assignment resolution (CEOPlanNormalizationStage)
+// -- so a future reader is never misled into thinking every Structural
+// Gate failure carries a Parse diagnostic.
+func TestHarnessNonIntentFailureLeavesParseNil(t *testing.T) {
+	result, err := Run(context.Background(), Config{VaultRoot: t.TempDir(), HTTPClient: doerFor(badInvalidRoleJSON)})
+	if err == nil {
+		t.Fatal("expected a Structural Gate failure, got nil error")
+	}
+	if result.StructuralFailureReason == "ceo_plan_intent" {
+		t.Fatalf("this fixture must fail at Normalization, not Intent parse: result = %#v", result)
+	}
+	if result.Parse != nil {
+		t.Fatalf("Parse = %#v, want nil for a non-Intent-parse failure", result.Parse)
+	}
+}
+
+// TestHarnessSuccessLeavesParseNil proves a successful run never sets
+// Parse -- it is exclusively a CEOPlanIntentStage failure diagnostic.
+func TestHarnessSuccessLeavesParseNil(t *testing.T) {
+	result, err := Run(context.Background(), Config{Provider: ProviderFakeGood, VaultRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Parse != nil {
+		t.Fatalf("Parse = %#v, want nil on a successful run", result.Parse)
 	}
 }
 

@@ -471,6 +471,8 @@ Phase Qが発見したCompany OS Governance gap（`CEOPlanService.Generate`が`w
 
 Phase Sの調査（Real Provider実行なし）で、Planning AcceptanceにSynthesis Acceptance相当のArtifact／metadata／CLI基盤が欠けていることを確認し、Phase T-0でFake Provider限定のまま整備しました。`internal/planningacceptance`へ`ReviewArtifact`（Normalized Planを保存、credential非含有）、`TokenUsage`/`Duration`/`StopReason`/`Runner`/`MaxOutputTokens`のResult metadata、`scenario_v1.json`内の`provider_fixtures`（good/bad named fixture、CLIから選択可能）を追加し、`cmd/workcairn-planning-acceptance`と`make planning-acceptance`を`workcairn-synthesis-acceptance`と同型で新設しました。`service.CEOPlanResult`へ`StopReason`をadditiveに追加（成功経路のみ、失敗経路の診断保持は今回対象外として明記）。Real Provider実行は0のまま、次のPhase Tでの実行判断に委ねています。
 
+Phase Tで初回Real Provider Planning Acceptance Runを実行し、`CEOPlanRunnerStage`が2種類の失敗を混同していたことを確認、Phase T+1の調査を経てPhase T-2で`CEOPlanRunnerFailedStage`/`CEOPlanInvalidRunnerResultStage`/`CEOPlanTimeoutStage`/`CEOPlanCanceledStage`へ分離しました。Phase T-3で初のReal Planning Quality Evidence（Structural Gate通過）を取得し、Phase T-4のReplication Runでは別の失敗（`CEOPlanIntentStage`）が発生。Phase T-5の調査で、`ceoplan.IntentParseError`が既に安全なReason/Field/FieldShapeを保持し、production Interaction flowは既存ADR-0041の`failure.ParseDiagnostic`へ変換済みである一方、`internal/planningacceptance`だけがStage文字列のみへ縮退させていたことを特定しました。Phase T-6で`planningacceptance.Result`へ`Parse *failure.ParseDiagnostic`をadditiveに追加し、既存primitiveの再利用のみでこのgapを閉じています（新taxonomy・新Stage・新Artifactは追加せず）。
+
 ## Completed — Public Beta Go Only Repository
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。

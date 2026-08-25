@@ -15,6 +15,7 @@ import (
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
 	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
 	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
@@ -113,6 +114,14 @@ type Result struct {
 	DurationMilliseconds    int64       `json:"duration_ms,omitempty"`
 	StopReason              string      `json:"stop_reason,omitempty"`
 	Evaluation              *Evaluation `json:"evaluation,omitempty"`
+	// Parse is the existing, ADR-0041 failure.ParseDiagnostic -- set only
+	// when StructuralFailureReason is CEOPlanIntentStage, mirroring the
+	// same typed diagnostic the production Interaction flow already
+	// surfaces for this identical failure (process/interaction.go's
+	// finishInteractionPlan). nil for every other Structural Gate failure
+	// and for a successful run. Never carries raw Provider content --
+	// entirely sourced from ceoplan.IntentParseError's own safe fields.
+	Parse *failure.ParseDiagnostic `json:"parse,omitempty"`
 }
 
 // Run exercises the real production Planning path
@@ -187,6 +196,7 @@ func Run(ctx context.Context, config Config) (Result, error) {
 		result.Status = "failed"
 		result.StructuralGate = StructuralGateFailed
 		result.StructuralFailureReason = structuralFailureReason(genErr)
+		result.Parse = ceoPlanIntentParseDiagnostic(genErr)
 		return result, genErr
 	}
 	if invariantErr := confirmStructuralInvariants(generation.Plan); invariantErr != nil {
@@ -291,6 +301,26 @@ func structuralFailureReason(err error) string {
 		return string(planErr.Stage)
 	}
 	return "unknown"
+}
+
+// ceoPlanIntentParseDiagnostic extracts the existing, ADR-0041
+// failure.ParseDiagnostic from a CEOPlanIntentStage failure, mirroring
+// process/interaction.go's identical extraction for the production
+// Interaction flow (ceoPlanParseFailureReason/Field/FieldShape) -- not
+// shared code (those helpers are unexported in package process), but the
+// same errors.As pattern over ceoplan.IntentParseError's own safe fields.
+// Returns nil for every other failure kind (Runner, Normalization,
+// Timeout, Canceled, OutputIncomplete), since only a ParseIntent failure
+// ever produces an *ceoplan.IntentParseError in the error chain.
+func ceoPlanIntentParseDiagnostic(err error) *failure.ParseDiagnostic {
+	var intentErr *ceoplan.IntentParseError
+	if !errors.As(err, &intentErr) {
+		return nil
+	}
+	return &failure.ParseDiagnostic{
+		Domain: "ceo_plan_intent", Reason: string(intentErr.Reason), Field: intentErr.Field,
+		StructuredOutputFieldShape: intentErr.FieldShape,
+	}
 }
 
 func acceptanceRoot(configured string) (string, func(), error) {
