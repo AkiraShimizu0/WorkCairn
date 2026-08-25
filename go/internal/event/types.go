@@ -19,6 +19,9 @@ const (
 	WorkflowStarted   Type = "workflow.started"
 	WorkflowCompleted Type = "workflow.completed"
 	ActionCompleted   Type = "action.completed"
+	GoalCreated       Type = "goal.created"
+	GoalAchieved      Type = "goal.achieved"
+	GoalAbandoned     Type = "goal.abandoned"
 )
 
 var supportedTypes = map[Type]struct{}{
@@ -37,6 +40,9 @@ var supportedTypes = map[Type]struct{}{
 	WorkflowStarted:   {},
 	WorkflowCompleted: {},
 	ActionCompleted:   {},
+	GoalCreated:       {},
+	GoalAchieved:      {},
+	GoalAbandoned:     {},
 }
 
 func (eventType Type) Valid() bool {

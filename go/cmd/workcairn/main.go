@@ -18,6 +18,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/workcairn/go/internal/goal"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
 	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
@@ -54,6 +55,7 @@ type commandOptions struct {
 	oldName, newName, reason                  string
 	recoveryAction, recoveryReason            string
 	ceoRequest, planJSON, scheduleJSON        string
+	goalID, goalScope, goalTitle, goalOutcome string
 	actionTarget                              string
 	actionSourceSHA256                        string
 	sessionID, requestDigest, planDigest      string
@@ -519,6 +521,66 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		record, err := workspaceprocess.ExecuteScheduleCreation(ctx, input, true)
 		if err != nil {
 			writeCommandResponse(output, durableCommandFailureResponse(err, "SCHEDULE_CREATE_FAILED", "schedule_commit"))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		return 0
+	}
+	if operation == "goal-list" {
+		records, err := workspaceprocess.InspectGoals(ctx, options.vaultRoot, goal.Scope(options.goalScope), options.projectName)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("GOAL_INSPECTION_FAILED", ""))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: map[string]any{"goals": records}})
+		return 0
+	}
+	if operation == "goal-show" {
+		record, err := workspaceprocess.InspectGoal(ctx, options.vaultRoot, goal.Scope(options.goalScope), options.projectName, options.goalID)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("GOAL_INSPECTION_FAILED", ""))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		return 0
+	}
+	if operation == "goal-create" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		record, err := workspaceprocess.ExecuteGoalCreate(ctx, workspaceprocess.GoalCreateInput{
+			VaultRoot: options.vaultRoot, GoalID: options.goalID, Scope: goal.Scope(options.goalScope), ProjectName: options.projectName,
+			Title: options.goalTitle, Outcome: options.goalOutcome, CurrentTime: currentTime, CommandID: options.commandID,
+		}, true)
+		if err != nil {
+			writeCommandResponse(output, durableCommandFailureResponse(err, "GOAL_CREATE_FAILED", "goal_create"))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		return 0
+	}
+	if operation == "goal-achieve" || operation == "goal-abandon" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		input := workspaceprocess.GoalTransitionInput{
+			VaultRoot: options.vaultRoot, GoalID: options.goalID, Scope: goal.Scope(options.goalScope), ProjectName: options.projectName,
+			ExpectedVersion: options.expectedVersion, CommandID: options.commandID,
+		}
+		var record goal.Record
+		var err error
+		var failureCode, failureStage string
+		if operation == "goal-achieve" {
+			record, err = workspaceprocess.ExecuteGoalAchieve(ctx, input, true)
+			failureCode, failureStage = "GOAL_ACHIEVE_FAILED", "goal_achieve"
+		} else {
+			record, err = workspaceprocess.ExecuteGoalAbandon(ctx, input, true)
+			failureCode, failureStage = "GOAL_ABANDON_FAILED", "goal_abandon"
+		}
+		if err != nil {
+			writeCommandResponse(output, durableCommandFailureResponse(err, failureCode, failureStage))
 			return 1
 		}
 		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
@@ -1006,6 +1068,10 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	set.StringVar(&options.ceoRequest, "request", "", "natural-language CEO request")
 	set.StringVar(&options.planJSON, "plan-json", "", "validated CEO plan JSON")
 	set.StringVar(&options.scheduleJSON, "schedule-json", "", "one-shot Schedule definition JSON")
+	set.StringVar(&options.goalID, "goal-id", "", "Goal ID")
+	set.StringVar(&options.goalScope, "goal-scope", "", "Goal scope: company or project")
+	set.StringVar(&options.goalTitle, "goal-title", "", "Goal title")
+	set.StringVar(&options.goalOutcome, "goal-outcome", "", "Goal outcome: what achieved concretely means")
 	set.StringVar(&options.actionTarget, "target", "", "logical external Action target ID")
 	set.StringVar(&options.actionSourceSHA256, "source-sha256", "", "approved Deliverable SHA-256 for external Action")
 	set.StringVar(&options.sessionID, "session-id", "", "Interaction Session ID")
@@ -1025,7 +1091,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 		return commandOptions{}, errors.New("invalid command arguments")
 	}
 	required := []string{options.vaultRoot}
-	if operation != "organization-inspect" && operation != "identity-validate" && operation != "employee-candidates-validate" && operation != "employee-hire-plan" && operation != "employee-hire-execute" && operation != "employee-rename-plan" && operation != "employee-rename-execute" && operation != "employee-rename-batch-plan" && operation != "employee-id-repair-plan" && operation != "employee-id-repair-execute" && operation != "organization-sync-plan" && operation != "organization-sync-execute" && operation != "ceo-plan-generate" && operation != "ceo-plan-apply-plan" && operation != "ceo-plan-apply" && operation != "schedule-plan" && operation != "schedule-create" && operation != "schedule-list" && !strings.HasPrefix(operation, "interaction-") {
+	if operation != "organization-inspect" && operation != "identity-validate" && operation != "employee-candidates-validate" && operation != "employee-hire-plan" && operation != "employee-hire-execute" && operation != "employee-rename-plan" && operation != "employee-rename-execute" && operation != "employee-rename-batch-plan" && operation != "employee-id-repair-plan" && operation != "employee-id-repair-execute" && operation != "organization-sync-plan" && operation != "organization-sync-execute" && operation != "ceo-plan-generate" && operation != "ceo-plan-apply-plan" && operation != "ceo-plan-apply" && operation != "schedule-plan" && operation != "schedule-create" && operation != "schedule-list" && operation != "goal-create" && operation != "goal-list" && operation != "goal-show" && operation != "goal-achieve" && operation != "goal-abandon" && !strings.HasPrefix(operation, "interaction-") {
 		required = append(required, options.projectName)
 	}
 	if operation == "plan" || operation == "execute" || operation == "review-plan" || operation == "review-execute" || operation == "revision-plan" || operation == "revision-execute" {
@@ -1139,6 +1205,29 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	if (operation == "project-dependencies-plan" || operation == "project-dependencies-create") && len(options.dependencyJSONs) == 0 {
 		return commandOptions{}, errors.New("dependency JSON is required")
 	}
+	if operation == "goal-create" {
+		required = append(required, options.goalID, options.goalScope, options.goalTitle, options.goalOutcome, options.commandID)
+	}
+	if operation == "goal-list" || operation == "goal-show" || operation == "goal-achieve" || operation == "goal-abandon" {
+		required = append(required, options.goalScope)
+	}
+	if operation == "goal-show" || operation == "goal-achieve" || operation == "goal-abandon" {
+		required = append(required, options.goalID)
+	}
+	if operation == "goal-achieve" || operation == "goal-abandon" {
+		required = append(required, options.commandID)
+		if options.expectedVersion == 0 {
+			return commandOptions{}, errors.New("expected Goal Version is required")
+		}
+	}
+	if (operation == "goal-create" || operation == "goal-list" || operation == "goal-show" || operation == "goal-achieve" || operation == "goal-abandon") &&
+		options.goalScope != "" && goal.Scope(options.goalScope) != goal.ScopeCompany && goal.Scope(options.goalScope) != goal.ScopeProject {
+		return commandOptions{}, errors.New("goal-scope must be company or project")
+	}
+	if (operation == "goal-create" || operation == "goal-list" || operation == "goal-show" || operation == "goal-achieve" || operation == "goal-abandon") &&
+		goal.Scope(options.goalScope) == goal.ScopeProject && strings.TrimSpace(options.projectName) == "" {
+		return commandOptions{}, errors.New("project is required for goal-scope=project")
+	}
 	for _, value := range required {
 		if strings.TrimSpace(value) == "" {
 			return commandOptions{}, errors.New("required command argument is missing")
@@ -1149,7 +1238,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish":
+	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish", "goal-create", "goal-list", "goal-show", "goal-achieve", "goal-abandon":
 		return true
 	default:
 		return false

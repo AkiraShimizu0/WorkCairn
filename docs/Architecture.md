@@ -105,6 +105,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0057: Synthesis Quality Acceptance — Deterministic-First Provider Evaluation](adr/ADR-0057-synthesis-quality-acceptance.md)
 - [ADR-0058: Provider Output Completeness Policy — Truncated Output Is Never Silent Success](adr/ADR-0058-provider-output-completeness-policy.md)
 - [ADR-0059: Claude Output Token Policy — a Single, Documented, Runtime-owned Default](adr/ADR-0059-claude-output-token-policy.md)
+- [ADR-0060: Goal Domain Foundation](adr/ADR-0060-goal-domain-foundation.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -165,6 +166,7 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Progress Intelligence | `go/internal/policy`の`ReviewSignature`／`DeliverableFingerprint`／`CompoundProgressPolicy`（ADR-0053）が、「同じQA指摘が繰り返され」「成果物が実質変化せず」「Revisionを既に消費している」という3つの独立したdeterministic signalが揃ったときだけbranchを止める。`ReviewSignature`は`review.Issue`の既存typed enum（Category／Severity）だけから構築し自由文は読まない（sortしてmap iteration順に依存しない）。`DeliverableFingerprint`はDeliverable本文をcontent-blindに正規化したSHA-256で、Domain・Vault・Auditへ一切永続化・露出しない内部比較値。embedding／semantic AI judgeは使わず、Resource Signal（Provider call数・経過時間）は`ProgressSignal`へ観測用として載るだけでPolicyのdecisionには使わない |
 | Go BudgetGuard | `go/internal/policy`の`FixedBudgetPolicy`（ADR-0054）が、「出力が改善しているか」ではなく「許可された資源envelopeを既に超えたか」だけを判断する――Progress Intelligenceとは意図的に独立した責務。scopeは1 Reviewed Workflow execution単位で、`autonomy.Contract.MaxRuntime`（既定30分）／`MaxProviderCalls`（既定60、LoopGuardの構造的counterとは別物）の2軸を独立して強制する。`internal/service`の`budgetTracker`が実際の並列安全な予約primitive（atomic reserve→invoke→record、`policy.BudgetPolicy`とは別の意図的にstatefulな機構）で、process-local・1呼び出しscopeのみの保証。Recovery Continuation（ADR-0055）は新しい明示Command／新しいbounded trackerを使い、古い消費量を消去・継承したと推測しない。root lineage全体のdurable Budgetは将来課題。Token使用量は既存の`worker.TokenUsage`のnilable設計（unknown≠0）をそのまま利用し、v1ではゲーティングに使わない。Cost Budgetは未実装（価格tableが存在しないため） |
 | Go Scheduler Service | 承認済みone-shot Commandをoffset付き時刻で選択し、Schedule CAS後に既存Process／Command Ledgerへ配送する。Task状態やProviderは直接扱わない |
+| Go Goal Service | ADR-0060のGoal lifecycle（create→active→achieved／abandoned）決定とEvent発行（`goal.created`／`goal.achieved`／`goal.abandoned`）を単独で所有する。Kernel未登録（CEOPlanService等と同じ、呼び出し側でcomposeするService）。Employee ownership、Task／Plan生成は一切行わない — Goalはstanding stateのみで、将来のResponsibility domainがGoalとEmployee／Work generationの間を仲介する想定（本Checkpointでは未実装） |
 | Go Notification／Metrics Subscriber | Runtime edgeから既存Eventへ接続し、payload-free immutable Inboxとbounded process-local counterを提供する。Task状態、Event、Auditを変更しない |
 | Go External Action Service／WordPress Adapter | 既存Deliverableをtyped intentへ変換し、明示承認、immutable request／result evidence、外部公開、`action.completed`を調停する。credentialとHTTPはAdapter edgeだけに置く |
 | Go Interaction Domain／Service | 自然言語request、CEO質問回答、plan digest承認、適用済みProject、Reviewed Workflow／External Actionのtyped summaryとResult digestをappend-only turn／Version/CASで調停する。Provider、Vault、Task状態を知らない |
@@ -172,6 +174,24 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Work Report | Interaction、Task、Deliverable、canonical Review、Revision intent、Command Ledger、AuditからProof of WorkとCEO Attentionを再構成するread-only projection。新しいStore、状態修復、自動retryを持たない |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
+
+## Company OS Hierarchy (Goal Foundation, ADR-0060)
+
+ADR-0060により、Company OSの上位構造を次のように整理しました。
+
+```text
+Goal                      (実装済み: internal/goal, ADR-0060)
+  ↓
+Responsibility            (未実装 — 将来Checkpoint)
+  ↓
+Planning
+  ├─ Routine               (未実装 — 将来Checkpoint)
+  └─ Workflow               (実装済み)
+       ↓
+      Task                 (実装済み)
+```
+
+Goalは会社またはProjectが継続的に追求するstanding business outcomeで、単一Plan／Workflowより長生きします。ResponsibilityとRoutineはPHASE Uの調査で概念整理済みですが未実装であり、GoalからTask／Planへの直接接続は意図的に作っていません（Goal→Responsibility→Work generationという将来の経路を保つため）。
 
 ## データ境界
 
@@ -186,6 +206,7 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 - `Reviews/`: 人間向けレビューと検証済みJSON
 - `Revisions/`: レビューから作られた修正タスクのメタデータ
 - `.workspace-os/schedules/`: one-shot Scheduleのdefinition、due time、Version／CAS、dispatch outcome
+- `会社/Goals/`（company-scope）／`プロジェクト/<name>/Goals/`（project-scope）: Goal canonical JSON + Markdown projection（ID、Title、Outcome、Status、Scope、Version）。ADR-0060
 - `.workspace-os/notifications/`: Event payloadを含まないimmutable Notification projection
 - `プロジェクト/<name>/.workspace-os/actions/`: source digestに拘束されたimmutable external Action request／result evidence
 - `Progress.md`と`Audit Log.md`: 実行・レビュー履歴
@@ -226,6 +247,7 @@ ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環�
 - `go/internal/autonomy`: 承認するWorkflowの自律範囲をcanonicalize／検証するProvider／Storage非依存のtyped contract
 - `go/internal/interaction`: request／clarification／plan／Workflow approvalのclosed state、append-only turn、結果summary／digest、CAS contract
 - `go/internal/scheduler`: Storage／transport非依存のone-shot Schedule、state、Version／CAS、Dispatcher port
+- `go/internal/goal`: Provider／Storage非依存のGoal（会社またはProjectが継続的に追求するstanding business outcome）。ID、Scope（company／project）、Status（active／achieved／abandoned）、Version／CASのDomain契約。Employee ownership、deadline、priority、Task/Planへの直接接続は持たない（ADR-0060）
 - `go/internal/notification`: Task／Review／Revision／Action EventからのredactedなpayloadなしImmutable projection契約
 - `go/internal/metrics`: Event typeごとの件数だけを持つbounded process-local Metrics subscriber
 - `go/internal/action`: Provider／Storage非依存の外部publication（WordPress等）typed intent／evidence契約
