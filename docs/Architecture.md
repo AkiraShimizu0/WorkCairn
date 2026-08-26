@@ -110,6 +110,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0062: Responsibility Work Generation](adr/ADR-0062-responsibility-work-generation.md)
 - [ADR-0063: Routine Automation Foundation](adr/ADR-0063-routine-automation-foundation.md)
 - [ADR-0064: Routine Scheduling Reliability / Reconciliation](adr/ADR-0064-routine-scheduling-reliability.md)
+- [ADR-0065: Company Attention / Decision Feed v1](adr/ADR-0065-company-attention-feed.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -174,6 +175,7 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Responsibility Service | ADR-0061のResponsibility lifecycle（create→active⇄inactive、再activate可）決定、GoalRefs存在確認（`GoalLookup`経由、同scope限定）、Employee binding（`Binding`、single-owner、`EmployeeLookup`経由で既存Organization rosterを確認）、Event発行（`responsibility.created`／`activated`／`deactivated`／`assigned`／`unassigned`）を単独で所有する。Kernel未登録（GoalServiceと同型）。Task／Plan／Workflow／Schedule生成は一切行わない |
 | Go Responsibility Work Generation | ADR-0062の`process.GenerateResponsibilityPlan`（`workcairn responsibility-plan`、手動trigger限定）。ResponsibilityのTitle／linked Goals／Bindingを解決し、明示Human instructionと合成したRequestを既存の`GenerateCEOPlan`（Provider呼び出し、`ceoplan.BuildPrompt`/`ParseIntent`/`NormalizeIntent`）へそのまま渡す — 新しいPlanning engineは持たない。Command Ledger未wrap（`GenerateCEOPlan`自体と同じくreal-time・non-replayable呼び出し）。TaskもWorkflowもScheduleも直接作らず、結果は`ResponsibilityPlanningResult`（既存`service.CEOPlanResult`をResponsibility/Goal/Binding traceabilityで包んだだけの新規wrapper、`ceoplan.Plan`自体のschemaは無変更）。生成されたPlanは既存の`ceo-plan-apply`（別途明示承認）へそのまま渡せる |
 | Go Routine Service / Automation | ADR-0063の`internal/routine`（RoutineID／Scope／ResponsibilityID／Instruction／Model／Trigger／Status、初期Inactive）とTrigger（daily／weekly限定、`NextOccurrence`はUTC日付演算のみ、cron parserなし）。`process.ExecuteRoutineActivate`が既存の一shot Scheduler（ADR-0025）へ次回発火分のSchedule 1件を作成——Schedulerは相変わらずRecurrenceを一切知らない。発火target `routine.plan`（新schedulable operation、Command Ledger管理、`task.execute`等と同型）は、ActiveなRoutineなら既存`GenerateResponsibilityPlan`をそのまま呼び出しPlan生成のみ行い、成功・失敗を問わず次occurrenceを再Chain（recurrence≠retry）。InactiveなRoutineへの発火はdispatch時fresh Status確認でno-op skip（Schedule取消機能なし、新規追加もせず）。`routine-run-now`はSchedule状態に触れない手動acceptance primitive。**Reliability（ADR-0064）**: `scheduleNextRoutineOccurrence`は書き込み前にSchedule Storeを直接読み、この occurrence の決定的IDに非terminalなScheduleが既に存在すればそれをそのまま返す（新規作成を試みない）——activate・post-occurrence chaining・新規`routine-reconcile`の3箇所が同じ1つの冪等helperを共有。`InspectRoutineScheduleHealth`（Schedule Store走査のみ、新規永続stateなし）が`routine-show`へ`schedule_healthy`として追加され、Active Routineなのに次回occurrenceが欠落した状態をon-demandで検出可能にする。`routine-reconcile`（承認必須、operator供給CommandID必須）が唯一の明示的repair primitive——hidden retry・rollbackはいずれも採用せず |
+| Go Company Attention / Decision Feed | ADR-0065の`internal/attention`（Type／EntityType／ActionKind／Item、Domain非依存の純粋read model）と`process.InspectAttention`（`internal/routine`・`internal/interaction`のみをread-only集約、新規state保存なし）。v1 type: `approval_required`／`human_input_required`／`interaction_attention_required`（Interaction`State`/`Next()`をそのまま分類）、`routine_recovery_required`（`InspectRoutineScheduleHealth`をそのまま再利用）。`recovery_required`／Task Hold／project-scope Routine／Responsibility未割当／Responsibility無しGoalはv1で意図的に不採用（根拠はADR-0065）。Dedupe・Sortは決定的（Type順→ObservedAt→EntityID）でAI rankingなし。`workcairn attention-list`／`GET /v1/attention`（`CompanyActivityInspector`と同型のoptional-capability interfaceで配線） |
 | Go Notification／Metrics Subscriber | Runtime edgeから既存Eventへ接続し、payload-free immutable Inboxとbounded process-local counterを提供する。Task状態、Event、Auditを変更しない |
 | Go External Action Service／WordPress Adapter | 既存Deliverableをtyped intentへ変換し、明示承認、immutable request／result evidence、外部公開、`action.completed`を調停する。credentialとHTTPはAdapter edgeだけに置く |
 | Go Interaction Domain／Service | 自然言語request、CEO質問回答、plan digest承認、適用済みProject、Reviewed Workflow／External Actionのtyped summaryとResult digestをappend-only turn／Version/CASで調停する。Provider、Vault、Task状態を知らない |
@@ -182,9 +184,9 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
-## Company OS Hierarchy (Goal / Responsibility Foundation, ADR-0060/ADR-0061/ADR-0062/ADR-0063)
+## Company OS Hierarchy (Goal / Responsibility Foundation, ADR-0060/ADR-0061/ADR-0062/ADR-0063/ADR-0064/ADR-0065)
 
-ADR-0060、ADR-0061、ADR-0062、ADR-0063により、Company OSの上位構造を次のように整理しました。
+ADR-0060、ADR-0061、ADR-0062、ADR-0063、ADR-0064、ADR-0065により、Company OSの上位構造を次のように整理しました。
 
 ```text
 Goal                      (実装済み: internal/goal, ADR-0060)
@@ -203,6 +205,20 @@ Task                      (実装済み)
 Goalは会社またはProjectが継続的に追求するstanding business outcomeで、単一Plan／Workflowより長生きします。Responsibilityは会社またはProject内のbusiness area／outcomeを継続的に担当するstanding obligationで、Goalを（任意で、同scope内に限り）参照でき、最大1名のEmployeeへbinding可能です（single-owner v1）。**Responsibility → Planningは接続済みです**（`process.GenerateResponsibilityPlan`、ADR-0062）：Human Operatorが`workcairn responsibility-plan --responsibility-id ... --instruction "..." --approved`を実行すると、Responsibilityの標準context（Title、linked Goals、Binding）を解決した上で、既存の`GenerateCEOPlan`（Provider呼び出し、`ceoplan.BuildPrompt`/`ParseIntent`/`NormalizeIntent`）へそのまま渡し、既存の`ceo-plan-apply`で承認・適用できる標準`ceoplan.Plan`を返します。Trigger手動限定・明示的Human instruction必須（Responsibility Titleのみから作業内容を捏造しない）・**Responsibility自身はTaskを直接作成せずWorkflowも直接実行しません**（Plan生成のみ）。
 
 **Routine（ADR-0063）はResponsibilityに紐づくsaved work definition + recurring triggerで、Workflowの兄弟概念です**（Routine≠Workflow：Routineは「何をいつ計画するか」の保存定義、Workflowは実際に実行するTask/依存関係構造）。`workcairn routine-create --routine-id ... --responsibility-id ... --instruction "..." --cadence weekly --weekday 1 --time-of-day 09:00 --approved`でRoutineを作成（初期状態はInactive）、`routine-activate`でActiveへ遷移させると同時に、既存の一shot Scheduler（ADR-0025）へ次回発火分のScheduleを1件だけ作成します。SchedulerはRecurrenceを一切知らず、常に「次の1回」だけを保持——Routine側が`Trigger.NextOccurrence`（daily／weekly限定、cron parserなし、UTC日付演算のみ）でRecurrence semanticを所有します。発火するSchedule targetは新しい`routine.plan`operation（Command Ledger管理、既存`task.execute`等と同型——手動`responsibility-plan`自体は非Ledgerのまま変更なし）で、ActiveなRoutineなら既存の`GenerateResponsibilityPlan`をそのまま呼び出してPlan生成のみ行い（Task／Workflow／Apply は一切行わない）、成功・失敗を問わず次のcadence発生分を改めてChainします（recurrence≠retry：同じ occurrence の自動retryは行わず、次の通常occurrenceだけを保証）。InactiveなRoutineへの発火はdispatch時のfresh Status確認によりno-op skipします（Schedule取消機能が存在しないため——新Scheduler capabilityは追加していません）。`routine-run-now`は手動acceptance primitiveで、Schedule状態に一切触れず同じPlanning pathをそのまま実行します。RoutineとScheduler／Event trigger以外の自動trigger（Evidence変化等）はまだ未実装です。GoalからTask／Planへの直接接続は意図的に作っていません（Goal→Responsibility→Planningという経路のみ）。RoleとResponsibilityは別概念です（Role＝どんな種類の仕事ができるか、Responsibility＝何を継続的に面倒見るか）。Responsibility ownerはTask assignmentを上書きしません（`ceoplan`のassignment解決はRequiredRoleのみに基づき、Responsibilityのownerを一切参照しません）。ResponsibilityはAuthorityでもありません（何を勝手にしてよいかは既存`autonomy.Contract`のまま）。
+
+**Routine schedulingのreliability（ADR-0064）**: `ExecuteRoutineActivate`のRoutine active commit成功後にSchedule creationが失敗すると「active RoutineなのにScheduleがない」Continuity violationが起き得たため、`scheduleNextRoutineOccurrence`を書き込み前Schedule Store読み取りにより冪等化しました（activate・post-occurrence chaining・新規`routine-reconcile`が共有する唯一のhelper）。`InspectRoutineScheduleHealth`（Schedule Store走査のみ、新規永続stateなし）が`routine-show`へ`schedule_healthy`として投影され、唯一の明示的repair primitiveとして`routine-reconcile`（承認必須・operator供給CommandID必須）を追加しました。rollback・hidden retryはいずれも採用していません。
+
+### Company Attention / Decision Feed（ADR-0065）
+
+```text
+Company State              (Goal / Responsibility / Routine / Interaction / Scheduler / Command Ledger等、正本)
+  ↓ read-only projection（新規state保存なし）
+Attention Projection       (実装済み: internal/attention, process.InspectAttention, ADR-0065)
+  ↓
+Human Decision             (workcairn attention-list / GET /v1/attention)
+```
+
+Attention Feedは新しいsource of truthではなく、既存の正本（Domain records／Events／Command Ledger／Interaction／Scheduler等）に対するread-only projectionです。v1は`approval_required`／`human_input_required`／`interaction_attention_required`（いずれもInteraction Sessionの既存State/`Next()`をそのまま分類）と`routine_recovery_required`（`InspectRoutineScheduleHealth`をそのまま再利用、ADR-0064）の4 typeのみに限定し、`recovery_required`／Task Hold／project-scope Routineは「全Project列挙」の既存primitiveが存在しないため、Responsibility未割当／Responsibility無しGoalは「actionableな根拠が既存semantics上ない」ためいずれも今回は採用していません（詳細はADR-0065）。Attention Itemは何も永続化せず、毎回再計算し、解消したら自然にFeedから消えます。AuditLog（過去の全Event）とは明確に異なり、現在actionableな状態のみを示します。優先順位はurgencyスコアではなく決定的なtype順＋時刻＋IDのtie-breakのみで、AI rankingは行いません。
 
 ## データ境界
 

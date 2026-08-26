@@ -815,6 +815,15 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
 		return 0
 	}
+	if operation == "attention-list" {
+		items, err := workspaceprocess.InspectAttention(ctx, options.vaultRoot, currentTime)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("ATTENTION_INSPECTION_FAILED", ""))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: map[string]any{"items": items}})
+		return 0
+	}
 	if operation == "action-wordpress-plan" || operation == "action-wordpress-publish" {
 		input := workspaceprocess.ActionPlanInput{
 			VaultRoot: options.vaultRoot, ProjectID: options.projectID, ProjectName: options.projectName,
@@ -1332,7 +1341,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	required := []string{options.vaultRoot}
 	if operation != "organization-inspect" && operation != "identity-validate" && operation != "employee-candidates-validate" && operation != "employee-hire-plan" && operation != "employee-hire-execute" && operation != "employee-rename-plan" && operation != "employee-rename-execute" && operation != "employee-rename-batch-plan" && operation != "employee-id-repair-plan" && operation != "employee-id-repair-execute" && operation != "organization-sync-plan" && operation != "organization-sync-execute" && operation != "ceo-plan-generate" && operation != "ceo-plan-apply-plan" && operation != "ceo-plan-apply" && operation != "schedule-plan" && operation != "schedule-create" && operation != "schedule-list" && operation != "goal-create" && operation != "goal-list" && operation != "goal-show" && operation != "goal-achieve" && operation != "goal-abandon" &&
 		operation != "responsibility-create" && operation != "responsibility-list" && operation != "responsibility-show" && operation != "responsibility-activate" && operation != "responsibility-deactivate" && operation != "responsibility-assign" && operation != "responsibility-unassign" && operation != "responsibility-plan" &&
-		operation != "routine-create" && operation != "routine-list" && operation != "routine-show" && operation != "routine-activate" && operation != "routine-deactivate" && operation != "routine-run-now" && operation != "routine-reconcile" &&
+		operation != "routine-create" && operation != "routine-list" && operation != "routine-show" && operation != "routine-activate" && operation != "routine-deactivate" && operation != "routine-run-now" && operation != "routine-reconcile" && operation != "attention-list" &&
 		!strings.HasPrefix(operation, "interaction-") {
 		required = append(required, options.projectName)
 	}
@@ -1556,7 +1565,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish", "goal-create", "goal-list", "goal-show", "goal-achieve", "goal-abandon", "responsibility-create", "responsibility-list", "responsibility-show", "responsibility-activate", "responsibility-deactivate", "responsibility-assign", "responsibility-unassign", "responsibility-plan", "routine-create", "routine-list", "routine-show", "routine-activate", "routine-deactivate", "routine-run-now", "routine-reconcile":
+	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish", "goal-create", "goal-list", "goal-show", "goal-achieve", "goal-abandon", "responsibility-create", "responsibility-list", "responsibility-show", "responsibility-activate", "responsibility-deactivate", "responsibility-assign", "responsibility-unassign", "responsibility-plan", "routine-create", "routine-list", "routine-show", "routine-activate", "routine-deactivate", "routine-run-now", "routine-reconcile", "attention-list":
 		return true
 	default:
 		return false

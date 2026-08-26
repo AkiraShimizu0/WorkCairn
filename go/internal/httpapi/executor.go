@@ -13,6 +13,7 @@ import (
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/attention"
 	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandcontract"
@@ -715,6 +716,10 @@ func (executor *ProcessExecutor) InspectConversation(ctx context.Context, sessio
 
 func (executor *ProcessExecutor) InspectCompanyActivity(ctx context.Context) (workspaceprocess.CompanyActivity, error) {
 	return workspaceprocess.InspectCompanyActivity(ctx, executor.vaultRoot)
+}
+
+func (executor *ProcessExecutor) InspectAttention(ctx context.Context) ([]attention.Item, error) {
+	return workspaceprocess.InspectAttention(ctx, executor.vaultRoot, time.Now())
 }
 
 func (executor *ProcessExecutor) PlanInteraction(ctx context.Context, request InteractionPlanRequest) (workspaceprocess.InteractionStartPlan, error) {

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AkiraShimizu0/workcairn/go/internal/attention"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
@@ -37,6 +38,7 @@ type Handler struct {
 	workReportInspector        WorkReportInspector
 	conversationInspector      ConversationInspector
 	companyActivityInspector   CompanyActivityInspector
+	attentionInspector         AttentionInspector
 	providerStatusInspector    ProviderStatusInspector
 	localSetup                 LocalSetup
 	localSetupAddress          string
@@ -95,6 +97,10 @@ type ConversationInspector interface {
 
 type CompanyActivityInspector interface {
 	InspectCompanyActivity(ctx context.Context) (workspaceprocess.CompanyActivity, error)
+}
+
+type AttentionInspector interface {
+	InspectAttention(ctx context.Context) ([]attention.Item, error)
 }
 
 type ProviderStatusInspector interface {
@@ -180,6 +186,10 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 	if companyActivityInspector, ok := executor.(CompanyActivityInspector); ok {
 		handler.companyActivityInspector = companyActivityInspector
 		handler.mux.HandleFunc("GET /v1/company-activity", handler.inspectCompanyActivity)
+	}
+	if attentionInspector, ok := executor.(AttentionInspector); ok {
+		handler.attentionInspector = attentionInspector
+		handler.mux.HandleFunc("GET /v1/attention", handler.inspectAttention)
 	}
 	if providerStatusInspector, ok := executor.(ProviderStatusInspector); ok {
 		handler.providerStatusInspector = providerStatusInspector
@@ -295,6 +305,20 @@ func (handler *Handler) inspectCompanyActivity(response http.ResponseWriter, req
 		return
 	}
 	writeCommandResponse(response, http.StatusOK, Response{Version: workspaceprocess.CompanyActivityVersion, OK: true, Result: encoded})
+}
+
+func (handler *Handler) inspectAttention(response http.ResponseWriter, request *http.Request) {
+	items, err := handler.attentionInspector.InspectAttention(request.Context())
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: workspaceprocess.AttentionVersion, OK: false, Error: &CommandError{Code: "ATTENTION_INSPECTION_FAILED", RecoveryRequired: true}})
+		return
+	}
+	encoded, err := json.Marshal(items)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: workspaceprocess.AttentionVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: workspaceprocess.AttentionVersion, OK: true, Result: encoded})
 }
 
 func (handler *Handler) inspectWorkReport(response http.ResponseWriter, request *http.Request) {

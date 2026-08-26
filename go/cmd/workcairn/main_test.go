@@ -18,6 +18,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/action"
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/workcairn/go/internal/attention"
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
 	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
@@ -1096,6 +1097,88 @@ func TestRoutineReconcileCLIRepairsMissingSchedule(t *testing.T) {
 	}
 	if !strings.Contains(showAfter.String(), `"schedule_healthy":true`) {
 		t.Fatalf("routine-show does not report schedule_healthy:true after reconciliation: %s", showAfter.String())
+	}
+}
+
+// TestAttentionListCLIReflectsRoutineRecoveryRequired confirms the new
+// read-only attention-list CLI operation surfaces an unhealthy Active
+// Routine, and that it disappears again once reconciled -- driven entirely
+// through the real CLI dispatcher, no approval required (read-only).
+func TestAttentionListCLIReflectsRoutineRecoveryRequired(t *testing.T) {
+	root := t.TempDir()
+	noSecretsDependencies := commandDependencies{
+		lookupEnv:     func(string) (string, bool) { t.Fatal("read-only step read Provider environment"); return "", false },
+		now:           commandTestTime,
+		newHTTPClient: func(time.Duration) claude.HTTPDoer { t.Fatal("read-only step created HTTP client"); return nil },
+	}
+	if exit := run(context.Background(), []string{
+		"responsibility-create", "--vault", root, "--responsibility-id", "RESP-1", "--responsibility-scope", "company",
+		"--responsibility-title", "オンボーディング品質を継続的に改善する", "--command-id", "CMD-RESP-1", "--approved",
+	}, new(bytes.Buffer), noSecretsDependencies); exit != 0 {
+		t.Fatal("responsibility-create failed")
+	}
+	if exit := run(context.Background(), []string{
+		"routine-create", "--vault", root, "--routine-id", "ROUTINE-1", "--routine-scope", "company",
+		"--responsibility-id", "RESP-1", "--instruction", "今週の改善項目を計画する", "--model", "Claude Sonnet 5",
+		"--cadence", "daily", "--time-of-day", "09:00", "--command-id", "CMD-ROUTINE-1", "--approved",
+	}, new(bytes.Buffer), noSecretsDependencies); exit != 0 {
+		t.Fatal("routine-create failed")
+	}
+
+	var emptyOutput bytes.Buffer
+	if exit := run(context.Background(), []string{"attention-list", "--vault", root}, &emptyOutput, noSecretsDependencies); exit != 0 {
+		t.Fatalf("attention-list response=%s", emptyOutput.String())
+	}
+	if strings.Contains(emptyOutput.String(), "routine_recovery_required") {
+		t.Fatalf("attention-list reported an item before the Routine was even Active: %s", emptyOutput.String())
+	}
+
+	store, err := vault.NewWorkspaceRoutineStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Get(context.Background(), "ROUTINE-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := record.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(context.Background(), active, record.Version); err != nil {
+		t.Fatal(err)
+	}
+
+	var unhealthyOutput bytes.Buffer
+	if exit := run(context.Background(), []string{"attention-list", "--vault", root, "--at", "2026-08-26T12:00:00Z"}, &unhealthyOutput, noSecretsDependencies); exit != 0 {
+		t.Fatalf("attention-list response=%s", unhealthyOutput.String())
+	}
+	unhealthyResponse := decodeCommandResponse(t, unhealthyOutput.Bytes())
+	if !unhealthyResponse.OK {
+		t.Fatalf("attention-list response=%#v", unhealthyResponse)
+	}
+	encoded, _ := json.Marshal(unhealthyResponse.Result)
+	var listed struct {
+		Items []attention.Item `json:"items"`
+	}
+	if err := json.Unmarshal(encoded, &listed); err != nil || len(listed.Items) != 1 ||
+		listed.Items[0].Type != attention.TypeRoutineRecoveryRequired || listed.Items[0].EntityID != "ROUTINE-1" {
+		t.Fatalf("attention-list result=%s err=%v", encoded, err)
+	}
+
+	if exit := run(context.Background(), []string{
+		"routine-reconcile", "--vault", root, "--routine-id", "ROUTINE-1", "--routine-scope", "company",
+		"--command-id", "CMD-RECONCILE-1", "--at", "2026-08-26T12:00:00Z", "--approved",
+	}, new(bytes.Buffer), noSecretsDependencies); exit != 0 {
+		t.Fatal("routine-reconcile failed")
+	}
+
+	var healedOutput bytes.Buffer
+	if exit := run(context.Background(), []string{"attention-list", "--vault", root}, &healedOutput, noSecretsDependencies); exit != 0 {
+		t.Fatalf("attention-list response=%s", healedOutput.String())
+	}
+	if strings.Contains(healedOutput.String(), "routine_recovery_required") {
+		t.Fatalf("attention-list still reports the Routine after reconciliation: %s", healedOutput.String())
 	}
 }
 
