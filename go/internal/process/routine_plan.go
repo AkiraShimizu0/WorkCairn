@@ -4,16 +4,36 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/workcairn/go/internal/responsibility"
 	"github.com/AkiraShimizu0/workcairn/go/internal/routine"
 	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 )
 
-var ErrRoutinePlanApprovalRequired = errors.New("explicit Routine Planning approval is required")
+var (
+	ErrRoutinePlanApprovalRequired = errors.New("explicit Routine Planning approval is required")
+	// ErrRoutineOccurrenceConflict means a Schedule already exists at this
+	// occurrence's deterministic ID but has already reached a terminal
+	// state -- Scheduler's own Schedule identity is immutable once created
+	// (ADR-0025), so this occurrence cannot be safely re-created under the
+	// same ID. This is an extremely narrow race (NextOccurrence always
+	// computes an instant strictly after "now", so a same-ID Schedule
+	// reaching a terminal state before that instant implies a clock or
+	// concurrent-reconciliation anomaly); it is reported rather than
+	// silently retried or swallowed.
+	ErrRoutineOccurrenceConflict = errors.New("a Schedule already exists for this Routine occurrence and has already reached a terminal state")
+	// ErrRoutineNotActiveForReconciliation means reconciliation was asked
+	// for an Inactive Routine -- reconciliation only restores the "Active
+	// Routine has a future occurrence" invariant; an Inactive Routine is
+	// never expected to have one (see ExecuteRoutinePlan's own dispatch-time
+	// skip).
+	ErrRoutineNotActiveForReconciliation = errors.New("routine is not active; reconciliation only applies to an Active Routine")
+)
 
 // routinePlanPayload is the workspace-command.v1 payload shape for the
 // "routine.plan" Schedule target operation -- independently defined here,
@@ -54,6 +74,14 @@ type RoutineActivateResult struct {
 // retry with the same CommandID/CurrentTime is safe: the transition step
 // replays its already-committed result, and Schedule creation is attempted
 // again with the same deterministically-derived Schedule/Command IDs.
+// ExecuteRoutineActivate returns success only when the Routine is durably
+// Active AND its next occurrence is durably represented as a Schedule --
+// never a silent half-success. If the transition succeeds but Schedule
+// creation fails, this function still returns a non-nil error: the Routine
+// is left correctly, durably Active with no pending Schedule, which is an
+// observable, recoverable state (Constitution Article 8; see
+// InspectRoutineScheduleHealth and ExecuteRoutineReconcile below), not a
+// rolled-back or ambiguous one.
 func ExecuteRoutineActivate(ctx context.Context, input RoutineTransitionInput, approved bool) (RoutineActivateResult, error) {
 	record, err := executeRoutineTransition(ctx, input, approved, "routine.activate", "ROUTINE_ACTIVATE_FAILED", "routine_activate", func(routineService *service.RoutineService) (routine.Record, error) {
 		return routineService.Activate(ctx, input.RoutineID, input.ExpectedVersion)
@@ -61,44 +89,184 @@ func ExecuteRoutineActivate(ctx context.Context, input RoutineTransitionInput, a
 	if err != nil {
 		return RoutineActivateResult{Routine: record}, err
 	}
-	schedule, scheduleErr := scheduleNextRoutineOccurrence(ctx, input.VaultRoot, record, input.CurrentTime)
+	schedule, _, scheduleErr := scheduleNextRoutineOccurrence(ctx, input.VaultRoot, record, input.CurrentTime, "")
 	if scheduleErr != nil {
 		return RoutineActivateResult{Routine: record}, scheduleErr
 	}
 	return RoutineActivateResult{Routine: record, NextScheduleID: schedule.ScheduleID}, nil
 }
 
-// scheduleNextRoutineOccurrence computes the Trigger's next occurrence
-// strictly after `after` and creates a one-shot Schedule targeting
-// "routine.plan" for it, via the existing, unmodified ExecuteScheduleCreation
-// -- no new Scheduler capability, no generic recurring-schedule primitive.
-// Schedule ID and the target Command's own CommandID are both deterministic
-// functions of (RoutineID, next due instant), so a retried caller (or two
-// callers racing on the same nominal occurrence) converge on the same IDs
-// -- ExecuteScheduleCreation's own existing duplicate-ID/duplicate-target
-// blocking (PlanScheduleCreation's "schedule_id_already_exists"/
-// "target_command_id_already_scheduled") is the only dedupe mechanism
-// relied on here; nothing new was built for this.
-func scheduleNextRoutineOccurrence(ctx context.Context, vaultRoot string, record routine.Record, after time.Time) (scheduler.Record, error) {
-	dueAt := record.Trigger.NextOccurrence(after)
+// routineOccurrenceIdentity derives the deterministic Schedule ID and
+// target Command ID for a Routine's next occurrence strictly after
+// `after`. This is the single occurrence-identity derivation every caller
+// (activation, post-occurrence chaining, and explicit operator
+// reconciliation) shares -- two different callers converging on the same
+// nominal occurrence converge on the same Schedule ID, which is what makes
+// duplicate-occurrence prevention hold regardless of which caller reaches
+// it first (see docs/adr/ADR-0064-routine-scheduling-reliability.md).
+func routineOccurrenceIdentity(record routine.Record, after time.Time) (dueAt time.Time, scheduleID, targetCommandID string) {
+	dueAt = record.Trigger.NextOccurrence(after)
 	suffix := dueAt.UTC().Format("20060102T150405Z")
-	scheduleID := "ROUTINE-" + record.RoutineID + "-" + suffix
-	targetCommandID := "routine-plan-" + record.RoutineID + "-" + suffix
+	return dueAt, "ROUTINE-" + record.RoutineID + "-" + suffix, "routine-plan-" + record.RoutineID + "-" + suffix
+}
+
+// scheduleNextRoutineOccurrence ensures exactly one one-shot Schedule
+// exists for the Routine's next occurrence strictly after `after`, via the
+// existing, unmodified ExecuteScheduleCreation -- no new Scheduler
+// capability, no generic recurring-schedule primitive.
+//
+// It is idempotent by construction: it first reads the Schedule Store for
+// this occurrence's deterministic ID, and if a non-terminal (pending or
+// dispatching) Schedule already exists there, it is returned as-is with no
+// second creation attempt -- this is what makes it safe to call
+// unconditionally from activation, post-occurrence chaining, AND explicit
+// operator reconciliation (ExecuteRoutineReconcile) without any of them
+// needing their own separate existence check or hidden retry loop. A
+// pre-existing Schedule that has already reached a terminal state at this
+// exact ID is reported as ErrRoutineOccurrenceConflict rather than
+// re-created (Schedule identity is immutable once created).
+//
+// commandIDOverride lets a caller supply its own Command ID for the
+// underlying schedule.create Ledger claim (used by ExecuteRoutineReconcile,
+// so a fresh reconciliation attempt is never stuck replaying a stale
+// cached failure). An empty string uses the same deterministic default
+// ("schedule-" + targetCommandID) activation and post-occurrence chaining
+// have always used -- replaying either of those specific outer operations
+// with the same Command ID therefore continues to consistently replay the
+// same chaining outcome, matching every other Command Ledger idempotency
+// in this codebase.
+func scheduleNextRoutineOccurrence(ctx context.Context, vaultRoot string, record routine.Record, after time.Time, commandIDOverride string) (schedule scheduler.Record, alreadyExisted bool, err error) {
+	dueAt, scheduleID, targetCommandID := routineOccurrenceIdentity(record, after)
+	scheduleStore, err := vault.NewScheduleStore(vaultRoot)
+	if err != nil {
+		return scheduler.Record{}, false, err
+	}
+	existing, getErr := scheduleStore.Get(ctx, scheduleID)
+	if getErr == nil {
+		if !existing.State.Terminal() {
+			return existing, true, nil
+		}
+		return scheduler.Record{}, false, fmt.Errorf("%w: %s", ErrRoutineOccurrenceConflict, scheduleID)
+	}
+	if !errors.Is(getErr, scheduler.ErrNotFound) {
+		return scheduler.Record{}, false, getErr
+	}
+	commandID := commandIDOverride
+	if commandID == "" {
+		commandID = "schedule-" + targetCommandID
+	}
 	payload, err := json.Marshal(routinePlanPayload{
 		RoutineID: record.RoutineID, Scope: string(record.Scope), ProjectName: record.ProjectName, CurrentTime: dueAt,
 	})
 	if err != nil {
-		return scheduler.Record{}, err
+		return scheduler.Record{}, false, err
 	}
-	return ExecuteScheduleCreation(ctx, ScheduleCreationInput{
+	created, err := ExecuteScheduleCreation(ctx, ScheduleCreationInput{
 		VaultRoot: vaultRoot, ScheduleID: scheduleID, DueAt: dueAt, CurrentTime: after,
 		ApprovalReference: "routine:" + record.RoutineID,
-		CommandID:         "schedule-" + targetCommandID,
+		CommandID:         commandID,
 		Target: scheduler.Command{
 			Version: scheduler.CommandVersion, CommandID: targetCommandID, Operation: "routine.plan",
 			Approved: true, Payload: payload,
 		},
 	}, true)
+	return created, false, err
+}
+
+// InspectRoutineScheduleHealth reports whether an Active Routine currently
+// has a non-terminal (pending or dispatching) Schedule targeting
+// "routine.plan" for it -- a pure read-side projection over the existing
+// Schedule Store, computed on demand and never persisted as new Routine or
+// Attention state. An Inactive Routine is always reported healthy: it is
+// never expected to have one (ExecuteRoutinePlan's own dispatch-time skip).
+// This is the durable fact "Routine requires recovery" a future Attention
+// Feed could project read-only, without Routine Core carrying any
+// Attention-specific state of its own.
+func InspectRoutineScheduleHealth(ctx context.Context, vaultRoot string, record routine.Record) (bool, error) {
+	if record.Status != routine.StatusActive {
+		return true, nil
+	}
+	scheduleStore, err := vault.NewScheduleStore(vaultRoot)
+	if err != nil {
+		return false, err
+	}
+	records, err := scheduleStore.List(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, candidate := range records {
+		if candidate.State.Terminal() || candidate.Command.Operation != "routine.plan" {
+			continue
+		}
+		var payload routinePlanPayload
+		if json.Unmarshal(candidate.Command.Payload, &payload) != nil {
+			continue
+		}
+		if payload.RoutineID == record.RoutineID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// RoutineReconcileInput's CommandID governs the underlying schedule.create
+// Ledger claim if a repair write is actually needed -- required and
+// operator-supplied, exactly like every other mutating Command in this
+// codebase, so each genuine reconciliation attempt gets its own identity
+// rather than replaying a stale cached outcome.
+type RoutineReconcileInput struct {
+	VaultRoot   string
+	RoutineID   string
+	Scope       routine.Scope
+	ProjectName string
+	CurrentTime time.Time
+	CommandID   string
+}
+
+type RoutineReconcileResult struct {
+	RoutineID string `json:"routine_id"`
+	// AlreadyHealthy is true when a non-terminal Schedule already existed
+	// for this Routine -- no write was attempted.
+	AlreadyHealthy bool   `json:"already_healthy,omitempty"`
+	ScheduleID     string `json:"schedule_id,omitempty"`
+}
+
+// ExecuteRoutineReconcile is the explicit, Human-invoked repair primitive
+// for the one Continuity invariant this Checkpoint hardens: every Active
+// Routine must have a future occurrence durably represented. It never
+// hidden-retries and is never invoked automatically -- an operator (or a
+// future Attention Feed action) must explicitly ask for it. It reuses
+// scheduleNextRoutineOccurrence verbatim, so it can never create a
+// duplicate Schedule for an occurrence that already has one, and it
+// requires an explicit approval + CommandID exactly like every other
+// mutating Routine operation (ExecuteRoutineActivate/Deactivate).
+func ExecuteRoutineReconcile(ctx context.Context, input RoutineReconcileInput, approved bool) (RoutineReconcileResult, error) {
+	if !approved {
+		return RoutineReconcileResult{}, ErrRoutineApprovalRequired
+	}
+	store, err := routineStoreFor(input.VaultRoot, input.Scope, input.ProjectName)
+	if err != nil {
+		return RoutineReconcileResult{}, err
+	}
+	record, err := store.Get(ctx, input.RoutineID)
+	if err != nil {
+		return RoutineReconcileResult{}, err
+	}
+	if record.Status != routine.StatusActive {
+		return RoutineReconcileResult{}, ErrRoutineNotActiveForReconciliation
+	}
+	healthy, err := InspectRoutineScheduleHealth(ctx, input.VaultRoot, record)
+	if err != nil {
+		return RoutineReconcileResult{}, err
+	}
+	if healthy {
+		return RoutineReconcileResult{RoutineID: record.RoutineID, AlreadyHealthy: true}, nil
+	}
+	schedule, alreadyExisted, err := scheduleNextRoutineOccurrence(ctx, input.VaultRoot, record, input.CurrentTime, input.CommandID)
+	if err != nil {
+		return RoutineReconcileResult{}, err
+	}
+	return RoutineReconcileResult{RoutineID: record.RoutineID, AlreadyHealthy: alreadyExisted, ScheduleID: schedule.ScheduleID}, nil
 }
 
 type RoutinePlanDispatchInput struct {
@@ -191,7 +359,7 @@ func executeClaimedRoutinePlan(ctx context.Context, input RoutinePlanDispatchInp
 	// today's Planning happen" and "is next week's occurrence scheduled"
 	// are different facts, and conflating them would make failures harder
 	// to diagnose, not easier.
-	if nextSchedule, chainErr := scheduleNextRoutineOccurrence(ctx, input.VaultRoot, record, input.CurrentTime); chainErr == nil {
+	if nextSchedule, _, chainErr := scheduleNextRoutineOccurrence(ctx, input.VaultRoot, record, input.CurrentTime, ""); chainErr == nil {
 		result.NextScheduleID = nextSchedule.ScheduleID
 	}
 	return result, planErr

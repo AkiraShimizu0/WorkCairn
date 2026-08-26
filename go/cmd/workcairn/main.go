@@ -743,7 +743,11 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			writeCommandResponse(output, failureResponse("ROUTINE_INSPECTION_FAILED", ""))
 			return 1
 		}
-		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		result := map[string]any{"routine": record}
+		if healthy, healthErr := workspaceprocess.InspectRoutineScheduleHealth(ctx, options.vaultRoot, record); healthErr == nil {
+			result["schedule_healthy"] = healthy
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
 		return 0
 	}
 	if operation == "routine-activate" {
@@ -776,6 +780,22 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 			return 1
 		}
 		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		return 0
+	}
+	if operation == "routine-reconcile" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		result, err := workspaceprocess.ExecuteRoutineReconcile(ctx, workspaceprocess.RoutineReconcileInput{
+			VaultRoot: options.vaultRoot, RoutineID: options.routineID, Scope: routine.Scope(options.routineScope), ProjectName: options.projectName,
+			CurrentTime: currentTime, CommandID: options.commandID,
+		}, true)
+		if err != nil {
+			writeCommandResponse(output, durableCommandFailureResponse(err, "ROUTINE_RECONCILE_FAILED", "routine_reconcile"))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
 		return 0
 	}
 	if operation == "routine-run-now" {
@@ -1312,7 +1332,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	required := []string{options.vaultRoot}
 	if operation != "organization-inspect" && operation != "identity-validate" && operation != "employee-candidates-validate" && operation != "employee-hire-plan" && operation != "employee-hire-execute" && operation != "employee-rename-plan" && operation != "employee-rename-execute" && operation != "employee-rename-batch-plan" && operation != "employee-id-repair-plan" && operation != "employee-id-repair-execute" && operation != "organization-sync-plan" && operation != "organization-sync-execute" && operation != "ceo-plan-generate" && operation != "ceo-plan-apply-plan" && operation != "ceo-plan-apply" && operation != "schedule-plan" && operation != "schedule-create" && operation != "schedule-list" && operation != "goal-create" && operation != "goal-list" && operation != "goal-show" && operation != "goal-achieve" && operation != "goal-abandon" &&
 		operation != "responsibility-create" && operation != "responsibility-list" && operation != "responsibility-show" && operation != "responsibility-activate" && operation != "responsibility-deactivate" && operation != "responsibility-assign" && operation != "responsibility-unassign" && operation != "responsibility-plan" &&
-		operation != "routine-create" && operation != "routine-list" && operation != "routine-show" && operation != "routine-activate" && operation != "routine-deactivate" && operation != "routine-run-now" &&
+		operation != "routine-create" && operation != "routine-list" && operation != "routine-show" && operation != "routine-activate" && operation != "routine-deactivate" && operation != "routine-run-now" && operation != "routine-reconcile" &&
 		!strings.HasPrefix(operation, "interaction-") {
 		required = append(required, options.projectName)
 	}
@@ -1486,10 +1506,10 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	if operation == "routine-create" {
 		required = append(required, options.routineID, options.routineScope, options.responsibilityID, options.instruction, options.model, options.routineCadence, options.routineTimeOfDay, options.commandID)
 	}
-	if operation == "routine-list" || operation == "routine-show" || operation == "routine-activate" || operation == "routine-deactivate" || operation == "routine-run-now" {
+	if operation == "routine-list" || operation == "routine-show" || operation == "routine-activate" || operation == "routine-deactivate" || operation == "routine-run-now" || operation == "routine-reconcile" {
 		required = append(required, options.routineScope)
 	}
-	if operation == "routine-show" || operation == "routine-activate" || operation == "routine-deactivate" || operation == "routine-run-now" {
+	if operation == "routine-show" || operation == "routine-activate" || operation == "routine-deactivate" || operation == "routine-run-now" || operation == "routine-reconcile" {
 		required = append(required, options.routineID)
 	}
 	if operation == "routine-activate" {
@@ -1504,8 +1524,11 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 			return commandOptions{}, errors.New("expected Routine Version is required")
 		}
 	}
+	if operation == "routine-reconcile" {
+		required = append(required, options.commandID, options.at)
+	}
 	routineOperation := operation == "routine-create" || operation == "routine-list" || operation == "routine-show" ||
-		operation == "routine-activate" || operation == "routine-deactivate" || operation == "routine-run-now"
+		operation == "routine-activate" || operation == "routine-deactivate" || operation == "routine-run-now" || operation == "routine-reconcile"
 	if routineOperation && options.routineScope != "" &&
 		routine.Scope(options.routineScope) != routine.ScopeCompany && routine.Scope(options.routineScope) != routine.ScopeProject {
 		return commandOptions{}, errors.New("routine-scope must be company or project")
@@ -1533,7 +1556,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish", "goal-create", "goal-list", "goal-show", "goal-achieve", "goal-abandon", "responsibility-create", "responsibility-list", "responsibility-show", "responsibility-activate", "responsibility-deactivate", "responsibility-assign", "responsibility-unassign", "responsibility-plan", "routine-create", "routine-list", "routine-show", "routine-activate", "routine-deactivate", "routine-run-now":
+	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish", "goal-create", "goal-list", "goal-show", "goal-achieve", "goal-abandon", "responsibility-create", "responsibility-list", "responsibility-show", "responsibility-activate", "responsibility-deactivate", "responsibility-assign", "responsibility-unassign", "responsibility-plan", "routine-create", "routine-list", "routine-show", "routine-activate", "routine-deactivate", "routine-run-now", "routine-reconcile":
 		return true
 	default:
 		return false

@@ -942,6 +942,16 @@ func TestRoutineCLILifecycleCreatesActivatesAndRunsNow(t *testing.T) {
 		t.Fatalf("schedule-list does not contain the Routine's next occurrence %s: %s", activated.NextScheduleID, listOutput.String())
 	}
 
+	var showOutput bytes.Buffer
+	if exit := run(context.Background(), []string{
+		"routine-show", "--vault", root, "--routine-id", "ROUTINE-1", "--routine-scope", "company",
+	}, &showOutput, noSecretsDependencies); exit != 0 {
+		t.Fatalf("routine-show response=%s", showOutput.String())
+	}
+	if !strings.Contains(showOutput.String(), `"schedule_healthy":true`) {
+		t.Fatalf("routine-show does not report schedule_healthy:true after a successful activation: %s", showOutput.String())
+	}
+
 	intentOutput, _ := json.Marshal(map[string]any{
 		"project_name": "オンボーディング改善", "objective": "新規ユーザーのオンボーディング体験を改善する",
 		"summary": "今週の改善項目を計画する",
@@ -989,6 +999,103 @@ func TestRoutineCLILifecycleCreatesActivatesAndRunsNow(t *testing.T) {
 	var deactivated routine.Record
 	if err := json.Unmarshal(encodedDeactivate, &deactivated); err != nil || deactivated.Status != routine.StatusInactive {
 		t.Fatalf("routine-deactivate result=%s err=%v", encodedDeactivate, err)
+	}
+}
+
+// TestRoutineReconcileCLIRepairsMissingSchedule drives the PHASE U-5
+// reliability primitive through the real CLI: routine-reconcile requires
+// approval, reports schedule_healthy:false via routine-show while an
+// Active Routine has no future occurrence, repairs it, and then reports
+// healthy again -- all without ever touching the Provider.
+func TestRoutineReconcileCLIRepairsMissingSchedule(t *testing.T) {
+	root := t.TempDir()
+	noSecretsDependencies := commandDependencies{
+		lookupEnv: func(string) (string, bool) {
+			t.Fatal("read-only/unapproved step read Provider environment")
+			return "", false
+		},
+		now: commandTestTime,
+		newHTTPClient: func(time.Duration) claude.HTTPDoer {
+			t.Fatal("read-only/unapproved step created HTTP client")
+			return nil
+		},
+	}
+	if exit := run(context.Background(), []string{
+		"responsibility-create", "--vault", root, "--responsibility-id", "RESP-1", "--responsibility-scope", "company",
+		"--responsibility-title", "オンボーディング品質を継続的に改善する", "--command-id", "CMD-RESP-1", "--approved",
+	}, new(bytes.Buffer), noSecretsDependencies); exit != 0 {
+		t.Fatal("responsibility-create failed")
+	}
+	if exit := run(context.Background(), []string{
+		"routine-create", "--vault", root, "--routine-id", "ROUTINE-1", "--routine-scope", "company",
+		"--responsibility-id", "RESP-1", "--instruction", "今週の改善項目を計画する", "--model", "Claude Sonnet 5",
+		"--cadence", "weekly", "--weekday", "1", "--time-of-day", "09:00", "--command-id", "CMD-ROUTINE-1", "--approved",
+	}, new(bytes.Buffer), noSecretsDependencies); exit != 0 {
+		t.Fatal("routine-create failed")
+	}
+	// Simulate the exact durable state PHASE U-5 hardens against: the
+	// Routine's own Active transition committed with no Schedule ever
+	// created for it. workspaceprocess is used directly here (rather than
+	// forcing a real Schedule-creation failure through the CLI) purely to
+	// construct that state economically.
+	store, err := vault.NewWorkspaceRoutineStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Get(context.Background(), "ROUTINE-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := record.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(context.Background(), active, record.Version); err != nil {
+		t.Fatal(err)
+	}
+
+	var showBefore bytes.Buffer
+	if exit := run(context.Background(), []string{
+		"routine-show", "--vault", root, "--routine-id", "ROUTINE-1", "--routine-scope", "company",
+	}, &showBefore, noSecretsDependencies); exit != 0 {
+		t.Fatalf("routine-show response=%s", showBefore.String())
+	}
+	if !strings.Contains(showBefore.String(), `"schedule_healthy":false`) {
+		t.Fatalf("routine-show does not report schedule_healthy:false for an Active Routine missing its occurrence: %s", showBefore.String())
+	}
+
+	var unapprovedReconcile bytes.Buffer
+	reconcileArgs := []string{
+		"routine-reconcile", "--vault", root, "--routine-id", "ROUTINE-1", "--routine-scope", "company",
+		"--command-id", "CMD-RECONCILE-1", "--at", "2026-08-26T12:00:00Z",
+	}
+	if exit := run(context.Background(), reconcileArgs, &unapprovedReconcile, noSecretsDependencies); exit != 1 {
+		t.Fatalf("unapproved routine-reconcile exit=%d response=%s", exit, unapprovedReconcile.String())
+	}
+	unapprovedResponse := decodeCommandResponse(t, unapprovedReconcile.Bytes())
+	if unapprovedResponse.OK || unapprovedResponse.Error == nil || unapprovedResponse.Error.Code != "APPROVAL_REQUIRED" {
+		t.Fatalf("unapproved routine-reconcile response=%#v", unapprovedResponse)
+	}
+
+	var reconcileOutput bytes.Buffer
+	if exit := run(context.Background(), append(reconcileArgs, "--approved"), &reconcileOutput, noSecretsDependencies); exit != 0 {
+		t.Fatalf("routine-reconcile response=%s", reconcileOutput.String())
+	}
+	reconcileResponse := decodeCommandResponse(t, reconcileOutput.Bytes())
+	encodedReconcile, _ := json.Marshal(reconcileResponse.Result)
+	var reconciled workspaceprocess.RoutineReconcileResult
+	if err := json.Unmarshal(encodedReconcile, &reconciled); err != nil || reconciled.AlreadyHealthy || reconciled.ScheduleID == "" {
+		t.Fatalf("routine-reconcile result=%s err=%v", encodedReconcile, err)
+	}
+
+	var showAfter bytes.Buffer
+	if exit := run(context.Background(), []string{
+		"routine-show", "--vault", root, "--routine-id", "ROUTINE-1", "--routine-scope", "company",
+	}, &showAfter, noSecretsDependencies); exit != 0 {
+		t.Fatalf("routine-show response=%s", showAfter.String())
+	}
+	if !strings.Contains(showAfter.String(), `"schedule_healthy":true`) {
+		t.Fatalf("routine-show does not report schedule_healthy:true after reconciliation: %s", showAfter.String())
 	}
 }
 
