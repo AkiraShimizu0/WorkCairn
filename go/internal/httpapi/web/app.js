@@ -130,6 +130,7 @@ const ui = {
   timeline: document.querySelector("#activity-timeline"),
   employeeGrid: document.querySelector("#employee-grid"),
   companyFeed: document.querySelector("#company-feed"),
+  companyAttention: document.querySelector("#company-attention"),
   teamCount: document.querySelector("#team-count"),
   attentionGrid: document.querySelector("#attention-grid"),
   autonomySummary: document.querySelector("#autonomy-summary"),
@@ -165,6 +166,9 @@ const state = {
   next: null,
   organization: null,
   companyActivity: null,
+  companyAttention: null,
+  companyAttentionError: null,
+  companyAttentionLoading: false,
   evidence: new Map(),
   workReport: null,
   workReportError: null,
@@ -1247,7 +1251,13 @@ async function startWorkspace() {
   ui.menuButton.hidden = isDesktopLayout();
   setConnected(true);
   renderSessionListFilter();
-  await Promise.all([loadProviderStatus(), loadWorkspaceStatus(), loadOrganization().catch(() => null), loadCompanyActivity().catch(() => null)]);
+  await Promise.all([
+    loadProviderStatus(),
+    loadWorkspaceStatus(),
+    loadOrganization().catch(() => null),
+    loadCompanyActivity().catch(() => null),
+    loadCompanyAttention().catch(() => null),
+  ]);
   const stored = localStorage.getItem(STORAGE_SESSION);
   if (stored) {
     try {
@@ -3077,9 +3087,28 @@ async function loadCompanyActivity(force = false) {
   return state.companyActivity;
 }
 
+async function loadCompanyAttention(force = false) {
+  if (!force && state.companyAttention !== null && !state.companyAttentionError) {
+    return state.companyAttention;
+  }
+  state.companyAttentionLoading = true;
+  renderCompanyAttention();
+  try {
+    const items = await requestJSON("/v1/attention");
+    state.companyAttention = Array.isArray(items) ? items : [];
+    state.companyAttentionError = null;
+  } catch (error) {
+    state.companyAttentionError = error;
+  } finally {
+    state.companyAttentionLoading = false;
+  }
+  renderCompanyAttention();
+  return state.companyAttention;
+}
+
 async function refreshEmployeesPane() {
   try {
-    await Promise.all([loadOrganization(), loadCompanyActivity(true)]);
+    await Promise.all([loadOrganization(), loadCompanyActivity(true), loadCompanyAttention(true)]);
     await loadTaskEvidenceDetails();
     renderEmployeesPane();
   } catch {
@@ -3343,6 +3372,119 @@ function renderEmployeesPane() {
     );
   }
   renderCompanyFeed();
+  renderCompanyAttention();
+}
+
+const ATTENTION_TYPE_LABELS = {
+  approval_required: "承認が必要",
+  human_input_required: "回答が必要",
+  interaction_attention_required: "確認が必要",
+  routine_recovery_required: "Routineの修復が必要",
+};
+
+const ATTENTION_ACTION_LABELS = {
+  approve: "承認",
+  answer: "回答",
+  inspect: "確認",
+  resume: "再開",
+  reconcile: "修復",
+};
+
+const ATTENTION_ENTITY_LABELS = {
+  interaction: "依頼",
+  routine: "Routine",
+};
+
+function attentionTypeLabel(type) {
+  return ATTENTION_TYPE_LABELS[type] || type || "不明";
+}
+
+function attentionActionLabel(kind) {
+  return ATTENTION_ACTION_LABELS[kind] || kind || "不明";
+}
+
+function attentionEntityLabel(entityType) {
+  return ATTENTION_ENTITY_LABELS[entityType] || entityType || "不明";
+}
+
+function attentionItemOpenButton(item) {
+  if (item.entity_type !== "interaction" || !item.entity_id) return null;
+  switch (item.action?.kind) {
+  case "approve":
+  case "answer":
+  case "inspect":
+  case "resume":
+    return button("依頼を開く", "quiet chip", async () => {
+      await selectSession(item.entity_id);
+      showRequestDetail(item.entity_id);
+    });
+  default:
+    return null;
+  }
+}
+
+function renderCompanyAttentionItem(item, index) {
+  const contextRows = [
+    node("div", { class: "attention-context-row" },
+      node("dt", {}, "対象"),
+      node("dd", {}, `${attentionEntityLabel(item.entity_type)} · ${item.entity_id || "—"}`),
+    ),
+    item.project_name
+      ? node("div", { class: "attention-context-row" },
+        node("dt", {}, "Project"),
+        node("dd", {}, item.project_name),
+      )
+      : null,
+    item.responsibility_id
+      ? node("div", { class: "attention-context-row" },
+        node("dt", {}, "Responsibility"),
+        node("dd", {}, item.responsibility_id),
+      )
+      : null,
+    item.observed_at
+      ? node("div", { class: "attention-context-row" },
+        node("dt", {}, "確認時刻"),
+        node("dd", {}, node("time", { datetime: item.observed_at }, sessionTimeLabel(item.observed_at))),
+      )
+      : null,
+  ].filter(Boolean);
+  const actionButton = attentionItemOpenButton(item);
+  return node("article", {
+    class: "attention-item",
+    "data-attention-index": String(index),
+    "data-attention-type": item.type || "",
+    "data-attention-action": item.action?.kind || "",
+  },
+  node("p", { class: "attention-item-summary" }, item.summary || ""),
+  node("div", { class: "attention-item-meta" },
+    node("span", { class: "attention-type-chip" }, attentionTypeLabel(item.type)),
+    node("span", { class: "attention-action-chip" }, attentionActionLabel(item.action?.kind)),
+  ),
+  node("dl", { class: "attention-item-context" }, ...contextRows),
+  actionButton ? node("div", { class: "attention-item-actions" }, actionButton) : null,
+  );
+}
+
+function renderCompanyAttention() {
+  if (state.companyAttentionLoading && state.companyAttention === null) {
+    ui.companyAttention.replaceChildren(node("p", { class: "empty" }, "読み込み中..."));
+    return;
+  }
+  const fragments = [];
+  if (state.companyAttentionError) {
+    fragments.push(node("p", { class: "warning attention-section-warning" }, "対応が必要な項目を読み込めませんでした。"));
+  }
+  const items = state.companyAttention || [];
+  if (!items.length) {
+    if (!state.companyAttentionError) {
+      ui.companyAttention.replaceChildren(node("p", { class: "empty" }, "現在、対応が必要な項目はありません"));
+      return;
+    }
+    ui.companyAttention.replaceChildren(...fragments);
+    return;
+  }
+  fragments.push(...items.map((item, index) => renderCompanyAttentionItem(item, index)));
+  ui.companyAttention.replaceChildren(...fragments);
 }
 
 function renderCompanyFeed() {
@@ -3696,10 +3838,13 @@ setInterval(async () => {
   if (!shouldBlockPollingRefresh() &&
     !ui.actionDialog.open && !ui.requestDialog.open && !ui.setupDialog.open && document.visibilityState === "visible") {
     if (isDraftRequestActive()) return;
-    if (state.record) await refreshCurrent(true);
-    else {
+    if (state.record) {
+      await refreshCurrent(true);
+      await loadCompanyAttention(true).catch(() => null);
+      renderCompanyAttention();
+    } else {
       try {
-        await Promise.all([loadSessions(), loadCompanyActivity(true)]);
+        await Promise.all([loadSessions(), loadCompanyActivity(true), loadCompanyAttention(true)]);
         renderSessions();
         renderEmployeesPane();
       } catch {}

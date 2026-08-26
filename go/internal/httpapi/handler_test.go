@@ -385,6 +385,40 @@ func TestEmbeddedWebUIProjectsAcceptedCommandAsInFlightUntilTerminal(t *testing.
 	}
 }
 
+func TestEmbeddedWebUIProjectsCompanyAttentionFeed(t *testing.T) {
+	content, err := webUI.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	for _, required := range []string{
+		`requestJSON("/v1/attention")`,
+		"renderCompanyAttention",
+		"loadCompanyAttention",
+		"approval_required",
+		"human_input_required",
+		"interaction_attention_required",
+		"routine_recovery_required",
+		"現在、対応が必要な項目はありません",
+		"ATTENTION_TYPE_LABELS",
+		"ATTENTION_ACTION_LABELS",
+		"attentionItemOpenButton",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("embedded UI missing company attention projection marker %q", required)
+		}
+	}
+	renderStart := strings.Index(script, "function renderCompanyAttention()")
+	renderEnd := strings.Index(script[renderStart:], "function renderCompanyFeed()")
+	if renderStart < 0 || renderEnd < 0 {
+		t.Fatal("renderCompanyAttention() is missing")
+	}
+	renderBlock := script[renderStart : renderStart+renderEnd]
+	if strings.Contains(renderBlock, ".sort(") {
+		t.Fatal("company attention feed must not re-sort backend items in the UI")
+	}
+}
+
 func TestCommandProviderFailureProjectionFindsReviewedWorkflowTaskFailure(t *testing.T) {
 	content, err := webUI.ReadFile("web/app.js")
 	if err != nil {
