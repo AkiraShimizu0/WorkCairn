@@ -24,6 +24,7 @@ import (
 	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
 	"github.com/AkiraShimizu0/workcairn/go/internal/project"
 	"github.com/AkiraShimizu0/workcairn/go/internal/recovery"
+	"github.com/AkiraShimizu0/workcairn/go/internal/responsibility"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
 	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
@@ -44,32 +45,34 @@ type commandDependencies struct {
 }
 
 type commandOptions struct {
-	vaultRoot, projectID, projectName, taskID string
-	reviewerID, reviewVersion                 string
-	at, approvalReference                     string
-	executionID, commandID                    string
-	migrationPlanFile                         string
-	identityName                              string
-	description, taskTitle, assigneeID        string
-	employeeID, department, role, model       string
-	oldName, newName, reason                  string
-	recoveryAction, recoveryReason            string
-	ceoRequest, planJSON, scheduleJSON        string
-	goalID, goalScope, goalTitle, goalOutcome string
-	actionTarget                              string
-	actionSourceSHA256                        string
-	sessionID, requestDigest, planDigest      string
-	workflowDigest                            string
-	actionPlanDigest                          string
-	candidateJSONs                            stringListFlag
-	answerJSONs                               stringListFlag
-	repairJSONs                               stringListFlag
-	renameJSONs                               stringListFlag
-	dependencyJSONs                           stringListFlag
-	approved                                  bool
-	timeout                                   time.Duration
-	maxTasks                                  int
-	expectedVersion                           uint64
+	vaultRoot, projectID, projectName, taskID                  string
+	reviewerID, reviewVersion                                  string
+	at, approvalReference                                      string
+	executionID, commandID                                     string
+	migrationPlanFile                                          string
+	identityName                                               string
+	description, taskTitle, assigneeID                         string
+	employeeID, department, role, model                        string
+	oldName, newName, reason                                   string
+	recoveryAction, recoveryReason                             string
+	ceoRequest, planJSON, scheduleJSON                         string
+	goalID, goalScope, goalTitle, goalOutcome                  string
+	responsibilityID, responsibilityScope, responsibilityTitle string
+	goalRefs                                                   stringListFlag
+	actionTarget                                               string
+	actionSourceSHA256                                         string
+	sessionID, requestDigest, planDigest                       string
+	workflowDigest                                             string
+	actionPlanDigest                                           string
+	candidateJSONs                                             stringListFlag
+	answerJSONs                                                stringListFlag
+	repairJSONs                                                stringListFlag
+	renameJSONs                                                stringListFlag
+	dependencyJSONs                                            stringListFlag
+	approved                                                   bool
+	timeout                                                    time.Duration
+	maxTasks                                                   int
+	expectedVersion                                            uint64
 }
 
 type commandResponse struct {
@@ -586,6 +589,99 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
 		return 0
 	}
+	if operation == "responsibility-list" {
+		records, err := workspaceprocess.InspectResponsibilities(ctx, options.vaultRoot, responsibility.Scope(options.responsibilityScope), options.projectName)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("RESPONSIBILITY_INSPECTION_FAILED", ""))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: map[string]any{"responsibilities": records}})
+		return 0
+	}
+	if operation == "responsibility-show" {
+		record, err := workspaceprocess.InspectResponsibility(ctx, options.vaultRoot, responsibility.Scope(options.responsibilityScope), options.projectName, options.responsibilityID)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("RESPONSIBILITY_INSPECTION_FAILED", ""))
+			return 1
+		}
+		binding, bindingErr := workspaceprocess.InspectResponsibilityBinding(ctx, options.vaultRoot, responsibility.Scope(options.responsibilityScope), options.projectName, options.responsibilityID)
+		result := map[string]any{"responsibility": record}
+		if bindingErr == nil {
+			result["binding"] = binding
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
+		return 0
+	}
+	if operation == "responsibility-create" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		record, err := workspaceprocess.ExecuteResponsibilityCreate(ctx, workspaceprocess.ResponsibilityCreateInput{
+			VaultRoot: options.vaultRoot, ResponsibilityID: options.responsibilityID, Scope: responsibility.Scope(options.responsibilityScope), ProjectName: options.projectName,
+			Title: options.responsibilityTitle, GoalRefs: options.goalRefs, CurrentTime: currentTime, CommandID: options.commandID,
+		}, true)
+		if err != nil {
+			writeCommandResponse(output, durableCommandFailureResponse(err, "RESPONSIBILITY_CREATE_FAILED", "responsibility_create"))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		return 0
+	}
+	if operation == "responsibility-activate" || operation == "responsibility-deactivate" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		input := workspaceprocess.ResponsibilityTransitionInput{
+			VaultRoot: options.vaultRoot, ResponsibilityID: options.responsibilityID, Scope: responsibility.Scope(options.responsibilityScope), ProjectName: options.projectName,
+			ExpectedVersion: options.expectedVersion, CommandID: options.commandID,
+		}
+		var record responsibility.Record
+		var err error
+		var failureCode, failureStage string
+		if operation == "responsibility-activate" {
+			record, err = workspaceprocess.ExecuteResponsibilityActivate(ctx, input, true)
+			failureCode, failureStage = "RESPONSIBILITY_ACTIVATE_FAILED", "responsibility_activate"
+		} else {
+			record, err = workspaceprocess.ExecuteResponsibilityDeactivate(ctx, input, true)
+			failureCode, failureStage = "RESPONSIBILITY_DEACTIVATE_FAILED", "responsibility_deactivate"
+		}
+		if err != nil {
+			writeCommandResponse(output, durableCommandFailureResponse(err, failureCode, failureStage))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		return 0
+	}
+	if operation == "responsibility-assign" || operation == "responsibility-unassign" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		var binding responsibility.Binding
+		var err error
+		var failureCode, failureStage string
+		if operation == "responsibility-assign" {
+			binding, err = workspaceprocess.ExecuteResponsibilityAssign(ctx, workspaceprocess.ResponsibilityAssignInput{
+				VaultRoot: options.vaultRoot, ResponsibilityID: options.responsibilityID, Scope: responsibility.Scope(options.responsibilityScope), ProjectName: options.projectName,
+				EmployeeID: options.employeeID, CommandID: options.commandID,
+			}, true)
+			failureCode, failureStage = "RESPONSIBILITY_ASSIGN_FAILED", "responsibility_assign"
+		} else {
+			binding, err = workspaceprocess.ExecuteResponsibilityUnassign(ctx, workspaceprocess.ResponsibilityUnassignInput{
+				VaultRoot: options.vaultRoot, ResponsibilityID: options.responsibilityID, Scope: responsibility.Scope(options.responsibilityScope), ProjectName: options.projectName,
+				CommandID: options.commandID,
+			}, true)
+			failureCode, failureStage = "RESPONSIBILITY_UNASSIGN_FAILED", "responsibility_unassign"
+		}
+		if err != nil {
+			writeCommandResponse(output, durableCommandFailureResponse(err, failureCode, failureStage))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: binding})
+		return 0
+	}
 	if operation == "action-wordpress-plan" || operation == "action-wordpress-publish" {
 		input := workspaceprocess.ActionPlanInput{
 			VaultRoot: options.vaultRoot, ProjectID: options.projectID, ProjectName: options.projectName,
@@ -1072,6 +1168,10 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	set.StringVar(&options.goalScope, "goal-scope", "", "Goal scope: company or project")
 	set.StringVar(&options.goalTitle, "goal-title", "", "Goal title")
 	set.StringVar(&options.goalOutcome, "goal-outcome", "", "Goal outcome: what achieved concretely means")
+	set.StringVar(&options.responsibilityID, "responsibility-id", "", "Responsibility ID")
+	set.StringVar(&options.responsibilityScope, "responsibility-scope", "", "Responsibility scope: company or project")
+	set.StringVar(&options.responsibilityTitle, "responsibility-title", "", "Responsibility title")
+	set.Var(&options.goalRefs, "goal-ref", "Goal ID this Responsibility supports; repeat for multiple")
 	set.StringVar(&options.actionTarget, "target", "", "logical external Action target ID")
 	set.StringVar(&options.actionSourceSHA256, "source-sha256", "", "approved Deliverable SHA-256 for external Action")
 	set.StringVar(&options.sessionID, "session-id", "", "Interaction Session ID")
@@ -1091,7 +1191,9 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 		return commandOptions{}, errors.New("invalid command arguments")
 	}
 	required := []string{options.vaultRoot}
-	if operation != "organization-inspect" && operation != "identity-validate" && operation != "employee-candidates-validate" && operation != "employee-hire-plan" && operation != "employee-hire-execute" && operation != "employee-rename-plan" && operation != "employee-rename-execute" && operation != "employee-rename-batch-plan" && operation != "employee-id-repair-plan" && operation != "employee-id-repair-execute" && operation != "organization-sync-plan" && operation != "organization-sync-execute" && operation != "ceo-plan-generate" && operation != "ceo-plan-apply-plan" && operation != "ceo-plan-apply" && operation != "schedule-plan" && operation != "schedule-create" && operation != "schedule-list" && operation != "goal-create" && operation != "goal-list" && operation != "goal-show" && operation != "goal-achieve" && operation != "goal-abandon" && !strings.HasPrefix(operation, "interaction-") {
+	if operation != "organization-inspect" && operation != "identity-validate" && operation != "employee-candidates-validate" && operation != "employee-hire-plan" && operation != "employee-hire-execute" && operation != "employee-rename-plan" && operation != "employee-rename-execute" && operation != "employee-rename-batch-plan" && operation != "employee-id-repair-plan" && operation != "employee-id-repair-execute" && operation != "organization-sync-plan" && operation != "organization-sync-execute" && operation != "ceo-plan-generate" && operation != "ceo-plan-apply-plan" && operation != "ceo-plan-apply" && operation != "schedule-plan" && operation != "schedule-create" && operation != "schedule-list" && operation != "goal-create" && operation != "goal-list" && operation != "goal-show" && operation != "goal-achieve" && operation != "goal-abandon" &&
+		operation != "responsibility-create" && operation != "responsibility-list" && operation != "responsibility-show" && operation != "responsibility-activate" && operation != "responsibility-deactivate" && operation != "responsibility-assign" && operation != "responsibility-unassign" &&
+		!strings.HasPrefix(operation, "interaction-") {
 		required = append(required, options.projectName)
 	}
 	if operation == "plan" || operation == "execute" || operation == "review-plan" || operation == "review-execute" || operation == "revision-plan" || operation == "revision-execute" {
@@ -1228,6 +1330,36 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 		goal.Scope(options.goalScope) == goal.ScopeProject && strings.TrimSpace(options.projectName) == "" {
 		return commandOptions{}, errors.New("project is required for goal-scope=project")
 	}
+	if operation == "responsibility-create" {
+		required = append(required, options.responsibilityID, options.responsibilityScope, options.responsibilityTitle, options.commandID)
+	}
+	if operation == "responsibility-list" || operation == "responsibility-show" || operation == "responsibility-activate" || operation == "responsibility-deactivate" || operation == "responsibility-assign" || operation == "responsibility-unassign" {
+		required = append(required, options.responsibilityScope)
+	}
+	if operation == "responsibility-show" || operation == "responsibility-activate" || operation == "responsibility-deactivate" || operation == "responsibility-assign" || operation == "responsibility-unassign" {
+		required = append(required, options.responsibilityID)
+	}
+	if operation == "responsibility-activate" || operation == "responsibility-deactivate" {
+		required = append(required, options.commandID)
+		if options.expectedVersion == 0 {
+			return commandOptions{}, errors.New("expected Responsibility Version is required")
+		}
+	}
+	if operation == "responsibility-assign" {
+		required = append(required, options.commandID, options.employeeID)
+	}
+	if operation == "responsibility-unassign" {
+		required = append(required, options.commandID)
+	}
+	responsibilityOperation := operation == "responsibility-create" || operation == "responsibility-list" || operation == "responsibility-show" ||
+		operation == "responsibility-activate" || operation == "responsibility-deactivate" || operation == "responsibility-assign" || operation == "responsibility-unassign"
+	if responsibilityOperation && options.responsibilityScope != "" &&
+		responsibility.Scope(options.responsibilityScope) != responsibility.ScopeCompany && responsibility.Scope(options.responsibilityScope) != responsibility.ScopeProject {
+		return commandOptions{}, errors.New("responsibility-scope must be company or project")
+	}
+	if responsibilityOperation && responsibility.Scope(options.responsibilityScope) == responsibility.ScopeProject && strings.TrimSpace(options.projectName) == "" {
+		return commandOptions{}, errors.New("project is required for responsibility-scope=project")
+	}
 	for _, value := range required {
 		if strings.TrimSpace(value) == "" {
 			return commandOptions{}, errors.New("required command argument is missing")
@@ -1238,7 +1370,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish", "goal-create", "goal-list", "goal-show", "goal-achieve", "goal-abandon":
+	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish", "goal-create", "goal-list", "goal-show", "goal-achieve", "goal-abandon", "responsibility-create", "responsibility-list", "responsibility-show", "responsibility-activate", "responsibility-deactivate", "responsibility-assign", "responsibility-unassign":
 		return true
 	default:
 		return false
