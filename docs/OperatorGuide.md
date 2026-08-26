@@ -13,8 +13,8 @@ WorkCairnのread-only操作とwriter操作は分離されています。`*-plan`
 - planでVault root、Project／Task／Employee ID、source digest、Command IDを確認する。
 - 同じ論理操作の再送には同じCommand IDと同じrequestを使う。内容が変わる場合は新しいCommand IDを使う。
 - `running`、partial failure、stale Versionを推測で再実行しない。
-- `.env`をGo Runtimeへ読ませず、一般利用のcredentialはMac native inputからKeychainへ保存する。process環境は明示Operator testだけのoverrideとする。
-- daemonのProvider statusはKeychain／起動時overrideをredacted inspectionし、remote Providerへ疎通しない。未接続時はPlan生成を開始せず、別Providerへfallbackしない。
+- `.env`をGo Runtimeへ読ませず、一般の対話利用credentialはMac native inputからKeychainへ保存する。無人運用ではADR-0066の明示sourceだけを使い、別sourceへfallbackしない。
+- daemonのProvider statusは選択済みcredential sourceをredacted inspectionし、remote Providerへ疎通しない。未接続時はPlan生成を開始せず、別Providerへfallbackしない。
 - Local Web UIの`AI Connections`は接続状態を表示し、Mac本体の明示操作だけがnative hidden-inputを起動します。mobile modeのHTTP payloadからcredentialを入力・送信しません。
 - canonical artifact、Deliverable、Review JSON、Revision intent、Action evidenceを自動削除・上書きしない。
 
@@ -79,6 +79,31 @@ bin/workcairn-daemon \
 ```
 
 既定daemonはloopback addressだけを受け付けます。`0.0.0.0`、空host、非loopback IPは拒否します。reverse proxyを置いてremote公開する構成も現在のsupport対象ではありません。
+
+### Credential sourceとheadless daemon
+
+対話的なmacOS利用では既定`automatic`を維持します。これは既存互換としてprocess environmentを先に確認し、未設定ならKeychainを読みます。headless-local fileへは自動fallbackしません。
+
+無人daemonはsourceを明示してください。
+
+```bash
+bin/workcairn-daemon \
+  --vault /absolute/path/to/temporary-or-approved-vault \
+  --listen 127.0.0.1:8787 \
+  --claude-credential-source=headless-local
+```
+
+選択肢は`environment`、`keychain`、`headless-local`です。明示したsourceだけを1回読み、missing／unavailableならstartupを拒否します。自動retry、別sourceへのfallback、Provider APIによる接続testは行いません。`environment`は`ANTHROPIC_API_KEY`だけを読み、Keychain／fileへ触れません。`keychain`はADR-0044のnative Keychainだけを読みます。`headless-local`はOS user config root配下の固定fileだけを読みます。
+
+macOSの標準pathは次です。
+
+```text
+~/Library/Application Support/WorkCairn/credentials/anthropic-api-key
+```
+
+WorkCairnはこのfileを作成、更新、移行しません。operatorがrepository、Vault、`.env`の外で明示的にprovisionし、所有者をdaemon実行user、modeを正確に`0600`としてください。symlink、別owner、group／other permission、空fileは拒否します。credential値やpathはHTTP、UI、Ledger、Audit、logへ出ません。First-run／Settingsの「Claudeへ接続」は`environment`／`headless-local`ではKeychain inputを開かずread-only sourceとして拒否します。
+
+direct `workcairn` CLIは従来どおり明示operator環境の`ANTHROPIC_API_KEY`だけを読みます。headless-localをCLIへ暗黙適用しません。外部secret manager、rotation、既存Keychainからの自動migrationは未実装です。
 
 ### iPhone Local Web UI
 

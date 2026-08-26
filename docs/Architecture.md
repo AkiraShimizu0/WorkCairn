@@ -111,6 +111,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0063: Routine Automation Foundation](adr/ADR-0063-routine-automation-foundation.md)
 - [ADR-0064: Routine Scheduling Reliability / Reconciliation](adr/ADR-0064-routine-scheduling-reliability.md)
 - [ADR-0065: Company Attention / Decision Feed v1](adr/ADR-0065-company-attention-feed.md)
+- [ADR-0066: Headless Credential Resolution for Unattended Operation](adr/ADR-0066-headless-credential-resolution.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -146,6 +147,7 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Runner Registry | 社員model値をProvider非依存のRunner Adapterへ明示的に解決する |
 | Go Claude Runner Adapter | Provider設定を注入され、Anthropic Messages APIとProvider非依存Runner契約を相互変換する |
 | Provider Connection Status | Runtime edgeへ注入済み設定をnetwork accessなしでredacted inspectionし、credential／modelの値を公開しない |
+| Runtime Credential Resolution | ADR-0066のclosed source（`automatic`／`environment`／`keychain`／`headless-local`）をdaemon composition rootだけで解決する。明示sourceは他sourceへfallbackせず、headless-localはOS user config root配下の固定0600・現user所有・非symlink fileをread-onlyで扱う。Provider Adapter、Core、Vault、HTTP、Ledgerはsourceもcredential値も知らない |
 | Provider Failure Diagnostics | Claude Adapterが実HTTP status／公式error typeを安全な分類へ変換し、raw messageを破棄してrequest IDとredacted分類だけをInteraction／Ledgerへ渡す |
 | Go Runtime | PromptBuilder、Runner Registry、Claude Adapter、TaskStore、DeliverableStore、read-only Dependency Evidence Collector、Audit Handlerをcompositionし、明示承認付きExecution入口を提供する |
 | Go Vault Context Adapter | 現行Vault Markdownを読み取り、Employee、Project、Task、dependencyの構造化Execution Contextへ変換する |
@@ -284,9 +286,9 @@ ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環�
 - `go/internal/action`: Provider／Storage非依存の外部publication（WordPress等）typed intent／evidence契約
 - `go/internal/runner`: model値とRunner Adapterを解決するthread-safe Registry
 - `go/internal/adapter/claude`: Anthropic Messages APIを既存Runner契約へ変換するProvider Adapter
-- `go/internal/adapter/localos`: macOS folder picker、Application Support path reference、Finder／browser openと、bounded helperからSecurity.frameworkを直接呼ぶKeychain persistenceをRuntime edgeへ閉じ込めるOS Adapter。credentialはanonymous socketだけを通り、Core、Vault contract、Task／EventはmacOS APIやsecretを知らない
+- `go/internal/adapter/localos`: macOS folder picker、Application Support path reference、Finder／browser open、bounded helperからSecurity.frameworkを直接呼ぶKeychain persistenceと、固定path・0600・owner・non-symlinkを検証するread-only headless credential loaderをRuntime edgeへ閉じ込めるOS Adapter。Core、Vault contract、Task／EventはmacOS APIやsecretを知らない
 - `go/internal/adapter/vault`: read-only Context／Organization Loader、Project／Task／Deliverable／Review／Revision intent／Schedule／Interaction Store、Audit Event subscriber
-- `go/internal/runtime`: Provider／Storage AdapterをServiceへ注入するprocess-neutral execution／Review／Revision composition
+- `go/internal/runtime`: Provider／Storage AdapterをServiceへ注入するprocess-neutral execution／Review／Revision compositionと、daemon用のclosed credential source resolution。解決後の値だけをProvider edgeへ渡し、source間の暗黙fallbackを明示modeでは行わない
 - `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／reviewed Workflow／Schedule／Interaction Workflow／Recoveryのread-only planと明示承認付きexecute、canonical evidenceからのWork Report projection
 - `go/internal/httpapi`: version付きCommand HTTP contract、必須Command ID、同期handler、mobile Interactionのbounded acceptance、Ledger／Task evidence／Work Report inspection、embed mobile Web UI、trusted-LAN pairing、graceful server lifecycle
 - `go/internal/policy`: 明示承認とWorker失敗後の回復判断を提供する決定的Policy Domain

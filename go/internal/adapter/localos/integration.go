@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,12 +26,16 @@ type CommandRunner interface {
 type CredentialFailure string
 
 const (
-	CredentialNotFound         CredentialFailure = "keychain_not_found"
-	CredentialPermissionDenied CredentialFailure = "keychain_permission_denied"
-	CredentialCommandFailed    CredentialFailure = "keychain_command_failed"
-	CredentialOutputInvalid    CredentialFailure = "keychain_output_invalid"
-	CredentialSetupTimeout     CredentialFailure = "keychain_setup_timeout"
-	CredentialUnavailable      CredentialFailure = "keychain_unavailable"
+	CredentialNotFound          CredentialFailure = "keychain_not_found"
+	CredentialPermissionDenied  CredentialFailure = "keychain_permission_denied"
+	CredentialCommandFailed     CredentialFailure = "keychain_command_failed"
+	CredentialOutputInvalid     CredentialFailure = "keychain_output_invalid"
+	CredentialSetupTimeout      CredentialFailure = "keychain_setup_timeout"
+	CredentialUnavailable       CredentialFailure = "keychain_unavailable"
+	CredentialFileNotFound      CredentialFailure = "credential_file_not_found"
+	CredentialFilePermission    CredentialFailure = "credential_file_permission_denied"
+	CredentialFileUnsafe        CredentialFailure = "credential_file_unsafe"
+	CredentialFileOutputInvalid CredentialFailure = "credential_file_output_invalid"
 )
 
 const (
@@ -38,6 +43,7 @@ const (
 	CredentialRead           = "keychain_read"
 	CredentialReadAfterWrite = "keychain_read_after_write"
 	CredentialInput          = "credential_input"
+	CredentialHeadlessRead   = "headless_local_read"
 )
 
 // CredentialError is a secret-free diagnostic crossing the Local OS Adapter
@@ -182,6 +188,78 @@ type WorkspaceSelector interface {
 type ClaudeCredentialStore interface {
 	Load(ctx context.Context) (string, error)
 	RequestAndStore(ctx context.Context) (string, error)
+}
+
+const maxHeadlessCredentialBytes = 64 << 10
+
+// HeadlessClaudeCredentialStore is a read-only unattended source. Its path is
+// fixed below the OS user config root, outside both the repository and Vault;
+// WorkCairn never writes or migrates a real credential into it.
+type HeadlessClaudeCredentialStore struct {
+	path string
+}
+
+func NewHeadlessClaudeCredentialStore(configRoot string) (*HeadlessClaudeCredentialStore, error) {
+	if strings.TrimSpace(configRoot) == "" {
+		return nil, errors.New("config root is required")
+	}
+	root, err := filepath.Abs(strings.TrimSpace(configRoot))
+	if err != nil {
+		return nil, errors.New("config root is invalid")
+	}
+	return &HeadlessClaudeCredentialStore{path: filepath.Join(filepath.Clean(root), "WorkCairn", "credentials", "anthropic-api-key")}, nil
+}
+
+func (store *HeadlessClaudeCredentialStore) Load(ctx context.Context) (string, error) {
+	if ctx == nil || ctx.Err() != nil {
+		return "", &CredentialError{Substage: CredentialHeadlessRead, Classification: CredentialUnavailable}
+	}
+	before, err := os.Lstat(store.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", &CredentialError{Substage: CredentialHeadlessRead, Classification: CredentialFileNotFound}
+	}
+	if err != nil {
+		return "", &CredentialError{Substage: CredentialHeadlessRead, Classification: CredentialUnavailable}
+	}
+	if !safeHeadlessCredentialFile(before) {
+		return "", &CredentialError{Substage: CredentialHeadlessRead, Classification: CredentialFileUnsafe}
+	}
+	file, err := os.Open(store.path)
+	if err != nil {
+		return "", &CredentialError{Substage: CredentialHeadlessRead, Classification: CredentialFilePermission}
+	}
+	defer file.Close()
+	after, err := file.Stat()
+	if err != nil || !safeHeadlessCredentialFile(after) || !os.SameFile(before, after) {
+		return "", &CredentialError{Substage: CredentialHeadlessRead, Classification: CredentialFileUnsafe}
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maxHeadlessCredentialBytes+1))
+	if err != nil {
+		return "", &CredentialError{Substage: CredentialHeadlessRead, Classification: CredentialUnavailable}
+	}
+	defer zeroCredentialBytes(content)
+	if len(content) > maxHeadlessCredentialBytes {
+		return "", &CredentialError{Substage: CredentialHeadlessRead, Classification: CredentialFileOutputInvalid}
+	}
+	credential := strings.TrimSpace(string(content))
+	if credential == "" {
+		return "", &CredentialError{Substage: CredentialHeadlessRead, Classification: CredentialFileOutputInvalid}
+	}
+	return credential, nil
+}
+
+func (*HeadlessClaudeCredentialStore) RequestAndStore(context.Context) (string, error) {
+	return "", ErrUnsupported
+}
+
+func safeHeadlessCredentialFile(info os.FileInfo) bool {
+	return info.Mode().IsRegular() && info.Mode().Perm() == 0o600 && credentialFileOwnedByCurrentUser(info)
+}
+
+func zeroCredentialBytes(value []byte) {
+	for index := range value {
+		value[index] = 0
+	}
 }
 
 type WorkspaceViewer interface {

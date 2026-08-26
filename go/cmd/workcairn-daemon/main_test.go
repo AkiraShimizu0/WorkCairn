@@ -2,16 +2,22 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/localos"
 	"github.com/AkiraShimizu0/workcairn/go/internal/httpapi"
 	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
+	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
 )
 
 type restartCredentialStore struct {
 	credential string
 	loads      int
+	requests   int
 }
 
 func (store *restartCredentialStore) Load(context.Context) (string, error) {
@@ -20,6 +26,7 @@ func (store *restartCredentialStore) Load(context.Context) (string, error) {
 }
 
 func (store *restartCredentialStore) RequestAndStore(context.Context) (string, error) {
+	store.requests++
 	return store.credential, nil
 }
 
@@ -27,7 +34,10 @@ func TestDaemonRestartLoadsStoredClaudeCredentialIntoProviderStatus(t *testing.T
 	store := &restartCredentialStore{credential: "stored-secret-never-exposed"}
 	// A new ProcessExecutor models a daemon restart: no in-memory credential
 	// survives, so startup must load the same persistent CredentialStore.
-	credential := resolveClaudeCredential(context.Background(), "", store)
+	credential, err := resolveDaemonClaudeCredential(context.Background(), workspaceruntime.ClaudeCredentialKeychain, workspaceruntime.CredentialReaders{Keychain: store.Load})
+	if err != nil {
+		t.Fatal(err)
+	}
 	executor, err := httpapi.NewProcessExecutor(t.TempDir(), workspaceprocess.ClaudeProcessConfig{APIKey: credential}, http.DefaultClient)
 	if err != nil {
 		t.Fatal(err)
@@ -40,10 +50,67 @@ func TestDaemonRestartLoadsStoredClaudeCredentialIntoProviderStatus(t *testing.T
 
 func TestDaemonEnvironmentOverrideDoesNotReadKeychain(t *testing.T) {
 	store := &restartCredentialStore{credential: "stored-secret"}
-	if credential := resolveClaudeCredential(context.Background(), " explicit-override ", store); credential != "explicit-override" || store.loads != 0 {
-		t.Fatalf("override resolution loads=%d", store.loads)
+	credential, err := resolveDaemonClaudeCredential(context.Background(), workspaceruntime.ClaudeCredentialEnvironment, workspaceruntime.CredentialReaders{
+		Environment: func() string { return " explicit-override " }, Keychain: store.Load,
+	})
+	if err != nil || credential != "explicit-override" || store.loads != 0 {
+		t.Fatalf("override resolution = %q, %v loads=%d", credential, err, store.loads)
 	}
 }
+
+func TestDaemonHeadlessCredentialConstructsProviderWithoutKeychainOrInteractiveHelper(t *testing.T) {
+	keychainCalls, environmentCalls, headlessCalls := 0, 0, 0
+	credential, err := resolveDaemonClaudeCredential(context.Background(), workspaceruntime.ClaudeCredentialHeadlessLocal, workspaceruntime.CredentialReaders{
+		Environment: func() string { environmentCalls++; return "environment-must-not-be-read" },
+		Keychain: func(context.Context) (string, error) {
+			keychainCalls++
+			return "", errors.New("Keychain must not be read")
+		},
+		HeadlessLocal: func(context.Context) (string, error) { headlessCalls++; return "fake-headless-credential", nil },
+	})
+	if err != nil || keychainCalls != 0 || environmentCalls != 0 || headlessCalls != 1 {
+		t.Fatalf("headless resolution = %q, %v env=%d Keychain=%d headless=%d", credential, err, environmentCalls, keychainCalls, headlessCalls)
+	}
+	executor, err := httpapi.NewProcessExecutor(t.TempDir(), workspaceprocess.ClaudeProcessConfig{APIKey: credential}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := executor.InspectProviderStatus(); !status.Configured {
+		t.Fatalf("headless Provider status = %#v", status)
+	} else if encoded, marshalErr := json.Marshal(status); marshalErr != nil {
+		t.Fatal(marshalErr)
+	} else if strings.Contains(string(encoded), credential) {
+		t.Fatal("headless credential escaped through Provider status")
+	}
+}
+
+func TestDaemonExplicitCredentialSourceMissingFailsClosedAndAutomaticRemainsFirstRunCompatible(t *testing.T) {
+	missing := workspaceruntime.CredentialReaders{HeadlessLocal: func(context.Context) (string, error) { return "", errors.New("missing") }}
+	if credential, err := resolveDaemonClaudeCredential(context.Background(), workspaceruntime.ClaudeCredentialHeadlessLocal, missing); credential != "" || err == nil {
+		t.Fatalf("explicit missing = %q, %v", credential, err)
+	}
+	if credential, err := resolveDaemonClaudeCredential(context.Background(), workspaceruntime.ClaudeCredentialAutomatic, workspaceruntime.CredentialReaders{
+		Environment: func() string { return "" }, Keychain: func(context.Context) (string, error) { return "", errors.New("not configured") },
+	}); credential != "" || err != nil {
+		t.Fatalf("automatic first run = %q, %v", credential, err)
+	}
+}
+
+func TestHeadlessAndEnvironmentLocalSetupNeverOpenKeychainInput(t *testing.T) {
+	for _, source := range []workspaceruntime.ClaudeCredentialSource{workspaceruntime.ClaudeCredentialHeadlessLocal, workspaceruntime.ClaudeCredentialEnvironment} {
+		t.Run(string(source), func(t *testing.T) {
+			store := &restartCredentialStore{credential: "must-not-be-used"}
+			setup := &daemonLocalSetup{credentialSource: source, credentialStore: store}
+			err := setup.ConnectClaude(context.Background())
+			var resolutionErr *workspaceruntime.CredentialResolutionError
+			if !errors.As(err, &resolutionErr) || resolutionErr.Classification != workspaceruntime.CredentialSourceReadOnly || store.loads != 0 || store.requests != 0 {
+				t.Fatalf("ConnectClaude = %#v loads=%d requests=%d", err, store.loads, store.requests)
+			}
+		})
+	}
+}
+
+var _ localos.ClaudeCredentialStore = (*restartCredentialStore)(nil)
 
 func TestLoopbackProviderFixtureURLDefaultDeniesNonLoopbackEndpoints(t *testing.T) {
 	for _, test := range []struct {

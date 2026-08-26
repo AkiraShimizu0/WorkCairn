@@ -45,7 +45,7 @@ func main() {
 }
 
 func run() error {
-	var vaultRoot, address string
+	var vaultRoot, address, credentialSourceValue string
 	var providerTimeout, shutdownTimeout, schedulerInterval time.Duration
 	var providerFixtureMaxCalls int
 	var mobile bool
@@ -55,8 +55,13 @@ func run() error {
 	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "graceful shutdown timeout")
 	flag.DurationVar(&schedulerInterval, "scheduler-interval", time.Second, "one-shot Schedule polling interval")
 	flag.IntVar(&providerFixtureMaxCalls, "provider-fixture-max-calls", 0, "Browser acceptance only: Provider-call Budget for a loopback fixture (0 uses production default)")
+	flag.StringVar(&credentialSourceValue, "claude-credential-source", string(workspaceruntime.ClaudeCredentialAutomatic), "Claude credential source: automatic, environment, keychain, or headless-local")
 	flag.BoolVar(&mobile, "mobile", false, "serve the paired Web UI on a trusted local network")
 	flag.Parse()
+	credentialSource, err := workspaceruntime.ParseClaudeCredentialSource(credentialSourceValue)
+	if err != nil {
+		return err
+	}
 	managedFirstRun := strings.TrimSpace(vaultRoot) == ""
 	providerBaseURL := strings.TrimSpace(os.Getenv("WORKCAIRN_CLAUDE_BASE_URL"))
 	if providerTimeout <= 0 || shutdownTimeout <= 0 || schedulerInterval <= 0 || providerFixtureMaxCalls < 0 {
@@ -78,8 +83,31 @@ func run() error {
 			return err
 		}
 	}
-	credentialStore := localos.NewClaudeCredentialStore()
-	credential := resolveClaudeCredential(context.Background(), os.Getenv("ANTHROPIC_API_KEY"), credentialStore)
+	var credentialStore localos.ClaudeCredentialStore
+	if credentialSource == workspaceruntime.ClaudeCredentialAutomatic || credentialSource == workspaceruntime.ClaudeCredentialKeychain {
+		credentialStore = localos.NewClaudeCredentialStore()
+	}
+	credentialReaders := workspaceruntime.CredentialReaders{
+		Environment: func() string { return os.Getenv("ANTHROPIC_API_KEY") },
+	}
+	if credentialStore != nil {
+		credentialReaders.Keychain = credentialStore.Load
+	}
+	credentialReaders.HeadlessLocal = func(ctx context.Context) (string, error) {
+		configRoot, configErr := os.UserConfigDir()
+		if configErr != nil {
+			return "", configErr
+		}
+		store, storeErr := localos.NewHeadlessClaudeCredentialStore(configRoot)
+		if storeErr != nil {
+			return "", storeErr
+		}
+		return store.Load(ctx)
+	}
+	credential, err := resolveDaemonClaudeCredential(context.Background(), credentialSource, credentialReaders)
+	if err != nil {
+		return err
+	}
 	executor, err := httpapi.NewProcessExecutorWithActionConfigAndOptions(vaultRoot, workspaceprocess.ClaudeProcessConfig{
 		APIKey: credential, BaseURL: providerBaseURL, MaxTokens: workspaceruntime.DefaultClaudeMaxTokens,
 	}, workspaceprocess.WordPressProcessConfig{
@@ -157,7 +185,7 @@ func run() error {
 	localAddress := addressHost(address)
 	if err := handler.EnableLocalSetup(&daemonLocalSetup{
 		executor: executor, credentialStore: credentialStore,
-		viewer: localos.NewWorkspaceViewer(), vaultRoot: vaultRoot,
+		credentialSource: credentialSource, viewer: localos.NewWorkspaceViewer(), vaultRoot: vaultRoot,
 	}, localAddress); err != nil {
 		return err
 	}
@@ -206,15 +234,16 @@ func loopbackProviderFixtureURL(raw string) bool {
 	return address != nil && address.IsLoopback()
 }
 
-func resolveClaudeCredential(ctx context.Context, environmentOverride string, store localos.ClaudeCredentialStore) string {
-	if credential := strings.TrimSpace(environmentOverride); credential != "" {
-		return credential
+func resolveDaemonClaudeCredential(ctx context.Context, source workspaceruntime.ClaudeCredentialSource, readers workspaceruntime.CredentialReaders) (string, error) {
+	credential, err := workspaceruntime.ResolveClaudeCredential(ctx, source, readers)
+	if err != nil && source == workspaceruntime.ClaudeCredentialAutomatic {
+		// Backward-compatible interactive first run: automatic has the
+		// documented environment -> Keychain precedence and may start with an
+		// unconfigured Provider so the Mac setup UI remains reachable. Explicit
+		// unattended sources fail closed instead of falling through.
+		return "", nil
 	}
-	credential, err := store.Load(ctx)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(credential)
+	return credential, err
 }
 
 func resolveWorkspaceRoot(ctx context.Context) (string, error) {
@@ -245,13 +274,20 @@ func resolveWorkspaceRoot(ctx context.Context) (string, error) {
 }
 
 type daemonLocalSetup struct {
-	executor        *httpapi.ProcessExecutor
-	credentialStore localos.ClaudeCredentialStore
-	viewer          localos.WorkspaceViewer
-	vaultRoot       string
+	executor         *httpapi.ProcessExecutor
+	credentialStore  localos.ClaudeCredentialStore
+	credentialSource workspaceruntime.ClaudeCredentialSource
+	viewer           localos.WorkspaceViewer
+	vaultRoot        string
 }
 
 func (setup *daemonLocalSetup) ConnectClaude(ctx context.Context) error {
+	if setup.credentialSource != workspaceruntime.ClaudeCredentialAutomatic && setup.credentialSource != workspaceruntime.ClaudeCredentialKeychain {
+		return &workspaceruntime.CredentialResolutionError{Source: setup.credentialSource, Classification: workspaceruntime.CredentialSourceReadOnly}
+	}
+	if setup.credentialStore == nil {
+		return &workspaceruntime.CredentialResolutionError{Source: setup.credentialSource, Classification: workspaceruntime.CredentialSourceUnavailable}
+	}
 	credential, err := setup.credentialStore.RequestAndStore(ctx)
 	if err != nil {
 		return err
