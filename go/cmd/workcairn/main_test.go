@@ -23,6 +23,7 @@ import (
 	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
 	"github.com/AkiraShimizu0/workcairn/go/internal/recovery"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/workcairn/go/internal/routine"
 	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 	"github.com/AkiraShimizu0/workcairn/go/internal/task"
@@ -855,6 +856,139 @@ func TestResponsibilityPlanCLIResolvesContextAndReusesGenerateCEOPlan(t *testing
 	}
 	if after := commandVaultSnapshot(t, root); !reflect.DeepEqual(before, after) {
 		t.Fatal("approved responsibility-plan (Plan generation only) changed the Vault")
+	}
+}
+
+// TestRoutineCLILifecycleCreatesActivatesAndRunsNow exercises the new
+// routine-* operations end to end through the real CLI dispatcher: a
+// Routine is created against a real Responsibility, activated (which must
+// create a next-occurrence Schedule, verified via schedule-list), run
+// manually via routine-run-now against a mock Provider (proving it reuses
+// the exact same Go-only Planning product path responsibility-plan uses),
+// then deactivated.
+func TestRoutineCLILifecycleCreatesActivatesAndRunsNow(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "プロジェクト"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "社員"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeCommandFile(t, filepath.Join(root, "社員", "田中 美咲.md"), "---\nid: PLAN-001\ndepartment: 企画部\nrole: Product Manager\nmodel: Claude Sonnet 5\nstatus: 待機中\n---\n")
+	noSecretsDependencies := commandDependencies{
+		lookupEnv: func(string) (string, bool) {
+			t.Fatal("read-only/unapproved step read Provider environment")
+			return "", false
+		},
+		now: commandTestTime,
+		newHTTPClient: func(time.Duration) claude.HTTPDoer {
+			t.Fatal("read-only/unapproved step created HTTP client")
+			return nil
+		},
+	}
+	var responsibilityOutput bytes.Buffer
+	if exit := run(context.Background(), []string{
+		"responsibility-create", "--vault", root, "--responsibility-id", "RESP-1", "--responsibility-scope", "company",
+		"--responsibility-title", "オンボーディング品質を継続的に改善する", "--command-id", "CMD-RESP-1", "--approved",
+	}, &responsibilityOutput, noSecretsDependencies); exit != 0 {
+		t.Fatalf("responsibility-create response=%s", responsibilityOutput.String())
+	}
+
+	var unapprovedOutput bytes.Buffer
+	createArgs := []string{
+		"routine-create", "--vault", root, "--routine-id", "ROUTINE-1", "--routine-scope", "company",
+		"--responsibility-id", "RESP-1", "--instruction", "今週の改善項目を計画する", "--model", "Claude Sonnet 5",
+		"--cadence", "weekly", "--weekday", "1", "--time-of-day", "09:00", "--command-id", "CMD-ROUTINE-1",
+	}
+	if exit := run(context.Background(), createArgs, &unapprovedOutput, noSecretsDependencies); exit != 1 {
+		t.Fatalf("unapproved routine-create exit=%d response=%s", exit, unapprovedOutput.String())
+	}
+	unapprovedResponse := decodeCommandResponse(t, unapprovedOutput.Bytes())
+	if unapprovedResponse.OK || unapprovedResponse.Error == nil || unapprovedResponse.Error.Code != "APPROVAL_REQUIRED" {
+		t.Fatalf("unapproved routine-create response=%#v", unapprovedResponse)
+	}
+
+	var createOutput bytes.Buffer
+	if exit := run(context.Background(), append(createArgs, "--approved"), &createOutput, noSecretsDependencies); exit != 0 {
+		t.Fatalf("routine-create response=%s", createOutput.String())
+	}
+	createResponse := decodeCommandResponse(t, createOutput.Bytes())
+	encodedCreated, _ := json.Marshal(createResponse.Result)
+	var createdRoutine routine.Record
+	if err := json.Unmarshal(encodedCreated, &createdRoutine); err != nil || createdRoutine.Status != routine.StatusInactive || createdRoutine.Version != 1 {
+		t.Fatalf("routine-create result=%s err=%v", encodedCreated, err)
+	}
+
+	var activateOutput bytes.Buffer
+	activateArgs := []string{
+		"routine-activate", "--vault", root, "--routine-id", "ROUTINE-1", "--routine-scope", "company",
+		"--expected-version", "1", "--command-id", "CMD-ACTIVATE-1", "--at", "2026-08-26T12:00:00Z", "--approved",
+	}
+	if exit := run(context.Background(), activateArgs, &activateOutput, noSecretsDependencies); exit != 0 {
+		t.Fatalf("routine-activate response=%s", activateOutput.String())
+	}
+	activateResponse := decodeCommandResponse(t, activateOutput.Bytes())
+	encodedActivate, _ := json.Marshal(activateResponse.Result)
+	var activated workspaceprocess.RoutineActivateResult
+	if err := json.Unmarshal(encodedActivate, &activated); err != nil || activated.Routine.Status != routine.StatusActive || activated.NextScheduleID == "" {
+		t.Fatalf("routine-activate result=%s err=%v", encodedActivate, err)
+	}
+
+	var listOutput bytes.Buffer
+	if exit := run(context.Background(), []string{"schedule-list", "--vault", root}, &listOutput, noSecretsDependencies); exit != 0 {
+		t.Fatalf("schedule-list response=%s", listOutput.String())
+	}
+	if !strings.Contains(listOutput.String(), activated.NextScheduleID) {
+		t.Fatalf("schedule-list does not contain the Routine's next occurrence %s: %s", activated.NextScheduleID, listOutput.String())
+	}
+
+	intentOutput, _ := json.Marshal(map[string]any{
+		"project_name": "オンボーディング改善", "objective": "新規ユーザーのオンボーディング体験を改善する",
+		"summary": "今週の改善項目を計画する",
+		"steps": []map[string]any{
+			{"kind": "write", "description": "改善候補を整理する", "required_role": "Product Manager"},
+		},
+		"ceo_questions": []string{},
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(intentOutput)}},
+			"usage": map[string]int{"input_tokens": 10, "output_tokens": 20},
+		})
+	}))
+	defer server.Close()
+	environment := map[string]string{"ANTHROPIC_API_KEY": "fake-key", "WORKCAIRN_CLAUDE_BASE_URL": server.URL}
+	providerDependencies := commandDependencies{
+		lookupEnv: func(key string) (string, bool) { value, ok := environment[key]; return value, ok },
+		now:       commandTestTime, newHTTPClient: func(time.Duration) claude.HTTPDoer { return server.Client() },
+	}
+	var runNowOutput bytes.Buffer
+	if exit := run(context.Background(), []string{
+		"routine-run-now", "--vault", root, "--routine-id", "ROUTINE-1", "--routine-scope", "company", "--approved",
+	}, &runNowOutput, providerDependencies); exit != 0 {
+		t.Fatalf("routine-run-now response=%s", runNowOutput.String())
+	}
+	runNowResponse := decodeCommandResponse(t, runNowOutput.Bytes())
+	encodedRunNow, _ := json.Marshal(runNowResponse.Result)
+	var runNowResult workspaceprocess.ResponsibilityPlanningResult
+	if err := json.Unmarshal(encodedRunNow, &runNowResult); err != nil || runNowResult.ResponsibilityID != "RESP-1" ||
+		runNowResult.Generation.Plan.ProjectName != "オンボーディング改善" {
+		t.Fatalf("routine-run-now result=%s err=%v", encodedRunNow, err)
+	}
+
+	var deactivateOutput bytes.Buffer
+	if exit := run(context.Background(), []string{
+		"routine-deactivate", "--vault", root, "--routine-id", "ROUTINE-1", "--routine-scope", "company",
+		"--expected-version", "2", "--command-id", "CMD-DEACTIVATE-1", "--approved",
+	}, &deactivateOutput, noSecretsDependencies); exit != 0 {
+		t.Fatalf("routine-deactivate response=%s", deactivateOutput.String())
+	}
+	deactivateResponse := decodeCommandResponse(t, deactivateOutput.Bytes())
+	encodedDeactivate, _ := json.Marshal(deactivateResponse.Result)
+	var deactivated routine.Record
+	if err := json.Unmarshal(encodedDeactivate, &deactivated); err != nil || deactivated.Status != routine.StatusInactive {
+		t.Fatalf("routine-deactivate result=%s err=%v", encodedDeactivate, err)
 	}
 }
 

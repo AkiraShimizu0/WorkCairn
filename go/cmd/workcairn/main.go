@@ -27,6 +27,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/responsibility"
 	"github.com/AkiraShimizu0/workcairn/go/internal/review"
 	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
+	"github.com/AkiraShimizu0/workcairn/go/internal/routine"
 	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
 	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
 	"github.com/AkiraShimizu0/workcairn/go/internal/service"
@@ -60,6 +61,8 @@ type commandOptions struct {
 	responsibilityID, responsibilityScope, responsibilityTitle string
 	instruction                                                string
 	goalRefs                                                   stringListFlag
+	routineID, routineScope, routineCadence, routineTimeOfDay  string
+	routineWeekday                                             int
 	actionTarget                                               string
 	actionSourceSHA256                                         string
 	sessionID, requestDigest, planDigest                       string
@@ -703,6 +706,95 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: binding})
 		return 0
 	}
+	if operation == "routine-create" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		trigger, err := parseRoutineTrigger(options.routineCadence, options.routineWeekday, options.routineTimeOfDay)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("INVALID_TRIGGER", ""))
+			return 2
+		}
+		record, err := workspaceprocess.ExecuteRoutineCreate(ctx, workspaceprocess.RoutineCreateInput{
+			VaultRoot: options.vaultRoot, RoutineID: options.routineID, Scope: routine.Scope(options.routineScope), ProjectName: options.projectName,
+			ResponsibilityID: options.responsibilityID, Instruction: options.instruction, Model: options.model, Trigger: trigger,
+			CurrentTime: currentTime, CommandID: options.commandID,
+		}, true)
+		if err != nil {
+			writeCommandResponse(output, durableCommandFailureResponse(err, "ROUTINE_CREATE_FAILED", "routine_create"))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		return 0
+	}
+	if operation == "routine-list" {
+		records, err := workspaceprocess.InspectRoutines(ctx, options.vaultRoot, routine.Scope(options.routineScope), options.projectName)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("ROUTINE_INSPECTION_FAILED", ""))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: records})
+		return 0
+	}
+	if operation == "routine-show" {
+		record, err := workspaceprocess.InspectRoutine(ctx, options.vaultRoot, routine.Scope(options.routineScope), options.projectName, options.routineID)
+		if err != nil {
+			writeCommandResponse(output, failureResponse("ROUTINE_INSPECTION_FAILED", ""))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		return 0
+	}
+	if operation == "routine-activate" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		result, err := workspaceprocess.ExecuteRoutineActivate(ctx, workspaceprocess.RoutineTransitionInput{
+			VaultRoot: options.vaultRoot, RoutineID: options.routineID, Scope: routine.Scope(options.routineScope), ProjectName: options.projectName,
+			ExpectedVersion: options.expectedVersion, CommandID: options.commandID, CurrentTime: currentTime,
+		}, true)
+		if err != nil {
+			writeCommandResponse(output, durableCommandFailureResponse(err, "ROUTINE_ACTIVATE_FAILED", "routine_activate"))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
+		return 0
+	}
+	if operation == "routine-deactivate" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		record, err := workspaceprocess.ExecuteRoutineDeactivate(ctx, workspaceprocess.RoutineTransitionInput{
+			VaultRoot: options.vaultRoot, RoutineID: options.routineID, Scope: routine.Scope(options.routineScope), ProjectName: options.projectName,
+			ExpectedVersion: options.expectedVersion, CommandID: options.commandID,
+		}, true)
+		if err != nil {
+			writeCommandResponse(output, durableCommandFailureResponse(err, "ROUTINE_DEACTIVATE_FAILED", "routine_deactivate"))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: record})
+		return 0
+	}
+	if operation == "routine-run-now" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
+		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
+		result, err := workspaceprocess.RunRoutineNow(ctx, options.vaultRoot, routine.Scope(options.routineScope), options.projectName, options.routineID, true, workspaceprocess.ClaudeProcessConfig{
+			APIKey: apiKey, BaseURL: baseURL, MaxTokens: workspaceruntime.DefaultClaudeMaxTokens,
+		}, dependencies.newHTTPClient(options.timeout))
+		if err != nil {
+			writeCommandResponse(output, responsibilityPlanFailureResponse(err))
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
+		return 0
+	}
 	if operation == "action-wordpress-plan" || operation == "action-wordpress-publish" {
 		input := workspaceprocess.ActionPlanInput{
 			VaultRoot: options.vaultRoot, ProjectID: options.projectID, ProjectName: options.projectName,
@@ -1193,6 +1285,11 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	set.StringVar(&options.responsibilityScope, "responsibility-scope", "", "Responsibility scope: company or project")
 	set.StringVar(&options.responsibilityTitle, "responsibility-title", "", "Responsibility title")
 	set.StringVar(&options.instruction, "instruction", "", "explicit Human instruction for Responsibility-scoped work generation")
+	set.StringVar(&options.routineID, "routine-id", "", "Routine ID")
+	set.StringVar(&options.routineScope, "routine-scope", "", "Routine scope: company or project")
+	set.StringVar(&options.routineCadence, "cadence", "", "Routine Trigger cadence: daily or weekly")
+	set.IntVar(&options.routineWeekday, "weekday", -1, "Routine Trigger weekday for cadence=weekly (0=Sunday..6=Saturday)")
+	set.StringVar(&options.routineTimeOfDay, "time-of-day", "", "Routine Trigger time of day, HH:MM in UTC")
 	set.Var(&options.goalRefs, "goal-ref", "Goal ID this Responsibility supports; repeat for multiple")
 	set.StringVar(&options.actionTarget, "target", "", "logical external Action target ID")
 	set.StringVar(&options.actionSourceSHA256, "source-sha256", "", "approved Deliverable SHA-256 for external Action")
@@ -1215,6 +1312,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	required := []string{options.vaultRoot}
 	if operation != "organization-inspect" && operation != "identity-validate" && operation != "employee-candidates-validate" && operation != "employee-hire-plan" && operation != "employee-hire-execute" && operation != "employee-rename-plan" && operation != "employee-rename-execute" && operation != "employee-rename-batch-plan" && operation != "employee-id-repair-plan" && operation != "employee-id-repair-execute" && operation != "organization-sync-plan" && operation != "organization-sync-execute" && operation != "ceo-plan-generate" && operation != "ceo-plan-apply-plan" && operation != "ceo-plan-apply" && operation != "schedule-plan" && operation != "schedule-create" && operation != "schedule-list" && operation != "goal-create" && operation != "goal-list" && operation != "goal-show" && operation != "goal-achieve" && operation != "goal-abandon" &&
 		operation != "responsibility-create" && operation != "responsibility-list" && operation != "responsibility-show" && operation != "responsibility-activate" && operation != "responsibility-deactivate" && operation != "responsibility-assign" && operation != "responsibility-unassign" && operation != "responsibility-plan" &&
+		operation != "routine-create" && operation != "routine-list" && operation != "routine-show" && operation != "routine-activate" && operation != "routine-deactivate" && operation != "routine-run-now" &&
 		!strings.HasPrefix(operation, "interaction-") {
 		required = append(required, options.projectName)
 	}
@@ -1385,6 +1483,46 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	if responsibilityOperation && responsibility.Scope(options.responsibilityScope) == responsibility.ScopeProject && strings.TrimSpace(options.projectName) == "" {
 		return commandOptions{}, errors.New("project is required for responsibility-scope=project")
 	}
+	if operation == "routine-create" {
+		required = append(required, options.routineID, options.routineScope, options.responsibilityID, options.instruction, options.model, options.routineCadence, options.routineTimeOfDay, options.commandID)
+	}
+	if operation == "routine-list" || operation == "routine-show" || operation == "routine-activate" || operation == "routine-deactivate" || operation == "routine-run-now" {
+		required = append(required, options.routineScope)
+	}
+	if operation == "routine-show" || operation == "routine-activate" || operation == "routine-deactivate" || operation == "routine-run-now" {
+		required = append(required, options.routineID)
+	}
+	if operation == "routine-activate" {
+		required = append(required, options.commandID, options.at)
+		if options.expectedVersion == 0 {
+			return commandOptions{}, errors.New("expected Routine Version is required")
+		}
+	}
+	if operation == "routine-deactivate" {
+		required = append(required, options.commandID)
+		if options.expectedVersion == 0 {
+			return commandOptions{}, errors.New("expected Routine Version is required")
+		}
+	}
+	routineOperation := operation == "routine-create" || operation == "routine-list" || operation == "routine-show" ||
+		operation == "routine-activate" || operation == "routine-deactivate" || operation == "routine-run-now"
+	if routineOperation && options.routineScope != "" &&
+		routine.Scope(options.routineScope) != routine.ScopeCompany && routine.Scope(options.routineScope) != routine.ScopeProject {
+		return commandOptions{}, errors.New("routine-scope must be company or project")
+	}
+	if routineOperation && routine.Scope(options.routineScope) == routine.ScopeProject && strings.TrimSpace(options.projectName) == "" {
+		return commandOptions{}, errors.New("project is required for routine-scope=project")
+	}
+	if operation == "routine-create" && options.routineCadence != "" &&
+		routine.Cadence(options.routineCadence) != routine.CadenceDaily && routine.Cadence(options.routineCadence) != routine.CadenceWeekly {
+		return commandOptions{}, errors.New("cadence must be daily or weekly")
+	}
+	if operation == "routine-create" && routine.Cadence(options.routineCadence) == routine.CadenceWeekly && (options.routineWeekday < 0 || options.routineWeekday > 6) {
+		return commandOptions{}, errors.New("weekday (0-6) is required for cadence=weekly")
+	}
+	if operation == "routine-create" && routine.Cadence(options.routineCadence) == routine.CadenceDaily && options.routineWeekday != -1 && options.routineWeekday != 0 {
+		return commandOptions{}, errors.New("weekday must not be set for cadence=daily")
+	}
 	for _, value := range required {
 		if strings.TrimSpace(value) == "" {
 			return commandOptions{}, errors.New("required command argument is missing")
@@ -1395,7 +1533,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish", "goal-create", "goal-list", "goal-show", "goal-achieve", "goal-abandon", "responsibility-create", "responsibility-list", "responsibility-show", "responsibility-activate", "responsibility-deactivate", "responsibility-assign", "responsibility-unassign", "responsibility-plan":
+	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish", "goal-create", "goal-list", "goal-show", "goal-achieve", "goal-abandon", "responsibility-create", "responsibility-list", "responsibility-show", "responsibility-activate", "responsibility-deactivate", "responsibility-assign", "responsibility-unassign", "responsibility-plan", "routine-create", "routine-list", "routine-show", "routine-activate", "routine-deactivate", "routine-run-now":
 		return true
 	default:
 		return false
@@ -1625,6 +1763,31 @@ func commandTime(value string, now func() time.Time) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("invalid RFC3339 time")
 	}
 	return parsed, nil
+}
+
+// parseRoutineTrigger turns the routine-create CLI flags into a
+// routine.Trigger and lets Trigger.Validate() itself be the single source
+// of truth for shape correctness (cadence, weekday-iff-weekly, time range)
+// -- this function only handles the one thing Trigger.Validate() cannot:
+// parsing the human-facing "HH:MM" string into a time.Duration offset.
+func parseRoutineTrigger(cadence string, weekday int, timeOfDay string) (routine.Trigger, error) {
+	offset, err := parseTimeOfDayUTC(timeOfDay)
+	if err != nil {
+		return routine.Trigger{}, err
+	}
+	trigger := routine.Trigger{Cadence: routine.Cadence(cadence), TimeOfDayUTC: offset}
+	if trigger.Cadence == routine.CadenceWeekly {
+		trigger.Weekday = time.Weekday(weekday)
+	}
+	return trigger, trigger.Validate()
+}
+
+func parseTimeOfDayUTC(value string) (time.Duration, error) {
+	parsed, err := time.Parse("15:04", value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid HH:MM time of day")
+	}
+	return time.Duration(parsed.Hour())*time.Hour + time.Duration(parsed.Minute())*time.Minute, nil
 }
 
 func executionFailureResponse(err error) commandResponse {

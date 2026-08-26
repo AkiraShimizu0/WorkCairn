@@ -24,6 +24,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
 	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
 	"github.com/AkiraShimizu0/workcairn/go/internal/project"
+	"github.com/AkiraShimizu0/workcairn/go/internal/routine"
 	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
 )
 
@@ -200,6 +201,13 @@ func workspaceStorageKind(root string) string {
 		return "temporary"
 	}
 	return "dedicated_local"
+}
+
+type routinePlanPayload struct {
+	RoutineID   string    `json:"routine_id"`
+	Scope       string    `json:"scope"`
+	ProjectName string    `json:"project_name,omitempty"`
+	CurrentTime time.Time `json:"current_time"`
 }
 
 type taskExecutePayload struct {
@@ -455,6 +463,15 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 			return nil, err
 		}
 		return workspaceprocess.ExecuteCEOPlanApply(ctx, workspaceprocess.CEOPlanApplyInput{VaultRoot: executor.vaultRoot, ProjectID: payload.ProjectID, Plan: payload.Plan, CurrentTime: payload.CurrentTime, CommandID: command.CommandID, EventObservers: executor.observers}, true)
+	case "routine.plan":
+		var payload routinePlanPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteRoutinePlan(ctx, workspaceprocess.RoutinePlanDispatchInput{
+			VaultRoot: executor.vaultRoot, RoutineID: payload.RoutineID, Scope: routine.Scope(payload.Scope), ProjectName: payload.ProjectName,
+			CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
+		}, true, executor.providerConfig(), executor.httpClient)
 	case "interaction.start":
 		var payload interactionStartPayload
 		if err := decodePayload(command.Payload, &payload); err != nil {

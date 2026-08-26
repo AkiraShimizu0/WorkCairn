@@ -27,6 +27,14 @@ const (
 	ResponsibilityDeactivated Type = "responsibility.deactivated"
 	ResponsibilityAssigned    Type = "responsibility.assigned"
 	ResponsibilityUnassigned  Type = "responsibility.unassigned"
+	// RoutineCreated/Activated/Deactivated are the only Routine lifecycle
+	// Events (ADR-0063) -- occurrence-level facts (a Routine firing,
+	// generating a Plan, or failing) are already observable via the
+	// existing Schedule Record and Command Ledger, so no
+	// routine.triggered/plan_generated/failed Event was added.
+	RoutineCreated     Type = "routine.created"
+	RoutineActivated   Type = "routine.activated"
+	RoutineDeactivated Type = "routine.deactivated"
 )
 
 var supportedTypes = map[Type]struct{}{
@@ -53,6 +61,9 @@ var supportedTypes = map[Type]struct{}{
 	ResponsibilityDeactivated: {},
 	ResponsibilityAssigned:    {},
 	ResponsibilityUnassigned:  {},
+	RoutineCreated:            {},
+	RoutineActivated:          {},
+	RoutineDeactivated:        {},
 }
 
 func (eventType Type) Valid() bool {

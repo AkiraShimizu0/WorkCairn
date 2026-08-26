@@ -75,6 +75,29 @@ func TestInteractionPayloadsAreStrictAndNotSchedulable(t *testing.T) {
 	}
 }
 
+func TestRoutinePlanPayloadIsStrictAndSchedulable(t *testing.T) {
+	companyValid := json.RawMessage(`{"routine_id":"ROUTINE-1","scope":"company","current_time":"2026-08-27T09:00:00Z"}`)
+	if !Schedulable("routine.plan") || ValidatePayload("routine.plan", companyValid) != nil {
+		t.Fatal("valid company-scope routine.plan payload was rejected or not schedulable")
+	}
+	projectValid := json.RawMessage(`{"routine_id":"ROUTINE-1","scope":"project","project_name":"P","current_time":"2026-08-27T09:00:00Z"}`)
+	if ValidatePayload("routine.plan", projectValid) != nil {
+		t.Fatal("valid project-scope routine.plan payload was rejected")
+	}
+	for _, invalid := range []json.RawMessage{
+		json.RawMessage(`{"scope":"company","current_time":"2026-08-27T09:00:00Z"}`),                                             // missing routine_id
+		json.RawMessage(`{"routine_id":"ROUTINE-1","current_time":"2026-08-27T09:00:00Z"}`),                                      // missing scope
+		json.RawMessage(`{"routine_id":"ROUTINE-1","scope":"company"}`),                                                          // missing current_time
+		json.RawMessage(`{"routine_id":"ROUTINE-1","scope":"project","current_time":"2026-08-27T09:00:00Z"}`),                    // project scope without project_name
+		json.RawMessage(`{"routine_id":"ROUTINE-1","scope":"company","project_name":"P","current_time":"2026-08-27T09:00:00Z"}`), // company scope with project_name
+		json.RawMessage(`{"routine_id":"ROUTINE-1","scope":"company","current_time":"2026-08-27T09:00:00Z","api_key":"secret"}`), // unknown/secret field
+	} {
+		if err := ValidatePayload("routine.plan", invalid); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("invalid routine.plan payload %s error = %v", invalid, err)
+		}
+	}
+}
+
 func TestWorkspaceSetupPayloadIsStrictAndNotSchedulable(t *testing.T) {
 	valid := json.RawMessage(`{"current_time":"2026-08-13T15:00:00+09:00"}`)
 	if Schedulable("workspace.setup") || ValidatePayload("workspace.setup", valid) != nil {

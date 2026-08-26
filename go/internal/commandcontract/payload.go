@@ -25,7 +25,7 @@ func Schedulable(operation string) bool {
 	case "task.execute", "review.execute", "revision.execute", "workflow.execute", "workflow.reviewed.execute",
 		"ceo_plan.apply", "project.bootstrap", "task.create", "project.dependencies.create",
 		"organization.employee_hire", "organization.employee_rename", "organization.employee_id_repair", "organization.sync",
-		"action.wordpress.publish":
+		"action.wordpress.publish", "routine.plan":
 		return true
 	default:
 		return false
@@ -128,6 +128,13 @@ func ValidatePayload(operation string, content json.RawMessage) error {
 		}{}
 	case "organization.sync":
 		target = &struct {
+			CurrentTime time.Time `json:"current_time"`
+		}{}
+	case "routine.plan":
+		target = &struct {
+			RoutineID   string    `json:"routine_id"`
+			Scope       string    `json:"scope"`
+			ProjectName string    `json:"project_name,omitempty"`
 			CurrentTime time.Time `json:"current_time"`
 		}{}
 	case "action.wordpress.publish":
@@ -237,6 +244,7 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 		"organization.employee_id_repair":       {},
 		"organization.sync":                     {},
 		"action.wordpress.publish":              {"project_id", "project_name", "task_id", "target_id", "source_sha256"},
+		"routine.plan":                          {"routine_id", "scope"},
 		"interaction.start":                     {"session_id", "request", "request_digest", "model"},
 		"interaction.plan.generate":             {"session_id"},
 		"interaction.answer":                    {"session_id"},
@@ -285,6 +293,17 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 	if operation == "action.wordpress.publish" {
 		var digest string
 		if json.Unmarshal(fields["source_sha256"], &digest) != nil || action.ValidateSourceDigest(digest) != nil {
+			return ErrInvalidPayload
+		}
+	}
+	if operation == "routine.plan" {
+		var scope, projectName string
+		_ = json.Unmarshal(fields["scope"], &scope)
+		_ = json.Unmarshal(fields["project_name"], &projectName)
+		if scope != "company" && scope != "project" {
+			return ErrInvalidPayload
+		}
+		if (scope == "project") != (strings.TrimSpace(projectName) != "") {
 			return ErrInvalidPayload
 		}
 	}

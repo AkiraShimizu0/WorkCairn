@@ -108,6 +108,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0060: Goal Domain Foundation](adr/ADR-0060-goal-domain-foundation.md)
 - [ADR-0061: Responsibility Domain Foundation](adr/ADR-0061-responsibility-domain-foundation.md)
 - [ADR-0062: Responsibility Work Generation](adr/ADR-0062-responsibility-work-generation.md)
+- [ADR-0063: Routine Automation Foundation](adr/ADR-0063-routine-automation-foundation.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -171,6 +172,7 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Goal Service | ADR-0060のGoal lifecycle（create→active→achieved／abandoned）決定とEvent発行（`goal.created`／`goal.achieved`／`goal.abandoned`）を単独で所有する。Kernel未登録（CEOPlanService等と同じ、呼び出し側でcomposeするService）。Employee ownership、Task／Plan生成は一切行わない — Goalはstanding stateのみで、将来のResponsibility domainがGoalとEmployee／Work generationの間を仲介する想定（本Checkpointでは未実装） |
 | Go Responsibility Service | ADR-0061のResponsibility lifecycle（create→active⇄inactive、再activate可）決定、GoalRefs存在確認（`GoalLookup`経由、同scope限定）、Employee binding（`Binding`、single-owner、`EmployeeLookup`経由で既存Organization rosterを確認）、Event発行（`responsibility.created`／`activated`／`deactivated`／`assigned`／`unassigned`）を単独で所有する。Kernel未登録（GoalServiceと同型）。Task／Plan／Workflow／Schedule生成は一切行わない |
 | Go Responsibility Work Generation | ADR-0062の`process.GenerateResponsibilityPlan`（`workcairn responsibility-plan`、手動trigger限定）。ResponsibilityのTitle／linked Goals／Bindingを解決し、明示Human instructionと合成したRequestを既存の`GenerateCEOPlan`（Provider呼び出し、`ceoplan.BuildPrompt`/`ParseIntent`/`NormalizeIntent`）へそのまま渡す — 新しいPlanning engineは持たない。Command Ledger未wrap（`GenerateCEOPlan`自体と同じくreal-time・non-replayable呼び出し）。TaskもWorkflowもScheduleも直接作らず、結果は`ResponsibilityPlanningResult`（既存`service.CEOPlanResult`をResponsibility/Goal/Binding traceabilityで包んだだけの新規wrapper、`ceoplan.Plan`自体のschemaは無変更）。生成されたPlanは既存の`ceo-plan-apply`（別途明示承認）へそのまま渡せる |
+| Go Routine Service / Automation | ADR-0063の`internal/routine`（RoutineID／Scope／ResponsibilityID／Instruction／Model／Trigger／Status、初期Inactive）とTrigger（daily／weekly限定、`NextOccurrence`はUTC日付演算のみ、cron parserなし）。`process.ExecuteRoutineActivate`が既存の一shot Scheduler（ADR-0025）へ次回発火分のSchedule 1件を作成——Schedulerは相変わらずRecurrenceを一切知らない。発火target `routine.plan`（新schedulable operation、Command Ledger管理、`task.execute`等と同型）は、ActiveなRoutineなら既存`GenerateResponsibilityPlan`をそのまま呼び出しPlan生成のみ行い、成功・失敗を問わず次occurrenceを再Chain（recurrence≠retry）。InactiveなRoutineへの発火はdispatch時fresh Status確認でno-op skip（Schedule取消機能なし、新規追加もせず）。`routine-run-now`はSchedule状態に触れない手動acceptance primitive |
 | Go Notification／Metrics Subscriber | Runtime edgeから既存Eventへ接続し、payload-free immutable Inboxとbounded process-local counterを提供する。Task状態、Event、Auditを変更しない |
 | Go External Action Service／WordPress Adapter | 既存Deliverableをtyped intentへ変換し、明示承認、immutable request／result evidence、外部公開、`action.completed`を調停する。credentialとHTTPはAdapter edgeだけに置く |
 | Go Interaction Domain／Service | 自然言語request、CEO質問回答、plan digest承認、適用済みProject、Reviewed Workflow／External Actionのtyped summaryとResult digestをappend-only turn／Version/CASで調停する。Provider、Vault、Task状態を知らない |
@@ -179,23 +181,27 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
-## Company OS Hierarchy (Goal / Responsibility Foundation, ADR-0060/ADR-0061/ADR-0062)
+## Company OS Hierarchy (Goal / Responsibility Foundation, ADR-0060/ADR-0061/ADR-0062/ADR-0063)
 
-ADR-0060、ADR-0061、ADR-0062により、Company OSの上位構造を次のように整理しました。
+ADR-0060、ADR-0061、ADR-0062、ADR-0063により、Company OSの上位構造を次のように整理しました。
 
 ```text
 Goal                      (実装済み: internal/goal, ADR-0060)
   ↓
 Responsibility            (実装済み: internal/responsibility, ADR-0061)
-  ↓ (手動trigger: responsibility-plan, ADR-0062)
+  ├─ Manual Planning       (手動trigger: responsibility-plan, ADR-0062)
+  └─ Routine                (実装済み: internal/routine, ADR-0063)
+       ↓ (recurring trigger → existing Scheduler → routine.plan)
 Planning
-  ├─ Routine               (未実装 — 将来Checkpoint)
-  └─ Workflow               (実装済み)
-       ↓
-      Task                 (実装済み)
+  ↓
+Workflow                  (実装済み)
+  ↓
+Task                      (実装済み)
 ```
 
-Goalは会社またはProjectが継続的に追求するstanding business outcomeで、単一Plan／Workflowより長生きします。Responsibilityは会社またはProject内のbusiness area／outcomeを継続的に担当するstanding obligationで、Goalを（任意で、同scope内に限り）参照でき、最大1名のEmployeeへbinding可能です（single-owner v1）。**Responsibility → Planningは接続済みです**（`process.GenerateResponsibilityPlan`、ADR-0062）：Human Operatorが`workcairn responsibility-plan --responsibility-id ... --instruction "..." --approved`を実行すると、Responsibilityの標準context（Title、linked Goals、Binding）を解決した上で、既存の`GenerateCEOPlan`（Provider呼び出し、`ceoplan.BuildPrompt`/`ParseIntent`/`NormalizeIntent`）へそのまま渡し、既存の`ceo-plan-apply`で承認・適用できる標準`ceoplan.Plan`を返します。Trigger手動限定・明示的Human instruction必須（Responsibility Titleのみから作業内容を捏造しない）・**Responsibility自身はTaskを直接作成せずWorkflowも直接実行しません**（Plan生成のみ）。RoutineとScheduler／Event trigger（Responsibility activateやEvidence等が自動でPlanningを起動すること）はまだ未実装です。GoalからTask／Planへの直接接続は意図的に作っていません（Goal→Responsibility→Planningという経路のみ）。RoleとResponsibilityは別概念です（Role＝どんな種類の仕事ができるか、Responsibility＝何を継続的に面倒見るか）。Responsibility ownerはTask assignmentを上書きしません（`ceoplan`のassignment解決はRequiredRoleのみに基づき、Responsibilityのownerを一切参照しません）。ResponsibilityはAuthorityでもありません（何を勝手にしてよいかは既存`autonomy.Contract`のまま）。
+Goalは会社またはProjectが継続的に追求するstanding business outcomeで、単一Plan／Workflowより長生きします。Responsibilityは会社またはProject内のbusiness area／outcomeを継続的に担当するstanding obligationで、Goalを（任意で、同scope内に限り）参照でき、最大1名のEmployeeへbinding可能です（single-owner v1）。**Responsibility → Planningは接続済みです**（`process.GenerateResponsibilityPlan`、ADR-0062）：Human Operatorが`workcairn responsibility-plan --responsibility-id ... --instruction "..." --approved`を実行すると、Responsibilityの標準context（Title、linked Goals、Binding）を解決した上で、既存の`GenerateCEOPlan`（Provider呼び出し、`ceoplan.BuildPrompt`/`ParseIntent`/`NormalizeIntent`）へそのまま渡し、既存の`ceo-plan-apply`で承認・適用できる標準`ceoplan.Plan`を返します。Trigger手動限定・明示的Human instruction必須（Responsibility Titleのみから作業内容を捏造しない）・**Responsibility自身はTaskを直接作成せずWorkflowも直接実行しません**（Plan生成のみ）。
+
+**Routine（ADR-0063）はResponsibilityに紐づくsaved work definition + recurring triggerで、Workflowの兄弟概念です**（Routine≠Workflow：Routineは「何をいつ計画するか」の保存定義、Workflowは実際に実行するTask/依存関係構造）。`workcairn routine-create --routine-id ... --responsibility-id ... --instruction "..." --cadence weekly --weekday 1 --time-of-day 09:00 --approved`でRoutineを作成（初期状態はInactive）、`routine-activate`でActiveへ遷移させると同時に、既存の一shot Scheduler（ADR-0025）へ次回発火分のScheduleを1件だけ作成します。SchedulerはRecurrenceを一切知らず、常に「次の1回」だけを保持——Routine側が`Trigger.NextOccurrence`（daily／weekly限定、cron parserなし、UTC日付演算のみ）でRecurrence semanticを所有します。発火するSchedule targetは新しい`routine.plan`operation（Command Ledger管理、既存`task.execute`等と同型——手動`responsibility-plan`自体は非Ledgerのまま変更なし）で、ActiveなRoutineなら既存の`GenerateResponsibilityPlan`をそのまま呼び出してPlan生成のみ行い（Task／Workflow／Apply は一切行わない）、成功・失敗を問わず次のcadence発生分を改めてChainします（recurrence≠retry：同じ occurrence の自動retryは行わず、次の通常occurrenceだけを保証）。InactiveなRoutineへの発火はdispatch時のfresh Status確認によりno-op skipします（Schedule取消機能が存在しないため——新Scheduler capabilityは追加していません）。`routine-run-now`は手動acceptance primitiveで、Schedule状態に一切触れず同じPlanning pathをそのまま実行します。RoutineとScheduler／Event trigger以外の自動trigger（Evidence変化等）はまだ未実装です。GoalからTask／Planへの直接接続は意図的に作っていません（Goal→Responsibility→Planningという経路のみ）。RoleとResponsibilityは別概念です（Role＝どんな種類の仕事ができるか、Responsibility＝何を継続的に面倒見るか）。Responsibility ownerはTask assignmentを上書きしません（`ceoplan`のassignment解決はRequiredRoleのみに基づき、Responsibilityのownerを一切参照しません）。ResponsibilityはAuthorityでもありません（何を勝手にしてよいかは既存`autonomy.Contract`のまま）。
 
 ## データ境界
 
@@ -212,6 +218,7 @@ Goalは会社またはProjectが継続的に追求するstanding business outcom
 - `.workspace-os/schedules/`: one-shot Scheduleのdefinition、due time、Version／CAS、dispatch outcome
 - `会社/Goals/`（company-scope）／`プロジェクト/<name>/Goals/`（project-scope）: Goal canonical JSON + Markdown projection（ID、Title、Outcome、Status、Scope、Version）。ADR-0060
 - `会社/Responsibilities/`（company-scope）／`プロジェクト/<name>/Responsibilities/`（project-scope）: Responsibility canonical JSON + Markdown projection（ID、Title、Scope、GoalRefs、Status、Version）と、独立したCAS lineageを持つBinding canonical JSON（`*.binding.json`、EmployeeID、Version）。ADR-0061
+- `会社/Routines/`（company-scope）／`プロジェクト/<name>/Routines/`（project-scope）: Routine canonical JSON + Markdown projection（ID、ResponsibilityID、Instruction、Model、Trigger、Status、Version）。ADR-0063
 - `.workspace-os/notifications/`: Event payloadを含まないimmutable Notification projection
 - `プロジェクト/<name>/.workspace-os/actions/`: source digestに拘束されたimmutable external Action request／result evidence
 - `Progress.md`と`Audit Log.md`: 実行・レビュー履歴
@@ -254,6 +261,7 @@ ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環�
 - `go/internal/scheduler`: Storage／transport非依存のone-shot Schedule、state、Version／CAS、Dispatcher port
 - `go/internal/goal`: Provider／Storage非依存のGoal（会社またはProjectが継続的に追求するstanding business outcome）。ID、Scope（company／project）、Status（active／achieved／abandoned）、Version／CASのDomain契約。Employee ownership、deadline、priority、Task/Planへの直接接続は持たない（ADR-0060）
 - `go/internal/responsibility`: Provider／Storage非依存のResponsibility（会社またはProject内のbusiness area／outcomeを継続的に担当するstanding obligation）。ID、Scope（company／project）、Status（active／inactive、再activate可能）、GoalRefs（optional、同scope限定、opaque string）、Version／CASのDomain契約。Employee bindingは別entity（Binding、single-owner v1）として分離し、Recordへ埋め込まない。Approval／Capability/Skillは持たない（ADR-0061）
+- `go/internal/routine`: Provider／Storage非依存のRoutine（1つのResponsibilityに紐づくsaved work definition + recurring trigger、Workflowの兄弟概念）。ID、Scope、ResponsibilityID（immutable、一方向参照）、Instruction／Model（unattended dispatch用に必須）、Trigger（daily／weekly限定、`NextOccurrence`はUTC日付演算のみ）、Status（active／inactive、初期Inactive、再activate可能）、Version／CASのDomain契約。Persona／SkillRefs／CapabilityRefs／Memory／Workflow定義／任意metadataは持たない（ADR-0063）
 - `go/internal/notification`: Task／Review／Revision／Action EventからのredactedなpayloadなしImmutable projection契約
 - `go/internal/metrics`: Event typeごとの件数だけを持つbounded process-local Metrics subscriber
 - `go/internal/action`: Provider／Storage非依存の外部publication（WordPress等）typed intent／evidence契約
