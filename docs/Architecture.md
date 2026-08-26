@@ -107,6 +107,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0059: Claude Output Token Policy — a Single, Documented, Runtime-owned Default](adr/ADR-0059-claude-output-token-policy.md)
 - [ADR-0060: Goal Domain Foundation](adr/ADR-0060-goal-domain-foundation.md)
 - [ADR-0061: Responsibility Domain Foundation](adr/ADR-0061-responsibility-domain-foundation.md)
+- [ADR-0062: Responsibility Work Generation](adr/ADR-0062-responsibility-work-generation.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -168,7 +169,8 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go BudgetGuard | `go/internal/policy`の`FixedBudgetPolicy`（ADR-0054）が、「出力が改善しているか」ではなく「許可された資源envelopeを既に超えたか」だけを判断する――Progress Intelligenceとは意図的に独立した責務。scopeは1 Reviewed Workflow execution単位で、`autonomy.Contract.MaxRuntime`（既定30分）／`MaxProviderCalls`（既定60、LoopGuardの構造的counterとは別物）の2軸を独立して強制する。`internal/service`の`budgetTracker`が実際の並列安全な予約primitive（atomic reserve→invoke→record、`policy.BudgetPolicy`とは別の意図的にstatefulな機構）で、process-local・1呼び出しscopeのみの保証。Recovery Continuation（ADR-0055）は新しい明示Command／新しいbounded trackerを使い、古い消費量を消去・継承したと推測しない。root lineage全体のdurable Budgetは将来課題。Token使用量は既存の`worker.TokenUsage`のnilable設計（unknown≠0）をそのまま利用し、v1ではゲーティングに使わない。Cost Budgetは未実装（価格tableが存在しないため） |
 | Go Scheduler Service | 承認済みone-shot Commandをoffset付き時刻で選択し、Schedule CAS後に既存Process／Command Ledgerへ配送する。Task状態やProviderは直接扱わない |
 | Go Goal Service | ADR-0060のGoal lifecycle（create→active→achieved／abandoned）決定とEvent発行（`goal.created`／`goal.achieved`／`goal.abandoned`）を単独で所有する。Kernel未登録（CEOPlanService等と同じ、呼び出し側でcomposeするService）。Employee ownership、Task／Plan生成は一切行わない — Goalはstanding stateのみで、将来のResponsibility domainがGoalとEmployee／Work generationの間を仲介する想定（本Checkpointでは未実装） |
-| Go Responsibility Service | ADR-0061のResponsibility lifecycle（create→active⇄inactive、再activate可）決定、GoalRefs存在確認（`GoalLookup`経由、同scope限定）、Employee binding（`Binding`、single-owner、`EmployeeLookup`経由で既存Organization rosterを確認）、Event発行（`responsibility.created`／`activated`／`deactivated`／`assigned`／`unassigned`）を単独で所有する。Kernel未登録（GoalServiceと同型）。Task／Plan／Workflow／Schedule生成は一切行わない — Responsibility→Work generationは将来Checkpointの接続対象 |
+| Go Responsibility Service | ADR-0061のResponsibility lifecycle（create→active⇄inactive、再activate可）決定、GoalRefs存在確認（`GoalLookup`経由、同scope限定）、Employee binding（`Binding`、single-owner、`EmployeeLookup`経由で既存Organization rosterを確認）、Event発行（`responsibility.created`／`activated`／`deactivated`／`assigned`／`unassigned`）を単独で所有する。Kernel未登録（GoalServiceと同型）。Task／Plan／Workflow／Schedule生成は一切行わない |
+| Go Responsibility Work Generation | ADR-0062の`process.GenerateResponsibilityPlan`（`workcairn responsibility-plan`、手動trigger限定）。ResponsibilityのTitle／linked Goals／Bindingを解決し、明示Human instructionと合成したRequestを既存の`GenerateCEOPlan`（Provider呼び出し、`ceoplan.BuildPrompt`/`ParseIntent`/`NormalizeIntent`）へそのまま渡す — 新しいPlanning engineは持たない。Command Ledger未wrap（`GenerateCEOPlan`自体と同じくreal-time・non-replayable呼び出し）。TaskもWorkflowもScheduleも直接作らず、結果は`ResponsibilityPlanningResult`（既存`service.CEOPlanResult`をResponsibility/Goal/Binding traceabilityで包んだだけの新規wrapper、`ceoplan.Plan`自体のschemaは無変更）。生成されたPlanは既存の`ceo-plan-apply`（別途明示承認）へそのまま渡せる |
 | Go Notification／Metrics Subscriber | Runtime edgeから既存Eventへ接続し、payload-free immutable Inboxとbounded process-local counterを提供する。Task状態、Event、Auditを変更しない |
 | Go External Action Service／WordPress Adapter | 既存Deliverableをtyped intentへ変換し、明示承認、immutable request／result evidence、外部公開、`action.completed`を調停する。credentialとHTTPはAdapter edgeだけに置く |
 | Go Interaction Domain／Service | 自然言語request、CEO質問回答、plan digest承認、適用済みProject、Reviewed Workflow／External Actionのtyped summaryとResult digestをappend-only turn／Version/CASで調停する。Provider、Vault、Task状態を知らない |
@@ -177,15 +179,15 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
 
-## Company OS Hierarchy (Goal / Responsibility Foundation, ADR-0060/ADR-0061)
+## Company OS Hierarchy (Goal / Responsibility Foundation, ADR-0060/ADR-0061/ADR-0062)
 
-ADR-0060とADR-0061により、Company OSの上位構造を次のように整理しました。
+ADR-0060、ADR-0061、ADR-0062により、Company OSの上位構造を次のように整理しました。
 
 ```text
 Goal                      (実装済み: internal/goal, ADR-0060)
   ↓
 Responsibility            (実装済み: internal/responsibility, ADR-0061)
-  ↓
+  ↓ (手動trigger: responsibility-plan, ADR-0062)
 Planning
   ├─ Routine               (未実装 — 将来Checkpoint)
   └─ Workflow               (実装済み)
@@ -193,7 +195,7 @@ Planning
       Task                 (実装済み)
 ```
 
-Goalは会社またはProjectが継続的に追求するstanding business outcomeで、単一Plan／Workflowより長生きします。Responsibilityは会社またはProject内のbusiness area／outcomeを継続的に担当するstanding obligationで、Goalを（任意で、同scope内に限り）参照でき、最大1名のEmployeeへbinding可能です（single-owner v1）。RoutineとResponsibility→Work generation（Responsibility create/activate/assignがPlan／Task／Workflow／Scheduleを自動生成すること）はまだ未実装です。GoalからTask／Planへの直接接続、ResponsibilityからTask／Planへの直接接続はいずれも意図的に作っていません（Goal→Responsibility→Work generationという将来の経路を保つため）。RoleとResponsibilityは別概念です（Role＝どんな種類の仕事ができるか、Responsibility＝何を継続的に面倒見るか）。ResponsibilityはAuthorityでもありません（何を勝手にしてよいかは既存`autonomy.Contract`のまま）。
+Goalは会社またはProjectが継続的に追求するstanding business outcomeで、単一Plan／Workflowより長生きします。Responsibilityは会社またはProject内のbusiness area／outcomeを継続的に担当するstanding obligationで、Goalを（任意で、同scope内に限り）参照でき、最大1名のEmployeeへbinding可能です（single-owner v1）。**Responsibility → Planningは接続済みです**（`process.GenerateResponsibilityPlan`、ADR-0062）：Human Operatorが`workcairn responsibility-plan --responsibility-id ... --instruction "..." --approved`を実行すると、Responsibilityの標準context（Title、linked Goals、Binding）を解決した上で、既存の`GenerateCEOPlan`（Provider呼び出し、`ceoplan.BuildPrompt`/`ParseIntent`/`NormalizeIntent`）へそのまま渡し、既存の`ceo-plan-apply`で承認・適用できる標準`ceoplan.Plan`を返します。Trigger手動限定・明示的Human instruction必須（Responsibility Titleのみから作業内容を捏造しない）・**Responsibility自身はTaskを直接作成せずWorkflowも直接実行しません**（Plan生成のみ）。RoutineとScheduler／Event trigger（Responsibility activateやEvidence等が自動でPlanningを起動すること）はまだ未実装です。GoalからTask／Planへの直接接続は意図的に作っていません（Goal→Responsibility→Planningという経路のみ）。RoleとResponsibilityは別概念です（Role＝どんな種類の仕事ができるか、Responsibility＝何を継続的に面倒見るか）。Responsibility ownerはTask assignmentを上書きしません（`ceoplan`のassignment解決はRequiredRoleのみに基づき、Responsibilityのownerを一切参照しません）。ResponsibilityはAuthorityでもありません（何を勝手にしてよいかは既存`autonomy.Contract`のまま）。
 
 ## データ境界
 

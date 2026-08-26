@@ -58,6 +58,7 @@ type commandOptions struct {
 	ceoRequest, planJSON, scheduleJSON                         string
 	goalID, goalScope, goalTitle, goalOutcome                  string
 	responsibilityID, responsibilityScope, responsibilityTitle string
+	instruction                                                string
 	goalRefs                                                   stringListFlag
 	actionTarget                                               string
 	actionSourceSHA256                                         string
@@ -201,6 +202,26 @@ func run(ctx context.Context, args []string, output io.Writer, dependencies comm
 				response.Error.Stage = string(planError.Stage)
 			}
 			writeCommandResponse(output, response)
+			return 1
+		}
+		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
+		return 0
+	}
+	if operation == "responsibility-plan" {
+		if !options.approved {
+			writeCommandResponse(output, failureResponse("APPROVAL_REQUIRED", ""))
+			return 1
+		}
+		apiKey, _ := dependencies.lookupEnv("ANTHROPIC_API_KEY")
+		baseURL, _ := dependencies.lookupEnv("WORKCAIRN_CLAUDE_BASE_URL")
+		result, err := workspaceprocess.GenerateResponsibilityPlan(ctx, workspaceprocess.ResponsibilityPlanInput{
+			VaultRoot: options.vaultRoot, ResponsibilityID: options.responsibilityID, Scope: responsibility.Scope(options.responsibilityScope), ProjectName: options.projectName,
+			Instruction: options.instruction, Model: options.model,
+		}, true, workspaceprocess.ClaudeProcessConfig{
+			APIKey: apiKey, BaseURL: baseURL, MaxTokens: workspaceruntime.DefaultClaudeMaxTokens,
+		}, dependencies.newHTTPClient(options.timeout))
+		if err != nil {
+			writeCommandResponse(output, responsibilityPlanFailureResponse(err))
 			return 1
 		}
 		writeCommandResponse(output, commandResponse{Version: outputVersion, OK: true, Result: result})
@@ -1171,6 +1192,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	set.StringVar(&options.responsibilityID, "responsibility-id", "", "Responsibility ID")
 	set.StringVar(&options.responsibilityScope, "responsibility-scope", "", "Responsibility scope: company or project")
 	set.StringVar(&options.responsibilityTitle, "responsibility-title", "", "Responsibility title")
+	set.StringVar(&options.instruction, "instruction", "", "explicit Human instruction for Responsibility-scoped work generation")
 	set.Var(&options.goalRefs, "goal-ref", "Goal ID this Responsibility supports; repeat for multiple")
 	set.StringVar(&options.actionTarget, "target", "", "logical external Action target ID")
 	set.StringVar(&options.actionSourceSHA256, "source-sha256", "", "approved Deliverable SHA-256 for external Action")
@@ -1192,7 +1214,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	}
 	required := []string{options.vaultRoot}
 	if operation != "organization-inspect" && operation != "identity-validate" && operation != "employee-candidates-validate" && operation != "employee-hire-plan" && operation != "employee-hire-execute" && operation != "employee-rename-plan" && operation != "employee-rename-execute" && operation != "employee-rename-batch-plan" && operation != "employee-id-repair-plan" && operation != "employee-id-repair-execute" && operation != "organization-sync-plan" && operation != "organization-sync-execute" && operation != "ceo-plan-generate" && operation != "ceo-plan-apply-plan" && operation != "ceo-plan-apply" && operation != "schedule-plan" && operation != "schedule-create" && operation != "schedule-list" && operation != "goal-create" && operation != "goal-list" && operation != "goal-show" && operation != "goal-achieve" && operation != "goal-abandon" &&
-		operation != "responsibility-create" && operation != "responsibility-list" && operation != "responsibility-show" && operation != "responsibility-activate" && operation != "responsibility-deactivate" && operation != "responsibility-assign" && operation != "responsibility-unassign" &&
+		operation != "responsibility-create" && operation != "responsibility-list" && operation != "responsibility-show" && operation != "responsibility-activate" && operation != "responsibility-deactivate" && operation != "responsibility-assign" && operation != "responsibility-unassign" && operation != "responsibility-plan" &&
 		!strings.HasPrefix(operation, "interaction-") {
 		required = append(required, options.projectName)
 	}
@@ -1351,8 +1373,11 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 	if operation == "responsibility-unassign" {
 		required = append(required, options.commandID)
 	}
+	if operation == "responsibility-plan" {
+		required = append(required, options.responsibilityScope, options.responsibilityID, options.instruction, options.model)
+	}
 	responsibilityOperation := operation == "responsibility-create" || operation == "responsibility-list" || operation == "responsibility-show" ||
-		operation == "responsibility-activate" || operation == "responsibility-deactivate" || operation == "responsibility-assign" || operation == "responsibility-unassign"
+		operation == "responsibility-activate" || operation == "responsibility-deactivate" || operation == "responsibility-assign" || operation == "responsibility-unassign" || operation == "responsibility-plan"
 	if responsibilityOperation && options.responsibilityScope != "" &&
 		responsibility.Scope(options.responsibilityScope) != responsibility.ScopeCompany && responsibility.Scope(options.responsibilityScope) != responsibility.ScopeProject {
 		return commandOptions{}, errors.New("responsibility-scope must be company or project")
@@ -1370,7 +1395,7 @@ func parseOptions(operation string, args []string) (commandOptions, error) {
 
 func knownOperation(operation string) bool {
 	switch operation {
-	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish", "goal-create", "goal-list", "goal-show", "goal-achieve", "goal-abandon", "responsibility-create", "responsibility-list", "responsibility-show", "responsibility-activate", "responsibility-deactivate", "responsibility-assign", "responsibility-unassign":
+	case "version", "plan", "execute", "review-plan", "review-execute", "revision-plan", "revision-execute", "workflow-plan", "workflow-execute", "workflow-reviewed-plan", "workflow-reviewed-execute", "migrate-plan", "migrate-apply", "recovery-inspect", "recovery-plan", "recovery-apply", "organization-inspect", "identity-validate", "employee-candidates-validate", "organization-sync-plan", "organization-sync-execute", "employee-hire-plan", "employee-hire-execute", "employee-rename-plan", "employee-rename-execute", "employee-rename-batch-plan", "employee-id-repair-plan", "employee-id-repair-execute", "project-bootstrap-plan", "project-bootstrap-execute", "task-create-plan", "task-create-execute", "project-dependencies-plan", "project-dependencies-create", "ceo-plan-generate", "ceo-plan-apply-plan", "ceo-plan-apply", "schedule-plan", "schedule-create", "schedule-list", "action-wordpress-plan", "action-wordpress-publish", "interaction-start-plan", "interaction-start", "interaction-list", "interaction-inspect", "interaction-next", "interaction-plan-generate", "interaction-answer", "interaction-plan-apply", "interaction-plan-approve-and-execute", "interaction-workflow-plan", "interaction-workflow-execute", "interaction-action-wordpress-plan", "interaction-action-wordpress-publish", "goal-create", "goal-list", "goal-show", "goal-achieve", "goal-abandon", "responsibility-create", "responsibility-list", "responsibility-show", "responsibility-activate", "responsibility-deactivate", "responsibility-assign", "responsibility-unassign", "responsibility-plan":
 		return true
 	default:
 		return false
@@ -1716,6 +1741,29 @@ func revisionFailureResponse(err error, result revision.Result) commandResponse 
 	response.Error.TaskCommitted = result.Task != nil
 	response.Error.EventPublished = result.EventPublished
 	return response
+}
+
+// responsibilityPlanFailureResponse classifies GenerateResponsibilityPlan
+// failures without inventing a new taxonomy: Responsibility/Goal context
+// resolution errors get their own machine-readable codes, and any
+// underlying Planning failure surfaces the existing service.CEOPlanError
+// Stage unchanged, exactly like ceo-plan-generate's own error handling.
+func responsibilityPlanFailureResponse(err error) commandResponse {
+	switch {
+	case errors.Is(err, responsibility.ErrNotFound):
+		return failureResponse("RESPONSIBILITY_NOT_FOUND", "")
+	case errors.Is(err, workspaceprocess.ErrResponsibilityInactiveForPlanning):
+		return failureResponse("RESPONSIBILITY_INACTIVE", "")
+	case errors.Is(err, service.ErrGoalRefNotFound):
+		return failureResponse("GOAL_REF_NOT_FOUND", "")
+	default:
+		response := failureResponse("RESPONSIBILITY_PLAN_GENERATION_FAILED", "")
+		var planError *service.CEOPlanError
+		if errors.As(err, &planError) {
+			response.Error.Stage = string(planError.Stage)
+		}
+		return response
+	}
 }
 
 func failureResponse(code string, stage string) commandResponse {

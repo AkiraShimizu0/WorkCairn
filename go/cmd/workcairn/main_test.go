@@ -745,6 +745,119 @@ func TestCEOPlanGenerateAndApplyUseGoOnlyProductPath(t *testing.T) {
 	}
 }
 
+// TestResponsibilityPlanCLIResolvesContextAndReusesGenerateCEOPlan exercises
+// the new responsibility-plan operation end to end through the real CLI
+// dispatcher: goal-create -> responsibility-create wire up standing Company
+// OS state exactly as an Operator would, then responsibility-plan resolves
+// that Responsibility's context and hands off to the same Go-only Planning
+// product path ceo-plan-generate itself uses -- confirming the CLI wiring
+// (flags, required-field validation, approval gate, error mapping) added
+// this Checkpoint, not just the underlying process.GenerateResponsibilityPlan
+// function already covered by internal/process's own unit tests.
+func TestResponsibilityPlanCLIResolvesContextAndReusesGenerateCEOPlan(t *testing.T) {
+	fixtureContent, err := os.ReadFile(filepath.Join("..", "..", "..", "fixtures", "ceo", "plan_generation_v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Employees []struct{ ID, Name, Department, Role, Model string } `json:"employees"`
+	}
+	if err := json.Unmarshal(fixtureContent, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "プロジェクト"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "社員"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, employee := range fixture.Employees {
+		writeCommandFile(t, filepath.Join(root, "社員", employee.Name+".md"), "---\nid: "+employee.ID+"\ndepartment: "+employee.Department+"\nrole: "+employee.Role+"\nmodel: "+employee.Model+"\nstatus: 待機中\n---\n")
+	}
+	noSecretsDependencies := commandDependencies{
+		lookupEnv: func(string) (string, bool) {
+			t.Fatal("read-only/unapproved step read Provider environment")
+			return "", false
+		},
+		now: commandTestTime,
+		newHTTPClient: func(time.Duration) claude.HTTPDoer {
+			t.Fatal("read-only/unapproved step created HTTP client")
+			return nil
+		},
+	}
+	var goalOutput bytes.Buffer
+	if exit := run(context.Background(), []string{
+		"goal-create", "--vault", root, "--goal-id", "GOAL-1", "--goal-scope", "company",
+		"--goal-title", "オンボーディングを継続的に改善する", "--goal-outcome", "完了率80%",
+		"--command-id", "CMD-GOAL-1", "--approved",
+	}, &goalOutput, noSecretsDependencies); exit != 0 {
+		t.Fatalf("goal-create response=%s", goalOutput.String())
+	}
+	var responsibilityOutput bytes.Buffer
+	if exit := run(context.Background(), []string{
+		"responsibility-create", "--vault", root, "--responsibility-id", "RESP-1", "--responsibility-scope", "company",
+		"--responsibility-title", "オンボーディング品質を継続的に改善する", "--goal-ref", "GOAL-1",
+		"--command-id", "CMD-RESP-1", "--approved",
+	}, &responsibilityOutput, noSecretsDependencies); exit != 0 {
+		t.Fatalf("responsibility-create response=%s", responsibilityOutput.String())
+	}
+	planArgs := []string{
+		"responsibility-plan", "--vault", root, "--responsibility-id", "RESP-1", "--responsibility-scope", "company",
+		"--instruction", "今週改善すべき項目を調査して実装計画を作る", "--model", "Claude Sonnet 5",
+	}
+	before := commandVaultSnapshot(t, root)
+	var unapprovedOutput bytes.Buffer
+	if exit := run(context.Background(), planArgs, &unapprovedOutput, noSecretsDependencies); exit != 1 {
+		t.Fatalf("unapproved responsibility-plan exit=%d response=%s", exit, unapprovedOutput.String())
+	}
+	unapprovedResponse := decodeCommandResponse(t, unapprovedOutput.Bytes())
+	if unapprovedResponse.OK || unapprovedResponse.Error == nil || unapprovedResponse.Error.Code != "APPROVAL_REQUIRED" {
+		t.Fatalf("unapproved responsibility-plan response=%#v", unapprovedResponse)
+	}
+	if after := commandVaultSnapshot(t, root); !reflect.DeepEqual(before, after) {
+		t.Fatal("unapproved responsibility-plan changed the Vault")
+	}
+	intentOutput, _ := json.Marshal(map[string]any{
+		"project_name": "オンボーディング改善", "objective": "新規ユーザーのオンボーディング体験を改善する",
+		"summary": "今週の改善項目を調査し実装計画を作る",
+		"steps": []map[string]any{
+			{"kind": "write", "description": "MVP要件を整理する", "required_role": "Product Manager"},
+			{"kind": "implement", "description": "収支登録画面を実装する", "required_role": "Backend Engineer"},
+		},
+		"ceo_questions": []string{},
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(intentOutput)}},
+			"usage": map[string]int{"input_tokens": 10, "output_tokens": 20},
+		})
+	}))
+	defer server.Close()
+	environment := map[string]string{"ANTHROPIC_API_KEY": "fake-key", "WORKCAIRN_CLAUDE_BASE_URL": server.URL}
+	dependencies := commandDependencies{
+		lookupEnv: func(key string) (string, bool) { value, ok := environment[key]; return value, ok },
+		now:       commandTestTime, newHTTPClient: func(time.Duration) claude.HTTPDoer { return server.Client() },
+	}
+	var approvedOutput bytes.Buffer
+	if exit := run(context.Background(), append(planArgs, "--approved"), &approvedOutput, dependencies); exit != 0 {
+		t.Fatalf("approved responsibility-plan response=%s", approvedOutput.String())
+	}
+	approvedResponse := decodeCommandResponse(t, approvedOutput.Bytes())
+	var result workspaceprocess.ResponsibilityPlanningResult
+	encodedResult, _ := json.Marshal(approvedResponse.Result)
+	if err := json.Unmarshal(encodedResult, &result); err != nil ||
+		result.ResponsibilityID != "RESP-1" || len(result.GoalRefs) != 1 || result.GoalRefs[0] != "GOAL-1" ||
+		result.BoundEmployeeID != "" || result.Generation.Plan.ProjectName != "オンボーディング改善" ||
+		len(result.Generation.Plan.ProposedTasks) != 2 {
+		t.Fatalf("approved responsibility-plan result=%s err=%v", encodedResult, err)
+	}
+	if after := commandVaultSnapshot(t, root); !reflect.DeepEqual(before, after) {
+		t.Fatal("approved responsibility-plan (Plan generation only) changed the Vault")
+	}
+}
+
 func TestExecuteCommandRequiresFlagBeforeSecretsOrEffects(t *testing.T) {
 	root := writeCommandVault(t)
 	before := commandVaultSnapshot(t, root)
