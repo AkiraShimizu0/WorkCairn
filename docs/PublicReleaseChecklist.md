@@ -28,32 +28,34 @@ cross-build成功だけでnative supportを宣言しません。初期Public Bet
 
 ## 3. Automated — Mock／temporaryだけで確認
 
-- [ ] `make public-beta-smoke`が成功する。
-- [ ] `make v1-release-gate`が成功する。
-- [ ] 全Go test、race、vet、gofmtが成功する。
-- [ ] macOS／Linuxの4 target、3 binaryがCGOなしでcross-buildできる。
-- [ ] temporary Vault + Mock ProviderでTask execution、Deliverable、Auditが完了する。
-- [ ] mobile Interactionで依頼、clarification、Plan承認、Reviewed Workflow完了まで成功する。
-- [ ] 空のtemporary rootでFirst-run Wizardを開き、明示承認前は副作用ゼロ、承認後はStarter Organizationが既存writerで作成される。
-- [ ] 同一Session／Versionのpollingを複数回行ってもtext、select、focus、開いている詳細が保持される。
-- [ ] failure／partial failureがToastで消えず、My Actions、依頼一覧、Timelineからsanitized detailを再確認できる。
-- [ ] Workflow承認対象へAutonomy Contractが固定され、Proof of Work／CEO Attentionがcanonical evidenceから再構成される。
-- [ ] Request Changes、Revision、再Review、Command replayが成功する。
-- [ ] 承認なしのProvider／Vault effectが拒否される。
-- [ ] JSON Contract v1、Prompt／Markdown／migration fixtureが成功する。
-- [ ] retired runtime asset guardとarchitecture ownership gateが成功する。
+PHASE PB-2でcommit `b64caa9`（HEAD）に対し全項目を確認済み。
+
+- [x] `make public-beta-smoke`が成功する。
+- [x] `make v1-release-gate`が成功する。
+- [x] 全Go test、vet、gofmtが成功する。raceは`v1-release-gate`実行では成功。既知flaky pair（`TestRunParallelProviderCallBudgetStopsBeforeExceedingLimit`、`TestRunParallelBudgetPartialFailurePreservesOtherBranches`）は独立実行で1件非決定的に失敗する場合があり、retry-until-greenはしない既存方針のまま。
+- [x] macOS／Linuxの4 target、3 binaryがcross-buildできる（`v1-release-gate`の`public-beta-build-matrix`）。darwin targetはmacOS host上でCGO有効、Linux targetはCGO無効。
+- [x] temporary Vault + Mock ProviderでTask execution、Deliverable、Auditが完了する。
+- [x] mobile Interactionで依頼、clarification、Plan承認、Reviewed Workflow完了まで成功する。
+- [x] 空のtemporary rootでFirst-run Wizardを開き、明示承認前は副作用ゼロ、承認後はStarter Organizationが既存writerで作成される。
+- [x] 同一Session／Versionのpollingを複数回行ってもtext、select、focus、開いている詳細が保持される。
+- [x] failure／partial failureがToastで消えず、My Actions、依頼一覧、Timelineからsanitized detailを再確認できる。
+- [x] Workflow承認対象へAutonomy Contractが固定され、Proof of Work／CEO Attentionがcanonical evidenceから再構成される。
+- [x] Request Changes、Revision、再Review、Command replayが成功する。
+- [x] 承認なしのProvider／Vault effectが拒否される。
+- [x] JSON Contract v1、Prompt／Markdown／migration fixtureが成功する。
+- [x] retired runtime asset guardとarchitecture ownership gateが成功する。
+- [x] `make public-beta-browser-gate`（Chromium desktop + WebKit iPhone、フルsuite）が成功する。69 passed、1 skipped（既知のiPhone-project限定skip、desktop-pointer固有assertion）。
 
 ## 4. Archive and checksum
 
-targetごとにclean output directoryを使います。
+targetごとにclean output directoryを使います。PHASE PB-2でdarwin/arm64（Tier 1）の実archiveを1回build・検証済み（commit `b64caa988bb6`、version `v1.0.0-beta.1`）。
 
-- [ ] `make release-package RELEASE_GOOS=<os> RELEASE_GOARCH=<arch> BUILD_DATE=<RFC3339>`が成功する。darwin archiveはSecurity.frameworkをlinkするためmacOS hostで作成する。
-- [ ] archive名、root directory、`VERSION`、3 binaryのversion、commit、build dateが一致する。
-- [ ] macOSの`shasum -a 256 -c`またはLinuxの`sha256sum -c`でchecksumが成功する。
-- [ ] archiveは3 binary、`VERSION`、LICENSE、README、CHANGELOG、SECURITY、CONTRIBUTING、docsだけを含む。
-- [ ] `make verify-release-package ARCHIVE=<absolute archive path>`が成功する。
-- [ ] source、test、fixture、`.git`、`.env`、Vault、cache、temporary file、local build outputを含まない。
-- [ ] 展開後のbinaryがarchive外のruntimeやSDKを要求しない。
+- [x] `make release-package RELEASE_GOOS=darwin RELEASE_GOARCH=arm64 BUILD_DATE=<RFC3339>`が成功する（macOS hostでSecurity.frameworkをlink）。
+- [x] archive名、root directory、`VERSION`、3 binaryのversion、commit、build dateが一致する（3 binary全てが`v1.0.0-beta.1`／`b64caa988bb6`を報告）。
+- [x] `make verify-release-package ARCHIVE=<absolute archive path>`（内部で`shasum -a 256 -c`）でchecksumが成功する。
+- [x] archiveは3 binary、`VERSION`、LICENSE、README、CHANGELOG、SECURITY、CONTRIBUTING、docsだけを含む（`tar -tzf`で目視確認）。
+- [x] source、test、fixture、`.git`、`.env`、Vault、cache、temporary file、local build outputを含まない。
+- [x] 展開後のbinaryがarchive外のruntimeやSDKを要求しない（temporary directoryへ展開し3 binaryを直接実行して確認）。
 
 ## 5. Clean install and first run
 
@@ -110,12 +112,12 @@ iPhone Web UIはavailableな任意機能であり、Public Beta acceptanceの必
 
 ## 7. Security and privacy review
 
-- [ ] tracked fileとarchiveにsecret、private key、実Provider responseがない。
-- [ ] 人名、社員情報、Project名、Vault path、username、home directory等の個人／machine固有情報がfixture以外にない。
-- [ ] fixtureの人物、Project、credential、timestampは明示的なfakeである。
-- [ ] daemonの既定loopback、mobile private-address制約、same-origin effect requestがtestで固定される。
-- [ ] remote authentication、TLS、Push、automatic retry、reconciliationを未実装として明記する。
-- [ ] WordPress credentialをRuntime環境だけから受け取り、evidenceへ保存しない。
+- [x] tracked fileとarchiveにsecret、private key、実Provider responseがない（PB-1の全history／tracked file secret scanと、PB-2の実archive内容確認で確認済み）。
+- [x] 人名、社員情報、Project名、Vault path、username、home directory等の個人／machine固有情報がfixture以外にない（PB-1で確認済み）。
+- [ ] fixtureの人物、Project、credential、timestampは明示的なfakeである（fixture単位の網羅確認は未実施）。
+- [x] daemonの既定loopback、mobile private-address制約、same-origin effect requestがtestで固定される（既存test、PB-2の全Go test再実行で確認）。
+- [x] remote authentication、TLS、Push、automatic retry、reconciliationを未実装として明記する（README、SECURITY.md、OperatorGuide.md、Release Notesに記載済み）。
+- [x] WordPress credentialをRuntime環境だけから受け取り、evidenceへ保存しない（OperatorGuide.mdに記載済み、既存testで確認）。
 
 ## 8. Public repository files
 
