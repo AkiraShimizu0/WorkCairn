@@ -10,9 +10,9 @@ Candidate: `v1.0.0-beta.1`
 - [ ] GitHub repositoryを`workcairn`へ実renameし、clone URLとmodule pathの一致を確認した。
 - [ ] 配布予定地域で`WorkCairn`の正式な商標clearanceを完了した。
 - [ ] Private Vulnerability Reportingを有効化し、`SECURITY.md`の報告経路を実際に確認した。
-- [ ] Public Betaのsupport窓口とresponse expectationをRelease noteへ記載した。
-- [ ] 配布対象をTier 1だけにするか、native smoke済みcandidateを追加するか決定した。
-- [ ] tag、Release title、CHANGELOG、archiveのversionを`v1.0.0-beta.1`へ揃えた。
+- [x] Public Betaのsupport窓口とresponse expectationを[Release Notes](ReleaseNotes.md)へ記載した（Issues／Discussions／Private Vulnerability Reporting、GitHub上へ集約）。support emailは必須としない。
+- [x] 初期Public Beta配布対象をmacOS／arm64（Tier 1）だけとし、他targetはnative smoke完了後の追加candidateとすることをHuman Operatorが決定した。iPhone、複数Mac／VM、Obsidian、iCloud Driveはいずれも初期Public Betaの必須acceptance条件としない。
+- [ ] tag、Release title、CHANGELOG、archiveのversionを`v1.0.0-beta.1`へ揃えた。CHANGELOG本体は現HEADまで同期済み（PHASE PB-2）。tag作成とRelease title確定はrelease owner承認後に行う。
 
 ## 2. Supported platform matrix
 
@@ -24,7 +24,7 @@ Candidate: `v1.0.0-beta.1`
 | linux/arm64 | automated | required on Linux arm64 | required | not required | native確認後 |
 | windows/* | excluded | unsupported file lock | unsupported | unsupported | 配布しない |
 
-cross-build成功だけでnative supportを宣言しません。
+cross-build成功だけでnative supportを宣言しません。初期Public Betaはdarwin/arm64だけを配布対象とする（PB-2で決定済み）。他3 targetのnative smokeはBeta必須条件ではなく、それらを配布対象へ追加する際の将来candidateとして扱う。
 
 ## 3. Automated — Mock／temporaryだけで確認
 
@@ -73,18 +73,24 @@ targetごとにclean output directoryを使います。
 
 ## 6. Real environment — 自動Gateでは代替不可
 
-### macOS／iPhone
+### macOS（Tier 1 — 必須）
 
-- [ ] Tier 1 MacとiPhoneを同じtrusted Wi-Fiへ接続した。
+Public Beta acceptanceの必須条件はHuman Operator自身のMacでのpackaged binary確認だけであり、物理iPhoneは不要。
+
+- [ ] Human Operator自身のMacでdaemonを起動し、Company View（既定）で一般向け「進め方」、Timeline、persistent error詳細が読め、内部IDは詳細へ退いていることを確認した。
+- [ ] Company ViewでMaker、Reviewer、Revision、担当、handoffを理解できることを確認した。
+- [ ] Workflow承認で任せる範囲が短く理解でき、Proof of Workが「何が実際に完了したか」を技術語なしで説明することを確認した。
+- [ ] public／shared network、port forwarding、internet公開を使っていない。
+
+### iPhone（任意機能の確認 — Public Beta必須ではない）
+
+iPhone Web UIはavailableな任意機能であり、Public Beta acceptanceの必須条件ではない。Mac browserだけでも一般UIの正式経路を完結できる。iPhoneを実際に使う場合だけ、以下を追加確認する。
+
 - [ ] `--mobile`がprivate addressとpairing codeを表示した。
 - [ ] iPhone Safariでpairing、reload、background復帰、完了確認を実施した。
 - [ ] iPhoneからAI Connection／Finder操作を開始できず、Macで行う案内だけが表示される。
 - [ ] 承認済みbackground実行は小さいindicatorだけとなり、clarification／approval／failure／Recoveryだけが前面に出る。
-- [ ] 390×844で一般向け「進め方」、Timeline、persistent error詳細が読め、内部IDは詳細へ退いている。
 - [ ] iPhoneでMy Actionsが既定となり、質問／承認以外では`No action needed`が明確に見える。
-- [ ] iPad／MacでCompany Viewが既定となり、Maker、Reviewer、Revision、担当、handoffを理解できる。
-- [ ] iPhoneのWorkflow承認で任せる範囲が短く理解でき、Company ViewのProof of Workが「何が実際に完了したか」を技術語なしで説明する。
-- [ ] public／shared network、port forwarding、internet公開を使っていない。
 
 ### Provider
 
@@ -95,9 +101,9 @@ targetごとにclean output directoryを使います。
 
 ### Filesystem／upgrade
 
-- [ ] iCloud Driveに新規WorkCairn専用directoryを作り、First-run後にObsidianから開けることを確認した。既存個人Vaultは変更していない。
+- [ ] Human Operator自身のMacで、選択した専用Vault root（iCloud Driveは推奨だが必須ではなく、任意のローカルfolderでもよい）でFirst-runを完了し、既存個人Vaultが変更されていないことを確認した。Obsidianから開けることの確認は任意（Obsidianは必須dependencyではない）。
 - [ ] [macOS First-run Acceptance](PublicBetaFirstRunAcceptance.md)を1回通し、再起動後のTimeline／persistent failureを確認した。
-- [ ] 同一iCloud Vaultへ複数daemonをwriterとして起動していない。
+- [ ] 同一Vaultへ複数daemonをwriterとして起動していない。
 - [ ] native filesystemでatomic replacement、file lock、CAS conflict、graceful shutdownを確認した。
 - [ ] 実Vaultのcopyでread-only inventoryとmigration planだけを実行した。
 - [ ] 実Vault本体は変更せず、backup／restore手順を別に確認した。
@@ -119,7 +125,7 @@ targetごとにclean output directoryを使います。
 - [x] `CONTRIBUTING.md`
 - [x] `CHANGELOG.md`
 - [x] Architecture、Operator、Recovery、HTTP、Release Gate docs
-- [ ] GitHub issue／PR templatesとCode of Conductを採用するか人間が決定した。
+- [x] GitHub issue／PR templates、`CODE_OF_CONDUCT.md`、`SUPPORT.md`はoptional／deferredとする（PB-2）。採用しない判断でもPublic Beta開始を妨げない。採用する場合は別途Human判断で追加する。
 - [ ] repository description、topics、screenshots、support boundaryを確認した。
 
 ## 9. Final release sign-off

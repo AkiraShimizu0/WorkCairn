@@ -149,6 +149,7 @@ make release-package RELEASE_GOOS=darwin RELEASE_GOARCH=arm64 \
 ## Documentation
 
 - [Public Beta Quickstart](docs/PublicBetaQuickstart.md)
+- [Release Notes](docs/ReleaseNotes.md)
 - [Public Beta Release Checklist](docs/PublicReleaseChecklist.md)
 - [Product Naming](docs/ProductNaming.md)
 - [Operator Guide](docs/OperatorGuide.md)

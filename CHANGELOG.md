@@ -21,6 +21,17 @@
 - Public Beta Quickstart、Security Policy、Contributing guide、native実機項目を分離したRelease Checklistを追加。
 - WorkCairnのLiving Company Dashboardとして、iPhone既定のMy ActionsとPC／iPad既定のCompany Viewを追加。
 - Workflow承認範囲を固定するAutonomy Contractと、確定記録から再構成するProof of Work／CEO Attentionを追加。
+- Goal（会社の継続的な達成目標）を、Responsibility／Planningから独立した最小domainとして追加。
+- Responsibility（継続的な担当領域と成果）を、単一ownerへのBindingと有効化状態つきで追加。
+- Responsibilityの明示instructionから既存のCEO Plan生成を再利用するResponsibility Planningを追加。
+- Responsibilityへ紐づくdaily／weekly Routineと、既存Scheduler経由の自動Plan生成を追加。
+- Routineの次回発火が確実に予約されるよう、冪等なSchedule再構成と手動repair操作を追加。
+- 対応が必要な質問・承認・Routine健全性を一覧化するCompany Attention／Decision Feedと、Company View上のAttention表示を追加。
+- 無人（headless）daemon起動時にProvider credential sourceを`environment`／`keychain`／`headless-local`から明示選択できるHeadless Credential resolutionを追加。
+
+### Fixed
+
+- Plan生成結果のSummary／Task Title／RationaleがProviderから仮の値（`placeholder`等）で返された場合に、その内容を保存せず明示的に拒否するよう修正。
 
 ### Changed
 

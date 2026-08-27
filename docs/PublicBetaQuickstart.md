@@ -44,7 +44,7 @@ Go 1.23以上だけを使用します。別言語runtimeやpackage managerは不
 bin/workcairn-daemon --mobile
 ```
 
-初回だけnative folder pickerが開きます。iCloud Drive内に空の`WorkCairn`専用folderを新規作成して選び、Web WizardでStarter Organizationを承認します。`AI Connections`はMacのnative hidden-inputからClaudeをmacOS Keychainへ接続し、RoutingはAutomaticのまま使用します。iPhoneにはcredential入力面を出しません。`会社を始める`から最初の依頼へ進みます。
+初回だけnative folder pickerが開きます。推奨のiCloud Drive内に空の`WorkCairn`専用folderを新規作成して選び、Web WizardでStarter Organizationを承認します。iCloud Driveは推奨であって必須ではなく、任意のローカルfolderも選択できます。`AI Connections`はMacのnative hidden-inputからClaudeをmacOS Keychainへ接続し、RoutingはAutomaticのまま使用します。iPhoneにはcredential入力面を出しません。`会社を始める`から最初の依頼へ進みます。
 
 選択したpathはmacOS Application Supportへprivate local configとして保存され、再起動後に再検証されます。既存の個人Obsidian Vault、home、iCloud Drive root、別用途の非空directoryは受け入れません。同じVaultへ書くdaemonは1つだけです。
 

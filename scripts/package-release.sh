@@ -16,6 +16,12 @@ case "${RELEASE_GOOS:-}/${RELEASE_GOARCH:-}" in
 esac
 
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+if [ -n "$(git -C "$repository_root" status --porcelain)" ]; then
+  echo "working tree is not clean; commit or stash changes before packaging a release" >&2
+  exit 2
+fi
+
 dist_root=${DIST_DIR:-dist}
 case "$dist_root" in
   /*) ;;

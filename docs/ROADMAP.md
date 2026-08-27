@@ -512,19 +512,20 @@ ADR-0033に基づき、外部公開前に移行用compatibility distribution、t
 
 Public Beta向け差別化foundationでは、安全側の固定contractだけを提供します。Shadow Mode、Employee Authority、支出上限、長期KPI Storeは既存Approval／Ledger／Adapter境界へ自然に追加できる設計だけを記録し、先取り実装しません。
 
+PHASE PB-1で外部公開前のPublic Beta Readiness Inventoryを実施し、Internal Core／Go Only／PQ-1（placeholder修正）が既にengineering blocker 0であることを確認しました。続くPHASE PB-2で、Human Operatorが決定済みの製品方針（初期対応環境はmacOS／arm64のみ、iPhoneはfeatureとして存在するがPublic Beta必須acceptance条件ではない、Obsidianはoptional viewer、iCloud Driveは必須ではない、複数Mac／VMはPublic Beta必須ではない）へ、CHANGELOG、[Release Notes](ReleaseNotes.md)、[Public Beta Release Checklist](PublicReleaseChecklist.md)を同期し、`v1.0.0-beta.1`のdarwin/arm64 release archiveを実際にbuild・checksum・allow-list検証しました。残る項目はいずれもHuman Operatorのaccount／実機操作であり、追加のengineering／documentation作業ではありません。
+
 Public Beta公開前に残る人間／実環境確認：
 
-- WorkCairnの正式商標clearance、実GitHub repository slug変更、security reporting、support窓口
-- macOS／arm64のnative CLI／daemon／iPhone実機smoke
-- 配布する追加targetごとのnative filesystem／daemon smoke
-- temporary Vaultとtest credentialによる最小Provider smoke
-- iCloud Drive上のWorkCairn専用VaultをFinderで選択し、Obsidianで開くfirst-run実機smoke（既存個人Vaultは変更しない、writerは1 daemon）
+- WorkCairnの正式商標clearance、実GitHub repository slug変更（`workcairn`）、GitHub Private Vulnerability Reportingの有効化、GitHub Discussions有効化（support窓口として採用する場合）
+- Human Operator自身のMacでのpackaged binary（darwin/arm64）acceptance。iPhone実機、iCloud Drive、Obsidian連携はいずれもPublic Beta必須条件ではなく、確認する場合も任意項目として扱う
+- 配布対象を将来darwin/amd64、linux/amd64、linux/arm64へ拡張する場合のnative filesystem／daemon smoke（初期Public Betaでは不要）
+- temporary Vaultとtest credentialによる最小Provider smoke（packaged binaryに対して、PB-3で実施）
+- tag作成、Release title確定、push、GitHub Release公開のrelease owner承認
 - [完了] native folder picker、Application Supportの再起動参照、Mac native hidden-input＋Keychainによりterminal不要のmacOS First-runを実装。trusted LANへpath／secret値を受けるendpointは追加しない
 - [完了] ADR-0044でmacOS Keychain保存を不定な`security`対話PTYから、anonymous socketとbounded helperを使うSecurity.framework native Adapterへ置換。write後read-back、existing update、restart read、timeout時kill/reapを固定
 - [完了] ADR-0045でProvider request timeoutをRuntime compositionへ一本化し、Public Beta defaultをboundedな5分へ変更。CEO Intent、Task、Review、Revision Task／再Reviewは同じclient policyを使い、operator override、typed timeout、no retryを維持
 - Provider streamingはprogress観測、partial stream failure、cancellation、durable diagnosticsを設計する後続候補とし、Public Beta timeout安定化では導入しない
 - ADR-0036の`workcairn-auto`を起点に、複数Provider導入時だけEmployee Role／Task capability／接続済みRuntime／quality・cost・latency policyからtyped Routeを解決する拡張（暗黙fallbackなし）
-- tag、Release note、archive checksumの最終sign-off
 
 ## Cross-Cutting Gates
 
