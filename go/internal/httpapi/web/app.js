@@ -1,4 +1,4 @@
-const BACKGROUND_CONTINUITY_COPY = "この画面を閉じても処理はMacで続きます。次に判断が必要になったら依頼詳細へ表示します。";
+const BACKGROUND_CONTINUITY_COPY = "この画面を閉じても処理はバックグラウンドで続きます。次に判断が必要になったら依頼詳細へ表示します。";
 
 const INTERACTION_VERSION = "workspace-interaction.v1";
 const COMMAND_VERSION = "workspace-command.v1";
@@ -720,7 +720,7 @@ async function requestJSON(path, options = {}) {
   try {
     response = await fetch(path, { ...options, headers, credentials: "same-origin" });
   } catch (error) {
-    throw new APIError("Macとの通信が切れました。状態を確認してから再開してください。", 0, error);
+    throw new APIError("このデバイスとの通信が切れました。状態を確認してから再開してください。", 0, error);
   }
   const payload = await response.json().catch(() => null);
   if (!response.ok || payload?.ok === false) {
@@ -738,7 +738,7 @@ async function requestJSON(path, options = {}) {
 }
 
 function setConnected(connected) {
-  ui.status.textContent = connected ? "Macに接続中" : "接続を確認してください";
+  ui.status.textContent = connected ? "接続中" : "接続を確認してください";
   ui.status.classList.toggle("online", connected);
 }
 
@@ -773,7 +773,7 @@ function inFlightCopy(operation) {
   case "interaction.workflow.recover_revision":
     return { message: "停止した作業だけ続けています。完了済みの成果はそのまま保持します。" };
   default:
-    return { message: "承認済みの処理をMacで安全に続けています。" };
+    return { message: "承認済みの処理をバックグラウンドで安全に続けています。" };
   }
 }
 
@@ -1138,7 +1138,7 @@ function interactionErrorGuidance(code, stage = "") {
     REVIEW_RESULT_INVALID: "AIのレビュー結果を正しく解釈できませんでした。成果物は保持されています。",
   };
   if (code === "PROVIDER_CONFIGURATION_REQUIRED") {
-    return "AIサービスの接続設定が不足しています。Providerへ依頼は送信されていません。MacのAI Connectionsから接続してください。";
+    return "AIサービスの接続設定が不足しています。Providerへ依頼は送信されていません。AI Connectionsから接続してください。";
   }
   if (providerFailures[code]) return providerFailures[code];
   if (reviewContractFailures[code]) return reviewContractFailures[code];
@@ -1232,7 +1232,7 @@ async function pair(event) {
   event.preventDefault();
   const code = new FormData(ui.pairingForm).get("code")?.toString().trim();
   if (!code) return;
-  setBusy(true, "Macと接続しています", "ペアリングコードを確認しています。今回の起動中だけ有効です。");
+  setBusy(true, "接続しています", "ペアリングコードを確認しています。今回の起動中だけ有効です。");
   try {
     await requestJSON("/v1/local-access/pair", { method: "POST", body: JSON.stringify({ code }) });
     ui.pairingForm.reset();
@@ -1313,7 +1313,7 @@ async function refreshProviderStatus() {
   if (state.record) renderNext(true);
   renderProviderSettings();
   renderStorageSettings();
-  toast(state.providerStatus?.configured ? "AIサービスを利用できます。" : "MacのAI ConnectionsからClaudeを接続してください。");
+  toast(state.providerStatus?.configured ? "AIサービスを利用できます。" : "AI ConnectionsからClaudeを接続してください。");
 }
 
 async function connectClaudeOnMac() {
@@ -1323,7 +1323,7 @@ async function connectClaudeOnMac() {
 		clientTimedOut = true;
 		controller.abort();
 	}, LOCAL_PROVIDER_SETUP_TIMEOUT_MS);
-	setBusy(true, "MacでClaudeへ接続しています", "Macに表示される安全な入力画面を確認してください。secretはbrowserへ送信しません。");
+	setBusy(true, "Claudeへ接続しています", "このデバイスに表示される安全な入力画面を確認してください。secretはbrowserへ送信しません。");
 	try {
 		state.providerStatus = await requestJSON("/v1/local-setup/claude", { method: "POST", body: "{}", signal: controller.signal });
 		state.providerSetupError = null;
@@ -1342,7 +1342,7 @@ async function connectClaudeOnMac() {
 		};
 		renderProviderSettings();
 		if (ui.setupDialog.open) renderSetupWizard();
-		toast(error.status === 403 ? "AI ConnectionはMac本体の画面から設定してください。" : providerSetupFailureCopy().title);
+		toast(error.status === 403 ? "AI Connectionはこのデバイスの画面から設定してください。" : providerSetupFailureCopy().title);
 	} finally {
 		window.clearTimeout(timeout);
 		setBusy(false);
@@ -1352,9 +1352,9 @@ async function connectClaudeOnMac() {
 async function revealWorkspaceOnMac() {
 	try {
 		await requestJSON("/v1/local-setup/reveal-workspace", { method: "POST", body: "{}" });
-		toast("MacのFinderに会社データを表示しました。Obsidianでは「Open folder as vault」を選んでください。");
+		toast("Finderに会社データを表示しました。Obsidianでは「Open folder as vault」を選んでください。");
 	} catch (error) {
-		toast(error.status === 403 ? "会社データを開く操作はMac本体で行ってください。" : "会社データをFinderに表示できませんでした。");
+		toast(error.status === 403 ? "会社データを開く操作はこのデバイスで行ってください。" : "会社データをFinderに表示できませんでした。");
 	}
 }
 
@@ -1372,7 +1372,7 @@ function providerStatusCopy() {
   return {
     state: "Setup required",
     className: "attention",
-    description: "AIサービスの接続が必要です。現在のPublic BetaではMacの起動設定を確認してください。",
+    description: "AIサービスの接続が必要です。現在のPublic Betaでは起動設定を確認してください。",
   };
 }
 
@@ -1385,9 +1385,9 @@ function renderProviderSettings() {
         node("span", { class: `connection-state ${copy.className}` }, copy.state),
       ),
       node("p", {}, copy.description),
-      !state.providerStatus?.configured ? node("p", { class: "connection-safety" }, "秘密情報はiPhoneやbrowser storageへ保存しません。接続設定はMac側で行います。") : null,
-	  !state.providerStatus?.configured && state.localSetupAvailable ? button("MacでClaudeを接続", "primary", connectClaudeOnMac) : null,
-	  !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "connection-safety" }, "MacのWorkCairn画面でAI Connectionsを開いて接続してください。") : null,
+      !state.providerStatus?.configured ? node("p", { class: "connection-safety" }, "秘密情報はiPhoneやbrowser storageへ保存しません。接続設定はこのデバイスで行います。") : null,
+	  !state.providerStatus?.configured && state.localSetupAvailable ? button("Claudeを接続", "primary", connectClaudeOnMac) : null,
+	  !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "connection-safety" }, "WorkCairn画面でAI Connectionsを開いて接続してください。") : null,
     ),
 	providerSetupFailureNode(),
   );
@@ -1409,11 +1409,11 @@ function providerSetupFailureNode() {
 function providerSetupFailureCopy() {
   if (state.providerSetupError?.category === "keychain_setup_timeout") return {
 	title: "Claudeの接続設定を完了できませんでした",
-	message: "安全な待機時間を超えたため処理を終了しました。Macの入力画面を閉じてから、もう一度お試しください。",
+	message: "安全な待機時間を超えたため処理を終了しました。入力画面を閉じてから、もう一度お試しください。",
   };
   return {
-	title: "Claude APIキーをMacのKeychainへ保存できませんでした",
-	message: "自動retryや別の保存先へのfallbackは行っていません。MacのKeychain設定を確認してください。",
+	title: "Claude APIキーをmacOS Keychainへ保存できませんでした",
+	message: "自動retryや別の保存先へのfallbackは行っていません。macOS Keychain設定を確認してください。",
   };
 }
 
@@ -1428,7 +1428,7 @@ function renderStorageSettings() {
   const [title, description] = storageStatusCopy();
   ui.storageSettings.replaceChildren(node("section", { class: "storage-card" },
 	node("strong", {}, title), node("small", {}, description),
-	state.localSetupAvailable ? button("Macで会社データを見る", "quiet", revealWorkspaceOnMac) : node("small", {}, "Obsidianで見る場合は、MacでこのWorkCairn専用folderをVaultとして開きます。"),
+	state.localSetupAvailable ? button("会社データを見る", "quiet", revealWorkspaceOnMac) : node("small", {}, "Obsidianで見る場合は、このWorkCairn専用folderをVaultとして開きます。"),
   ));
 }
 
@@ -1640,7 +1640,7 @@ async function refreshCurrent(silent = false) {
   } catch (error) {
     if (sequence !== state.refreshSequence) return;
     setConnected(false);
-    showError(error, silent ? "Macとの接続を確認してください" : "依頼の状態を取得できませんでした");
+    showError(error, silent ? "接続を確認してください" : "依頼の状態を取得できませんでした");
   }
 }
 
@@ -2009,7 +2009,7 @@ function renderPlanApproval(next) {
       executeNextCommand(next, {
         session_id: next.session_id, expected_version: next.expected_version,
         project_id: identifier, plan_digest: current.digest, current_time: now(),
-      }, "仕事を開始しています", "Planの適用とReviewed WorkflowをMacで進めています。");
+      }, "仕事を開始しています", "Planの適用とReviewed Workflowを進めています。");
     }),
   ]);
   ui.activeCard.hidden = true;
@@ -2340,7 +2340,7 @@ async function resumePendingCommand(command) {
     await monitorAcceptedCommand(command);
     if (command.payload?.session_id === state.record?.session_id) await refreshCurrent();
     setBusy(false);
-    toast("Macで完了した処理を反映しました。");
+    toast("バックグラウンドで完了した処理を反映しました。");
   } catch (error) {
     updateBackgroundWorkingState();
     if (command.payload?.session_id === state.record?.session_id) {
@@ -3112,7 +3112,7 @@ async function refreshEmployeesPane() {
     await loadTaskEvidenceDetails();
     renderEmployeesPane();
   } catch {
-    ui.employeeGrid.replaceChildren(node("p", { class: "warning" }, "社員情報を読み込めませんでした。仕事の状態は推測せず、Mac側のOrganizationを確認してください。"));
+    ui.employeeGrid.replaceChildren(node("p", { class: "warning" }, "社員情報を読み込めませんでした。仕事の状態は推測せず、Organizationを確認してください。"));
   }
 }
 
@@ -3525,7 +3525,7 @@ function openSetupWizard() {
 function renderSetupWizard() {
   const workspace = state.workspaceStatus;
   if (!workspace) {
-    ui.setupContent.replaceChildren(node("p", { class: "warning" }, "Mac側の会社データ状態を確認できません。daemonの接続を確認してください。"));
+    ui.setupContent.replaceChildren(node("p", { class: "warning" }, "会社データ状態を確認できません。daemonの接続を確認してください。"));
     return;
   }
   const storage = storageStatusCopy();
@@ -3555,8 +3555,8 @@ function renderSetupWizard() {
     node("article", { class: `setup-step ${state.providerStatus?.configured ? "ready" : "attention"}` },
       node("div", { class: "setup-step-heading" }, node("h3", {}, "3. AI Connection"), node("span", { class: "state-chip" }, state.providerStatus?.configured ? "Connected" : "Setup required")),
 	  node("p", {}, "RoutingはAutomaticです。Model IDを選ぶ必要はありません。credentialはbrowserへ保存しません。"),
-	  !state.providerStatus?.configured && state.localSetupAvailable ? button("MacでClaudeを接続", "quiet", connectClaudeOnMac) : null,
-	  !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "warning" }, "AI ConnectionはMac本体のWorkCairn画面から設定してください。") : null,
+	  !state.providerStatus?.configured && state.localSetupAvailable ? button("Claudeを接続", "quiet", connectClaudeOnMac) : null,
+	  !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "warning" }, "AI ConnectionはこのデバイスのWorkCairn画面から設定してください。") : null,
     ),
 	providerSetupFailureNode(),
     node("div", { class: "setup-actions" },
@@ -3564,7 +3564,7 @@ function renderSetupWizard() {
       !state.providerStatus?.configured ? button("AI Connectionsを確認", "primary", () => { ui.setupDialog.close(); openSettingsDialog(); }) : null,
 	  workspace.organization_ready && state.providerStatus?.configured ? button("会社を始める", "primary", () => { ui.setupDialog.close(); openNewRequestDraft(); }) : null,
 	  workspace.layout_ready && state.localSetupAvailable ? button("Obsidianで会社データを見る", "quiet", revealWorkspaceOnMac) : null,
-      button("Macで設定してから再確認", "quiet", async () => { await Promise.all([loadWorkspaceStatus(), loadProviderStatus(), loadOrganization().catch(() => null)]); renderSetupWizard(); }),
+      button("設定してから再確認", "quiet", async () => { await Promise.all([loadWorkspaceStatus(), loadProviderStatus(), loadOrganization().catch(() => null)]); renderSetupWizard(); }),
     ),
   );
 }
@@ -3607,7 +3607,7 @@ function renderAutonomy() {
 function renderProofOfWork() {
   const report = state.workReport;
   if (state.workReportError) {
-    ui.proofOfWork.replaceChildren(node("p", { class: "warning" }, "仕事の記録を確認できません。完了を推測せず、Mac側の状態を確認してください。"));
+    ui.proofOfWork.replaceChildren(node("p", { class: "warning" }, "仕事の記録を確認できません。完了を推測せず、状態を確認してください。"));
     return;
   }
   const proof = report?.proof_of_work;

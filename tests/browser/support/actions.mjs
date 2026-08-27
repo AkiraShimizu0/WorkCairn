@@ -48,7 +48,7 @@ export async function pairThroughUI(page, daemon) {
   await page.goto(daemon.baseURL);
   await expect(page.locator("#pairing-view")).toBeVisible();
   await page.locator("#pairing-code").fill(daemon.pairingCode);
-  await page.getByRole("button", { name: "このMacと接続" }).click();
+  await page.getByRole("button", { name: "接続する" }).click();
   await expect(page.locator("#workspace-view")).toBeVisible();
   const cookies = await page.context().cookies(daemon.baseURL);
   expect(cookies.some((cookie) => cookie.name === "workspace_local_access" && cookie.httpOnly && cookie.sameSite === "Strict")).toBeTruthy();

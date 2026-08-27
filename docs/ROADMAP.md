@@ -516,7 +516,7 @@ PHASE PB-1で外部公開前のPublic Beta Readiness Inventoryを実施し、Int
 
 Public Beta公開前に残る人間／実環境確認：
 
-- WorkCairnの正式商標clearance、実GitHub repository slug変更（`workcairn`）、GitHub Private Vulnerability Reportingの有効化、GitHub Discussions有効化（support窓口として採用する場合）
+- WorkCairnの正式商標clearance、GitHub Private Vulnerability Reportingの有効化、GitHub Discussions有効化（support窓口として採用する場合）。GitHub repository slugは`WorkCairn`へ実rename済み（PHASE PB-2.1）
 - Human Operator自身のMacでのpackaged binary（darwin/arm64）acceptance。iPhone実機、iCloud Drive、Obsidian連携はいずれもPublic Beta必須条件ではなく、確認する場合も任意項目として扱う
 - 配布対象を将来darwin/amd64、linux/amd64、linux/arm64へ拡張する場合のnative filesystem／daemon smoke（初期Public Betaでは不要）
 - temporary Vaultとtest credentialによる最小Provider smoke（packaged binaryに対して、PB-3で実施）

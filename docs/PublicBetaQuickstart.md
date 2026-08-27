@@ -29,7 +29,7 @@ Linuxではchecksum確認に`sha256sum -c`を使用できます。
 ### Source checkout
 
 ```bash
-git clone <repository-url> workcairn
+git clone https://github.com/AkiraShimizu0/WorkCairn.git workcairn
 cd workcairn
 make v1-release-gate
 ```

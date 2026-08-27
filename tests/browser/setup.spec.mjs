@@ -55,7 +55,7 @@ test("Claude connection always leaves in-flight state on terminal outcome @setup
     await page.goto(environment.daemon.baseURL);
     await expect(page.locator("#setup-dialog")).toBeVisible();
 
-    const connect = page.locator("#setup-content").getByRole("button", { name: "MacでClaudeを接続" });
+    const connect = page.locator("#setup-content").getByRole("button", { name: "Claudeを接続" });
     await connect.click();
     await expect(page.locator("#busy-overlay")).toBeVisible();
     await expect(page.locator("#busy-overlay")).toBeHidden();

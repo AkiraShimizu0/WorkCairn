@@ -42,7 +42,7 @@ WorkCairnは会社simulationではありません。給与や機嫌を管理す�
 ### Sourceからbuild
 
 ```bash
-git clone <repository-url> workcairn
+git clone https://github.com/AkiraShimizu0/WorkCairn.git workcairn
 cd workcairn
 make go-build
 bin/workcairn version
