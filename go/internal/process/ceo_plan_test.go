@@ -19,6 +19,7 @@ import (
 	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
 	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
+	"github.com/AkiraShimizu0/workcairn/go/internal/service"
 )
 
 type ceoPlanHTTPDoer func(*http.Request) (*http.Response, error)
@@ -77,6 +78,54 @@ func TestGenerateCEOPlanUsesClaudeAdapterAndTemporaryVault(t *testing.T) {
 	}
 	if len(plan.MissingRoles) != 0 {
 		t.Fatalf("plan has missing roles despite every step resolving: %#v", plan.MissingRoles)
+	}
+}
+
+// TestGenerateCEOPlanRejectsPlaceholderSummaryThroughRealPath is a
+// secret-free regression fixture for the real Human Acceptance evidence
+// that motivated ADR-0067: a request for a社内FAQページ作業計画 ("FAQ page
+// work plan, split into research / writing / confirmation") for which the
+// real Provider once returned a structurally valid Intent with
+// Summary="placeholder" and the second step's own description ("PROPOSED-002")
+// also "placeholder". No real Request ID, credential, or raw Provider
+// transcript is reproduced here -- only the reported request text and the
+// observed defect shape. This exercises the one production entrypoint
+// every Planning path shares (interaction.plan.generate,
+// GenerateResponsibilityPlan -- therefore both manual responsibility-plan
+// and Routine dispatch -- all call this exact GenerateCEOPlan function, see
+// internal/process/interaction.go and internal/process/responsibility_work.go):
+// the placeholder-laden response is rejected, not silently accepted, and no
+// second Provider call is made.
+func TestGenerateCEOPlanRejectsPlaceholderSummaryThroughRealPath(t *testing.T) {
+	fixture := loadCEOPlanFixture(t)
+	root := ceoPlanVault(t, fixture.Employees)
+	realRequest := "新しい社内FAQページを作るための作業計画を作ってください。調査、文章作成、確認の作業に分けてください。"
+	intentOutput, _ := json.Marshal(map[string]any{
+		"project_name": "社内FAQページ", "objective": "社内向けFAQページを新設する",
+		"summary": "placeholder",
+		"steps": []map[string]any{
+			{"kind": "research", "description": "既存の問い合わせ内容を調査する", "required_role": "Product Manager"},
+			{"kind": "write", "description": "placeholder", "required_role": "Product Manager"},
+			{"kind": "review", "description": "内容を確認する"},
+		},
+		"ceo_questions": []string{},
+	})
+	providerResponse, _ := json.Marshal(map[string]any{
+		"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(intentOutput)}},
+		"usage": map[string]int{"input_tokens": 10, "output_tokens": 20},
+	})
+	calls := 0
+	client := ceoPlanHTTPDoer(func(request *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
+	})
+	_, err := GenerateCEOPlan(context.Background(), CEOPlanGenerationInput{VaultRoot: root, Request: realRequest, Model: "Claude Sonnet 5", Approved: true}, ClaudeProcessConfig{APIKey: "fake-key", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}, client)
+	var planError *service.CEOPlanError
+	if !errors.As(err, &planError) || planError.Stage != service.CEOPlanParserStage {
+		t.Fatalf("err=%v, want *service.CEOPlanError{Stage: CEOPlanParserStage}", err)
+	}
+	if calls != 1 {
+		t.Fatalf("Provider called %d times, want exactly 1 (no hidden retry)", calls)
 	}
 }
 

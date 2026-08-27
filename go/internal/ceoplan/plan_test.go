@@ -62,6 +62,100 @@ func TestNormalizeCandidateAllowsBlankSummary(t *testing.T) {
 	}
 }
 
+// TestIsPlaceholderValueExactMatchOnly locks ADR-0067's narrow definition:
+// only the literal token "placeholder" (trimmed, case-insensitive, one
+// layer of wrapping punctuation stripped) matches -- a sentence that merely
+// contains the word must never be rejected.
+func TestIsPlaceholderValueExactMatchOnly(t *testing.T) {
+	rejected := []string{"placeholder", " placeholder ", "PLACEHOLDER", "Placeholder", "<placeholder>", "[placeholder]", "\"placeholder\"", "  <PlaceHolder>  "}
+	for _, value := range rejected {
+		if !isPlaceholderValue(value) {
+			t.Errorf("isPlaceholderValue(%q) = false, want true", value)
+		}
+	}
+	accepted := []string{
+		"", "  ",
+		"2つの調査記事を並行して作成し、まとめ記事へ統合する",
+		"placeholder text should be replaced",
+		"This is a placeholder for now", // contains the word, not an exact value
+		"placeholders",
+		"replace this placeholder later",
+	}
+	for _, value := range accepted {
+		if isPlaceholderValue(value) {
+			t.Errorf("isPlaceholderValue(%q) = true, want false", value)
+		}
+	}
+}
+
+// TestParseRunnerOutputRejectsPlaceholderSummary is Step 12's Summary
+// coverage, exercised through the real, shared canonical layer
+// (ParseRunnerOutput -> NormalizeCandidate) rather than calling
+// isPlaceholderValue directly.
+func TestParseRunnerOutputRejectsPlaceholderSummary(t *testing.T) {
+	fixture := loadGenerationFixture(t)
+	for _, value := range []string{"placeholder", " Placeholder ", "PLACEHOLDER"} {
+		var candidate map[string]any
+		if err := json.Unmarshal(fixture.RunnerOutput, &candidate); err != nil {
+			t.Fatal(err)
+		}
+		candidate["summary"] = value
+		encoded, _ := json.Marshal(candidate)
+		_, err := ParseRunnerOutput(string(encoded), fixture.Employees)
+		var parseErr *ParseError
+		if !errors.As(err, &parseErr) || parseErr.Reason != ParseFailurePlaceholderValue {
+			t.Fatalf("summary=%q: err=%v, want *ParseError{Reason: ParseFailurePlaceholderValue}", value, err)
+		}
+	}
+}
+
+// TestParseRunnerOutputRejectsPlaceholderTaskTitleAndRationale is Step 12's
+// Task Title/Rationale coverage.
+func TestParseRunnerOutputRejectsPlaceholderTaskTitleAndRationale(t *testing.T) {
+	fixture := loadGenerationFixture(t)
+	for _, field := range []string{"title", "rationale"} {
+		var candidate map[string]any
+		if err := json.Unmarshal(fixture.RunnerOutput, &candidate); err != nil {
+			t.Fatal(err)
+		}
+		tasks := candidate["proposed_tasks"].([]any)
+		tasks[0].(map[string]any)[field] = "placeholder"
+		encoded, _ := json.Marshal(candidate)
+		_, err := ParseRunnerOutput(string(encoded), fixture.Employees)
+		var parseErr *ParseError
+		if !errors.As(err, &parseErr) || parseErr.Reason != ParseFailurePlaceholderValue {
+			t.Fatalf("task %s=placeholder: err=%v, want *ParseError{Reason: ParseFailurePlaceholderValue}", field, err)
+		}
+	}
+}
+
+// TestParseRunnerOutputAcceptsFullyValidPlanUnchanged confirms the new
+// guard has zero effect on an ordinary, fully-valid Plan -- the exact
+// fixture this package's other tests already treat as golden.
+func TestParseRunnerOutputAcceptsFullyValidPlanUnchanged(t *testing.T) {
+	fixture := loadGenerationFixture(t)
+	plan, err := ParseRunnerOutput(string(fixture.RunnerOutput), fixture.Employees)
+	if err != nil || !reflect.DeepEqual(plan, fixture.ExpectedPlan) {
+		t.Fatalf("plan=%#v err=%v, want unchanged fixture.ExpectedPlan", plan, err)
+	}
+}
+
+// TestValidateApprovedPlanRejectsPlaceholderValue is Step 16's Apply-safety
+// coverage: a Plan reaching ValidateApprovedPlan (the Apply-time path any
+// externally/manually supplied --plan-json also goes through) with a
+// placeholder Summary must be rejected there too, via the same shared
+// NormalizeCandidate boundary -- not a second, duplicated validator.
+func TestValidateApprovedPlanRejectsPlaceholderValue(t *testing.T) {
+	fixture := loadGenerationFixture(t)
+	plan := fixture.ExpectedPlan
+	plan.Summary = "placeholder"
+	_, err := ValidateApprovedPlan(plan, fixture.Employees)
+	var parseErr *ParseError
+	if !errors.As(err, &parseErr) || parseErr.Reason != ParseFailurePlaceholderValue {
+		t.Fatalf("err=%v, want *ParseError{Reason: ParseFailurePlaceholderValue}", err)
+	}
+}
+
 func TestCEOPlanRejectsUnknownAssigneeAndDependencyCycle(t *testing.T) {
 	fixture := loadGenerationFixture(t)
 	var candidate map[string]any

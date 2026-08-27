@@ -68,6 +68,13 @@ func TestCEOPlanServiceMapsRunnerIntentNormalizationAndParserFailures(t *testing
 		{"intent unknown step kind", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"bogus","description":"T","required_role":"R"}],"ceo_questions":[]}`, nil, "", CEOPlanIntentStage},
 		{"normalization no matching employee", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"T","required_role":"Nonexistent"}],"ceo_questions":[]}`, nil, "", CEOPlanNormalizationStage},
 		{"canonical validation (Go-constructed project name)", `{"project_name":"a/b","objective":"O","summary":"S","steps":[` + validStep + `],"ceo_questions":[]}`, nil, "", CEOPlanParserStage},
+		// ADR-0067: a placeholder Summary or Task content is syntactically
+		// valid (non-empty, well-typed) so it reaches the same shared
+		// canonical layer (NormalizeCandidate) as the project-name case
+		// above, and is classified identically as CEOPlanParserStage -- not
+		// a new Stage, not NormalizationStage.
+		{"placeholder summary", `{"project_name":"P","objective":"O","summary":"placeholder","steps":[` + validStep + `],"ceo_questions":[]}`, nil, "", CEOPlanParserStage},
+		{"placeholder task description", `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"placeholder","required_role":"R"}],"ceo_questions":[]}`, nil, "", CEOPlanParserStage},
 		// ADR-0058 extended to Planning: StopReasonMaxTokens is classified
 		// as CEOPlanOutputIncompleteStage even though this Content would
 		// otherwise parse successfully -- proving the check happens on
@@ -99,6 +106,45 @@ func TestCEOPlanServiceMapsRunnerIntentNormalizationAndParserFailures(t *testing
 				t.Fatalf("planError.Partial = %#v, want nil for stage %v", planError.Partial, test.stage)
 			}
 		})
+	}
+}
+
+// countingCEOPlanRunner wraps ceoPlanFakeRunner to additionally count Run
+// invocations -- used to prove placeholder rejection never triggers a
+// hidden second Provider call.
+type countingCEOPlanRunner struct {
+	ceoPlanFakeRunner
+	calls int
+}
+
+func (fake *countingCEOPlanRunner) Run(ctx context.Context, request worker.RunRequest) (worker.RunResult, error) {
+	fake.calls++
+	return fake.ceoPlanFakeRunner.Run(ctx, request)
+}
+
+// TestCEOPlanServicePlaceholderRejectionNeverRetriesTheProvider is ADR-0067's
+// no-hidden-retry guarantee: a placeholder-laden but otherwise
+// structurally valid Runner result is rejected on the first pass, with no
+// second Run call and no substituted/regenerated content.
+func TestCEOPlanServicePlaceholderRejectionNeverRetriesTheProvider(t *testing.T) {
+	fake := &countingCEOPlanRunner{ceoPlanFakeRunner: ceoPlanFakeRunner{result: worker.RunResult{
+		Content: `{"project_name":"P","objective":"O","summary":"placeholder","steps":[{"kind":"write","description":"T","required_role":"Planner"}],"ceo_questions":[]}`,
+		Runner:  "FakeCEOPlanRunner", Model: "logical-model",
+	}}}
+	service, err := NewCEOPlanService(fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Generate(context.Background(), CEOPlanInput{
+		Request: "計画する", Model: "logical-model",
+		Employees: []organization.Identity{{ID: "PLAN-001", Department: "企画部", Role: "Planner"}},
+	})
+	var planError *CEOPlanError
+	if !errors.As(err, &planError) || planError.Stage != CEOPlanParserStage {
+		t.Fatalf("err=%v, want CEOPlanParserStage", err)
+	}
+	if fake.calls != 1 {
+		t.Fatalf("Runner.Run called %d times, want exactly 1 (no hidden retry)", fake.calls)
 	}
 }
 

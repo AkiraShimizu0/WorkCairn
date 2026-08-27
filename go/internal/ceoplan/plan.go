@@ -38,6 +38,14 @@ const (
 	ParseFailureInvalidAssignee      ParseFailureReason = "invalid_assignee"
 	ParseFailureInvalidDependency    ParseFailureReason = "invalid_dependency"
 	ParseFailureDependencyCycle      ParseFailureReason = "dependency_cycle"
+	// ParseFailurePlaceholderValue means a field that is otherwise
+	// syntactically valid (non-empty, correctly typed) contains only a
+	// literal placeholder token instead of real content -- a recurring
+	// real-Provider defect (see
+	// docs/adr/ADR-0067-planning-placeholder-rejection.md). Distinct from
+	// ParseFailureMissingRequiredField: the field is present and non-blank,
+	// it just is not meaningful content.
+	ParseFailurePlaceholderValue ParseFailureReason = "placeholder_value"
 )
 
 // ParseError pairs ErrInvalidOutput/ErrInvalidPlan with a sanitized
@@ -137,8 +145,14 @@ func NormalizeCandidate(candidate candidatePlan, employees []organization.Identi
 	}
 	// summary is optional (ADR-0046): planDescription() already tolerates
 	// a blank summary (falls back to objective alone), so the canonical
-	// shape validation must not reject it here either.
+	// shape validation must not reject it here either. A non-blank summary
+	// that is nothing but a placeholder token is a different case, though
+	// (ADR-0067): "" is a genuine absence, "placeholder" is a real Provider
+	// defect masquerading as content, so only the latter is rejected.
 	summary := strings.TrimSpace(candidate.Summary)
+	if isPlaceholderValue(summary) {
+		return Plan{}, newParseError(ParseFailurePlaceholderValue, fmt.Errorf("%w: summary", ErrInvalidPlan))
+	}
 	departments, err := requiredStringList(candidate.RequiredDepartments, "required_departments")
 	if err != nil {
 		return Plan{}, newParseError(ParseFailureMissingRequiredField, err)
@@ -160,9 +174,15 @@ func NormalizeCandidate(candidate candidatePlan, employees []organization.Identi
 		if err != nil || strings.ContainsAny(title, "\r\n|") {
 			return Plan{}, newParseError(ParseFailureInvalidTaskShape, fmt.Errorf("%w: task title", ErrInvalidPlan))
 		}
+		if isPlaceholderValue(title) {
+			return Plan{}, newParseError(ParseFailurePlaceholderValue, fmt.Errorf("%w: proposed_tasks[%d].title", ErrInvalidPlan, index))
+		}
 		rationale, err := requiredText(candidateTask.Rationale, "task rationale")
 		if err != nil {
 			return Plan{}, newParseError(ParseFailureMissingRequiredField, err)
+		}
+		if isPlaceholderValue(rationale) {
+			return Plan{}, newParseError(ParseFailurePlaceholderValue, fmt.Errorf("%w: proposed_tasks[%d].rationale", ErrInvalidPlan, index))
 		}
 		assignment, err := organization.ResolveTaskAssignment(organization.AssignmentRequest{
 			RequiredRole: candidateTask.RequiredRole, ProposedEmployeeID: candidateTask.AssigneeID,
@@ -305,6 +325,28 @@ func validateDependencyGraph(tasks []ProposedTask) error {
 		}
 	}
 	return nil
+}
+
+// placeholderTrimSet is the small, fixed set of wrapping punctuation an LLM
+// commonly uses around a lazy-fill token (e.g. "<placeholder>",
+// "[placeholder]") -- trimmed before the exact-match comparison so those
+// variants are caught too, without turning isPlaceholderValue into a
+// substring ban. A sentence that merely contains the word ("placeholder
+// text should be replaced") never matches: only the token itself, alone in
+// the field, does.
+const placeholderTrimSet = "<>[]{}\"'“”‘’"
+
+// isPlaceholderValue reports whether value is exactly the literal token
+// "placeholder" (case-insensitive, surrounding whitespace and one layer of
+// wrapping punctuation trimmed) and nothing else. This is the one
+// evidence-backed token real Provider Planning output has repeatedly
+// produced (see docs/adr/ADR-0067-planning-placeholder-rejection.md) --
+// deliberately not a generic banned-word list or fuzzy/substring match.
+func isPlaceholderValue(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	trimmed = strings.Trim(trimmed, placeholderTrimSet)
+	trimmed = strings.TrimSpace(trimmed)
+	return strings.EqualFold(trimmed, "placeholder")
 }
 
 func requiredText(value, field string) (string, error) {
