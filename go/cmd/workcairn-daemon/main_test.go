@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"net/http"
 	"strings"
 	"testing"
@@ -131,5 +133,80 @@ func TestLoopbackProviderFixtureURLDefaultDeniesNonLoopbackEndpoints(t *testing.
 				t.Fatalf("loopbackProviderFixtureURL(%q) = %v, want %v", test.raw, got, test.want)
 			}
 		})
+	}
+}
+
+// PHASE PB-2.4: --mobile was renamed to --local-network (see ADR-0069). The
+// flag's actual behavior -- expand the bind scope from loopback-only to a
+// trusted private/link-local address, plus require pairing -- never was
+// mobile-device-specific; it was a local-network reachability control that
+// happened to be named after its most common use case.
+
+func TestLocalNetworkFlagUnknownMobileFlagIsRejected(t *testing.T) {
+	var output bytes.Buffer
+	if _, err := parseFlags([]string{"-mobile"}, &output); err == nil {
+		t.Fatal("parseFlags accepted the removed -mobile flag")
+	}
+	if !strings.Contains(output.String(), "mobile") {
+		t.Fatalf("expected flag package to name the unknown -mobile flag in its error output, got %q", output.String())
+	}
+}
+
+func TestLocalNetworkFlagEnablesExpectedBehavior(t *testing.T) {
+	config, err := parseFlags([]string{"-local-network"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.localNetwork {
+		t.Fatal("parseFlags(-local-network) did not set localNetwork")
+	}
+}
+
+func TestLocalNetworkFlagDefaultIsLoopbackOnly(t *testing.T) {
+	config, err := parseFlags(nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.localNetwork {
+		t.Fatal("localNetwork must default to false (loopback-only)")
+	}
+	if config.address != "127.0.0.1:8787" {
+		t.Fatalf("default listen address = %q, want loopback 127.0.0.1:8787", config.address)
+	}
+}
+
+func TestExplicitListenFlagIsRecordedForLocalNetworkAddressDiscovery(t *testing.T) {
+	withoutListen, err := parseFlags([]string{"-local-network"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutListen.listenWasSet {
+		t.Fatal("listenWasSet must be false when -listen was not passed")
+	}
+
+	withListen, err := parseFlags([]string{"-local-network", "-listen", "192.168.1.20:9000"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !withListen.listenWasSet {
+		t.Fatal("listenWasSet must be true when -listen was explicitly passed")
+	}
+	if withListen.address != "192.168.1.20:9000" {
+		t.Fatalf("address = %q, want the explicit -listen value unchanged", withListen.address)
+	}
+}
+
+func TestDaemonHelpListsLocalNetworkNotMobile(t *testing.T) {
+	var output bytes.Buffer
+	_, err := parseFlags([]string{"-h"}, &output)
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("parseFlags(-h) error = %v, want flag.ErrHelp", err)
+	}
+	help := output.String()
+	if !strings.Contains(help, "-local-network") {
+		t.Fatalf("--help is missing -local-network:\n%s", help)
+	}
+	if strings.Contains(help, "-mobile") {
+		t.Fatalf("--help still mentions the removed -mobile flag:\n%s", help)
 	}
 }

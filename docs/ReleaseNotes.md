@@ -27,7 +27,7 @@ Public Betaの正式サポート対象は**macOS／arm64のみ**です。macOS�
 
 ### 既知の制限
 
-- remote authentication、TLS、internet公開、Push通知は未実装です。mobile modeは信頼できる同一LAN専用です。
+- remote authentication、TLS、internet公開、Push通知は未実装です。`--local-network`は信頼できる同一LAN専用です。
 - daemonは既定でloopback bindのみを受け付けます。
 - 外部secret manager、credential rotationの自動化は未実装です。credentialはmacOS Keychain、または明示指定したheadless-local fileからのみ読み込みます。
 - Routineの実行頻度はdaily／weeklyのみで、cron形式の指定はできません。

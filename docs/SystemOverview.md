@@ -64,11 +64,11 @@ one-shot Scheduler、Notification／Metrics inspection、WordPress External Acti
 
 Local Web UIはこの順序を再実装しません。`interaction-next`が返す1つの次操作をiPhoneの先頭へ表示し、質問回答とread-only plan、承認対象digestを既存HTTP APIへ渡します。完了後はProject、Task、Deliverable本文、canonical Reviewをread-only evidence endpointから後で展開できます。
 
-## iPhoneからのLocal Web UI
+## 別デバイスからのLocal Web UI
 
-`workcairn-daemon --mobile`は、同じWi-Fi等のtrusted local network上のiPhoneへmobile-first Web UIを配信します。起動時にprivate IPv4を自動選択し、terminalへURLとprocess lifetimeだけ有効なpairing codeを表示します。codeはVault、`.env`、Interaction Session、browser storageへ保存されません。
+`workcairn-daemon --local-network`は、同じWi-Fi等のtrusted local network上の別デバイス（iPhone等、任意機能）へLocal Web UIを配信します。起動時にprivate IPv4を自動選択し、terminalへURLとprocess lifetimeだけ有効なpairing codeを表示します。codeはVault、`.env`、Interaction Session、browser storageへ保存されません。
 
-通常の依頼ではModel名を選びません。新規Interactionは論理値`workcairn-auto`を使い、Claude Adapter edgeのversioned supported-model policyが具体modelを自動解決します。製品daemon／CLIはmodel環境変数を読みません。daemonはProviderへ通信せず、ADR-0066の選択済みcredential sourceをredacted statusとして検査し、未接続ならPlan承認の前に設定を案内します。既定`automatic`は既存互換としてenvironment→Keychainの順ですがheadless-localへは進みません。明示`environment`／`keychain`／`headless-local`は他sourceへfallbackしません。Local Web UIの`AI Connections`はClaudeの接続可否とAutomatic routingを表示しますが、credential、Provider model ID、Base URLをUIやSessionへ出しません。credential登録はMac本体のsame-origin操作からnative hidden-inputを開き、値をHTTPへ載せずKeychainへ保存します。trusted LANのiPhoneは接続状態だけを読みます。本格的なRole／Task別routingはADR-0036のtyped policyとして既存Runner Registryの手前へ追加し、未接続Providerへの暗黙fallbackは行いません。
+通常の依頼ではModel名を選びません。新規Interactionは論理値`workcairn-auto`を使い、Claude Adapter edgeのversioned supported-model policyが具体modelを自動解決します。製品daemon／CLIはmodel環境変数を読みません。daemonはProviderへ通信せず、ADR-0066の選択済みcredential sourceをredacted statusとして検査し、未接続ならPlan承認の前に設定を案内します。既定`automatic`は既存互換としてenvironment→Keychainの順ですがheadless-localへは進みません。明示`environment`／`keychain`／`headless-local`は他sourceへfallbackしません。Local Web UIの`AI Connections`はClaudeの接続可否とAutomatic routingを表示しますが、credential、Provider model ID、Base URLをUIやSessionへ出しません。credential登録はMac本体のsame-origin操作からnative hidden-inputを開き、値をHTTPへ載せずKeychainへ保存します。trusted LAN上の別デバイスは接続状態だけを読みます。本格的なRole／Task別routingはADR-0036のtyped policyとして既存Runner Registryの手前へ追加し、未接続Providerへの暗黙fallbackは行いません。
 
 Claudeがerror responseを返した場合、Adapterは実HTTP statusと公式error typeだけから認証、請求、権限、request不正、rate limit、一時利用不可を分類します。Provider messageは保存せず、sanitized request IDとredacted分類だけをCommand Ledgerへ残すため、My Actionsは秘密情報を出さず次の確認先を案内できます。分類不能な旧evidenceや未知errorを推測せず、自動retryや別Providerへのfallbackを行いません。
 
@@ -97,9 +97,9 @@ Workflowを承認する前に、ADR-0035の`workcairn-autonomy.v1`で今回任�
 
 Company ViewのProof of Workは、Interaction evidenceからTask、Deliverable、canonical Review JSON、Revision intent、Command Ledger、Auditを再読込するread-only Work Reportです。誰が作り、誰がReviewし、Request ChangesとRevisionがあったか、外部Actionが成立したかを表示します。欠落やpartial stateは完了と推測せず`確認が必要`とします。同じReportから、会社が処理したstep、委任範囲で進んだstep、質問、承認、Recovery attentionをCEO Attentionとして算出します。新しい実績Storeやprocess-local counterを正本にしません。
 
-承認済みInteraction commandはADR-0032のbounded acceptanceでbrowser接続から切り離され、iPhoneがlock／backgroundへ移ってもdaemon process内で継続します。画面は同じCommand IDのLedger statusだけをpollし、再読込後も再実行せずstatus確認を再開します。daemon crash後の自動resumeやLedger欠落の推測は行いません。
+承認済みInteraction commandはADR-0032のbounded acceptanceでbrowser接続から切り離され、client側がlock／backgroundへ移ってもdaemon process内で継続します。画面は同じCommand IDのLedger statusだけをpollし、再読込後も再実行せずstatus確認を再開します。daemon crash後の自動resumeやLedger欠落の推測は行いません。
 
-既定daemonは引き続きloopback限定です。mobile modeもunspecified／public addressを拒否し、remote公開、敵対的LAN、port forwardingをsupportしません。HTTPを暗号化しないためtrusted LAN専用であり、internet公開には将来のTLS、durable identity、authorizationが必要です。
+既定daemonは引き続きloopback限定です。`--local-network`もunspecified／public addressを拒否し、remote公開、敵対的LAN、port forwardingをsupportしません。HTTPを暗号化しないためtrusted LAN専用であり、internet公開には将来のTLS、durable identity、authorizationが必要です。
 
 各副作用commandは`--approved`がなければ、Vault I/O、Provider設定読取、HTTP client生成より前に拒否されます。plan／inspect／validateは副作用を持ちません。
 
@@ -212,7 +212,7 @@ Public Beta前に移行用compatibility distributionを撤去しました。製�
 - 既存artifactを使った自動retry／adoption／projection再構成はない。安全なTask partial stateだけ明示Recoveryできる
 - Durable Command判定は明示Command ID付き主要writerへ適用済み。ID未指定実行と専用migration／Recovery操作は再送保証を持たない
 - 複数Task orchestrationはboundedな同期runであり、durable queueや自動resumeはない
-- HTTP daemonのremote公開、TLS、durable user identity／authorization、非同期queueは未実装。既定はloopbackで、明示mobile modeもprocess-local pairing付きprivate／link-local addressだけを許可する
+- HTTP daemonのremote公開、TLS、durable user identity／authorization、非同期queueは未実装。既定はloopbackで、明示`--local-network`もprocess-local pairing付きprivate／link-local addressだけを許可する
 - Reviewed Multi-task WorkflowはTaskごとにReviewし、Request ChangesならRevision Taskを実行・再Reviewする。自動resume、並列実行は未実装
 - Schedulerはone-shotだけで、cron／recurrence、並列配送、`dispatching` reconciliationは未実装
 - Notificationはlocal read-only Inboxだけで、外部channel配送、未読／ack、Event replayは未実装。Metricsはprocess再起動でresetされる

@@ -15,7 +15,7 @@ WorkCairnのread-only操作とwriter操作は分離されています。`*-plan`
 - `running`、partial failure、stale Versionを推測で再実行しない。
 - `.env`をGo Runtimeへ読ませず、一般の対話利用credentialはMac native inputからKeychainへ保存する。無人運用ではADR-0066の明示sourceだけを使い、別sourceへfallbackしない。
 - daemonのProvider statusは選択済みcredential sourceをredacted inspectionし、remote Providerへ疎通しない。未接続時はPlan生成を開始せず、別Providerへfallbackしない。
-- Local Web UIの`AI Connections`は接続状態を表示し、Mac本体の明示操作だけがnative hidden-inputを起動します。mobile modeのHTTP payloadからcredentialを入力・送信しません。
+- Local Web UIの`AI Connections`は接続状態を表示し、Mac本体の明示操作だけがnative hidden-inputを起動します。`--local-network`のHTTP payloadからcredentialを入力・送信しません。
 - canonical artifact、Deliverable、Review JSON、Revision intent、Action evidenceを自動削除・上書きしない。
 
 ## 配布物の確認
@@ -105,15 +105,15 @@ WorkCairnはこのfileを作成、更新、移行しません。operatorがrepos
 
 direct `workcairn` CLIは従来どおり明示operator環境の`ANTHROPIC_API_KEY`だけを読みます。headless-localをCLIへ暗黙適用しません。外部secret manager、rotation、既存Keychainからの自動migrationは未実装です。
 
-### iPhone Local Web UI
+### Local Network Web UI（別デバイスから接続、例: iPhone）
 
-iPhoneとMacを同じtrusted Wi-Fiへ接続し、temporary／approved Vaultを明示して起動します。
+別デバイス（iPhone等）とMacを同じtrusted Wi-Fiへ接続し、temporary／approved Vaultを明示して起動します。
 
 ```bash
-bin/workcairn-daemon --vault /absolute/path/to/temporary-or-approved-vault --mobile
+bin/workcairn-daemon --vault /absolute/path/to/temporary-or-approved-vault --local-network
 ```
 
-1. terminalに表示された`WorkCairn mobile UI`のURLをiPhone Safariで開く。
+1. terminalに表示された`WorkCairn local network UI`のURLを別デバイスのbrowser（例: iPhone Safari）で開く。
 2. 同じterminalのpairing codeを入力する。Universal Clipboardでcopyしてもよい。
 3. 自然言語の依頼を入力し、request digestを確認してSession開始を承認する。
 4. 表示された質問へ回答し、Provider Plan生成、Plan適用、Reviewed Workflowをそれぞれ明示承認する。
@@ -123,7 +123,7 @@ bin/workcairn-daemon --vault /absolute/path/to/temporary-or-approved-vault --mob
 
 承認後にSafariをbackgroundへ移しても、`202 Accepted`済みのInteraction commandはMac上で継続します。画面へ戻ると同じCommand IDのLedger状態を再取得します。daemon自体を終了した場合やMacがsleep／crashした場合は自動resumeせず、`running`／partial stateをRecovery手順で確認してください。
 
-mobile modeは自動検出したprivate IPv4だけへbindします。複数network interfaceで違うaddressを選んだ場合は`--listen 192.168.x.x:8787`を明示してください。pairing code／cookieはprocess終了で無効になり、Vault、`.env`、Interaction Sessionには保存されません。
+`--local-network`は自動検出したprivate IPv4だけへbindします。複数network interfaceで違うaddressを選んだ場合は`--listen 192.168.x.x:8787`を明示してください。pairing code／cookieはprocess終了で無効になり、Vault、`.env`、Interaction Sessionには保存されません。
 
 HTTPは暗号化されないため、信頼できない共有Wi-Fi、port forwarding、internet公開では使用しないでください。remote authentication、TLS、durable account、Push通知は未実装です。
 

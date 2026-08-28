@@ -6,7 +6,7 @@ flowchart TD
     CEOApply --> Managed["Go managed Project / Task"]
     Managed --> Run["Go workcairn operator path"]
     API["workcairn-daemon / Public Beta allow-list"] --> Interaction
-    Mobile["iPhone / Local Web UI"] --> API
+    Mobile["Paired device / Local Web UI"] --> API
     CLI["workcairn operator CLI"] --> Run
     Scheduler["Operator one-shot Scheduler"] --> Run
     API -. operator inspect .-> Observe["Redacted Notification / Metrics"]

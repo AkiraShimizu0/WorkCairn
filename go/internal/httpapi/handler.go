@@ -917,7 +917,7 @@ func validateLocalNetworkAddress(address string) error {
 	}
 	ip := net.ParseIP(host)
 	if ip == nil || ip.IsUnspecified() || !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
-		return errors.New("mobile listen address must be loopback, private, or link-local")
+		return errors.New("local network listen address must be loopback, private, or link-local")
 	}
 	return nil
 }

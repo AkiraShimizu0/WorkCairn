@@ -88,7 +88,7 @@ Public Beta acceptanceの必須条件はHuman Operator自身のMacでのpackaged
 
 iPhone Web UIはavailableな任意機能であり、Public Beta acceptanceの必須条件ではない。Mac browserだけでも一般UIの正式経路を完結できる。iPhoneを実際に使う場合だけ、以下を追加確認する。
 
-- [ ] `--mobile`がprivate addressとpairing codeを表示した。
+- [ ] `--local-network`がprivate addressとpairing codeを表示した。
 - [ ] iPhone Safariでpairing、reload、background復帰、完了確認を実施した。
 - [ ] iPhoneからAI Connection／Finder操作を開始できず、Macで行う案内だけが表示される。
 - [ ] 承認済みbackground実行は小さいindicatorだけとなり、clarification／approval／failure／Recoveryだけが前面に出る。

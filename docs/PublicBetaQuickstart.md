@@ -41,10 +41,10 @@ Go 1.23以上だけを使用します。別言語runtimeやpackage managerは不
 通常利用ではterminalでVault path、Employee ID、Role、Model IDを設定しません。
 
 ```bash
-bin/workcairn-daemon --mobile
+bin/workcairn-daemon
 ```
 
-初回だけnative folder pickerが開きます。推奨のiCloud Drive内に空の`WorkCairn`専用folderを新規作成して選び、Web WizardでStarter Organizationを承認します。iCloud Driveは推奨であって必須ではなく、任意のローカルfolderも選択できます。`AI Connections`はMacのnative hidden-inputからClaudeをmacOS Keychainへ接続し、RoutingはAutomaticのまま使用します。iPhoneにはcredential入力面を出しません。`会社を始める`から最初の依頼へ進みます。
+初回だけnative folder pickerが開きます。推奨のiCloud Drive内に空の`WorkCairn`専用folderを新規作成して選び、Web WizardでStarter Organizationを承認します。iCloud Driveは推奨であって必須ではなく、任意のローカルfolderも選択できます。`AI Connections`はMacのnative hidden-inputからClaudeをmacOS Keychainへ接続し、RoutingはAutomaticのまま使用します。`会社を始める`から最初の依頼へ進みます。別デバイスから接続したい場合は[iPhone Local Web UI](#iphone-local-web-ui)を参照してください。
 
 選択したpathはmacOS Application Supportへprivate local configとして保存され、再起動後に再検証されます。既存の個人Obsidian Vault、home、iCloud Drive root、別用途の非空directoryは受け入れません。同じVaultへ書くdaemonは1つだけです。
 
@@ -73,7 +73,7 @@ bin/workcairn-daemon --vault "$beta_vault"
 MacとiPhoneを同じ信頼できるWi-Fiへ接続します。
 
 ```bash
-bin/workcairn-daemon --vault "$beta_vault" --mobile
+bin/workcairn-daemon --vault "$beta_vault" --local-network
 ```
 
 terminalのURLをiPhone Safariで開き、pairing codeを入力します。URLやcodeは公開せず、process終了後に再利用しません。iPhoneでは`My Actions`が既定で、必要な質問・承認・Recoveryだけを表示します。対応不要なら`Your company is working. No action needed.`と分かります。承認済み処理の実行中は小さなindicatorだけを表示し、failureはMy ActionsとTimelineから消えません。UIへ到達するだけならProvider設定は不要です。

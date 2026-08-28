@@ -20,7 +20,7 @@ WorkCairnは、自分専用のAI会社へ仕事を任せ、必要な質問と重
 - ADR-0028/0029のInteraction Sessionは自然言語request、CEO質問回答、再plan、plan digest承認、既存Project／Task writer適用、Reviewed Workflow実行をappend-only turnとVersion/CASで調停します。未回答質問をblockし、Workflow完全Resultはproject Ledgerへ残してSessionにはdigestとbounded typed summaryだけを保存します。
 - ADR-0030の任意External Action handoffはcompleted Workflow内の明示Taskだけを既存WordPress Action child Commandへ渡し、source／plan digest承認後の結果summaryをSessionへ記録します。公開意図や対象を推測しません。
 - `interaction-next`はSession stateと最新turnから次のoperation、必要field、質問、承認要否、Recovery参照をread-onlyに導出します。自動承認・実行・Recoveryは行いません。
-- ADR-0031のmobile-first Local Web UIは`workcairn-daemon`へembedされ、iPhoneからInteraction／Next Action／Command APIを利用します。既定loopbackを維持し、明示`--mobile`だけprivate／link-local addressとprocess-local pairingを許可します。UIはbusiness ruleを持たず、Task／Deliverable／canonical Review evidenceをread-onlyで後から表示します。
+- ADR-0031のLocal Web UIは`workcairn-daemon`へembedされ、別デバイス（iPhone等、任意機能）からInteraction／Next Action／Command APIを利用します。既定loopbackを維持し、明示`--local-network`（旧`--mobile`、ADR-0069）だけprivate／link-local addressとprocess-local pairingを許可します。UIはbusiness ruleを持たず、Task／Deliverable／canonical Review evidenceをread-onlyで後から表示します。
 - ADR-0032によりmobile Interaction commandはtyped validation後にbounded受理でき、client接続から切り離して既存workspace Ledgerを追跡します。同期API、CLI、commit pointは変更せず、daemon crash後の自動resumeは行いません。
 - Workspace Kernel、Project／Workflow／Task／Event／Worker／Policy Domain、PromptBuilder、Claude Adapter、Vault Adapter、Runtime compositionはGoです。temporary VaultとMock ProviderでEnd-to-End検証します。
 - ADR-0033により移行用Python package、tests、entry point、SDK、build metadataはPublic Beta前に削除済みです。製品surfaceは`workcairn`、`workcairn-daemon`、JSON Contract v1の`workcairn-core`です。

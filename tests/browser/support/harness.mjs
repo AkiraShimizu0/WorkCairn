@@ -167,7 +167,7 @@ async function startDaemon({ vaultRoot, providerURL, providerFixtureMaxCalls = 0
   const args = [
     "-vault", vaultRoot,
     "-listen", address,
-    "-mobile",
+    "-local-network",
     "-provider-timeout", "10s",
     "-shutdown-timeout", "5s",
     "-scheduler-interval", "1h"

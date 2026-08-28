@@ -44,7 +44,7 @@
 
 ### Security
 
-- daemonは既定で非loopback bindを拒否し、明示mobile modeだけprivate／link-local IP、process-local pairing、same-origin effect requestを許可。
+- daemonは既定で非loopback bindを拒否し、明示`--local-network`だけprivate／link-local IP、process-local pairing、same-origin effect requestを許可。
 - Provider／Action credentialをRuntime environmentへ限定し、Command／Schedule／evidenceから除外。
 
 ## [0.1.0] - 2026-08-07

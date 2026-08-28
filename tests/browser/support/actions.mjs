@@ -92,7 +92,7 @@ export async function completeFirstRunFast(page) {
     const commandID = `CMD-FAST-SETUP-${Math.random().toString(36).slice(2)}`;
     const response = await fetch("/v1/commands", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Intent": "mobile-ui.v1", Prefer: "respond-async" },
+      headers: { "Content-Type": "application/json", "X-Workspace-Intent": "local-network-ui.v1", Prefer: "respond-async" },
       body: JSON.stringify({
         version: "workspace-command.v1",
         command_id: commandID,

@@ -2,7 +2,7 @@
 
 この手順だけが実iCloud、実Keychain、実Providerを使う人間確認です。自動testはtemporary directoryとFakeだけを使い、既存の個人Obsidian Vaultには触れません。
 
-1. 新規install状態のmacOSで`workcairn-daemon --mobile`を起動する。
+1. 新規install状態のmacOSで`workcairn-daemon --local-network`を起動する。
 2. native pickerでiCloud Driveを開き、空の`WorkCairn`専用folderを新規作成して選ぶ。iCloud rootや既存の個人Vaultは選ばない。
 3. Macに自動表示されたFirst-run Wizardで「最初のAIチームを作ります」を確認し、明示承認する。
 4. Product Manager、Content Writer、QA EngineerがAI社員一覧へ表示されることを確認する。

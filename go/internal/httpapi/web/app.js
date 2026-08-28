@@ -711,7 +711,7 @@ async function requestJSON(path, options = {}) {
   headers.set("Accept", "application/json");
   if (options.body != null) {
     headers.set("Content-Type", "application/json");
-    headers.set("X-Workspace-Intent", "mobile-ui.v1");
+    headers.set("X-Workspace-Intent", "local-network-ui.v1");
   }
   let response;
   try {
@@ -2048,7 +2048,7 @@ async function prepareWorkflowApproval(next, maxTasks) {
         reviewer_id: plan.reviewer_id, current_time: currentTime, max_tasks: maxTasks,
         autonomy_contract: plan.autonomy_contract,
         workflow_plan_digest: plan.workflow_plan_digest,
-        approval_reference: `mobile-ui:${next.session_id}:v${next.expected_version}`,
+        approval_reference: `local-network-ui:${next.session_id}:v${next.expected_version}`,
       }, "Workflowを実行しています", "Task、Review、必要なRevisionを順番に進めています。")),
       button("今は実行しない", "quiet chip", () => toast("仕事は開始されていません。")),
     ]);

@@ -1,6 +1,6 @@
 # HTTP Command API
 
-`workcairn-daemon`は、Go Only Runtimeをloopback HTTPから利用する同期Command入口であり、同じGo binaryからmobile-first Local Web UIを配信します。現在はinternet／remote公開用ではありません。既定は`127.0.0.1`で、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可します。
+`workcairn-daemon`は、Go Only Runtimeをloopback HTTPから利用する同期Command入口であり、同じGo binaryからLocal Web UIを配信します。現在はinternet／remote公開用ではありません。既定は`127.0.0.1`で、明示`--local-network`だけprivate／link-local IPとprocess-local pairingを許可します。
 
 ## 起動
 
@@ -8,13 +8,13 @@
 bin/workcairn-daemon
 ```
 
-iPhoneとMacを同じtrusted local networkへ接続し、次でmobile modeを起動します。
+別デバイス（iPhone等）を同じtrusted local networkへ接続し、次で`--local-network`を起動します。
 
 ```bash
-bin/workcairn-daemon --mobile
+bin/workcairn-daemon --local-network
 ```
 
-private IPv4を自動選択し、iPhoneで開くURLとpairing codeをterminalへ表示します。必要なら`--listen 192.168.x.x:8787`のように明示できます。`0.0.0.0`、public IP、hostnameは拒否します。pairing codeは起動ごとに変わり、Vault／Session／browser storageへ保存しません。mobile modeのeffect POSTはpairing cookie、same-origin、`X-Workspace-Intent: mobile-ui.v1`を要求します。
+private IPv4を自動選択し、別デバイスで開くURLとpairing codeをterminalへ表示します。必要なら`--listen 192.168.x.x:8787`のように明示できます。`0.0.0.0`、public IP、hostnameは拒否します。pairing codeは起動ごとに変わり、Vault／Session／browser storageへ保存しません。`--local-network`のeffect POSTはpairing cookie、same-origin、`X-Workspace-Intent: local-network-ui.v1`を要求します。
 
 daemonは`.env` fileを読みません。Provider commandに必要な設定はRuntime environmentから注入され、HTTP payloadではAPI key、Base URL、Vault rootを受け取りません。
 

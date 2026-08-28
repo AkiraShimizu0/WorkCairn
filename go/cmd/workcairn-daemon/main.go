@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -38,36 +39,62 @@ func main() {
 		}
 		return
 	}
-	if err := run(); err != nil {
+	config, err := parseFlags(os.Args[1:], os.Stderr)
+	if err != nil {
+		os.Exit(2)
+	}
+	if err := run(config); err != nil {
 		fmt.Fprintln(os.Stderr, "workcairn-daemon stopped:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	var vaultRoot, address, credentialSourceValue string
-	var providerTimeout, shutdownTimeout, schedulerInterval time.Duration
-	var providerFixtureMaxCalls int
-	var mobile bool
-	flag.StringVar(&vaultRoot, "vault", "", "Vault root")
-	flag.StringVar(&address, "listen", "127.0.0.1:8787", "HTTP listen address")
-	flag.DurationVar(&providerTimeout, "provider-timeout", workspaceruntime.DefaultProviderRequestTimeout, "Provider request timeout")
-	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "graceful shutdown timeout")
-	flag.DurationVar(&schedulerInterval, "scheduler-interval", time.Second, "one-shot Schedule polling interval")
-	flag.IntVar(&providerFixtureMaxCalls, "provider-fixture-max-calls", 0, "Browser acceptance only: Provider-call Budget for a loopback fixture (0 uses production default)")
-	flag.StringVar(&credentialSourceValue, "claude-credential-source", string(workspaceruntime.ClaudeCredentialAutomatic), "Claude credential source: automatic, environment, keychain, or headless-local")
-	flag.BoolVar(&mobile, "mobile", false, "serve the paired Web UI on a trusted local network")
-	flag.Parse()
-	credentialSource, err := workspaceruntime.ParseClaudeCredentialSource(credentialSourceValue)
+// daemonFlags is parseFlags' result -- a fresh flag.FlagSet per call (rather
+// than the package-global flag.CommandLine) so flag parsing is independently
+// unit-testable without cross-test flag-registration collisions.
+type daemonFlags struct {
+	vaultRoot, address, credentialSourceValue           string
+	providerTimeout, shutdownTimeout, schedulerInterval time.Duration
+	providerFixtureMaxCalls                             int
+	localNetwork                                        bool
+	listenWasSet                                        bool
+}
+
+func parseFlags(args []string, output io.Writer) (*daemonFlags, error) {
+	flagSet := flag.NewFlagSet("workcairn-daemon", flag.ContinueOnError)
+	flagSet.SetOutput(output)
+	config := &daemonFlags{}
+	flagSet.StringVar(&config.vaultRoot, "vault", "", "Vault root")
+	flagSet.StringVar(&config.address, "listen", "127.0.0.1:8787", "HTTP listen address")
+	flagSet.DurationVar(&config.providerTimeout, "provider-timeout", workspaceruntime.DefaultProviderRequestTimeout, "Provider request timeout")
+	flagSet.DurationVar(&config.shutdownTimeout, "shutdown-timeout", 30*time.Second, "graceful shutdown timeout")
+	flagSet.DurationVar(&config.schedulerInterval, "scheduler-interval", time.Second, "one-shot Schedule polling interval")
+	flagSet.IntVar(&config.providerFixtureMaxCalls, "provider-fixture-max-calls", 0, "Browser acceptance only: Provider-call Budget for a loopback fixture (0 uses production default)")
+	flagSet.StringVar(&config.credentialSourceValue, "claude-credential-source", string(workspaceruntime.ClaudeCredentialAutomatic), "Claude credential source: automatic, environment, keychain, or headless-local")
+	flagSet.BoolVar(&config.localNetwork, "local-network", false, "bind to a trusted local-network address (instead of loopback-only) and require pairing")
+	if err := flagSet.Parse(args); err != nil {
+		return nil, err
+	}
+	flagSet.Visit(func(current *flag.Flag) {
+		if current.Name == "listen" {
+			config.listenWasSet = true
+		}
+	})
+	return config, nil
+}
+
+func run(config *daemonFlags) error {
+	vaultRoot, address := config.vaultRoot, config.address
+	credentialSource, err := workspaceruntime.ParseClaudeCredentialSource(config.credentialSourceValue)
 	if err != nil {
 		return err
 	}
 	managedFirstRun := strings.TrimSpace(vaultRoot) == ""
 	providerBaseURL := strings.TrimSpace(os.Getenv("WORKCAIRN_CLAUDE_BASE_URL"))
-	if providerTimeout <= 0 || shutdownTimeout <= 0 || schedulerInterval <= 0 || providerFixtureMaxCalls < 0 {
+	if config.providerTimeout <= 0 || config.shutdownTimeout <= 0 || config.schedulerInterval <= 0 || config.providerFixtureMaxCalls < 0 {
 		return errors.New("positive timeouts are required")
 	}
-	if providerFixtureMaxCalls > 0 && !loopbackProviderFixtureURL(providerBaseURL) {
+	if config.providerFixtureMaxCalls > 0 && !loopbackProviderFixtureURL(providerBaseURL) {
 		return errors.New("provider-fixture-max-calls requires an explicit loopback Provider base URL")
 	}
 	if vaultRoot == "" {
@@ -113,7 +140,7 @@ func run() error {
 	}, workspaceprocess.WordPressProcessConfig{
 		TargetID: os.Getenv("WORKCAIRN_WORDPRESS_TARGET_ID"), BaseURL: os.Getenv("WORKCAIRN_WORDPRESS_BASE_URL"),
 		Username: os.Getenv("WORKCAIRN_WORDPRESS_USERNAME"), ApplicationPassword: os.Getenv("WORKCAIRN_WORDPRESS_APPLICATION_PASSWORD"),
-	}, workspaceruntime.NewProviderHTTPClient(providerTimeout), httpapi.ProcessExecutorOptions{ProviderFixtureMaxCalls: providerFixtureMaxCalls})
+	}, workspaceruntime.NewProviderHTTPClient(config.providerTimeout), httpapi.ProcessExecutorOptions{ProviderFixtureMaxCalls: config.providerFixtureMaxCalls})
 	if err != nil {
 		return err
 	}
@@ -126,7 +153,7 @@ func run() error {
 		return err
 	}
 	schedulerService, err := service.NewSchedulerService(scheduleStore, executor, service.SchedulerConfig{
-		PollInterval: schedulerInterval, Now: time.Now,
+		PollInterval: config.schedulerInterval, Now: time.Now,
 	})
 	if err != nil {
 		return err
@@ -152,15 +179,9 @@ func run() error {
 		return err
 	}
 	var server *httpapi.Server
-	if mobile {
-		listenWasSet := false
-		flag.Visit(func(current *flag.Flag) {
-			if current.Name == "listen" {
-				listenWasSet = true
-			}
-		})
-		if !listenWasSet {
-			address, err = discoverMobileAddress("8787")
+	if config.localNetwork {
+		if !config.listenWasSet {
+			address, err = discoverLocalNetworkAddress("8787")
 			if err != nil {
 				return err
 			}
@@ -174,7 +195,7 @@ func run() error {
 		}
 		server, err = httpapi.NewLocalNetworkServer(address, handler)
 		if err == nil {
-			fmt.Fprintf(os.Stdout, "WorkCairn mobile UI: %s\nPairing code: %s\nTrusted local network only; do not expose this address to the internet.\n", localURL(address), pairingCode)
+			fmt.Fprintf(os.Stdout, "WorkCairn local network UI: %s\nPairing code: %s\nTrusted local network only; do not expose this address to the internet.\n", localURL(address), pairingCode)
 		}
 	} else {
 		server, err = httpapi.NewServer(address, handler)
@@ -210,7 +231,7 @@ func run() error {
 		return fmt.Errorf("stop scheduler: %w", err)
 	}
 	schedulerStarted = false
-	shutdownContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdownContext, cancel := context.WithTimeout(context.Background(), config.shutdownTimeout)
 	defer cancel()
 	if err := server.Shutdown(shutdownContext); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
@@ -310,7 +331,7 @@ func addressHost(address string) string {
 	return host
 }
 
-func discoverMobileAddress(port string) (string, error) {
+func discoverLocalNetworkAddress(port string) (string, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return "", fmt.Errorf("discover local network: %w", err)
@@ -333,7 +354,7 @@ func discoverMobileAddress(port string) (string, error) {
 		}
 	}
 	if len(candidates) == 0 {
-		return "", errors.New("no private local network address found; connect the Mac and iPhone to the same network or pass --listen with a private IP")
+		return "", errors.New("no private local network address found; connect this device and the other device to the same network or pass --listen with a private IP")
 	}
 	sort.Strings(candidates)
 	return net.JoinHostPort(candidates[0], port), nil

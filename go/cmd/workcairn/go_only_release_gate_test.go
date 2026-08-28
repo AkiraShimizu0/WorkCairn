@@ -166,7 +166,7 @@ func TestWorkCairnPublicSurfaceIsConsistent(t *testing.T) {
 		"go/go.mod":                  {"module github.com/AkiraShimizu0/WorkCairn/go"},
 		"Makefile":                   {"bin/workcairn", "bin/workcairn-daemon", "bin/workcairn-core"},
 		"scripts/package-release.sh": {`archive_name="workcairn_`, "for command in workcairn-core workcairn workcairn-daemon"},
-		"README.md":                  {"# WorkCairn", "Your AI company that manages itself.", "Company View", "My Actions"},
+		"README.md":                  {"# WorkCairn", "あなたのAI会社。必要な判断だけ、あなたがする。", "Company View", "CEO Attention"},
 	}
 	for path, required := range checks {
 		content, readErr := os.ReadFile(filepath.Join(repositoryRoot, filepath.FromSlash(path)))

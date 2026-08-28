@@ -297,7 +297,7 @@ ADR-0031に基づき、既存Interaction plan／command／next endpointを使い
 - attention stateでは自動継続せずLedger／Recovery案内へ止める
 - credentialをclient historyやSessionへ保存しない
 
-UIはGo binaryへembedし、iPhone 390×844相当で`依頼→質問→Plan承認→Workflow→完了→成果物／Review詳細`をtemporary VaultとMock Providerで確認済みです。既定loopbackは維持し、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可します。remote authentication、TLS、native app、Push通知は含めません。
+UIはGo binaryへembedし、iPhone 390×844相当で`依頼→質問→Plan承認→Workflow→完了→成果物／Review詳細`をtemporary VaultとMock Providerで確認済みです。既定loopbackは維持し、明示`--local-network`（旧`--mobile`、ADR-0069）だけprivate／link-local IPとprocess-local pairingを許可します。remote authentication、TLS、native app、Push通知は含めません。
 
 ## Completed — Mobile Command Continuity
 
@@ -313,7 +313,7 @@ ADR-0032に基づき、`interaction.*`だけが`Prefer: respond-async`でbounded
 
 ## Next 1 — Guided Recovery Inspection
 
-mobile attention表示は現在outer／child Command IDとLedger stateまでです。次は既存ADR-0020のRecovery snapshot／finding／planをread-only HTTP projectionとして公開し、iPhoneでも「何がcommit済みで、なぜ自動継続しないか」を理解できるようにします。
+Local Web UIのattention表示は現在outer／child Command IDとLedger stateまでです。次は既存ADR-0020のRecovery snapshot／finding／planをread-only HTTP projectionとして公開し、Web UIからも「何がcommit済みで、なぜ自動継続しないか」を理解できるようにします。
 
 - 最初は診断だけとし、自動repair／retry／artifact adoptionを追加しない
 - canonical evidence certaintyと既存Recovery error型をそのまま表示する
@@ -512,7 +512,7 @@ ADR-0033に基づき、外部公開前に移行用compatibility distribution、t
 
 Public Beta向け差別化foundationでは、安全側の固定contractだけを提供します。Shadow Mode、Employee Authority、支出上限、長期KPI Storeは既存Approval／Ledger／Adapter境界へ自然に追加できる設計だけを記録し、先取り実装しません。
 
-PHASE PB-1で外部公開前のPublic Beta Readiness Inventoryを実施し、Internal Core／Go Only／PQ-1（placeholder修正）が既にengineering blocker 0であることを確認しました。続くPHASE PB-2で、Human Operatorが決定済みの製品方針（初期対応環境はmacOS／arm64のみ、iPhoneはfeatureとして存在するがPublic Beta必須acceptance条件ではない、Obsidianはoptional viewer、iCloud Driveは必須ではない、複数Mac／VMはPublic Beta必須ではない）へ、CHANGELOG、[Release Notes](ReleaseNotes.md)、[Public Beta Release Checklist](PublicReleaseChecklist.md)を同期し、`v1.0.0-beta.1`のdarwin/arm64 release archiveを実際にbuild・checksum・allow-list検証しました。残る項目はいずれもHuman Operatorのaccount／実機操作であり、追加のengineering／documentation作業ではありません。
+PHASE PB-1で外部公開前のPublic Beta Readiness Inventoryを実施し、Internal Core／Go Only／PQ-1（placeholder修正）が既にengineering blocker 0であることを確認しました。続くPHASE PB-2で、Human Operatorが決定済みの製品方針（初期対応環境はmacOS／arm64のみ、iPhoneはfeatureとして存在するがPublic Beta必須acceptance条件ではない、Obsidianはoptional viewer、iCloud Driveは必須ではない、複数Mac／VMはPublic Beta必須ではない）へ、CHANGELOG、[Release Notes](ReleaseNotes.md)、[Public Beta Release Checklist](PublicReleaseChecklist.md)を同期し、`v1.0.0-beta.1`のdarwin/arm64 release archiveを実際にbuild・checksum・allow-list検証しました。PHASE PB-2.1で旧`Workspace OS`ブランド残存の監査（新規発見なし）とUI上の不要な機種名依存（Mac固有表現、Employee個人名の代わりにRole表示）を整理し、PHASE PB-2.2でGo module pathをGitHub canonical repository（`WorkCairn`）の大文字小文字へ揃え（ADR-0068）、PHASE PB-2.3で「AI社員が動いている様子」を見せるCompany/Employee activity UIをPublic Betaから一旦非表示・削除しました。PHASE PB-2.4でREADMEを日本語中心の利用者向け構成へ全面再編し、`--mobile`daemon flagを実態に合わせて`--local-network`へrename（ADR-0069、compatibility不要のため旧名は完全削除）、AGENTS.md／`.ai/workspace.md`／ROADMAP.mdのcurrent-state syncを行いました。残る項目はいずれもHuman Operatorのaccount／実機操作であり、追加のengineering／documentation作業ではありません。
 
 Public Beta公開前に残る人間／実環境確認：
 

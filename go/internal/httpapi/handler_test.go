@@ -261,7 +261,7 @@ func TestServerRejectsNonLoopbackExposure(t *testing.T) {
 	}
 }
 
-func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules(t *testing.T) {
+func TestEmbeddedUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules(t *testing.T) {
 	backend := &fakeCommandBackend{}
 	handler, err := NewHandler(backend, backend)
 	if err != nil {
@@ -294,7 +294,7 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		`/v1/interaction-action-plans`, `id: "project-id"`, `for: "project-id"`,
 	} {
 		if strings.Contains(asset.Body.String(), forbidden) {
-			t.Fatalf("mobile UI contains forbidden rule or secret surface %q", forbidden)
+			t.Fatalf("embedded UI contains forbidden rule or secret surface %q", forbidden)
 		}
 	}
 	for _, required := range []string{
@@ -339,19 +339,19 @@ func TestEmbeddedMobileUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules
 		"parse?.structured_output_presence",
 	} {
 		if !strings.Contains(asset.Body.String(), required) {
-			t.Fatalf("mobile UI is missing command continuity boundary %q", required)
+			t.Fatalf("embedded UI is missing command continuity boundary %q", required)
 		}
 	}
 	index := httptest.NewRecorder()
 	handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/", nil))
 	for _, required := range []string{"AI会社", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION", "AI Connections", "Automatic", "接続済みAIサービスから、WorkCairnが実行先を選びます", "この依頼の歩み", "依頼一覧へ戻る", "FIRST-RUN SETUP"} {
 		if !strings.Contains(index.Body.String(), required) {
-			t.Fatalf("mobile UI is missing Living Company Dashboard surface %q", required)
+			t.Fatalf("embedded UI is missing Living Company Dashboard surface %q", required)
 		}
 	}
 	for _, forbidden := range []string{`name="model"`, `type="password"`, "利用モデル"} {
 		if strings.Contains(index.Body.String(), forbidden) {
-			t.Fatalf("mobile UI still asks for per-request model selection %q", forbidden)
+			t.Fatalf("embedded UI still asks for per-request model selection %q", forbidden)
 		}
 	}
 }

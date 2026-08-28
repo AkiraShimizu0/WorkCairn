@@ -15,7 +15,7 @@ flowchart TD
     Apply --> Workflow["Go managed Project / Task"]
     Workflow --> Run["Go workcairn operator path"]
     API["workcairn-daemon / Public Beta allow-list"] --> Interaction
-    Mobile["iPhone / Local Web UI"] --> API
+    Mobile["Paired device / Local Web UI"] --> API
     CLI["workcairn operator CLI"] --> Run
     Scheduler["Operator one-shot Scheduler"] --> Run
     API -. operator inspect .-> Observe["Notification Inbox / Metrics"]
@@ -162,8 +162,8 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Command Ledger Domain／Service | Command ID、request digest、running／terminal outcomeと一度だけのVersion遷移を管理する |
 | Go Vault Command Ledger Adapter | Project scopeまたはworkspace scopeのhidden machine metadataへclaimをatomic createし、terminal outcomeをCAS／atomic replacementで保存する |
 | Go Process／workcairn | Vault AdapterとRuntimeをprocess edgeでcompositionし、Task metadata migration、read-only execution／recovery plan、明示承認付きexecute／recoveryを提供する |
-| Go HTTP API／workcairn-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger／Organization／Task evidence inspection、graceful shutdownを提供し、workcairnと同じprocess／Serviceを利用する。既定はloopback、明示mobile modeだけprivate／link-local IPとprocess-local pairingを許可する。mobile Interaction commandだけadditiveなbounded acceptanceでclient接続から切り離せる |
-| Living Company Dashboard | daemon同一originからembed配信する薄いclient。iPhone既定のMy ActionsはInteraction Next Actionを質問／承認／Recoveryへ投影し、PC／iPad既定のCompany ViewはOrganization／Workflow／Task evidenceから社員、Maker、Reviewer、Revision、handoff、Timelineを表示する。同一Session／Versionのpollingでは操作中DOMを再生成せず、Task／Review／Revision規則を持たない |
+| Go HTTP API／workcairn-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger／Organization／Task evidence inspection、graceful shutdownを提供し、workcairnと同じprocess／Serviceを利用する。既定はloopback、明示`--local-network`（ADR-0069、旧`--mobile`）だけprivate／link-local IPとprocess-local pairingを許可する。Interaction commandだけadditiveなbounded acceptanceでclient接続から切り離せる |
+| Living Company Dashboard | daemon同一originからembed配信する薄いclient。iPhone等の別端末から到達した場合はMy ActionsがInteraction Next Actionを質問／承認／Recoveryへ投影し、Mac／iPadでは既定のCompany ViewがOrganization／Workflow／Task evidenceから社員、Maker、Reviewer、Revision、handoff、Timelineを表示する。iPhoneはavailableな任意機能であり、Public Beta必須の対応対象ではない（Public Beta初期対応環境はmacOS／arm64）。同一Session／Versionのpollingでは操作中DOMを再生成せず、Task／Review／Revision規則を持たない |
 | First-run Workspace Setup | macOS native picker／Application Support path reference、Mac-only Keychain Adapter、redacted Workspace Statusと、明示承認・workspace Command Ledger・既存Employee writerを使うStarter Organization bootstrap。選択済み専用rootだけを扱い、path／secretをHTTPへ渡さず、既存Vault変更やCoreへの既定社員追加を行わない |
 | Go Workflow Run Service | dependency readinessを各Task後に再planし、決定的child Command IDで既存Task executionを順次調停する。Task状態やEventは変更しない |
 | Go Reviewed Workflow Run Service | 唯一のoperation `workflow.reviewed.execute`（`process.ExecuteReviewedWorkflow`）が、内部で常に`RunParallel`（ADR-0051）を駆動する。依存関係を満たした全readyタスクを1ラウンドとしてbounded goroutine poolで同時実行し、束全体が終端に達してから次ラウンドをplanする。ready Taskが1件なら実質逐次と同じ挙動、複数件ならGoが自動的に並列実行し、どちらになるかは依存グラフの形だけから毎ラウンド自動的に決まる――呼び出し元がparallel／sequential／concurrencyを選ぶ経路は存在しない。`MaxParallelTasks`／`MaxRevisionCount`（Revision Guard、branch独立counting）はAutonomy Contractから読む。optionalな`policy.ProgressPolicy`（ADR-0052、未設定ならnilで既存挙動のまま）をRequest Changesの都度呼び、Review Progress／Deliverable Progress／Execution Progressの3信号が揃って停滞している場合だけ`no_progress`としてRevision Guardより早くbranchを止められる（既定は`policy.CompoundProgressPolicy`、ADR-0053）――Policy自体はTask状態を変更しない。optionalな`policy.BudgetPolicy`（ADR-0054、未設定ならnilで既存挙動のまま）と`budgetTracker`（並列安全な予約primitive）が、Provider呼び出し直前ごとにRuntime／Provider Call Budgetを強制する（既定は`policy.FixedBudgetPolicy`）――こちらもPolicy自体はTask状態を変更しない。`ResumeRevision`（ADR-0055）はCEOの新Recovery Commandから、既存canonicalなUnstarted Revision Taskを最初のtargeted roundとして実行し、その後だけ同じ`EvaluateAllReadiness`へ戻す。Synthesis専用resume logicは持たない。既存の逐次`Run`メソッド自体は無変更のまま残置（現在の呼び出し元はテストのみ）。TaskState変更経路は既存TaskServiceだけを通る |
@@ -290,7 +290,7 @@ ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環�
 - `go/internal/adapter/vault`: read-only Context／Organization Loader、Project／Task／Deliverable／Review／Revision intent／Schedule／Interaction Store、Audit Event subscriber
 - `go/internal/runtime`: Provider／Storage AdapterをServiceへ注入するprocess-neutral execution／Review／Revision compositionと、daemon用のclosed credential source resolution。解決後の値だけをProvider edgeへ渡し、source間の暗黙fallbackを明示modeでは行わない
 - `go/internal/process`: Organization参照、Project／Task作成、通常Task／Review／Revision／reviewed Workflow／Schedule／Interaction Workflow／Recoveryのread-only planと明示承認付きexecute、canonical evidenceからのWork Report projection
-- `go/internal/httpapi`: version付きCommand HTTP contract、必須Command ID、同期handler、mobile Interactionのbounded acceptance、Ledger／Task evidence／Work Report inspection、embed mobile Web UI、trusted-LAN pairing、graceful server lifecycle
+- `go/internal/httpapi`: version付きCommand HTTP contract、必須Command ID、同期handler、Interactionのbounded acceptance、Ledger／Task evidence／Work Report inspection、embed Local Web UI、trusted-LAN pairing、graceful server lifecycle
 - `go/internal/policy`: 明示承認とWorker失敗後の回復判断を提供する決定的Policy Domain
 - `go/internal/execution`: 1タスク実行のRequest、Result、Stage、型付きpartial failure契約
 - `go/internal/service`: Kernel向けProject/Workflow/Task/Event/Worker/Execution／Scheduler Facade
@@ -298,7 +298,7 @@ ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環�
 - `go/internal/bootstrap`: 具体Serviceを登録するcomposition root
 - `go/cmd/workcairn-core`: バージョン付きJSON契約を公開するCLI境界
 - `go/cmd/workcairn`: Organization参照、Project／Task作成、migration、通常Task／Review／Revision／reviewed Workflow、one-shot Schedule、Interaction、Recoveryを公開するGo運用CLI
-- `go/cmd/workcairn-daemon`: 同じprocess／Service compositionをloopback既定HTTPと、明示pairing済みtrusted-LAN mobile UIで公開するGo daemon
+- `go/cmd/workcairn-daemon`: 同じprocess／Service compositionをloopback既定HTTPと、明示pairing済みtrusted-LAN Local Web UI（`--local-network`）で公開するGo daemon
 - `go/internal/buildinfo`: release時にlinkerから注入するversion／commit／build date。DomainやRuntime設定ではない
 - `scripts/package-release.sh`: allow-listされたGo binary、LICENSE、docsをversion付きarchiveとSHA-256 checksumへ構成するdistribution edge
 

@@ -16,7 +16,7 @@ import (
 const (
 	localAccessCookie = "workspace_local_access"
 	localIntentHeader = "X-Workspace-Intent"
-	localIntentValue  = "mobile-ui.v1"
+	localIntentValue  = "local-network-ui.v1"
 )
 
 // LocalAccess is a process-local trusted-LAN access boundary. It deliberately
