@@ -149,7 +149,7 @@ test("company attention API failure stays section-local @office", async ({ page 
     await expect(page.locator("#workspace-view")).toBeVisible();
     await showCompanyView(page);
     await expect(page.locator("#company-attention .attention-section-warning")).toContainText("対応が必要な項目を読み込めませんでした");
-    await expect(page.locator(".office-room, .employee-compact-row").first()).toBeVisible();
+    await expect(page.locator("#employees-pane")).toBeVisible();
   } finally {
     await environment.stop();
   }

@@ -128,10 +128,7 @@ const ui = {
   sessionFilterActive: document.querySelector("#session-filter-active"),
   sessionFilterArchived: document.querySelector("#session-filter-archived"),
   timeline: document.querySelector("#activity-timeline"),
-  employeeGrid: document.querySelector("#employee-grid"),
-  companyFeed: document.querySelector("#company-feed"),
   companyAttention: document.querySelector("#company-attention"),
-  teamCount: document.querySelector("#team-count"),
   attentionGrid: document.querySelector("#attention-grid"),
   autonomySummary: document.querySelector("#autonomy-summary"),
   proofOfWork: document.querySelector("#proof-of-work"),
@@ -2355,22 +2352,19 @@ async function resumeAllPendingCommands() {
   await Promise.all(commands.map((command) => resumePendingCommand(command)));
 }
 
+// Public Beta UI shows Role, never the Employee's proper name -- the
+// Employee data model and persona names are unchanged (see Organization
+// domain), only display resolves to a Role label here.
 function employeeIdentityByRole(role) {
   const employee = (state.organization?.inventory?.employees || []).find((candidate) => candidate.role === role);
-  if (employee?.name || employee?.role) {
-    return { name: employee.name || employee.role, role: employee.role ? roleLabel(employee.role) : "" };
-  }
-  if (role) return { name: "AI社員", role: roleLabel(role) };
-  return { name: "AI社員", role: "" };
+  const label = roleLabel(employee?.role || role);
+  return { name: label, role: label };
 }
 
 function employeeIdentityByID(id) {
   const employee = (state.organization?.inventory?.employees || []).find((candidate) => candidate.id === id);
-  if (employee?.name || employee?.id) {
-    return { name: employee.name || employee.id, role: employee.role ? roleLabel(employee.role) : "" };
-  }
-  if (id) return { name: "AI社員", role: "" };
-  return { name: "AI社員", role: "" };
+  const label = employee?.role ? roleLabel(employee.role) : "AI社員";
+  return { name: label, role: label };
 }
 
 function speakerForRole(role) {
@@ -2421,7 +2415,8 @@ function reviewIssueLines(issues) {
 }
 
 function companyFactText(entry) {
-  const subjectName = entry.subject?.name || entry.subject?.employee_id || "";
+  // Role label, never the Employee's proper name (Public Beta UI policy).
+  const subjectName = entry.subject?.employee_id ? (actorRoleLabel(entry.subject) || "担当AI") : "";
   switch (entry.kind) {
   case "task_assigned":
     return entry.task_title ? `${subjectName}に${entry.task_title}を割り当てました。` : `${subjectName}に仕事を割り当てました。`;
@@ -2472,16 +2467,16 @@ function conversationEntryNode(entry) {
     );
   }
   if (entry.category === "directed_communication") {
-    const speakerName = entry.speaker?.name || entry.speaker?.employee_id || "";
-    const role = actorRoleLabel(entry.speaker);
-    const mention = entry.mention_allowed && entry.recipient?.name
-      ? node("p", { class: "msg-mention" }, `@${entry.recipient.name}`)
+    // Role label, never the Employee's proper name (Public Beta UI policy).
+    const speakerName = actorRoleLabel(entry.speaker) || "担当AI";
+    const recipientLabel = entry.recipient?.employee_id ? actorRoleLabel(entry.recipient) : "";
+    const mention = entry.mention_allowed && recipientLabel
+      ? node("p", { class: "msg-mention" }, `@${recipientLabel}`)
       : null;
     return node("article", { class: "msg msg-employee msg-directed" },
       node("div", { class: "msg-header" },
         node("span", { class: "msg-name" }, speakerName),
         node("div", { class: "msg-meta" },
-          role ? node("span", { class: "msg-role" }, role) : null,
           entry.at ? node("time", { class: "msg-time-inline" }, sessionTimeLabel(entry.at)) : null,
         ),
       ),
@@ -3112,266 +3107,16 @@ async function refreshEmployeesPane() {
     await loadTaskEvidenceDetails();
     renderEmployeesPane();
   } catch {
-    ui.employeeGrid.replaceChildren(node("p", { class: "warning" }, "社員情報を読み込めませんでした。仕事の状態は推測せず、Organizationを確認してください。"));
+    ui.companyAttention.replaceChildren(node("p", { class: "warning" }, "社員情報を読み込めませんでした。仕事の状態は推測せず、Organizationを確認してください。"));
   }
 }
 
-function avatarVariant(employeeID) {
-  let hash = 0;
-  const source = String(employeeID || "unknown");
-  for (let index = 0; index < source.length; index += 1) {
-    hash = ((hash << 5) - hash) + source.charCodeAt(index);
-    hash |= 0;
-  }
-  return Math.abs(hash) % 6;
-}
-
-function avatarNode(employeeID, statusClass = "") {
-  const variant = avatarVariant(employeeID);
-  return node("span", { class: `employee-avatar avatar-v${variant} ${statusClass}`.trim(), "aria-hidden": "true" });
-}
-
-function employeeStatusIcon(displayStatus) {
-  switch (displayStatus) {
-  case "作業中": return "✎";
-  case "レビュー中": return "✓";
-  case "修正中": return "↺";
-  case "社長と相談中": return "💬";
-  case "完了": return "◦";
-  default: return "•";
-  }
-}
-
-function employeePoseClass(displayStatus) {
-  switch (displayStatus) {
-  case "作業中": return "pose-desk";
-  case "レビュー中": return "pose-review";
-  case "修正中": return "pose-revise";
-  case "社長と相談中": return "pose-consult";
-  case "完了": return "pose-done";
-  default: return "pose-idle";
-  }
-}
-
-function characterZoneClass(employee, index) {
-  switch (employee.display_status) {
-  case "レビュー中": return "zone-review";
-  case "社長と相談中": return "zone-consult";
-  case "作業中":
-  case "修正中":
-  case "完了":
-    return `zone-desk-${index}`;
-  default:
-    return `zone-walk-${index}`;
-  }
-}
-
-function officeRoomSvgNode() {
-  const svgNS = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(svgNS, "svg");
-  svg.setAttribute("class", "office-room-svg");
-  svg.setAttribute("viewBox", "0 0 400 240");
-  svg.setAttribute("aria-hidden", "true");
-
-  const defs = document.createElementNS(svgNS, "defs");
-  const wallGrad = document.createElementNS(svgNS, "linearGradient");
-  wallGrad.setAttribute("id", "room-wall");
-  wallGrad.setAttribute("x1", "0");
-  wallGrad.setAttribute("y1", "0");
-  wallGrad.setAttribute("x2", "0");
-  wallGrad.setAttribute("y2", "1");
-  for (const [offset, color] of [["0%", "var(--room-wall-top, #eef3ef)"], ["100%", "var(--room-wall-bottom, #dfe8e1)"]]) {
-    const stop = document.createElementNS(svgNS, "stop");
-    stop.setAttribute("offset", offset);
-    stop.setAttribute("stop-color", color);
-    wallGrad.append(stop);
-  }
-  const floorGrad = document.createElementNS(svgNS, "linearGradient");
-  floorGrad.setAttribute("id", "room-floor");
-  floorGrad.setAttribute("x1", "0");
-  floorGrad.setAttribute("y1", "0");
-  floorGrad.setAttribute("x2", "0");
-  floorGrad.setAttribute("y2", "1");
-  for (const [offset, color] of [["0%", "var(--room-floor-top, #d8e0da)"], ["100%", "var(--room-floor-bottom, #c8d2cb)"]]) {
-    const stop = document.createElementNS(svgNS, "stop");
-    stop.setAttribute("offset", offset);
-    stop.setAttribute("stop-color", color);
-    floorGrad.append(stop);
-  }
-  defs.append(wallGrad, floorGrad);
-  svg.append(defs);
-
-  const wall = document.createElementNS(svgNS, "rect");
-  wall.setAttribute("class", "room-wall");
-  wall.setAttribute("x", "0");
-  wall.setAttribute("y", "0");
-  wall.setAttribute("width", "400");
-  wall.setAttribute("height", "170");
-  wall.setAttribute("fill", "url(#room-wall)");
-  const floor = document.createElementNS(svgNS, "rect");
-  floor.setAttribute("class", "room-floor");
-  floor.setAttribute("x", "0");
-  floor.setAttribute("y", "170");
-  floor.setAttribute("width", "400");
-  floor.setAttribute("height", "70");
-  floor.setAttribute("fill", "url(#room-floor)");
-  svg.append(wall, floor);
-
-  const addRect = (className, attrs) => {
-    const rect = document.createElementNS(svgNS, "rect");
-    rect.setAttribute("class", className);
-    for (const [key, value] of Object.entries(attrs)) rect.setAttribute(key, String(value));
-    svg.append(rect);
-    return rect;
-  };
-  addRect("room-window", { x: 288, y: 28, width: 72, height: 48, rx: 4 });
-  addRect("room-whiteboard", { x: 156, y: 34, width: 88, height: 52, rx: 4 });
-  addRect("room-shelf", { x: 12, y: 72, width: 36, height: 56, rx: 3 });
-  addRect("room-shelf-board", { x: 16, y: 78, width: 28, height: 4, rx: 1 });
-  addRect("room-shelf-board", { x: 16, y: 92, width: 28, height: 4, rx: 1 });
-  addRect("room-shelf-board", { x: 16, y: 106, width: 28, height: 4, rx: 1 });
-  addRect("room-consult-rug", { x: 18, y: 176, width: 56, height: 24, rx: 8 });
-  const windowBarV = document.createElementNS(svgNS, "line");
-  windowBarV.setAttribute("class", "room-window-bar");
-  windowBarV.setAttribute("x1", "324");
-  windowBarV.setAttribute("y1", "32");
-  windowBarV.setAttribute("x2", "324");
-  windowBarV.setAttribute("y2", "72");
-  const windowBarH = document.createElementNS(svgNS, "line");
-  windowBarH.setAttribute("class", "room-window-bar");
-  windowBarH.setAttribute("x1", "292");
-  windowBarH.setAttribute("y1", "52");
-  windowBarH.setAttribute("x2", "356");
-  windowBarH.setAttribute("y2", "52");
-  svg.append(windowBarV, windowBarH);
-  const line = document.createElementNS(svgNS, "line");
-  line.setAttribute("class", "room-board-line");
-  line.setAttribute("x1", "168");
-  line.setAttribute("y1", "50");
-  line.setAttribute("x2", "228");
-  line.setAttribute("y2", "50");
-  svg.append(line);
-  addRect("room-desk room-desk-left", { x: 44, y: 148, width: 72, height: 10, rx: 3 });
-  addRect("room-monitor room-monitor-left", { x: 68, y: 124, width: 24, height: 18, rx: 2 });
-  addRect("room-chair room-chair-left", { x: 72, y: 158, width: 16, height: 10, rx: 3 });
-  addRect("room-desk room-desk-center", { x: 164, y: 148, width: 72, height: 10, rx: 3 });
-  addRect("room-monitor room-monitor-center", { x: 188, y: 124, width: 24, height: 18, rx: 2 });
-  addRect("room-chair room-chair-center", { x: 192, y: 158, width: 16, height: 10, rx: 3 });
-  addRect("room-desk room-desk-review", { x: 284, y: 148, width: 72, height: 10, rx: 3 });
-  addRect("room-monitor room-monitor-review", { x: 308, y: 124, width: 24, height: 18, rx: 2 });
-  addRect("room-chair room-chair-review", { x: 312, y: 158, width: 16, height: 10, rx: 3 });
-  addRect("room-doc-stack", { x: 332, y: 132, width: 18, height: 14, rx: 2 });
-  addRect("room-coffee", { x: 248, y: 176, width: 10, height: 12, rx: 2 });
-
-  const pot = document.createElementNS(svgNS, "circle");
-  pot.setAttribute("class", "room-plant-pot");
-  pot.setAttribute("cx", "36");
-  pot.setAttribute("cy", "182");
-  pot.setAttribute("r", "8");
-  addRect("room-plant-stem", { x: 34, y: 166, width: 4, height: 12, rx: 2 });
-  const leafA = document.createElementNS(svgNS, "circle");
-  leafA.setAttribute("class", "room-plant-leaf");
-  leafA.setAttribute("cx", "32");
-  leafA.setAttribute("cy", "162");
-  leafA.setAttribute("r", "6");
-  const leafB = document.createElementNS(svgNS, "circle");
-  leafB.setAttribute("class", "room-plant-leaf");
-  leafB.setAttribute("cx", "40");
-  leafB.setAttribute("cy", "160");
-  leafB.setAttribute("r", "5");
-  svg.append(pot, leafA, leafB);
-
-  return node("div", { class: "office-room-scene", "aria-hidden": "true" }, svg);
-}
-
-function roomCharacterNode(employee, index) {
-  const variant = avatarVariant(employee.id);
-  const statusClass = employeeStatusClass(employee.display_status);
-  const poseClass = employeePoseClass(employee.display_status);
-  const zoneClass = characterZoneClass(employee, index);
-  return node("div", {
-    class: `room-character avatar-v${variant} ${statusClass} ${poseClass} ${zoneClass}${employee.is_liaison ? " liaison" : ""}${employee.ceo_attention ? " attention" : ""}`.trim(),
-    title: employee.current_work_title || employee.display_status || "",
-  },
-  node("div", { class: "room-character-figure", "aria-hidden": "true" },
-    node("span", { class: "char-hair" }),
-    node("span", { class: "char-head" },
-      node("span", { class: "char-face" },
-        node("span", { class: "char-eye char-eye-left" }),
-        node("span", { class: "char-eye char-eye-right" }),
-      ),
-    ),
-    node("span", { class: "char-torso" }),
-    node("span", { class: "char-arm char-arm-left" }),
-    node("span", { class: "char-arm char-arm-right" }),
-    node("span", { class: "char-leg char-leg-left" }),
-    node("span", { class: "char-leg char-leg-right" }),
-    node("span", { class: "char-chair-back" }),
-  ),
-  node("span", { class: "char-shadow", "aria-hidden": "true" }),
-  employee.display_status === "社長と相談中" || employee.ceo_attention
-    ? node("span", { class: "char-speech-bubble", "aria-hidden": "true" })
-    : null,
-  );
-}
-
-function roomCharacterLabel(employee) {
-  const statusClass = employeeStatusClass(employee.display_status);
-  return node("div", { class: "room-character-label" },
-    node("strong", {}, employee.name || employee.id),
-    node("small", {}, `${employee.role ? roleLabel(employee.role) : "役割未設定"} · ${employee.display_status || "待機中"}`),
-    node("span", { class: `employee-status ${statusClass}`.trim() },
-      node("span", { class: "status-glyph", "aria-hidden": "true" }, employeeStatusIcon(employee.display_status)),
-      employee.display_status || "待機中",
-    ),
-    employee.current_work_title ? node("p", { class: "employee-task" }, employee.current_work_title) : null,
-  );
-}
-
-function employeeCompactRow(employee) {
-  const statusClass = employeeStatusClass(employee.display_status);
-  const variant = avatarVariant(employee.id);
-  return node("div", { class: "employee-compact-row" },
-    node("span", { class: `employee-compact-avatar avatar-v${variant} ${statusClass}`.trim(), "aria-hidden": "true" },
-      node("span", { class: "char-hair" }),
-      node("span", { class: "char-head" }),
-      node("span", { class: "char-torso" }),
-    ),
-    node("div", { class: "employee-compact-copy" },
-      node("strong", {}, employee.name || employee.id),
-      node("small", {}, `${employee.department || "会社"} · ${employee.role ? roleLabel(employee.role) : "役割未設定"}`),
-      node("span", { class: `employee-status ${statusClass}`.trim() },
-        node("span", { class: "status-glyph", "aria-hidden": "true" }, employeeStatusIcon(employee.display_status)),
-        node("span", { class: "status-dot", "aria-hidden": "true" }),
-        employee.display_status || "待機中",
-      ),
-      employee.current_work_title ? node("p", { class: "employee-task" }, employee.current_work_title) : null,
-    ),
-  );
-}
-
+// The office-visual (room/characters) and company-feed ("社内の動き")
+// sections are hidden in Public Beta (index.html: `hidden` on
+// .employee-status-section / .company-feed-section) -- they narrated
+// individual AI employees by name/activity, which Public Beta doesn't
+// show. Attention stays the only populated section here.
 function renderEmployeesPane() {
-  const employees = state.companyActivity?.employees || [];
-  ui.teamCount.textContent = employees.length ? `${employees.length}人` : "";
-  if (!employees.length) {
-    ui.employeeGrid.replaceChildren(node("p", { class: "empty" }, "AI社員はまだ読み込まれていません。"));
-  } else {
-    ui.employeeGrid.replaceChildren(
-      node("div", { class: "office-room" },
-        officeRoomSvgNode(),
-        node("div", { class: "office-room-characters", "aria-hidden": "true" },
-          ...employees.map((employee, index) => roomCharacterNode(employee, index)),
-        ),
-        node("div", { class: "office-room-labels" },
-          ...employees.map((employee) => roomCharacterLabel(employee)),
-        ),
-        node("div", { class: "office-room-compact" },
-          ...employees.map((employee) => employeeCompactRow(employee)),
-        ),
-      ),
-    );
-  }
-  renderCompanyFeed();
   renderCompanyAttention();
 }
 
@@ -3485,36 +3230,6 @@ function renderCompanyAttention() {
   }
   fragments.push(...items.map((item, index) => renderCompanyAttentionItem(item, index)));
   ui.companyAttention.replaceChildren(...fragments);
-}
-
-function renderCompanyFeed() {
-  const events = state.companyActivity?.feed || [];
-  if (!events.length) {
-    ui.companyFeed.replaceChildren(node("p", { class: "empty" }, "社内の動きはここに表示されます。"));
-    return;
-  }
-  ui.companyFeed.replaceChildren(...events.slice().reverse().map((event) => {
-    const time = event.at ? sessionTimeLabel(event.at) : "";
-    const directed = Boolean(event.directed && event.target_name);
-    const route = directed
-      ? node("p", { class: "feed-copy" }, node("strong", {}, event.actor_name), ` → ${event.target_name}`, node("span", {}, ` ${event.label}`))
-      : node("p", { class: "feed-copy" }, node("strong", {}, event.actor_name), node("span", {}, ` ${event.label}`));
-    return node("article", { class: "feed-item" },
-      node("time", { class: "feed-time" }, time),
-      route,
-    );
-  }));
-}
-
-function employeeStatusClass(displayStatus) {
-  switch (displayStatus) {
-  case "作業中": return "working";
-  case "レビュー中": return "reviewing";
-  case "修正中": return "revising";
-  case "完了": return "completed";
-  case "社長と相談中": return "with-ceo";
-  default: return "standby";
-  }
 }
 
 function openSetupWizard() {
@@ -3642,10 +3357,11 @@ function renderProofOfWork() {
   );
 }
 
+// Role label, never the Employee's proper name (Public Beta UI policy).
 function employeeLabel(id) {
   if (!id) return "未割当";
   const employee = (state.organization?.inventory?.employees || []).find((candidate) => candidate.id === id);
-  return employee ? (employee.name || employee.id) : id;
+  return employee?.role ? roleLabel(employee.role) : "担当AI";
 }
 
 function detailBlock(title, rows) {

@@ -77,11 +77,6 @@ test("employee role labels render in natural Japanese while canonical roles stay
     await pairThroughUI(page, environment.daemon);
     await completeFirstRun(page);
     await ensureRequestDetail(page);
-    const menu = page.locator("#menu-button");
-    if (await menu.isVisible()) {
-      await menu.click();
-      await page.locator("#nav-employees-home").click();
-    }
     await expect(page.locator("body")).toContainText("企画担当");
     await expect(page.locator("body")).toContainText("コンテンツ担当");
     await expect(page.locator("body")).toContainText("品質確認担当");

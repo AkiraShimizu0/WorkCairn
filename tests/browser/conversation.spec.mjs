@@ -215,7 +215,7 @@ test("conversation projection renders canonical chat categories @conversation", 
   }
 });
 
-test("UI refinement: composer, settings, branding, themes, and office visual @conversation @mobile", async ({ page }, testInfo) => {
+test("UI refinement: composer, settings, branding, themes @conversation @mobile", async ({ page }, testInfo) => {
   const environment = await startBrowserEnvironment("happy_path");
   const isMobileProject = testInfo.project.name.includes("iphone");
   try {
@@ -251,15 +251,12 @@ test("UI refinement: composer, settings, branding, themes, and office visual @co
       const menu = page.locator("#menu-button");
       await menu.click();
       await page.locator("#nav-employees-home").click();
-      await expect(page.getByRole("heading", { name: "AI会社の様子" })).toBeVisible();
-      await expect(page.locator(".employee-compact-row").first()).toBeVisible();
-      await expect(page.locator(".office-room-characters").first()).toBeHidden();
+      await expect(page.getByRole("heading", { name: "対応が必要" })).toBeVisible();
+      await expect(page.locator(".employee-status-section")).toBeHidden();
     } else {
       await page.emulateMedia({ colorScheme: "light" });
       await expect(page.locator("#workspace-view")).toBeVisible();
-      await expect(page.locator(".office-room").first()).toBeVisible();
-      await expect(page.locator(".office-room-scene").first()).toBeVisible();
-      await expect(page.locator(".room-character").first()).toBeVisible();
+      await expect(page.locator(".employee-status-section")).toBeHidden();
     }
 
     if (!isMobileProject) {
@@ -270,16 +267,15 @@ test("UI refinement: composer, settings, branding, themes, and office visual @co
       await expect(menu).toBeVisible();
       await menu.click();
       await page.locator("#nav-employees-home").click();
-      await expect(page.getByRole("heading", { name: "AI会社の様子" })).toBeVisible();
-      await expect(page.locator(".employee-compact-row").first()).toBeVisible();
-      await expect(page.locator(".office-room-characters").first()).toBeHidden();
+      await expect(page.getByRole("heading", { name: "対応が必要" })).toBeVisible();
+      await expect(page.locator(".employee-status-section")).toBeHidden();
     }
   } finally {
     await environment.stop();
   }
 });
 
-test("UI refinement round 2: composer, sequential clarifications, shared office @conversation @mobile", async ({ page }, testInfo) => {
+test("UI refinement round 2: composer, sequential clarifications @conversation @mobile", async ({ page }, testInfo) => {
   const environment = await startBrowserEnvironment("clarification_three");
   const isMobileProject = testInfo.project.name.includes("iphone");
   const q1 = "Browser Gate質問1：対象読者は誰ですか？";
@@ -333,10 +329,7 @@ test("UI refinement round 2: composer, sequential clarifications, shared office 
     await expect(timeline.getByText(q1)).toHaveCount(1);
 
     if (!isMobileProject) {
-      await expect(page.locator(".office-room")).toHaveCount(1);
-      await expect(page.locator(".office-zone")).toHaveCount(0);
-      await expect(page.locator(".room-character")).toHaveCount(3);
-      await expect(page.locator(".room-character.pose-idle").first()).toBeVisible();
+      await expect(page.locator(".employee-status-section")).toBeHidden();
 
       const layoutRatio = await page.locator(".workspace-layout").evaluate((element) => {
         const columns = getComputedStyle(element).gridTemplateColumns.split(" ");
@@ -345,16 +338,8 @@ test("UI refinement round 2: composer, sequential clarifications, shared office 
         return right / (left + right);
       });
       expect(layoutRatio).toBeGreaterThan(0.62);
-
-      await page.emulateMedia({ colorScheme: "light" });
-      const workerTone = await page.locator(".char-torso").first().evaluate((element) => getComputedStyle(element).backgroundColor);
-      expect(workerTone).not.toBe("rgba(0, 0, 0, 0)");
-
-      await page.emulateMedia({ colorScheme: "dark" });
-      const darkWorkerTone = await page.locator(".char-head").first().evaluate((element) => getComputedStyle(element).backgroundColor);
-      expect(darkWorkerTone).not.toBe("rgba(0, 0, 0, 0)");
     } else {
-      await expect(page.locator(".employee-compact-row")).toHaveCount(3);
+      await expect(page.locator(".employee-status-section")).toBeHidden();
     }
 
     await page.emulateMedia({ reducedMotion: "reduce" });

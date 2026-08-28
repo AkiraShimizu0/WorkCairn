@@ -409,7 +409,7 @@ func TestEmbeddedWebUIProjectsCompanyAttentionFeed(t *testing.T) {
 		}
 	}
 	renderStart := strings.Index(script, "function renderCompanyAttention()")
-	renderEnd := strings.Index(script[renderStart:], "function renderCompanyFeed()")
+	renderEnd := strings.Index(script[renderStart:], "function openSetupWizard()")
 	if renderStart < 0 || renderEnd < 0 {
 		t.Fatal("renderCompanyAttention() is missing")
 	}

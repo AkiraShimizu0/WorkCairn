@@ -32,7 +32,9 @@ test("composer stays pinned on mobile and plan tasks show canonical titles @mobi
 
     await generatePlanThroughClarification(page);
     await expect(page.locator(".msg-embed-plan .msg-attach-task-title")).not.toHaveText(/^x$/i);
-    await expect(page.locator(".msg-embed-plan")).toContainText("佐藤 葵");
+    // Public Beta UI shows Role, never the Employee's proper name.
+    await expect(page.locator(".msg-embed-plan")).toContainText("コンテンツ担当");
+    await expect(page.locator(".msg-embed-plan")).not.toContainText("佐藤 葵");
     await assertComposerBottomStable(page, "mobile plan");
   } finally {
     await environment.stop();
