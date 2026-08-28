@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/execution"
 )
 
 const MaxWorkflowTasks = 100

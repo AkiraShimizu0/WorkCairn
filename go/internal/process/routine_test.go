@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workcairn/go/internal/responsibility"
-	"github.com/AkiraShimizu0/workcairn/go/internal/routine"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/responsibility"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/routine"
 )
 
 func testRoutineTrigger() routine.Trigger {

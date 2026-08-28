@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/execution"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 var ErrDependencyEvidenceMissing = errors.New("canonical dependency evidence is unavailable")

@@ -13,14 +13,14 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
-	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
-	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
-	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
-	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
-	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
-	"github.com/AkiraShimizu0/workcairn/go/internal/service"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
+	workspaceprocess "github.com/AkiraShimizu0/WorkCairn/go/internal/process"
+	workspaceruntime "github.com/AkiraShimizu0/WorkCairn/go/internal/runtime"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 const (

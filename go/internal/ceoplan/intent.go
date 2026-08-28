@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
 )
 
 var ErrInvalidIntent = errors.New("invalid CEO plan intent")

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
 )
 
 func TestCommandRecordTransitionsOnceToTerminalOutcome(t *testing.T) {

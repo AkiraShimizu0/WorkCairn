@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/goal"
-	"github.com/AkiraShimizu0/workcairn/go/internal/responsibility"
-	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/goal"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/responsibility"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
 )
 
 // responsibilityPlanFixture composes a temporary Vault with the real

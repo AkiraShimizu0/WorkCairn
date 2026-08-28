@@ -7,12 +7,12 @@ import (
 	"reflect"
 	"sort"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/event"
-	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
-	"github.com/AkiraShimizu0/workcairn/go/internal/project"
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
-	"github.com/AkiraShimizu0/workcairn/go/internal/workflow"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/execution"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/project"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/workflow"
 )
 
 // ServiceKind identifies a stable Kernel service boundary.

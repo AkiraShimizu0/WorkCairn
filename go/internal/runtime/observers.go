@@ -3,7 +3,7 @@ package runtime
 import (
 	"fmt"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
 )
 
 type eventSubscriber interface {

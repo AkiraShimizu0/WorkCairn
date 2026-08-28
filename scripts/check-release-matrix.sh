@@ -5,7 +5,7 @@ repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/workcairn-build-matrix.XXXXXX")
 trap 'rm -rf "$temporary_root"' EXIT HUP INT TERM
 
-module=github.com/AkiraShimizu0/workcairn/go/internal/buildinfo
+module=github.com/AkiraShimizu0/WorkCairn/go/internal/buildinfo
 version=$(sed -n '1p' "$repository_root/VERSION")
 ldflags="-s -w -X $module.Version=$version -X $module.Commit=matrix-check -X $module.BuildDate=unknown"
 host_os=$(cd "$repository_root/go" && go env GOOS)

@@ -22,8 +22,8 @@ WorkCairnはagentを細かく設定・監督するtoolではなく、自分専�
 - local daemon／Web UI: `workcairn-daemon`
 - JSON Contract executable: `workcairn-core`
 - release archive: `workcairn_<version>_<os>_<arch>`
-- intended repository slug: `workcairn`
-- Go module: `github.com/AkiraShimizu0/workcairn/go`
+- repository slug: `WorkCairn`（実rename済み、PHASE PB-2.1）
+- Go module: `github.com/AkiraShimizu0/WorkCairn/go`（PHASE PB-2.2でGitHub canonical repository pathの大文字小文字と統一）
 - product-specific environment prefix: `WORKCAIRN_`
 
 実GitHub repositoryのrename、redirect、Public化はこのrepository内の変更では実行しません。Public Beta公開前にrelease ownerが外部操作として行います。

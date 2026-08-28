@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
 )
 
 func TestOrganizationLoaderReadsEmployeesManagersAndReservedIdentities(t *testing.T) {

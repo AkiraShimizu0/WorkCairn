@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
 )
 
 type interactionMemoryStore struct {

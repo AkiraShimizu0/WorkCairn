@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
-	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workcairn/go/internal/event"
-	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
-	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
-	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
 )
 
 var (

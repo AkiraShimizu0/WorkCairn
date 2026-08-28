@@ -3,7 +3,7 @@ package review
 import (
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
 )
 
 type OrchestrationRequest struct {

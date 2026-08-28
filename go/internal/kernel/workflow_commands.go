@@ -1,6 +1,6 @@
 package kernel
 
-import "github.com/AkiraShimizu0/workcairn/go/internal/workflow"
+import "github.com/AkiraShimizu0/WorkCairn/go/internal/workflow"
 
 type readinessPayload struct {
 	Tasks             []workflow.Task       `json:"tasks"`

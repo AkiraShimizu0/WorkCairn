@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
 )
 
 type memoryCommandLedger struct {

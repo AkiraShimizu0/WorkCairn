@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
 )
 
 func storedTask(t *testing.T) task.Task {

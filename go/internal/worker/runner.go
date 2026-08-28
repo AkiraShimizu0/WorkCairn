@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
 )
 
 // RunRequest is the only contract visible to provider-specific Runner

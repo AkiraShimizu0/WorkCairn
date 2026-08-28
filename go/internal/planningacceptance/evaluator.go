@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/ceoplan"
 )
 
 const (

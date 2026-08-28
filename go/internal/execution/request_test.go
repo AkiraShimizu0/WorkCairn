@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
-	"github.com/AkiraShimizu0/workcairn/go/internal/workflow"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/workflow"
 )
 
 func validRequest() Request {

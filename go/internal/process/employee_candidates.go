@@ -3,8 +3,8 @@ package process
 import (
 	"context"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
 )
 
 func ValidateEmployeeCandidates(ctx context.Context, root string, candidates []organization.EmployeeCandidate) ([]organization.CandidateValidation, error) {

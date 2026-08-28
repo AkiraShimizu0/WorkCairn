@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/review"
 )
 
 // ReviewStore commits immutable structured evidence before its human-readable

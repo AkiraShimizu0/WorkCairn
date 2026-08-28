@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/responsibility"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/responsibility"
 )
 
 func vaultResponsibility(t *testing.T, scope responsibility.Scope, projectName string) responsibility.Record {

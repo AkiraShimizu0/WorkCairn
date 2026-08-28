@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/action"
-	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
-	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
-	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
-	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
-	"github.com/AkiraShimizu0/workcairn/go/internal/project"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/action"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/autonomy"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/project"
 )
 
 var ErrInvalidPayload = errors.New("invalid product command payload")

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
 )
 
 // validTaskID reuses the Task Domain's own canonical ParseTaskID instead of

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
-	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
 )
 
 func TestInteractionStoreCreateCASListAndRejectCorruption(t *testing.T) {

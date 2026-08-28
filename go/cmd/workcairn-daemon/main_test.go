@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/localos"
-	"github.com/AkiraShimizu0/workcairn/go/internal/httpapi"
-	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
-	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/localos"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/httpapi"
+	workspaceprocess "github.com/AkiraShimizu0/WorkCairn/go/internal/process"
+	workspaceruntime "github.com/AkiraShimizu0/WorkCairn/go/internal/runtime"
 )
 
 type restartCredentialStore struct {

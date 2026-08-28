@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
-	"github.com/AkiraShimizu0/workcairn/go/internal/synthesisacceptance"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/synthesisacceptance"
 )
 
 func TestClaudeDryRunNeedsNoCredentialAndMakesNoProviderClient(t *testing.T) {

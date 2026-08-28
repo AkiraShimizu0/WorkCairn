@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
-	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
-	"github.com/AkiraShimizu0/workcairn/go/internal/responsibility"
-	"github.com/AkiraShimizu0/workcairn/go/internal/routine"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
+	workspaceprocess "github.com/AkiraShimizu0/WorkCairn/go/internal/process"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/responsibility"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/routine"
 )
 
 // TestGetAttentionReturnsRoutineRecoveryItemThroughRealHandler is the one

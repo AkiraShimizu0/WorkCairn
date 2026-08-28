@@ -13,8 +13,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/event"
-	"github.com/AkiraShimizu0/workcairn/go/internal/notification"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/notification"
 )
 
 const maxNotificationRecordBytes = 64 << 10

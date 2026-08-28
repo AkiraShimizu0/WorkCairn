@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/event"
-	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/review"
 )
 
 type orchestrationReviewExecutor struct {

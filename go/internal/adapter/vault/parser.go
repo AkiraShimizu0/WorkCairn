@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
-	"github.com/AkiraShimizu0/workcairn/go/internal/workflow"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/workflow"
 )
 
 func parseFrontmatter(content string) (map[string]string, error) {

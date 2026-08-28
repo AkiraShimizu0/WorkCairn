@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/event"
-	"github.com/AkiraShimizu0/workcairn/go/internal/goal"
-	"github.com/AkiraShimizu0/workcairn/go/internal/responsibility"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/goal"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/responsibility"
 )
 
 type fakeResponsibilityStore struct {

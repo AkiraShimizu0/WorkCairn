@@ -12,8 +12,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
-	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/claude"
+	workspaceruntime "github.com/AkiraShimizu0/WorkCairn/go/internal/runtime"
 )
 
 func TestHarnessRunsGoodSynthesisThroughCanonicalProductionPath(t *testing.T) {

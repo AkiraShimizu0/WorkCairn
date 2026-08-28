@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
-	"github.com/AkiraShimizu0/workcairn/go/internal/policy"
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/execution"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/policy"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
 )
 
 func TestRuntimeCompletesTemporaryVaultExecutionWithDeliverableAndAudit(t *testing.T) {

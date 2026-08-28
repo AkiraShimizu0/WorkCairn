@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-const internalModulePrefix = "github.com/AkiraShimizu0/workcairn/go/internal/"
+const internalModulePrefix = "github.com/AkiraShimizu0/WorkCairn/go/internal/"
 
 func TestGoOnlyReleaseGateCoversProductCapabilities(t *testing.T) {
 	capabilities := map[string][]string{
@@ -163,7 +163,7 @@ func TestWorkCairnPublicSurfaceIsConsistent(t *testing.T) {
 		}
 	}
 	checks := map[string][]string{
-		"go/go.mod":                  {"module github.com/AkiraShimizu0/workcairn/go"},
+		"go/go.mod":                  {"module github.com/AkiraShimizu0/WorkCairn/go"},
 		"Makefile":                   {"bin/workcairn", "bin/workcairn-daemon", "bin/workcairn-core"},
 		"scripts/package-release.sh": {`archive_name="workcairn_`, "for command in workcairn-core workcairn workcairn-daemon"},
 		"README.md":                  {"# WorkCairn", "Your AI company that manages itself.", "Company View", "My Actions"},

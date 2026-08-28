@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
 )
 
 const maxCommandLedgerRecordBytes = 16 << 20

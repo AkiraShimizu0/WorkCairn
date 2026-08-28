@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workcairn/go/internal/event"
-	"github.com/AkiraShimizu0/workcairn/go/internal/project"
-	"github.com/AkiraShimizu0/workcairn/go/internal/service"
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/project"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
 )
 
 var (

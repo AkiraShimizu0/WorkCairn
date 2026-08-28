@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/goal"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/goal"
 )
 
 const maxGoalRecordBytes = 1 << 20

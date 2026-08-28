@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
-	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
 )
 
 const workspaceCommandScope = "workspace"

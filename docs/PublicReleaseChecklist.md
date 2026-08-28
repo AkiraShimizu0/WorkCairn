@@ -6,8 +6,8 @@ Candidate: `v1.0.0-beta.1`
 
 ## 1. Human decisions — release前に必須
 
-- [x] 公開製品名を`WorkCairn`、binaryを`workcairn*`、Go moduleを`github.com/AkiraShimizu0/workcairn/go`と決定した。
-- [x] GitHub repositoryを`WorkCairn`へ実rename済み（`origin`は`git@github.com:AkiraShimizu0/WorkCairn.git`）。clone URLはPHASE PB-2.1で`https://github.com/AkiraShimizu0/WorkCairn.git`へ更新済み。Go module path（`github.com/AkiraShimizu0/workcairn/go`、小文字）とGitHub slug（`WorkCairn`、大文字混在）の大文字小文字差異は残る——GitHubのgit wire protocolはslugの大文字小文字を区別しないため`go get`/`go install`は動作する見込みだが、実際のnetwork疎通による検証はPHASE PB-2.1では未実施。既存module pathを変更する場合はGo moduleの破壊的変更となるため、実施するかは別途Human判断とする。
+- [x] 公開製品名を`WorkCairn`、binaryを`workcairn*`、Go moduleを`github.com/AkiraShimizu0/WorkCairn/go`と決定した。
+- [x] GitHub repositoryを`WorkCairn`へ実rename済み（`origin`は`git@github.com:AkiraShimizu0/WorkCairn.git`）。clone URLはPHASE PB-2.1で`https://github.com/AkiraShimizu0/WorkCairn.git`へ更新済み。Go module pathはPHASE PB-2.2で`github.com/AkiraShimizu0/WorkCairn/go`（大文字混在）へ揃え、GitHub canonical repository pathとの大文字小文字差異を解消した（245 Go source file・821箇所のimport pathとMakefile／release scriptsのldflags参照を機械的に更新、`go.sum`・JSON Contract・Vault／`workspace-*` identifierは無変更）。実際のnetwork経由`go get`検証は引き続き未実施（この製品はsourceのclone + `make go-build`で配布し、`go get`によるlibrary的消費を想定していないため）。
 - [ ] 配布予定地域で`WorkCairn`の正式な商標clearanceを完了した。
 - [ ] Private Vulnerability Reportingを有効化し、`SECURITY.md`の報告経路を実際に確認した。
 - [x] Public Betaのsupport窓口とresponse expectationを[Release Notes](ReleaseNotes.md)へ記載した（Issues／Discussions／Private Vulnerability Reporting、GitHub上へ集約）。support emailは必須としない。

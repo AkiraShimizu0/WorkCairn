@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
-	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
-	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/autonomy"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
 )
 
 const (

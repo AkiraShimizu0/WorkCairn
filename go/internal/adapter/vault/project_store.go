@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/project"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/project"
 )
 
 const projectLockFilename = ".workspace-os-projects.lock"

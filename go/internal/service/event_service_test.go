@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
 )
 
 func TestEventServiceLifecycleAndDelivery(t *testing.T) {

@@ -9,10 +9,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/localos"
-	workcairnruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
-	"github.com/AkiraShimizu0/workcairn/go/internal/synthesisacceptance"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/localos"
+	workcairnruntime "github.com/AkiraShimizu0/WorkCairn/go/internal/runtime"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/synthesisacceptance"
 )
 
 type dependencies struct {

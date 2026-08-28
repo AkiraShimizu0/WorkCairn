@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 var ErrInvalidResult = errors.New("invalid review result")

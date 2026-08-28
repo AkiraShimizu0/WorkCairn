@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 type fakeRunner struct{ name string }

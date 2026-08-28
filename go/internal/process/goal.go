@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workcairn/go/internal/goal"
-	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/goal"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
 )
 
 var ErrGoalApprovalRequired = errors.New("explicit Goal approval is required")

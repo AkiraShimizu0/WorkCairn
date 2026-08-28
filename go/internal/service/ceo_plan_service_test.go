@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
-	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
-	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 type ceoPlanFakeRunner struct {

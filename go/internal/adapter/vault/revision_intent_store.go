@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/revision"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
 )
 
 const maxRevisionIntentBytes = 1 << 20

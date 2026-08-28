@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/event"
-	"github.com/AkiraShimizu0/workcairn/go/internal/responsibility"
-	"github.com/AkiraShimizu0/workcairn/go/internal/routine"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/responsibility"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/routine"
 )
 
 var (

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/project"
-	"github.com/AkiraShimizu0/workcairn/go/internal/workflow"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/project"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/workflow"
 )
 
 // ErrorKind is stable across Kernel entry points without exposing error text.

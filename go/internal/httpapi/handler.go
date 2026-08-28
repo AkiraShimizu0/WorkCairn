@@ -10,15 +10,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/attention"
-	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
-	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
-	"github.com/AkiraShimizu0/workcairn/go/internal/metrics"
-	"github.com/AkiraShimizu0/workcairn/go/internal/notification"
-	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
-	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/attention"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/metrics"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/notification"
+	workspaceprocess "github.com/AkiraShimizu0/WorkCairn/go/internal/process"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/scheduler"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
 )
 
 const maxCommandRequestBytes = 2 << 20

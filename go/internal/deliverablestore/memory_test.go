@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/deliverable"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/deliverable"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 func TestInMemoryIsImmutableAndClonesDocument(t *testing.T) {

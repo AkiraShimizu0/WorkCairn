@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/review"
 )
 
 func TestRepeatedFeedbackProgressPolicyContinuesBelowThreshold(t *testing.T) {

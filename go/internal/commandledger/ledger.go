@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/failure"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
 )
 
 const SchemaVersion = 1

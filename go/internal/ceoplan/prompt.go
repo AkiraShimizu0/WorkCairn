@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 func BuildPrompt(request string, employees []organization.Identity) (worker.Prompt, error) {

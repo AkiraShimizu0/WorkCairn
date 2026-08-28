@@ -7,10 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workcairn/go/internal/event"
-	"github.com/AkiraShimizu0/workcairn/go/internal/recovery"
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/recovery"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
 )
 
 type RecoveryInspectionService struct{ reader recovery.SnapshotReader }

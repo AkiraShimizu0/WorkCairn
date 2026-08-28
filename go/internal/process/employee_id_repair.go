@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
 )
 
 var ErrEmployeeIDRepairApproval = errors.New("explicit Employee ID repair approval is required")

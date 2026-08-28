@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/review"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/review"
 )
 
 func TestInspectTaskEvidenceReadsCommittedDeliverableAndCanonicalReviews(t *testing.T) {

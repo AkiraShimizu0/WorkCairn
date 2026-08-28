@@ -8,9 +8,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/bootstrap"
-	"github.com/AkiraShimizu0/workcairn/go/internal/buildinfo"
-	"github.com/AkiraShimizu0/workcairn/go/internal/kernel"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/bootstrap"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/buildinfo"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/kernel"
 )
 
 const (

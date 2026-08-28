@@ -1,6 +1,6 @@
 package project
 
-import "github.com/AkiraShimizu0/workcairn/go/internal/task"
+import "github.com/AkiraShimizu0/WorkCairn/go/internal/task"
 
 // Status is a closed set of project task states.
 type Status = task.Status

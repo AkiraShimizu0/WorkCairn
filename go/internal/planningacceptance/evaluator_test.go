@@ -3,7 +3,7 @@ package planningacceptance
 import (
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/ceoplan"
 )
 
 func goodPlan() ceoplan.Plan {

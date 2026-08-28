@@ -14,17 +14,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
-	"github.com/AkiraShimizu0/workcairn/go/internal/deliverable"
-	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
-	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
-	"github.com/AkiraShimizu0/workcairn/go/internal/project"
-	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
-	"github.com/AkiraShimizu0/workcairn/go/internal/service"
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/autonomy"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/deliverable"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/execution"
+	workspaceprocess "github.com/AkiraShimizu0/WorkCairn/go/internal/process"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/project"
+	workspaceruntime "github.com/AkiraShimizu0/WorkCairn/go/internal/runtime"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 const (

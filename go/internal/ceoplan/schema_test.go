@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
 )
 
 var testAllowedRoles = []string{"Content Writer", "Product Manager", "QA Engineer"}

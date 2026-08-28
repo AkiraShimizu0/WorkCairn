@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
-	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
+	workspaceprocess "github.com/AkiraShimizu0/WorkCairn/go/internal/process"
 )
 
 // TestInteractionArchiveOperationAllowListedAndPayloadValidated covers §18's

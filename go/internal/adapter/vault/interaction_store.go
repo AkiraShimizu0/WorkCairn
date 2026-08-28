@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
 )
 
 const maxInteractionRecordBytes = 8 << 20

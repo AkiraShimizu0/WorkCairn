@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	promptbuilder "github.com/AkiraShimizu0/workcairn/go/internal/prompt"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	promptbuilder "github.com/AkiraShimizu0/WorkCairn/go/internal/prompt"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 var ErrContextFailure = errors.New("Synthesis acceptance context failure")

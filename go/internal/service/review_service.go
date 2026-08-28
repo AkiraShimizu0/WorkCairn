@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/review"
-	"github.com/AkiraShimizu0/workcairn/go/internal/runner"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/review"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/runner"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 // ReviewService performs the provider call and validates its structured

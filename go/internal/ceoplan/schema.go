@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
 )
 
 // ErrNoAllowedRoles is returned by IntentJSONSchema when the given

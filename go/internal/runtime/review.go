@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
-	"github.com/AkiraShimizu0/workcairn/go/internal/event"
-	promptbuilder "github.com/AkiraShimizu0/workcairn/go/internal/prompt"
-	"github.com/AkiraShimizu0/workcairn/go/internal/review"
-	"github.com/AkiraShimizu0/workcairn/go/internal/runner"
-	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
+	promptbuilder "github.com/AkiraShimizu0/WorkCairn/go/internal/prompt"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/review"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/runner"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
 )
 
 // ReviewRuntime composes Review execution, artifact persistence, Event

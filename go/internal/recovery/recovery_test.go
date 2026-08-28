@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
 )
 
 func TestRecoveryPlanValidationRequiresApprovalAndExactEvidence(t *testing.T) {

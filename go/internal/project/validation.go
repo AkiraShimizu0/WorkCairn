@@ -1,6 +1,6 @@
 package project
 
-import taskdomain "github.com/AkiraShimizu0/workcairn/go/internal/task"
+import taskdomain "github.com/AkiraShimizu0/WorkCairn/go/internal/task"
 
 var (
 	ErrInvalidTaskTitle  = taskdomain.ErrInvalidTaskTitle

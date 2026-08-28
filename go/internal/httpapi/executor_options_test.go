@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
-	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/autonomy"
+	workspaceprocess "github.com/AkiraShimizu0/WorkCairn/go/internal/process"
 )
 
 func TestProcessExecutorProviderFixtureBudgetIsExplicitAndBounded(t *testing.T) {

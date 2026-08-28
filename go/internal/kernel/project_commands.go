@@ -1,6 +1,6 @@
 package kernel
 
-import "github.com/AkiraShimizu0/workcairn/go/internal/project"
+import "github.com/AkiraShimizu0/WorkCairn/go/internal/project"
 
 type nextTaskIDPayload struct {
 	ExistingIDs []string `json:"existing_ids"`

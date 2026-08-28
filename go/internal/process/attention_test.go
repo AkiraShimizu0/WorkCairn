@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workcairn/go/internal/attention"
-	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
-	"github.com/AkiraShimizu0/workcairn/go/internal/responsibility"
-	"github.com/AkiraShimizu0/workcairn/go/internal/routine"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/attention"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/responsibility"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/routine"
 )
 
 func attentionVault(t *testing.T) string {

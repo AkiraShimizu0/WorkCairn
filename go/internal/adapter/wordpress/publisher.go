@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/action"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/action"
 )
 
 const Name = "wordpress"

@@ -5,7 +5,7 @@ GO_DAEMON_BINARY := bin/workcairn-daemon
 BUILD_VERSION ?= dev
 BUILD_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
 BUILD_DATE ?= unknown
-GO_LDFLAGS := -X github.com/AkiraShimizu0/workcairn/go/internal/buildinfo.Version=$(BUILD_VERSION) -X github.com/AkiraShimizu0/workcairn/go/internal/buildinfo.Commit=$(BUILD_COMMIT) -X github.com/AkiraShimizu0/workcairn/go/internal/buildinfo.BuildDate=$(BUILD_DATE)
+GO_LDFLAGS := -X github.com/AkiraShimizu0/WorkCairn/go/internal/buildinfo.Version=$(BUILD_VERSION) -X github.com/AkiraShimizu0/WorkCairn/go/internal/buildinfo.Commit=$(BUILD_COMMIT) -X github.com/AkiraShimizu0/WorkCairn/go/internal/buildinfo.BuildDate=$(BUILD_DATE)
 GO_BUILD_FLAGS := -trimpath -buildvcs=false -ldflags "$(GO_LDFLAGS)"
 RELEASE_VERSION ?=
 RELEASE_GOOS ?= $(shell cd $(GO_DIR) && go env GOOS)

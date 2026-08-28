@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/action"
-	"github.com/AkiraShimizu0/workcairn/go/internal/event"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/action"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
 )
 
 type fakeActionStore struct {

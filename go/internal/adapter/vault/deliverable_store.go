@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/deliverable"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/deliverable"
 )
 
 // DeliverableStore persists immutable, version-stable Task Deliverables in

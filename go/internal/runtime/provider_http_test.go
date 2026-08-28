@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/claude"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 func TestProviderHTTPClientUsesBoundedPublicBetaDefaultAndExplicitOverride(t *testing.T) {

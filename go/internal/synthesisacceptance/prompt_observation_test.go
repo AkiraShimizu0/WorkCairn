@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 func TestPromptObservationRequiresAllEvidenceInCanonicalOrder(t *testing.T) {

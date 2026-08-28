@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
 )
 
 // intentGenerationFixture is the seed of a Provider/model compatibility

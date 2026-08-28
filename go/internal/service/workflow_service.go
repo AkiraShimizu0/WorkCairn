@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/workflow"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/workflow"
 )
 
 // WorkflowService is a stateless facade over the Workflow Domain.

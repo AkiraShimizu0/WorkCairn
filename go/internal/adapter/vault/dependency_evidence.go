@@ -4,11 +4,11 @@ import (
 	"context"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
-	"github.com/AkiraShimizu0/workcairn/go/internal/service"
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
-	"github.com/AkiraShimizu0/workcairn/go/internal/workflow"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/execution"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/workflow"
 )
 
 // DependencyEvidenceCollector reads only canonical Task, Revision intent, and

@@ -1,4 +1,4 @@
-module github.com/AkiraShimizu0/workcairn/go
+module github.com/AkiraShimizu0/WorkCairn/go
 
 go 1.23.0
 

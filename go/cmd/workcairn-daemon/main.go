@@ -17,15 +17,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/localos"
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/vault"
-	"github.com/AkiraShimizu0/workcairn/go/internal/bootstrap"
-	"github.com/AkiraShimizu0/workcairn/go/internal/buildinfo"
-	"github.com/AkiraShimizu0/workcairn/go/internal/httpapi"
-	"github.com/AkiraShimizu0/workcairn/go/internal/kernel"
-	workspaceprocess "github.com/AkiraShimizu0/workcairn/go/internal/process"
-	workspaceruntime "github.com/AkiraShimizu0/workcairn/go/internal/runtime"
-	"github.com/AkiraShimizu0/workcairn/go/internal/service"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/localos"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/bootstrap"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/buildinfo"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/httpapi"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/kernel"
+	workspaceprocess "github.com/AkiraShimizu0/WorkCairn/go/internal/process"
+	workspaceruntime "github.com/AkiraShimizu0/WorkCairn/go/internal/runtime"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
 )
 
 func main() {

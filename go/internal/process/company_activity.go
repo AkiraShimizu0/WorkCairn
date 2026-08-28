@@ -6,11 +6,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workcairn/go/internal/interaction"
-	"github.com/AkiraShimizu0/workcairn/go/internal/organization"
-	"github.com/AkiraShimizu0/workcairn/go/internal/review"
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/review"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
 )
 
 const CompanyActivityVersion = "workcairn-company-activity.v1"

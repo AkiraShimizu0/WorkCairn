@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
-	"github.com/AkiraShimizu0/workcairn/go/internal/policy"
-	"github.com/AkiraShimizu0/workcairn/go/internal/review"
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
-	"github.com/AkiraShimizu0/workcairn/go/internal/workflow"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/execution"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/policy"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/review"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/workflow"
 )
 
 const maxDocumentBytes = 1 << 20

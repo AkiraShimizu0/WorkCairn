@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/deliverable"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/deliverable"
 )
 
 // InMemory is a race-safe immutable Deliverable Store for tests and

@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/responsibility"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/responsibility"
 )
 
 const maxResponsibilityRecordBytes = 1 << 20

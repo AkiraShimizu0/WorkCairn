@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/execution"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/execution"
 )
 
 type workflowRunPlannerFake struct {

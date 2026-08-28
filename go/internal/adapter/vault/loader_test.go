@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/policy"
-	promptbuilder "github.com/AkiraShimizu0/workcairn/go/internal/prompt"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
-	"github.com/AkiraShimizu0/workcairn/go/internal/workflow"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/policy"
+	promptbuilder "github.com/AkiraShimizu0/WorkCairn/go/internal/prompt"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/workflow"
 )
 
 type promptFixture struct {

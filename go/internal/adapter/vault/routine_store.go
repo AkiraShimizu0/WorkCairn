@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/routine"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/routine"
 )
 
 const maxRoutineRecordBytes = 1 << 20

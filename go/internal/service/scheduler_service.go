@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/scheduler"
 )
 
 type SchedulerConfig struct {

@@ -57,7 +57,7 @@ fi
 
 mkdir -p "$package_dir/bin" "$package_dir/docs"
 
-module=github.com/AkiraShimizu0/workcairn/go/internal/buildinfo
+module=github.com/AkiraShimizu0/WorkCairn/go/internal/buildinfo
 commit=${BUILD_COMMIT:-unknown}
 build_date=${BUILD_DATE:-unknown}
 ldflags="-s -w -X $module.Version=$RELEASE_VERSION -X $module.Commit=$commit -X $module.BuildDate=$build_date"

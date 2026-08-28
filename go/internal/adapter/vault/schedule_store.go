@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/scheduler"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/scheduler"
 )
 
 const maxScheduleRecordBytes = 4 << 20

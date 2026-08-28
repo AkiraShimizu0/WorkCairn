@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/adapter/claude"
-	promptbuilder "github.com/AkiraShimizu0/workcairn/go/internal/prompt"
-	"github.com/AkiraShimizu0/workcairn/go/internal/runner"
-	"github.com/AkiraShimizu0/workcairn/go/internal/service"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/claude"
+	promptbuilder "github.com/AkiraShimizu0/WorkCairn/go/internal/prompt"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/runner"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 type promptFixture struct {

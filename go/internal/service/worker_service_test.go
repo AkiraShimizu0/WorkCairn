@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	promptbuilder "github.com/AkiraShimizu0/workcairn/go/internal/prompt"
-	"github.com/AkiraShimizu0/workcairn/go/internal/runner"
-	"github.com/AkiraShimizu0/workcairn/go/internal/task"
-	"github.com/AkiraShimizu0/workcairn/go/internal/worker"
+	promptbuilder "github.com/AkiraShimizu0/WorkCairn/go/internal/prompt"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/runner"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 type workerPromptFixture struct {

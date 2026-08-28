@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AkiraShimizu0/workcairn/go/internal/action"
-	"github.com/AkiraShimizu0/workcairn/go/internal/autonomy"
-	"github.com/AkiraShimizu0/workcairn/go/internal/ceoplan"
-	"github.com/AkiraShimizu0/workcairn/go/internal/commandledger"
-	"github.com/AkiraShimizu0/workcairn/go/internal/review"
-	"github.com/AkiraShimizu0/workcairn/go/internal/revision"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/action"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/autonomy"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/ceoplan"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/review"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/revision"
 )
 
 const SchemaVersion = 1
