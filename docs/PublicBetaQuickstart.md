@@ -4,7 +4,7 @@
 
 第三者が実Vaultや実Providerを誤って使用せず、install、first-run、Local Web UI、Mock Provider E2Eを確認するための手順です。
 
-最新versionは[GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases/latest)を参照してください。最初の正式サポート対象はmacOS／arm64です。
+[GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases)から`workcairn_<version>_darwin_arm64.tar.gz`と対応する`.sha256`を選んでください。最初の正式サポート対象はmacOS／arm64です。
 
 ## Clean environmentからinstall
 

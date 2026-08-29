@@ -16,19 +16,21 @@ Candidate: `v1.0.0-beta.1`
 
 ## 2. Supported platform matrix
 
-| Target | Build | Native CLI／filesystem smoke | daemon smoke | iPhone smoke | Beta配布可否 |
-|---|---:|---:|---:|---:|---:|
-| darwin/arm64 | automated | required | required | required | Tier 1 candidate |
-| darwin/amd64 | automated | required on Intel Mac | required | optional | native確認後 |
-| linux/amd64 | automated | required on Linux | required | not required | native確認後 |
-| linux/arm64 | automated | required on Linux arm64 | required | not required | native確認後 |
-| windows/* | excluded | unsupported file lock | unsupported | unsupported | 配布しない |
+| Target | Build | Native CLI／filesystem smoke | daemon smoke | Beta配布可否 |
+|---|---:|---:|---:|---:|
+| darwin/arm64 | automated | required | required | Tier 1 candidate |
+| darwin/amd64 | automated | required on Intel Mac | required | native確認後 |
+| linux/amd64 | automated | required on Linux | required | native確認後 |
+| linux/arm64 | automated | required on Linux arm64 | required | native確認後 |
+| windows/* | excluded | unsupported file lock | unsupported | 配布しない |
 
 cross-build成功だけでnative supportを宣言しません。初期Public Betaはdarwin/arm64だけを配布対象とする（PB-2で決定済み）。他3 targetのnative smokeはBeta必須条件ではなく、それらを配布対象へ追加する際の将来candidateとして扱う。
 
+`make public-beta-browser-gate`（Playwright WebKit・iPhone viewport含む）は、配布targetごとのsmokeではなく、Public Beta candidate全体に対して1回実行する必須のautomated Gateです。物理iPhone実機でのHuman Acceptanceはこれとは別で、§6「iPhone（任意機能の確認）」のとおりPublic Beta必須ではありません。
+
 ## 3. Automated — Mock／temporaryだけで確認
 
-PHASE PB-2でcommit `b64caa9`（HEAD）に対し全項目を確認済み。
+PHASE PB-2でcommit `b64caa9`（当時のHEAD）に対し全項目を確認済み。以降のPHASE PB-2.1〜PB-2.10でREADME、CONTRIBUTING、UI theme、その他public docsへ追加の変更が入っているため、この確認はtag対象commitの決定後に再実施が必要です。
 
 - [x] `make public-beta-smoke`が成功する。
 - [x] `make v1-release-gate`が成功する。
@@ -48,7 +50,7 @@ PHASE PB-2でcommit `b64caa9`（HEAD）に対し全項目を確認済み。
 
 ## 4. Archive and checksum
 
-targetごとにclean output directoryを使います。PHASE PB-2でdarwin/arm64（Tier 1）の実archiveを1回build・検証済み（commit `b64caa988bb6`、version `v1.0.0-beta.1`）。
+targetごとにclean output directoryを使います。PHASE PB-2でdarwin/arm64（Tier 1）の実archiveを1回build・検証済み（commit `b64caa988bb6`、version `v1.0.0-beta.1`）。このarchiveはPHASE PB-2時点の検証サンプルであり、final release archiveではありません。実際に配布するarchiveは、final cross-reviewと全修正完了後にtag対象として確定したcommitから改めてbuildしてください。
 
 - [x] `make release-package RELEASE_GOOS=darwin RELEASE_GOARCH=arm64 BUILD_DATE=<RFC3339>`が成功する（macOS hostでSecurity.frameworkをlink）。
 - [x] archive名、root directory、`VERSION`、3 binaryのversion、commit、build dateが一致する（3 binary全てが`v1.0.0-beta.1`／`b64caa988bb6`を報告）。
@@ -92,7 +94,7 @@ iPhone Web UIはavailableな任意機能であり、Public Beta acceptanceの必
 - [ ] iPhone Safariでpairing、reload、background復帰、完了確認を実施した。
 - [ ] iPhoneからAI Connection／Finder操作を開始できず、Macで行う案内だけが表示される。
 - [ ] 承認済みbackground実行は小さいindicatorだけとなり、clarification／approval／failure／Recoveryだけが前面に出る。
-- [ ] iPhoneでMy Actionsが既定となり、質問／承認以外では`No action needed`が明確に見える。
+- [ ] iPhoneでMy Actionsが既定となり、質問／承認以外では対応が必要な項目がないことが明確に見える。
 
 ### Provider
 

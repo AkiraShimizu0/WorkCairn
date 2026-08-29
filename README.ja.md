@@ -37,7 +37,7 @@ make go-build
 bin/workcairn version
 ```
 
-**または[GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases/latest)から最新版をdownload**（macOSでは`shasum`、Linuxでは`sha256sum`でチェックサムを確認）：
+**または[GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases)からdownload** — `workcairn_<version>_darwin_arm64.tar.gz`と対応する`.sha256`を選び（macOSでは`shasum`、Linuxでは`sha256sum`でチェックサムを確認）：
 
 ```bash
 shasum -a 256 -c workcairn_<version>_darwin_arm64.tar.gz.sha256

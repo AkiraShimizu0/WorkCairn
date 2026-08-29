@@ -37,7 +37,7 @@ make go-build
 bin/workcairn version
 ```
 
-**Or download the latest release** from [GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases/latest) and verify the checksum first (`shasum` on macOS, `sha256sum` on Linux):
+**Or download a release** from [GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases) — look for `workcairn_<version>_darwin_arm64.tar.gz` and its matching `.sha256`, and verify the checksum first (`shasum` on macOS, `sha256sum` on Linux):
 
 ```bash
 shasum -a 256 -c workcairn_<version>_darwin_arm64.tar.gz.sha256
