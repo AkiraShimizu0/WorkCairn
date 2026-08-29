@@ -1,64 +1,64 @@
+English | [日本語](README.ja.md)
+
 # WorkCairn
 
-**あなたのAI会社。必要な判断だけ、あなたがする。**
+WorkCairn is a local-first product that runs your own AI company from natural-language requests. An AI employee plans the work, another executes it, a third reviews it independently, and revises it if needed. You're only asked to answer real questions and approve what actually matters.
 
-候補versionは`v1.0.0-beta.1`です。製品Runtime、build、release、distributionはすべてGo Onlyです。actual browserを検証する独立Acceptance harnessだけはtest-only Node／Playwright（ADR-0043）を使い、製品archiveには含めません。
+Candidate version: `v1.0.0-beta.1`. The product runtime, build, release, and distribution are all Go only. The only exception is a separate, test-only browser acceptance harness (ADR-0043) that uses Node/Playwright to drive an actual browser — it never ships in the product archive.
 
-## 1. WorkCairnとは
+## 1. What is WorkCairn
 
-WorkCairnは、自分専用のAI会社へ自然言語で仕事を依頼するlocal-firstな製品です。AI社員が計画、実行、独立レビュー、必要な修正を進め、人間には本当に必要な質問と重要な承認だけを返します。
+WorkCairn isn't a company simulation. There's no payroll or morale to manage — instead, it shows you who made something, who reviewed it, and who's fixing it if it needs work. Most of the time it just says `Your company is working. No action needed.` and doesn't ask you to micromanage.
 
-WorkCairnは会社シミュレーションではありません。給与や機嫌を管理する代わりに、誰が作り、誰がレビューし、必要なら誰が直しているかを見せます。通常時は`Your company is working. No action needed.`と表示し、CEOである利用者へ細かな管理を要求しません。
+## 2. What you can do
 
-## 2. 何ができるか
+- Turn a natural-language request into a work plan, then approve it (after answering any clarifying questions) to apply it to a Project and its Tasks
+- Have Tasks executed, independently reviewed by a different AI employee, and revised and re-reviewed if changes are requested
+- See employees, assignments, and the maker → reviewer → revision flow in `Company View`
+- See exactly what you're delegating — as an Autonomy Contract — at the moment you approve a Workflow
+- Review deliverables, independent review results, revisions, approvals, and external publications from a durable, saved record
+- See what the company handled on its own versus what needed your judgment, as CEO Attention
+- Trust that nothing happens before approval, and that partial failures are never hidden
+- Keep deliverables, review evidence, revision intent, and execution history stored locally
+- Use read-only diagnostics and a narrow, explicit recovery path grounded only in confirmed evidence
 
-- 自然言語の依頼からtyped Planを生成し、質問への回答後、明示承認でProject／Taskへ適用
-- Task実行、別のAI社員による独立レビュー、Request Changes時の修正と再レビュー
-- `Company View`で、AI社員、担当、Maker → Reviewer → 修正の流れを確認
-- Workflow承認時に、今回AI会社へ任せる範囲をAutonomy Contractとして確認
-- 成果物、独立レビュー、修正、承認、外部公開を保存済みの確定記録から確認
-- 会社が自律的に進めたstepと、人間の判断を仰いだstepをCEO Attentionとして確認
-- 承認前の副作用ゼロ、Task Version／CAS、Command Ledger、部分失敗の明示
-- 成果物、レビューの証跡、修正の意図、実行記録をローカル保存
-- read-onlyの診断と、確定した証跡だけに基づく限定的な明示Recovery
-
-## 3. 基本的な考え方
+## 3. How it works
 
 ```text
-自然言語で依頼
-→ 必要なら質問へ回答
-→ 一般向けの「進め方」を確認して承認（内部digestは詳細から確認）
-→ Project / Taskを作成
-→ Reviewed Workflowを承認
-→ Task実行 → レビュー
-→ 問題なければ次のTaskへ
-→ 修正が必要なら再修正 → 再レビュー
-→ 完了した成果物と実行記録を確認
+Describe the request in natural language
+→ answer any clarifying questions
+→ review and approve the proposed plan
+→ Project / Tasks are created
+→ approve the work (Workflow)
+→ a Task runs, then gets reviewed
+→ move to the next Task if it's accepted
+→ revise and re-review if changes are requested
+→ review the finished deliverable and its execution record
 ```
 
-UIはこのフローを実装せず、Go Interaction Sessionの`Next Action`を表示する薄いclientです。Task状態とTask lifecycle Eventの変更はTaskServiceだけが行います。
+The UI doesn't implement this flow itself — it's a thin client that displays whatever "next action" the underlying Interaction Session reports. Task state, and the record of how it changed, is owned by a single internal component (TaskService) — nothing else touches it.
 
-Public Betaの一般daemonは、この経路に必要な`workspace.setup`、`interaction.start`、`interaction.plan.generate`、`interaction.answer`、`interaction.plan.apply`、`interaction.workflow.execute`だけを実行できます。個別のTask／レビュー／修正操作、Scheduler、外部公開などはoperator用CLI／内部処理として維持しますが、一般Web UIからは実行できません。
+The general-purpose daemon can only run the operations this flow needs. Individual Task operations, reviews, revisions, the scheduler, and external publishing exist as operator-only tools and internal processes, but aren't reachable from the general Web UI.
 
-## 4. 現在の対応環境
+## 4. Supported environment
 
-初期Public Betaの対応対象は**macOS／arm64**です。
+The initial Public Beta target is **macOS on Apple Silicon (arm64)**.
 
-| OS / architecture | 状態 | 検証範囲 |
+| OS / architecture | Status | Verified so far |
 |---|---|---|
-| macOS / arm64 | Beta Tier 1 | build、全test、race、native CLI／daemon smoke対象 |
-| macOS / amd64 | Release candidate | cross-build済み。配布前にIntel Mac native smokeが必要 |
-| Linux / amd64 | Release candidate | cross-build済み。配布前にnative filesystem／daemon smokeが必要 |
-| Linux / arm64 | Release candidate | cross-build済み。配布前にnative filesystem／daemon smokeが必要 |
-| Windows | 非対応 | Vault file lockが未対応のためwriterをsupportしない |
+| macOS / arm64 | Beta Tier 1 | Build, full test suite, race tests, and native CLI/daemon smoke tests all pass |
+| macOS / amd64 | Release candidate | Cross-builds successfully; needs native smoke testing on an Intel Mac before distribution |
+| Linux / amd64 | Release candidate | Cross-builds successfully; needs native filesystem/daemon smoke testing before distribution |
+| Linux / arm64 | Release candidate | Cross-builds successfully; needs native filesystem/daemon smoke testing before distribution |
+| Windows | Not supported | Vault writes rely on file locking that isn't implemented on Windows |
 
-必要環境はGo 1.23以上、`make`、POSIX shell、`tar`です。配布archiveを使う場合、Go toolchainは不要です。
+You'll need Go 1.23+, `make`, a POSIX shell, and `tar`. If you're using a release archive instead, you don't need the Go toolchain at all.
 
-## 5. インストール
+## 5. Installation
 
-最初は実Vaultではなく、空のtemporary directoryを使ってください。
+Start with an empty, temporary directory rather than a real Vault.
 
-### Sourceからbuild
+### Build from source
 
 ```bash
 git clone https://github.com/AkiraShimizu0/WorkCairn.git workcairn
@@ -67,9 +67,9 @@ make go-build
 bin/workcairn version
 ```
 
-### 配布archiveからinstall
+### Install from a release archive
 
-macOSでは`shasum`、Linuxでは`sha256sum`でchecksumを確認します。
+Verify the checksum first — `shasum` on macOS, `sha256sum` on Linux.
 
 ```bash
 shasum -a 256 -c workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz.sha256
@@ -78,90 +78,91 @@ cd workcairn_v1.0.0-beta.1_darwin_arm64
 bin/workcairn version
 ```
 
-## 6. 起動方法
+## 6. Running WorkCairn
 
 ```bash
 bin/workcairn-daemon
 ```
 
-初回だけmacOSのfolder pickerが開きます。推奨のiCloud Drive内に空の`WorkCairn`専用folderを新規作成して選ぶと、Local Web UIが開きます（iCloud Driveは推奨であって必須ではなく、任意のローカルfolderも選択できます）。保存先はApplication Supportへ記録され、再起動後も同じ専用Vaultを使います。既存の個人Obsidian Vault、home、iCloud rootは選択できません。
+The first run opens a native macOS folder picker. Create a new, empty `WorkCairn` folder inside iCloud Drive (recommended, not required — any local folder works too) and the Local Web UI opens once you select it. The location is saved to Application Support and reused on every restart. You can't select an existing personal Obsidian Vault, your home folder, or the iCloud Drive root itself.
 
-GUI WizardでStarter Organizationを明示承認し、Macのnative画面からClaudeをKeychainへ接続します。Model IDやRouteを入力する必要はありません。`会社を始める`から最初の依頼へ進めます。
+A setup wizard walks you through explicitly approving a starter team, and connects Claude through Keychain from a native macOS screen — you never have to type a model ID or pick a route yourself. From there, `会社を始める` (Start the company) takes you to your first request.
 
-自然言語依頼を試す前の設定について詳しくは[9. 安全性 / approval](#9-安全性--approval)を、temporary Vault、First-run Wizard、初回Operator確認の一巡手順は[Public Beta Quickstart](docs/PublicBetaQuickstart.md)と[macOS First-run Acceptance](docs/PublicBetaFirstRunAcceptance.md)を参照してください。
+See [9. Safety and approval](#9-safety-and-approval) for what to set up before sending a natural-language request, and the [Public Beta Quickstart](docs/PublicBetaQuickstart.md) / [macOS First-run Acceptance](docs/PublicBetaFirstRunAcceptance.md) for a full first-run walkthrough.
 
-## 7. 主要CLI
+## 7. Main CLI
 
-- `workcairn-daemon`: Public Beta一般利用者向けのInteraction Reviewed WorkflowとLocal Web UIを提供するdaemon
-- `workcairn`: plan、approval、execute、inspect、recoveryを明示的に扱うoperator CLI
-- `workcairn-core`: JSON Contract v1を公開する外部process境界
+- `workcairn-daemon`: the daemon Public Beta users run — handles requests and serves the Local Web UI
+- `workcairn`: an operator CLI for explicitly planning, approving, executing, inspecting, and recovering work
+- `workcairn-core`: an external process boundary that speaks a fixed JSON contract (JSON Contract v1)
 
-`workcairn`はoperator向けの詳細なsubcommand（Organization参照、Project／Task作成、Recoveryなど）を持ちます。一般利用ではdaemonのWeb UIだけで完結し、operator subcommandは通常は不要です。詳細は[Operator Guide](docs/OperatorGuide.md)を参照してください。
+`workcairn` also has detailed operator subcommands (inspecting the Organization, creating Projects/Tasks, recovery, and more). Day-to-day use is fully covered by the daemon's Web UI — you shouldn't normally need these. See the [Operator Guide](docs/OperatorGuide.md) for details.
 
-## 8. daemonの引数
+## 8. Daemon options
 
-Public Betaの一般利用で使う可能性がある引数は次のとおりです。
+These are the flags you're likely to use as a Public Beta user.
 
-| 引数 | 既定値 | 説明 |
+| Flag | Default | Description |
 |---|---|---|
-| `--vault` | （空。native pickerで解決） | Vault rootを明示指定します。上級者向けです。 |
-| `--listen` | `127.0.0.1:8787` | daemonがlistenするaddressを明示指定します。上級者向けです。 |
-| `--local-network` | `false` | trusted local network上の別デバイス（iPhone等）から接続できるよう、private addressを自動選択してbindし、pairingを要求します。 |
-| `--claude-credential-source` | `automatic` | Claude credentialの取得元（`automatic`／`environment`／`keychain`／`headless-local`）。通常は既定のままで構いません。 |
+| `--vault` | (empty — resolved via the folder picker) | Explicitly set the Vault location. Advanced use. |
+| `--listen` | `127.0.0.1:8787` | Explicitly set the address the daemon listens on. Advanced use. |
+| `--local-network` | `false` | Allows access from another device on the same trusted local network. WorkCairn automatically selects an appropriate private local-network address, and requires pairing to connect. |
+| `--claude-credential-source` | `automatic` | Where Claude's credential comes from (`automatic` / `environment` / `keychain` / `headless-local`). Leave this at the default unless you have a specific reason not to. |
 
-`--listen`と`--local-network`を両方指定した場合は、`--listen`で明示したaddressがそのまま使われます（自動選択より優先）。`--local-network`だけを指定した場合は、private／link-localなIPv4addressを自動選択します。既定（どちらも未指定）ではloopback（`127.0.0.1`）だけを受け付けます。
+If you pass both `--listen` and `--local-network`, the explicit `--listen` address wins over automatic selection. `--local-network` alone auto-selects a private local-network address. With neither flag, only connections from the same machine (`127.0.0.1`) are accepted.
 
-`--local-network`はinternet公開のためのものではありません。TLS、remote authentication、port forwardingには対応しておらず、信頼できる同一LAN上の別デバイスから接続する用途に限定されます。上記以外の運用者向け引数（`--provider-timeout`など）は[Operator Guide](docs/OperatorGuide.md)を参照してください。
+`--local-network` is not for exposing WorkCairn to the internet — it doesn't support TLS, remote authentication, or port forwarding, and is meant only for a trusted device on the same local network. Operator-level flags not listed here (like `--provider-timeout`) are documented in the [Operator Guide](docs/OperatorGuide.md).
 
-## 9. 安全性 / approval
+## 9. Safety and approval
 
-- 変更前に内容を確認でき、重要な副作用は明示承認まで開始しない
-- 同じ依頼が届いても仕事を重複実行せず、異なる依頼の取り違えを拒否する
-- 「どこまで完了したか」「何が未確認か」を成立済みの記録から説明する
-- 任せたEmployee、レビュー必須、修正、実行上限を承認対象のdigestへ固定する
-- 外部公開後や成果物保存後の失敗を隠さず、完了済み部分を勝手に削除しない
-- 状態が曖昧なときは勝手に再実行せず、人間へRecovery確認を返す
-- 実運用前にtemporary Vaultと外部backupを要求する
+- You can review what's about to happen before it happens — actions with side effects require explicit human approval
+- The same request arriving twice never runs the work twice, and different requests are never confused with each other
+- What's actually done, and what's still unconfirmed, is explained from a durable record — never guessed
+- The employee you're delegating to, whether review is required, how many revisions are allowed, and any execution limits are all fixed and shown to you as part of what you approve
+- A failure after publishing or after a deliverable is saved is never hidden, and completed work is never silently deleted
+- If a state is ambiguous, WorkCairn never guesses and re-runs it — it asks you to confirm recovery instead
+- Before real use, WorkCairn asks you to try a temporary Vault first and have an external backup ready
 
-UIへ到達するだけならcredentialは不要です。Plan生成やTask実行では、Macの`Settings → AI Connections → MacでClaudeを接続`を使います。native hidden-inputへ入力したcredentialはmacOS Keychainだけに保存され、browser、Vault、Command、logへは渡りません。WorkCairnは`.env`を自動読込せず、Provider model IDの設定も不要です。論理Route`workcairn-auto`をsupported-model policyで解決し、接続不足ならProvider送信前に停止して別Providerへ無断で切り替えません。
+You don't need a credential just to reach the UI. Generating a plan or running a Task requires connecting Claude from `Settings → AI Connections → Connect Claude on this Mac`. Whatever you enter there is stored only in macOS Keychain — it never reaches the browser, the Vault, a Command, or a log. WorkCairn never auto-loads a `.env` file, and you don't need to configure a model ID either — the route resolves automatically, and if nothing is connected, WorkCairn stops before sending anything rather than silently switching providers.
 
-異常終了や`attention_required`では、推測で再実行せず[Recovery Guide](docs/Recovery.md)を参照してください。
+If something exits abnormally or shows `attention_required`, don't guess and retry — see the [Recovery Guide](docs/Recovery.md).
 
-## 10. データ保存
+## 10. Data storage
 
-WorkCairn自身がVault内へ、成果物、独立レビューのcanonical JSON、修正の意図、実行記録／監査証跡を永続化することがprimary behaviorです。Obsidianは**任意のviewer**であり、必須のdependencyではありません。Finderに表示した専用folderをObsidianの`Open folder as vault`で開けば、同じ成果物と人間可読の履歴を閲覧できます。Obsidianを一度も開かなくても、WorkCairnは通常どおり動作します。
+WorkCairn itself persists deliverables, review records, revision intent, and execution/audit history inside your Vault — that's its primary behavior, not something layered on top. Obsidian is an **optional viewer**, not a required dependency. You can open the same dedicated folder (visible in Finder) with Obsidian's `Open folder as vault` to browse the same deliverables and human-readable history. WorkCairn works normally even if you never open Obsidian at all.
 
-WorkCairn自身はVault backup製品ではありません。実運用前にtemporary Vaultで確認し、外部backupを別途用意してください。詳しくは[Operator Guide](docs/OperatorGuide.md)と[Recovery Guide](docs/Recovery.md)を参照してください。
+WorkCairn itself is not a backup product. Try it with a temporary Vault before real use, and keep a backup made outside WorkCairn. See the [Operator Guide](docs/OperatorGuide.md) and [Recovery Guide](docs/Recovery.md) for details.
 
-## 11. リポジトリ構成
+## 11. Repository structure
 
 ```text
-go/            WorkCairn本体のGoコード
-go/cmd/        CLI / daemon / core binaryのentry point
-go/internal/   Domain / Service / Adapter / Runtime
-docs/          設計・運用・Release docs
+go/            WorkCairn's Go source
+go/cmd/        Entry points for the CLI, daemon, and core binaries
+go/internal/   WorkCairn's internal domains, services, adapters, and runtime
+docs/          Design, operations, and release documentation
 docs/adr/      Architecture Decision Records
-fixtures/      JSON Contract / Providerなどのfixture
-tests/         browser / integration tests
-scripts/       release / verification scripts
-.ai/           AI開発agent向けcontext
-AGENTS.md      AI開発ルール
-README.md      利用者向け概要（このfile）
-CHANGELOG.md   変更履歴
-SECURITY.md    脆弱性報告
-VERSION        release versionの正
-Makefile       build/test/release commands
+fixtures/      Test inputs and fixed test data
+tests/         Browser and integration tests
+scripts/       Build, release, and verification scripts
+.ai/           Working context for AI development agents
+AGENTS.md      Rules AI agents follow when working in this repo
+README.md      English README (this file)
+README.ja.md   Japanese README
+CHANGELOG.md   Change history
+SECURITY.md    How to report a vulnerability
+VERSION        Source of truth for the release version
+Makefile       Build, test, and release commands
 ```
 
-## 12. 現在の制限
+## 12. Current limitations
 
-- remote authentication、TLS、internet公開、Push通知は未実装
-- durable queue、自動resume、Event replay、automatic reconciliationは未実装
-- Schedulerと単一WordPress外部公開はoperator向け機能として残るが、Public Beta一般UIでは非表示
-- WindowsはVault writer非対応
-- iPhone等の別デバイスからのLocal Web UI接続（`--local-network`）はavailableな任意機能であり、Public Beta必須の対応対象ではない
+- Remote authentication, TLS, internet exposure, and push notifications aren't implemented
+- No durable queue, automatic resume, event replay, or automatic reconciliation
+- The scheduler and single-target WordPress publishing exist as operator-only tools, hidden from the general Public Beta UI
+- Windows isn't supported for Vault writes
+- Connecting from another device (like an iPhone) over `--local-network` is an available feature, but not a required Public Beta target
 
-## 13. 詳細ドキュメント
+## 13. Documentation
 
 - [Public Beta Quickstart](docs/PublicBetaQuickstart.md)
 - [Release Notes](docs/ReleaseNotes.md)
@@ -176,20 +177,20 @@ Makefile       build/test/release commands
 - [Contributing](CONTRIBUTING.md)
 - [Migration History](docs/MigrationHistory.md)
 
-## 開発・検証
+## Development and verification
 
 ```bash
 make public-beta-smoke
-make public-beta-browser-setup # 初回のみ。test-only Node / Chromium / WebKit
+make public-beta-browser-setup # first time only: test-only Node / Chromium / WebKit
 make public-beta-browser-gate
 make v1-release-gate
 ```
 
-Browser Gateはactual daemonとembedded UIを操作する独立Acceptanceです。Node／Playwrightはtest-onlyで、Go製品Runtimeやrelease archiveには含まれません。
+The browser gate is an independent acceptance pass that drives the actual daemon and its embedded UI. Node/Playwright are test-only and never ship in the product runtime or release archive.
 
-`public-beta-smoke`はtemporary VaultとMock Providerだけで、Task execution、成果物／監査証跡、レビュー／修正の分岐、Interaction経由の依頼完了までを検証します。`v1-release-gate`は3 binary、4 target cross-build、全Go test、race、vet、gofmt、repository asset guardを確認します。
+`public-beta-smoke` uses only a temporary Vault and a mock AI provider to verify Task execution, deliverables/audit trail, review/revision branches, and request completion end to end. `v1-release-gate` builds all 3 binaries for all 4 targets, and runs the full Go test suite, race tests, `vet`, `gofmt`, and a repository-content guard.
 
-release archiveは`VERSION`を既定値として作成できます。
+A release archive can be built using `VERSION` as the default:
 
 ```bash
 make release-package RELEASE_GOOS=darwin RELEASE_GOARCH=arm64 \
