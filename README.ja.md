@@ -4,7 +4,7 @@
 
 WorkCairnは、自然言語で依頼した内容をもとに作業の進め方を考え、実際に作業を進め、完了前に別の担当が内容を確認します。修正が必要なら直して、もう一度確認します。利用者に求められるのは、本当に必要な質問への回答と、重要な場面での承認だけです。細かい進み具合を追いかける必要はありません。
 
-現在Public Beta中の製品です（`v1.0.0-beta.1`）。自分のMac上で動作します。
+現在Public Beta中の製品です。自分のMac上で動作します。
 
 ## 1. WorkCairnとは
 
@@ -37,12 +37,12 @@ make go-build
 bin/workcairn version
 ```
 
-**または配布パッケージからinstall**（macOSでは`shasum`、Linuxでは`sha256sum`でチェックサムを確認）：
+**または[GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases/latest)から最新版をdownload**（macOSでは`shasum`、Linuxでは`sha256sum`でチェックサムを確認）：
 
 ```bash
-shasum -a 256 -c workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz.sha256
-tar -xzf workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz
-cd workcairn_v1.0.0-beta.1_darwin_arm64
+shasum -a 256 -c workcairn_<version>_darwin_arm64.tar.gz.sha256
+tar -xzf workcairn_<version>_darwin_arm64.tar.gz
+cd workcairn_<version>_darwin_arm64
 bin/workcairn version
 ```
 

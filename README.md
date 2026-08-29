@@ -4,7 +4,7 @@ English | [日本語](README.ja.md)
 
 WorkCairn takes a natural-language request, plans the work, carries it out, and has it checked by an independent reviewer before it's done. If something needs fixing, it gets revised and checked again. You're only asked to answer real questions and approve what actually matters — you don't have to manage the details.
 
-It's currently in Public Beta (`v1.0.0-beta.1`) and runs locally on your own Mac.
+It's currently in Public Beta and runs locally on your own Mac.
 
 ## 1. What is WorkCairn
 
@@ -37,12 +37,12 @@ make go-build
 bin/workcairn version
 ```
 
-**Or install from a release archive** (verify the checksum first — `shasum` on macOS, `sha256sum` on Linux):
+**Or download the latest release** from [GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases/latest) and verify the checksum first (`shasum` on macOS, `sha256sum` on Linux):
 
 ```bash
-shasum -a 256 -c workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz.sha256
-tar -xzf workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz
-cd workcairn_v1.0.0-beta.1_darwin_arm64
+shasum -a 256 -c workcairn_<version>_darwin_arm64.tar.gz.sha256
+tar -xzf workcairn_<version>_darwin_arm64.tar.gz
+cd workcairn_<version>_darwin_arm64
 bin/workcairn version
 ```
 

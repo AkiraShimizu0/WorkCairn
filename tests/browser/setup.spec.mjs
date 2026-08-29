@@ -53,12 +53,15 @@ test("Claude connection always leaves in-flight state on terminal outcome @setup
   try {
     await page.route("**/v1/provider-status", providerStatusRoute);
     await page.route("**/v1/local-setup/claude", connectRoute);
+    await page.emulateMedia({ colorScheme: "dark" });
     await page.goto(environment.daemon.baseURL);
     await expect(page.locator("#setup-dialog")).toBeVisible();
 
     const connect = page.locator("#setup-content").getByRole("button", { name: "Claudeを接続" });
     await connect.click();
     await expect(page.locator("#busy-overlay")).toBeVisible();
+    const darkBusyBackground = await page.locator(".busy-card").evaluate((element) => getComputedStyle(element).backgroundColor);
+    expect(darkBusyBackground).not.toBe("rgb(255, 255, 255)");
     await expect(page.locator("#busy-overlay")).toBeHidden();
     await expect(page.locator("#setup-content")).toContainText("Claudeの接続設定を完了できませんでした");
 
@@ -68,6 +71,7 @@ test("Claude connection always leaves in-flight state on terminal outcome @setup
     await expect(page.locator("#setup-content")).toContainText("Connected");
     expect(attempt).toBe(2);
   } finally {
+    await page.emulateMedia({ colorScheme: null });
     await environment.stop();
   }
 });
@@ -126,6 +130,35 @@ test("settings dialog never renders a literal null and matches the active theme 
     const cardTextColor = await page.locator(".connection-card p").first().evaluate((element) => getComputedStyle(element).color);
     expect(cardTextColor).not.toBe("rgb(255, 255, 255)");
     expect(cardTextColor).not.toBe(darkCardBackground);
+  } finally {
+    await page.emulateMedia({ colorScheme: null });
+    await environment.stop();
+  }
+});
+
+test("first-run Setup Wizard renders correctly in dark mode without a literal null @setup", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await expect(page.locator("#setup-dialog")).toBeVisible();
+
+    // Light mode baseline: confirm this test's assertions describe the
+    // pre-existing appearance before checking anything changes in dark mode.
+    const lightStepBackground = await page.locator(".setup-step").first().evaluate((element) => getComputedStyle(element).backgroundColor);
+    expect(lightStepBackground).toBe("rgb(255, 255, 255)");
+    const setupText = await page.locator("#setup-content").innerText();
+    expect(setupText).not.toMatch(/\bnull\b/);
+    expect(setupText).not.toMatch(/\bundefined\b/);
+
+    await page.emulateMedia({ colorScheme: "dark" });
+    const darkStepBackground = await page.locator(".setup-step").first().evaluate((element) => getComputedStyle(element).backgroundColor);
+    expect(darkStepBackground).not.toBe("rgb(255, 255, 255)");
+    // renderSetupWizard() shares the same providerSetupFailureNode()
+    // replaceChildren() call shape as Settings -- exercise it directly here
+    // too, not just via the Settings dialog covered by the test above.
+    const darkSetupText = await page.locator("#setup-content").innerText();
+    expect(darkSetupText).not.toMatch(/\bnull\b/);
+    expect(darkSetupText).not.toMatch(/\bundefined\b/);
   } finally {
     await page.emulateMedia({ colorScheme: null });
     await environment.stop();
