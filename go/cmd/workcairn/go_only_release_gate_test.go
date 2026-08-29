@@ -166,8 +166,14 @@ func TestWorkCairnPublicSurfaceIsConsistent(t *testing.T) {
 		"go/go.mod":                  {"module github.com/AkiraShimizu0/WorkCairn/go"},
 		"Makefile":                   {"bin/workcairn", "bin/workcairn-daemon", "bin/workcairn-core"},
 		"scripts/package-release.sh": {`archive_name="workcairn_`, "for command in workcairn-core workcairn workcairn-daemon"},
-		"README.md":                  {"# WorkCairn", "local-first product", "Company View", "CEO Attention"},
-		"README.ja.md":               {"# WorkCairn", "あなたのAI会社。必要な判断だけ、あなたがする。", "Company View", "CEO Attention"},
+		// Deliberately loose: these two README files get their prose
+		// rewritten for readability from time to time (most recently
+		// PHASE PB-2.6's user-facing simplification pass). Pin only the
+		// title and one stable, unlikely-to-be-renamed product term so
+		// this test catches a real branding regression (wrong title, or
+		// reverting to old naming) without breaking on every wording pass.
+		"README.md":    {"# WorkCairn", "Company View"},
+		"README.ja.md": {"# WorkCairn", "Company View"},
 	}
 	for path, required := range checks {
 		content, readErr := os.ReadFile(filepath.Join(repositoryRoot, filepath.FromSlash(path)))

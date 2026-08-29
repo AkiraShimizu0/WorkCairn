@@ -2,63 +2,33 @@ English | [日本語](README.ja.md)
 
 # WorkCairn
 
-WorkCairn is a local-first product that runs your own AI company from natural-language requests. An AI employee plans the work, another executes it, a third reviews it independently, and revises it if needed. You're only asked to answer real questions and approve what actually matters.
+WorkCairn takes a natural-language request, plans the work, carries it out, and has it checked by an independent reviewer before it's done. If something needs fixing, it gets revised and checked again. You're only asked to answer real questions and approve what actually matters — you don't have to manage the details.
 
-Candidate version: `v1.0.0-beta.1`. The product runtime, build, release, and distribution are all Go only. The only exception is a separate, test-only browser acceptance harness (ADR-0043) that uses Node/Playwright to drive an actual browser — it never ships in the product archive.
+It's currently in Public Beta (`v1.0.0-beta.1`) and runs locally on your own Mac.
 
 ## 1. What is WorkCairn
 
-WorkCairn isn't a company simulation. There's no payroll or morale to manage — instead, it shows you who made something, who reviewed it, and who's fixing it if it needs work. Most of the time it just says `Your company is working. No action needed.` and doesn't ask you to micromanage.
+Instead of you tracking every step yourself, WorkCairn keeps track of the work and tells you who did what, who checked it, and what's still being fixed. You're not asked to micromanage — you step in only when a decision, a review, or an approval is actually needed.
 
 ## 2. What you can do
 
-- Turn a natural-language request into a work plan, then approve it (after answering any clarifying questions) to apply it to a Project and its Tasks
-- Have Tasks executed, independently reviewed by a different AI employee, and revised and re-reviewed if changes are requested
-- See employees, assignments, and the maker → reviewer → revision flow in `Company View`
-- See exactly what you're delegating — as an Autonomy Contract — at the moment you approve a Workflow
-- Review deliverables, independent review results, revisions, approvals, and external publications from a durable, saved record
-- See what the company handled on its own versus what needed your judgment, as CEO Attention
-- Trust that nothing happens before approval, and that partial failures are never hidden
-- Keep deliverables, review evidence, revision intent, and execution history stored locally
-- Use read-only diagnostics and a narrow, explicit recovery path grounded only in confirmed evidence
+- Turn a request into a plan, then approve it (after answering any clarifying questions) to get it under way
+- Have work carried out, checked by an independent reviewer, and revised and re-checked if changes are requested
+- See who's working on what, and how work is handed off between them, in `Company View`
+- See exactly what you're delegating before you approve it
+- Look back at results, review outcomes, revisions, approvals, and anything published externally, from a saved record
+- See what was handled on its own versus what needed your judgment
+- Trust that nothing happens before you approve it, and that problems are never hidden
+- Keep results, review notes, and a record of what happened stored locally
+- Get a narrow, explicit recovery path — grounded only in what's actually confirmed — if something goes wrong
 
-## 3. How it works
+## 3. How to use it
 
-```text
-Describe the request in natural language
-→ answer any clarifying questions
-→ review and approve the proposed plan
-→ Project / Tasks are created
-→ approve the work (Workflow)
-→ a Task runs, then gets reviewed
-→ move to the next Task if it's accepted
-→ revise and re-review if changes are requested
-→ review the finished deliverable and its execution record
-```
+### Install
 
-The UI doesn't implement this flow itself — it's a thin client that displays whatever "next action" the underlying Interaction Session reports. Task state, and the record of how it changed, is owned by a single internal component (TaskService) — nothing else touches it.
+Start with an empty, temporary folder rather than a real Vault.
 
-The general-purpose daemon can only run the operations this flow needs. Individual Task operations, reviews, revisions, the scheduler, and external publishing exist as operator-only tools and internal processes, but aren't reachable from the general Web UI.
-
-## 4. Supported environment
-
-The initial Public Beta target is **macOS on Apple Silicon (arm64)**.
-
-| OS / architecture | Status | Verified so far |
-|---|---|---|
-| macOS / arm64 | Beta Tier 1 | Build, full test suite, race tests, and native CLI/daemon smoke tests all pass |
-| macOS / amd64 | Release candidate | Cross-builds successfully; needs native smoke testing on an Intel Mac before distribution |
-| Linux / amd64 | Release candidate | Cross-builds successfully; needs native filesystem/daemon smoke testing before distribution |
-| Linux / arm64 | Release candidate | Cross-builds successfully; needs native filesystem/daemon smoke testing before distribution |
-| Windows | Not supported | Vault writes rely on file locking that isn't implemented on Windows |
-
-You'll need Go 1.23+, `make`, a POSIX shell, and `tar`. If you're using a release archive instead, you don't need the Go toolchain at all.
-
-## 5. Installation
-
-Start with an empty, temporary directory rather than a real Vault.
-
-### Build from source
+**Build from source:**
 
 ```bash
 git clone https://github.com/AkiraShimizu0/WorkCairn.git workcairn
@@ -67,9 +37,7 @@ make go-build
 bin/workcairn version
 ```
 
-### Install from a release archive
-
-Verify the checksum first — `shasum` on macOS, `sha256sum` on Linux.
+**Or install from a release archive** (verify the checksum first — `shasum` on macOS, `sha256sum` on Linux):
 
 ```bash
 shasum -a 256 -c workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz.sha256
@@ -78,124 +46,95 @@ cd workcairn_v1.0.0-beta.1_darwin_arm64
 bin/workcairn version
 ```
 
-## 6. Running WorkCairn
+### Run it
 
 ```bash
 bin/workcairn-daemon
 ```
 
-The first run opens a native macOS folder picker. Create a new, empty `WorkCairn` folder inside iCloud Drive (recommended, not required — any local folder works too) and the Local Web UI opens once you select it. The location is saved to Application Support and reused on every restart. You can't select an existing personal Obsidian Vault, your home folder, or the iCloud Drive root itself.
+The first run opens a native macOS folder picker. Create a new, empty `WorkCairn` folder inside iCloud Drive (recommended, not required — any local folder works too) and the app opens once you select it. The location is remembered for next time. You can't select an existing personal Obsidian Vault, your home folder, or the iCloud Drive root itself.
 
-A setup wizard walks you through explicitly approving a starter team, and connects Claude through Keychain from a native macOS screen — you never have to type a model ID or pick a route yourself. From there, `会社を始める` (Start the company) takes you to your first request.
+A setup screen walks you through approving a starter team and connecting Claude — you never have to type a model ID or pick a route yourself. From there, `会社を始める` (Start) takes you to your first request.
 
-See [9. Safety and approval](#9-safety-and-approval) for what to set up before sending a natural-language request, and the [Public Beta Quickstart](docs/PublicBetaQuickstart.md) / [macOS First-run Acceptance](docs/PublicBetaFirstRunAcceptance.md) for a full first-run walkthrough.
+See the [Public Beta Quickstart](docs/PublicBetaQuickstart.md) for a full first-run walkthrough.
 
-## 7. Main CLI
+## 4. What you decide
 
-- `workcairn-daemon`: the daemon Public Beta users run — handles requests and serves the Local Web UI
-- `workcairn`: an operator CLI for explicitly planning, approving, executing, inspecting, and recovering work
-- `workcairn-core`: an external process boundary that speaks a fixed JSON contract (JSON Contract v1)
+- Whether to approve the proposed plan for a request
+- Whether to approve the work itself once you know what it involves
+- What to do when a reviewer asks for changes — WorkCairn revises and re-checks, but stops if it needs more direction from you
+- Whether to publish anything externally — that's always a separate approval
 
-`workcairn` also has detailed operator subcommands (inspecting the Organization, creating Projects/Tasks, recovery, and more). Day-to-day use is fully covered by the daemon's Web UI — you shouldn't normally need these. See the [Operator Guide](docs/OperatorGuide.md) for details.
+## 5. Safety
 
-## 8. Daemon options
+- Nothing with a side effect happens before you approve it
+- The same request arriving twice never runs the work twice
+- What's actually done, and what's still unconfirmed, is explained from a saved record — never guessed
+- What you're delegating, whether review is required, and any limits are all shown to you as part of what you approve
+- A failure after something is published or saved is never hidden, and finished work is never silently deleted
+- If something is unclear, WorkCairn asks you to confirm what happened rather than guessing and retrying
+- Before real use, try it with a temporary Vault first and keep a backup ready
 
-These are the flags you're likely to use as a Public Beta user.
+You don't need any credentials just to look around. Actually generating a plan or doing work requires connecting Claude from `Settings → AI Connections`. Whatever you enter there is stored only in macOS Keychain — it never reaches your browser, your files, or a log. You don't need to configure a model either; if nothing is connected, WorkCairn stops before sending anything rather than silently trying something else.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--vault` | (empty — resolved via the folder picker) | Explicitly set the Vault location. Advanced use. |
-| `--listen` | `127.0.0.1:8787` | Explicitly set the address the daemon listens on. Advanced use. |
-| `--local-network` | `false` | Allows access from another device on the same trusted local network. WorkCairn automatically selects an appropriate private local-network address, and requires pairing to connect. |
-| `--claude-credential-source` | `automatic` | Where Claude's credential comes from (`automatic` / `environment` / `keychain` / `headless-local`). Leave this at the default unless you have a specific reason not to. |
+If something exits abnormally or asks for your attention unexpectedly, don't guess and retry — see the [Recovery Guide](docs/Recovery.md).
 
-If you pass both `--listen` and `--local-network`, the explicit `--listen` address wins over automatic selection. `--local-network` alone auto-selects a private local-network address. With neither flag, only connections from the same machine (`127.0.0.1`) are accepted.
+## 6. Data storage
 
-`--local-network` is not for exposing WorkCairn to the internet — it doesn't support TLS, remote authentication, or port forwarding, and is meant only for a trusted device on the same local network. Operator-level flags not listed here (like `--provider-timeout`) are documented in the [Operator Guide](docs/OperatorGuide.md).
+WorkCairn stores results, review outcomes, and a record of what happened directly in your Vault — that's how it works, not an add-on. Obsidian is an **optional** way to browse that same folder; you can open it with `Open folder as vault` any time, but WorkCairn works fully without it.
 
-## 9. Safety and approval
+WorkCairn is not a backup tool. Try it with a temporary Vault before real use, and keep a backup made some other way. See the [Operator Guide](docs/OperatorGuide.md) and [Recovery Guide](docs/Recovery.md) for details.
 
-- You can review what's about to happen before it happens — actions with side effects require explicit human approval
-- The same request arriving twice never runs the work twice, and different requests are never confused with each other
-- What's actually done, and what's still unconfirmed, is explained from a durable record — never guessed
-- The employee you're delegating to, whether review is required, how many revisions are allowed, and any execution limits are all fixed and shown to you as part of what you approve
-- A failure after publishing or after a deliverable is saved is never hidden, and completed work is never silently deleted
-- If a state is ambiguous, WorkCairn never guesses and re-runs it — it asks you to confirm recovery instead
-- Before real use, WorkCairn asks you to try a temporary Vault first and have an external backup ready
+## 7. Supported environment
 
-You don't need a credential just to reach the UI. Generating a plan or running a Task requires connecting Claude from `Settings → AI Connections → Connect Claude on this Mac`. Whatever you enter there is stored only in macOS Keychain — it never reaches the browser, the Vault, a Command, or a log. WorkCairn never auto-loads a `.env` file, and you don't need to configure a model ID either — the route resolves automatically, and if nothing is connected, WorkCairn stops before sending anything rather than silently switching providers.
+The initial Public Beta target is **macOS on Apple Silicon (arm64)**.
 
-If something exits abnormally or shows `attention_required`, don't guess and retry — see the [Recovery Guide](docs/Recovery.md).
+| OS / architecture | Status |
+|---|---|
+| macOS / arm64 | Supported |
+| macOS / amd64, Linux / amd64, Linux / arm64 | Builds successfully; not yet verified on real hardware |
+| Windows | Not supported |
 
-## 10. Data storage
+You'll need Go 1.23+, `make`, a POSIX shell, and `tar` to build from source. A release archive doesn't need the Go toolchain at all.
 
-WorkCairn itself persists deliverables, review records, revision intent, and execution/audit history inside your Vault — that's its primary behavior, not something layered on top. Obsidian is an **optional viewer**, not a required dependency. You can open the same dedicated folder (visible in Finder) with Obsidian's `Open folder as vault` to browse the same deliverables and human-readable history. WorkCairn works normally even if you never open Obsidian at all.
+## 8. Current limitations
 
-WorkCairn itself is not a backup product. Try it with a temporary Vault before real use, and keep a backup made outside WorkCairn. See the [Operator Guide](docs/OperatorGuide.md) and [Recovery Guide](docs/Recovery.md) for details.
+- No remote access over the internet, and no encrypted (TLS) connections
+- Connecting from another device (like a phone) works only over your local network, and isn't required for normal use
+- No automatic backups — see [6. Data storage](#6-data-storage)
+- Some scheduling and one external publishing integration (WordPress) exist but aren't part of the main flow yet
+- Windows isn't supported
 
-## 11. Repository structure
+## 9. For developers
+
+WorkCairn's product code, build, and release process are all Go. A separate, test-only browser test suite uses Node/Playwright to drive a real browser, but never ships in the product.
 
 ```text
 go/            WorkCairn's Go source
 go/cmd/        Entry points for the CLI, daemon, and core binaries
-go/internal/   WorkCairn's internal domains, services, adapters, and runtime
+go/internal/   Internal domains, services, adapters, and runtime
 docs/          Design, operations, and release documentation
-docs/adr/      Architecture Decision Records
+docs/adr/      Design decision records
 fixtures/      Test inputs and fixed test data
 tests/         Browser and integration tests
 scripts/       Build, release, and verification scripts
-.ai/           Working context for AI development agents
-AGENTS.md      Rules AI agents follow when working in this repo
-README.md      English README (this file)
-README.ja.md   Japanese README
-CHANGELOG.md   Change history
-SECURITY.md    How to report a vulnerability
-VERSION        Source of truth for the release version
-Makefile       Build, test, and release commands
 ```
 
-## 12. Current limitations
+There are three binaries: `workcairn-daemon` (what you run day to day), `workcairn` (an operator CLI for advanced/manual operations), and `workcairn-core` (a fixed JSON interface for other programs). The daemon accepts `--vault <path>` to set the Vault location and `--local-network` to allow another device on your network to connect; see the [Operator Guide](docs/OperatorGuide.md) for the rest.
 
-- Remote authentication, TLS, internet exposure, and push notifications aren't implemented
-- No durable queue, automatic resume, event replay, or automatic reconciliation
-- The scheduler and single-target WordPress publishing exist as operator-only tools, hidden from the general Public Beta UI
-- Windows isn't supported for Vault writes
-- Connecting from another device (like an iPhone) over `--local-network` is an available feature, but not a required Public Beta target
+```bash
+make v1-release-gate     # build + full test suite + checks
+make public-beta-smoke   # quick end-to-end check with a temporary Vault
+```
 
-## 13. Documentation
+## 10. Documentation
 
 - [Public Beta Quickstart](docs/PublicBetaQuickstart.md)
-- [Release Notes](docs/ReleaseNotes.md)
-- [Public Beta Release Checklist](docs/PublicReleaseChecklist.md)
-- [Product Naming](docs/ProductNaming.md)
 - [Operator Guide](docs/OperatorGuide.md)
-- [System Overview](docs/SystemOverview.md)
-- [Architecture](docs/Architecture.md)
-- [HTTP Command API](docs/HTTPAPI.md)
-- [Go Only Release Gate](docs/GoOnlyReleaseGate.md)
+- [Architecture](docs/Architecture.md) and [design decision records](docs/adr/)
+- [Release Notes](docs/ReleaseNotes.md)
 - [Security Policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
-- [Migration History](docs/MigrationHistory.md)
-
-## Development and verification
-
-```bash
-make public-beta-smoke
-make public-beta-browser-setup # first time only: test-only Node / Chromium / WebKit
-make public-beta-browser-gate
-make v1-release-gate
-```
-
-The browser gate is an independent acceptance pass that drives the actual daemon and its embedded UI. Node/Playwright are test-only and never ship in the product runtime or release archive.
-
-`public-beta-smoke` uses only a temporary Vault and a mock AI provider to verify Task execution, deliverables/audit trail, review/revision branches, and request completion end to end. `v1-release-gate` builds all 3 binaries for all 4 targets, and runs the full Go test suite, race tests, `vet`, `gofmt`, and a repository-content guard.
-
-A release archive can be built using `VERSION` as the default:
-
-```bash
-make release-package RELEASE_GOOS=darwin RELEASE_GOARCH=arm64 \
-  BUILD_DATE=2026-08-10T00:00:00Z
-```
 
 ## License
 

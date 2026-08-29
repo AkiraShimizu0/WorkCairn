@@ -745,7 +745,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 .advanced-settings { padding: 12px 0; }
 .advanced-settings summary { min-height: 44px; cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 700; }
 .advanced-settings p { margin: 0; color: var(--muted); font-size: 12px; }
-.connection-card, .routing-settings { padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
+.connection-card, .routing-settings { padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface-strong); }
 .connection-card.connected { border-color: #bdd8ce; }
 .connection-card.attention { border-color: #edc9c5; }
 .connection-heading, .settings-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -758,7 +758,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 .routing-settings h3 { margin: 0; }
 .routing-settings .eyebrow { margin-bottom: 3px; }
 .settings-actions { grid-template-columns: 1fr 1fr; }
-.storage-card { margin-top: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
+.storage-card { margin-top: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface-strong); }
 .storage-card strong, .storage-card small { display: block; }
 .storage-card small { margin-top: 4px; color: var(--muted); font-size: 11px; }
 .setup-content { display: grid; gap: 12px; }
@@ -783,7 +783,7 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
 .toast { position: fixed; z-index: 20; right: 18px; bottom: calc(18px + env(safe-area-inset-bottom)); left: 18px; max-width: 520px; margin: auto; padding: 13px 15px; border-radius: 14px; color: #fff; background: #26332d; box-shadow: var(--shadow); font-size: 13px; }
 .empty { padding: 22px 8px; color: var(--muted); text-align: center; font-size: 13px; }
 .warning { padding: 13px; border-radius: 14px; color: #7a3e0b; background: var(--amber-soft); font-size: 13px; }
-.error-box { padding: 14px; border-radius: 14px; color: #7e2828; background: var(--red-soft); font-size: 13px; }
+.error-box { padding: 14px; border-radius: 14px; color: var(--red); background: var(--red-soft); font-size: 13px; }
 
 [hidden] { display: none !important; }
 

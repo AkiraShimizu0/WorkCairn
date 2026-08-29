@@ -1375,18 +1375,25 @@ function providerStatusCopy() {
 
 function renderProviderSettings() {
   const copy = providerStatusCopy();
+  // .replaceChildren() is the native DOM API, not the node() helper -- it
+  // does not skip null/undefined arguments the way node()'s own children
+  // handling does. Passing providerSetupFailureNode()'s common `null`
+  // return (no setup error) straight through stringifies it to the text
+  // "null" in the DOM. Build the list and drop falsy entries first.
   ui.providerSettings.replaceChildren(
-    node("section", { class: `connection-card ${copy.className}` },
-      node("div", { class: "connection-heading" },
-        node("div", {}, node("strong", {}, "Claude"), node("small", {}, "AI service")),
-        node("span", { class: `connection-state ${copy.className}` }, copy.state),
+    ...[
+      node("section", { class: `connection-card ${copy.className}` },
+        node("div", { class: "connection-heading" },
+          node("div", {}, node("strong", {}, "Claude"), node("small", {}, "AI service")),
+          node("span", { class: `connection-state ${copy.className}` }, copy.state),
+        ),
+        node("p", {}, copy.description),
+        !state.providerStatus?.configured ? node("p", { class: "connection-safety" }, "秘密情報はiPhoneやbrowser storageへ保存しません。接続設定はこのデバイスで行います。") : null,
+        !state.providerStatus?.configured && state.localSetupAvailable ? button("Claudeを接続", "primary", connectClaudeOnMac) : null,
+        !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "connection-safety" }, "WorkCairn画面でAI Connectionsを開いて接続してください。") : null,
       ),
-      node("p", {}, copy.description),
-      !state.providerStatus?.configured ? node("p", { class: "connection-safety" }, "秘密情報はiPhoneやbrowser storageへ保存しません。接続設定はこのデバイスで行います。") : null,
-	  !state.providerStatus?.configured && state.localSetupAvailable ? button("Claudeを接続", "primary", connectClaudeOnMac) : null,
-	  !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "connection-safety" }, "WorkCairn画面でAI Connectionsを開いて接続してください。") : null,
-    ),
-	providerSetupFailureNode(),
+      providerSetupFailureNode(),
+    ].filter(Boolean),
   );
 }
 
