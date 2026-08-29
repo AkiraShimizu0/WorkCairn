@@ -134,7 +134,7 @@ make public-beta-smoke   # 一時的なVaultを使った簡易な動作確認
 - [Architecture](docs/Architecture.md)と[設計判断の記録](docs/adr/)
 - [Release Notes](docs/ReleaseNotes.md)
 - [Security Policy](SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
+- [Contributing](CONTRIBUTING.ja.md)
 
 ## License
 

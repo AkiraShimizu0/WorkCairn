@@ -4,7 +4,7 @@
 
 第三者が実Vaultや実Providerを誤って使用せず、install、first-run、Local Web UI、Mock Provider E2Eを確認するための手順です。
 
-候補versionは`v1.0.0-beta.1`です。最初の正式サポート対象はmacOS／arm64です。
+最新versionは[GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases/latest)を参照してください。最初の正式サポート対象はmacOS／arm64です。
 
 ## Clean environmentからinstall
 
@@ -16,9 +16,9 @@
 4. 3 binaryのversionがarchive名、`VERSION`、Release noteと一致することを確認する。
 
 ```bash
-shasum -a 256 -c workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz.sha256
-tar -xzf workcairn_v1.0.0-beta.1_darwin_arm64.tar.gz
-cd workcairn_v1.0.0-beta.1_darwin_arm64
+shasum -a 256 -c workcairn_<version>_darwin_arm64.tar.gz.sha256
+tar -xzf workcairn_<version>_darwin_arm64.tar.gz
+cd workcairn_<version>_darwin_arm64
 bin/workcairn version
 bin/workcairn-daemon --version
 bin/workcairn-core --version
@@ -76,7 +76,7 @@ MacとiPhoneを同じ信頼できるWi-Fiへ接続します。
 bin/workcairn-daemon --vault "$beta_vault" --local-network
 ```
 
-terminalのURLをiPhone Safariで開き、pairing codeを入力します。URLやcodeは公開せず、process終了後に再利用しません。iPhoneでは`My Actions`が既定で、必要な質問・承認・Recoveryだけを表示します。対応不要なら`Your company is working. No action needed.`と分かります。承認済み処理の実行中は小さなindicatorだけを表示し、failureはMy ActionsとTimelineから消えません。UIへ到達するだけならProvider設定は不要です。
+terminalのURLをiPhone Safariで開き、pairing codeを入力します。URLやcodeは公開せず、process終了後に再利用しません。iPhoneでは`My Actions`が既定で、必要な質問・承認・Recoveryだけを表示します。対応不要なら、対応が必要な項目がないことが画面から分かります。承認済み処理の実行中は小さなindicatorだけを表示し、failureはMy ActionsとTimelineから消えません。UIへ到達するだけならProvider設定は不要です。
 
 Mac／iPadでは`Company View`が既定です。AI社員、Maker、Reviewer、Revision、担当中の仕事とhandoffをread-onlyで確認できます。表示はOrganization／Interaction／evidenceのprojectionであり、画面からTask状態を推測変更しません。
 
