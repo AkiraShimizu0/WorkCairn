@@ -1,21 +1,24 @@
-# Security Policy
+# セキュリティポリシー
 
-## Supported release
+## サポート対象
 
-Public Betaでは、`VERSION`に記載した最新のpre-releaseだけをsecurity update対象とします。過去のbeta、source snapshot、未commit buildはsupport対象外です。
+Public Betaでは、`VERSION`に記載した最新のプレリリースだけをセキュリティ更新の対象とします。過去のベータ版、ソースのスナップショット、未コミットのビルドはサポート対象外です。
 
-## Reporting a vulnerability
+## 脆弱性の報告
 
-credential漏えい、承認回避、Vault root外への書込み、remote access、任意command実行などの疑いは、公開Issueへ詳細を書かないでください。repository公開時にGitHub Private Vulnerability Reportingを有効化し、Security tabから報告してください。有効化前はPublic Betaを開始しません。
+認証情報の漏えい、承認手順の回避、Vaultルート外への書き込み、意図しない遠隔アクセス、任意のコマンド実行などが疑われる場合は、公開Issueに詳細を書かないでください。リポジトリの公開時にGitHubのPrivate Vulnerability Reportingを有効にし、Securityタブから報告できるようにします。この機能を有効にするまではPublic Betaを開始しません。
 
-報告には、秘密情報や実Vaultデータを含めず、影響するversion、再現条件、期待する安全境界、temporary fixtureでの最小再現を含めてください。
+報告には秘密情報や実際のVaultデータを含めず、影響を受けるバージョン、再現条件、期待される安全境界、一時的なテスト環境での最小再現手順を記載してください。
 
-## Current security boundary
+## 現在のセキュリティ境界
 
-- `workcairn-daemon`は既定loopbackです。`--local-network`は信頼できる同一LANとprocess-local pairing専用で、TLSやremote authenticationはありません。
-- port forwarding、public IP、reverse proxy、internet公開はsupportしません。
-- `.env`は自動読込しません。Provider／External Action credentialは承認済みprocessの環境からだけ注入します。
-- 実Vaultでの初回試用は推奨しません。temporary Vaultで確認後、外部backupを用意してください。
-- automatic retry、artifact adoption、remote Action reconciliationは行いません。partial failureはRecovery手順で確認します。
+- `workcairn-daemon`は、初期設定ではループバックアドレスだけで待ち受けます。`--local-network`は、信頼できる同一LANと、そのプロセス内だけで有効なペアリングに限って使用できます。TLSや遠隔接続用の認証機能はありません。
+- ポート転送、公開IPアドレス、リバースプロキシ、インターネットへの公開はサポートしません。
+- `.env`は自動読込しません。
+- AIプロバイダーの認証情報は、実行環境で選択した4種類の取得元（`automatic`、`environment`、`keychain`、`headless-local`）のいずれかからだけ取得します。対話操作を行うmacOSでの初期設定は`automatic`で、環境変数、Keychainの順に確認します。取得元を明示した場合は、別の取得元へ自動的に切り替えません。詳細は[運用ガイド](docs/OperatorGuide.md)と[ADR-0066](docs/adr/ADR-0066-headless-credential-resolution.md)を参照してください。
+- 外部アクションの認証情報は、承認済みプロセスの環境変数からだけ渡します。
+- 認証情報の値を、ブラウザ、Vault、Command Ledger、監査記録、ログへ保存または表示しません。
+- 実際のVaultを最初の試用に使うことは推奨しません。一時Vaultで確認した後、外部にバックアップを用意してください。
+- 自動再試行、成果物の自動採用、遠隔アクションの自動照合は行いません。処理が途中まで成功した場合は、[復旧手順](docs/Recovery.md)で状態を確認してください。
 
-詳細は`docs/OperatorGuide.md`と`docs/Recovery.md`を参照してください。
+詳しい運用方法は[運用ガイド](docs/OperatorGuide.md)と[復旧手順](docs/Recovery.md)を参照してください。

@@ -4,7 +4,7 @@
 
 このGuideは、Go Only製品Runtimeを初めて動かすoperatorが、意図しないVault変更や外部公開を避けながらplan、approval、execute、inspect、recoveryを行うための手順です。
 
-WorkCairnのread-only操作とwriter操作は分離されています。`*-plan`、`*-inspect`、`identity-validate`は承認やProvider credentialを必要としません。`*-execute`、`*-create`、`*-apply`、`action-wordpress-publish`は対象とplanを人間が確認した後にだけ明示承認します。
+WorkCairnのread-only操作とwriter操作は分離されています。`*-inspect`、`identity-validate`と、writer effectの内容を確認するdeterministicな`*-plan`（`project-bootstrap-plan`、`employee-hire-plan`、`schedule-plan`、`recovery-plan`等）は承認やProvider credentialを必要としません。一方、`ceo-plan-generate`、`interaction-plan-generate`、`responsibility-plan`のようにPlan自体をLLMで生成するoperationはProvider credentialを必要とします。LLM-backed Plan生成だけではProject／Task作成やTask実行等の業務writer effectを開始しません。ただし`interaction-plan-generate`は、重複実行防止と生成結果の証拠としてCommand LedgerとInteraction Sessionへ生成Planをcommitします。`*-execute`、`*-create`、`*-apply`、`action-wordpress-publish`のような業務writer effectは、対象とplanを人間が確認した後にだけ、その別の明示承認で実行します。
 
 次を運用上の不変条件とします。
 

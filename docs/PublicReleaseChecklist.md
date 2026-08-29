@@ -117,8 +117,8 @@ iPhone Web UIはavailableな任意機能であり、Public Beta acceptanceの必
 - [x] tracked fileとarchiveにsecret、private key、実Provider responseがない（PB-1の全history／tracked file secret scanと、PB-2の実archive内容確認で確認済み）。
 - [x] 人名、社員情報、Project名、Vault path、username、home directory等の個人／machine固有情報がfixture以外にない（PB-1で確認済み）。
 - [ ] fixtureの人物、Project、credential、timestampは明示的なfakeである（fixture単位の網羅確認は未実施）。
-- [x] daemonの既定loopback、mobile private-address制約、same-origin effect requestがtestで固定される（既存test、PB-2の全Go test再実行で確認）。
-- [x] remote authentication、TLS、Push、automatic retry、reconciliationを未実装として明記する（README、SECURITY.md、OperatorGuide.md、Release Notesに記載済み）。
+- [x] daemonの既定loopback、local-network private-address制約、same-origin effect requestがtestで固定される（既存test、PB-2の全Go test再実行で確認）。
+- [x] remote authentication、TLS、Push、automatic retry、remote Action reconciliationを未実装として明記する（README、SECURITY.md、OperatorGuide.md、Release Notesに記載済み）。
 - [x] WordPress credentialをRuntime環境だけから受け取り、evidenceへ保存しない（OperatorGuide.mdに記載済み、既存testで確認）。
 
 ## 8. Public repository files

@@ -29,7 +29,7 @@ Public Betaの正式サポート対象は**macOS／arm64のみ**です。macOS�
 
 - remote authentication、TLS、internet公開、Push通知は未実装です。`--local-network`は信頼できる同一LAN専用です。
 - daemonは既定でloopback bindのみを受け付けます。
-- 外部secret manager、credential rotationの自動化は未実装です。credentialはmacOS Keychain、または明示指定したheadless-local fileからのみ読み込みます。
+- 外部secret manager、credential rotationの自動化は未実装です。credentialは対話的macOSでは通常Keychainから読み込み、明示`environment` source、unattended運用向けの明示`headless-local` sourceも利用できます。明示したsource間の暗黙fallbackはなく、`.env`は自動読込しません。
 - Routineの実行頻度はdaily／weeklyのみで、cron形式の指定はできません。
 - Company Attention Feedはv1として、質問・承認・Routine健全性など一部の情報源に限定されています。
 - Scheduler、WordPress連携は運用者向け機能として存在しますが、Public Betaの一般UIでは非表示です。外部連携は今後段階的に追加します。
@@ -37,15 +37,15 @@ Public Betaの正式サポート対象は**macOS／arm64のみ**です。macOS�
 
 ### セキュリティ
 
-脆弱性の疑いがある場合は、公開Issueへ詳細を書かず、GitHub Private Vulnerability Reportingから報告してください。詳細は[SECURITY.md](../SECURITY.md)を参照してください。
+脆弱性の疑いがある場合は、公開Issueへ詳細を書かず、GitHub Private Vulnerability Reportingから報告してください。詳細は[SECURITY.md](https://github.com/AkiraShimizu0/WorkCairn/blob/v1.0.0-beta.1/SECURITY.md)を参照してください。
 
 ### サポート
 
 - バグ報告・機能要望: GitHub Issues
 - 質問: GitHub Discussions
-- セキュリティ報告: GitHub Private Vulnerability Reporting（[SECURITY.md](../SECURITY.md)）
+- セキュリティ報告: GitHub Private Vulnerability Reporting（[SECURITY.md](https://github.com/AkiraShimizu0/WorkCairn/blob/v1.0.0-beta.1/SECURITY.md)）
 - 上記以外の一般的な問い合わせも、当面はGitHub上に集約します。
 
 ### データの安全性
 
-WorkCairn自身はVault backup製品ではありません。実運用前にtemporary Vaultで確認し、外部backupを別途用意してください。詳細は[Operator Guide](OperatorGuide.md)と[Recovery Guide](Recovery.md)を参照してください。
+WorkCairn自身はVault backup製品ではありません。実運用前にtemporary Vaultで確認し、外部backupを別途用意してください。詳細は[Operator Guide](https://github.com/AkiraShimizu0/WorkCairn/blob/v1.0.0-beta.1/docs/OperatorGuide.md)と[Recovery Guide](https://github.com/AkiraShimizu0/WorkCairn/blob/v1.0.0-beta.1/docs/Recovery.md)を参照してください。

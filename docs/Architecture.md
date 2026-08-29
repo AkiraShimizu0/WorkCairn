@@ -248,7 +248,7 @@ WorkCairnの移行は完了しています。`workcairn`、`workcairn-daemon`、
 
 Public BetaではmacOS／arm64をTier 1とし、macOS／amd64、Linux／amd64、Linux／arm64はcross-build後に各native smokeを要求します。WindowsはVault file lockが未対応のためsupportしません。このplatform境界はAdapterの制約であり、Domain／Service契約は変更しません。
 
-ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環境変数はWorkCairnへrenameしました。`Workspace`／`Workspace Kernel`は一般Architecture概念、`workspace-command.v1`、`workspace-interaction.v1`、`.workspace-os`、managed metadata markerは通信／永続化contractとして意図的に維持します。実GitHub repository slugの変更はPublic化前の外部release作業です。
+ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環境変数はWorkCairnへrenameしました。`Workspace`／`Workspace Kernel`は一般Architecture概念、`workspace-command.v1`、`workspace-interaction.v1`、`.workspace-os`、managed metadata markerは通信／永続化contractとして意図的に維持します。実GitHub repository slugは`WorkCairn`へrename済みで、Go module pathも`github.com/AkiraShimizu0/WorkCairn/go`へ同期済みです（ADR-0068）。RepositoryのPrivate → Public化は別のHuman release actionとして未完了です。
 
 - 依存解析や実行可否判定などの副作用のないCoreを含め、中核ルールはGoを正本とします。
 - MarkdownやObsidianのファイルI/OはCoreの外側に置きます。

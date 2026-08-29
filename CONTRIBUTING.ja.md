@@ -1,121 +1,121 @@
 [English](CONTRIBUTING.md) | 日本語
 
-# WorkCairnへのContributing
+# WorkCairnへの貢献
 
-このguideは、WorkCairnへコードをcontributeする開発者向けです。製品としての利用方法は[README](README.ja.md)を、運用方法は[Operator Guide](docs/OperatorGuide.md)を参照してください。
+このガイドは、WorkCairnの開発に参加する方を対象としています。製品の利用方法は[README](README.ja.md)を、導入後の運用方法は[運用ガイド](docs/OperatorGuide.md)を参照してください。
 
 ## 作業前に
 
-[AGENTS.md](AGENTS.md)、[docs/CONSTITUTION.md](docs/CONSTITUTION.md)、[docs/Architecture.md](docs/Architecture.md)を読んでください。このrepositoryの不変条件と現在の構造の正本です。対象領域に関連する決定がないか`docs/adr/`も確認してください。
+[AGENTS.md](AGENTS.md)、[docs/CONSTITUTION.md](docs/CONSTITUTION.md)、[docs/Architecture.md](docs/Architecture.md)を読んでください。これらは、このリポジトリで守るべき原則と現在の構造を示す正本です。変更する領域に関係する決定がないか、`docs/adr/`も確認してください。
 
-## IssuesとDiscussions
+## 不具合・要望・質問の窓口
 
-- **Issues** — bug報告と具体的なfeature request。
-- **Discussions** — 質問、アイデア、まだ具体的な提案になっていないもの。
-- **Security報告** — 公開Issueへは書かず、[SECURITY.md](SECURITY.md)（GitHub Private Vulnerability Reporting）を使用してください。
+- **Issues** — 不具合の報告と、内容が具体化した機能要望に使用します。
+- **Discussions** — 質問、アイデア、まだ具体的な提案になっていない内容に使用します。
+- **脆弱性の報告** — 公開Issueには書かず、[SECURITY.md](SECURITY.md)に従ってGitHubのPrivate Vulnerability Reportingを使用してください。
 
-## Development environment
+## 開発環境
 
-- Go 1.23以上、POSIX shell、`make`、`tar`。
-- build・testに実Vault、`.env`、実Provider API keyは不要です。
-- Browser testにはNode.js 20以上が追加で必要です（test専用で、製品buildには含まれません）。
+- Go 1.23以上、POSIX互換シェル、`make`、`tar`が必要です。
+- ビルドとテストに、実際のVault、`.env`、実際のAIプロバイダーのAPIキーは不要です。
+- ブラウザテストにはNode.js 20以上も必要です。Node.jsはテスト専用であり、製品のビルドには含まれません。
 
-## BranchとCommit
+## ブランチとコミット
 
-`main`からbranchします。Commit messageは[Conventional Commits](https://www.conventionalcommits.org/)（`feat:`、`fix:`、`docs:`、`chore:`など）に従ってください。`CHANGELOG.md`はこの履歴から生成されるため、summary行は正確に、変更範囲へ対応させてください。
+`main`からブランチを作成します。コミットメッセージは[Conventional Commits](https://www.conventionalcommits.org/)（`feat:`、`fix:`、`docs:`、`chore:`など）に従ってください。`CHANGELOG.md`はこの履歴から生成されるため、先頭行には変更内容と範囲を正確に記載してください。
 
-## BuildとTest
+## ビルドとテスト
 
-このrepositoryの`Makefile`に実在するcommandだけを載せています。推測でcommandを増やさず、sourceから確認してください。
+次に示すのは、このリポジトリの`Makefile`に実在するコマンドだけです。コマンドを推測で補わず、必ずソースで確認してください。
 
 ```bash
-make go-build                          # 3 binaryをbin/へbuild
-cd go && go test -count=1 ./...        # unit test
-cd go && go test -race -count=1 ./...  # race detector
+make go-build                          # 3つのバイナリをbin/へ作成
+cd go && go test -count=1 ./...        # 単体テスト
+cd go && go test -race -count=1 ./...  # データ競合の検査
 cd go && go vet ./...
-gofmt -l .                             # 出力が空であること
-make public-beta-smoke                 # 高速なend-to-end smoke: Mock Provider + temporary Vault
-make v1-release-gate                   # build + 全test + race + vet + gofmt + release matrix + git diff --check
+gofmt -l .                             # 何も出力されないこと
+make public-beta-smoke                 # 高速な一連動作の確認: 模擬プロバイダー + 一時Vault
+make v1-release-gate                   # ビルド + 全テスト + 競合検査 + vet + gofmt + 配布対象検査 + git diff --check
 ```
 
-UIを変更した場合は[Browser test](#browser-test)も参照してください。
+UIを変更した場合は[ブラウザテスト](#ブラウザテスト)も参照してください。
 
-## Architecture rules
+## アーキテクチャ上の規則
 
-詳細は[AGENTS.md](AGENTS.md)と[docs/CONSTITUTION.md](docs/CONSTITUTION.md)にあります。構造に関わる変更の前に必ず読んでください。要点は次のとおりです。
+詳細は[AGENTS.md](AGENTS.md)と[docs/CONSTITUTION.md](docs/CONSTITUTION.md)にあります。構造に関わる変更を始める前に、必ず読んでください。要点は次のとおりです。
 
-- **Go Only。** 製品コード、build、test、release toolingはGoです。唯一の例外はtest専用のPlaywright browser harness（ADR-0043）で、Go moduleや製品binaryへは入りません。
-- **Kernelは調停役、Domainが判断する。** KernelはService登録とCommand調停に限定し、ビジネスルール、保存形式、Provider設定を持ちません。
-- **Event駆動。** Business Eventはlog entryではなく事実です。Audit、Notification、MetricsはEventのsubscriberとして接続し、直接書き込みません。
-- **Adapterは境界に置く。** Vault、filesystem、HTTP、LLM ProviderへのアクセスはすべてAdapterです。Coreはこれらへ依存しません。
-- **Task lifecycleの所有者は1つ。** Task状態変更とTask lifecycle Eventの発行元は`TaskService`だけです。
-- **RunnerはProvider呼び出しだけを行う。** Task状態、承認、retry、Audit、Deliverable保存には触れません。
-- **副作用の前に明示承認。** 承認なしではTask開始、外部呼び出し、永続化のいずれも始まりません。
-- **暗黙のretry・fallback禁止。** credential不足、timeout、状態不明はそのまま表面化させ、黙って再試行・別経路へ回しません。
-- **既存primitiveを先に探す。** repository内、Go標準library、既に採用済みのdependencyの順で確認してから新規実装を検討します。
-- **ビジネスルールはWorkCairn固有のまま保つ。** Task lifecycle、Approval、Recoveryなどの製品固有ロジックを外部libraryへ委譲しません。
+- **Goのみで構成する。** 製品コード、ビルド、テスト、配布用ツールはGoで実装します。唯一の例外は、ADR-0043で定めたテスト専用のPlaywrightブラウザ検証環境です。これはGoモジュールや製品バイナリには含まれません。
+- **カーネルは調停し、ドメインが判断する。** カーネルはサービスの登録とコマンドの調停に限定し、ビジネスルール、保存形式、プロバイダー設定を持ちません。
+- **イベント駆動とする。** ビジネスイベントは単なるログではなく、発生した事実です。監査、通知、計測はイベントの購読者として接続し、ドメインサービスから直接書き込みません。
+- **アダプターは境界に置く。** Vault、ファイルシステム、HTTP、LLMプロバイダーへのアクセスは、すべてアダプターが担当します。コアはこれらに依存しません。
+- **タスクのライフサイクルは1つのサービスが所有する。** タスク状態の変更とタスクライフサイクルイベントの発行は、`TaskService`だけが行います。
+- **Runnerはプロバイダー呼び出しだけを行う。** タスク状態、承認、再試行、監査、成果物の保存には触れません。
+- **副作用の前に明示的な承認を求める。** 承認なしでは、タスク開始、外部呼び出し、永続化のいずれも始めません。
+- **暗黙の再試行や代替経路への切り替えを禁止する。** 認証情報の不足、タイムアウト、状態不明はそのまま利用者へ示し、黙って再試行したり別経路へ切り替えたりしません。
+- **既存の基礎部品を先に探す。** リポジトリ内、Go標準ライブラリ、採用済みの依存ライブラリの順に確認してから、新しい実装を検討します。
+- **ビジネスルールはWorkCairnが所有する。** タスクのライフサイクル、承認、復旧などの製品固有ロジックを外部ライブラリへ委ねません。
 
-## JSON Contract compatibility
+## JSON Contractの互換性
 
-JSON Contract v1（付随するPrompt／Markdown／migration fixtureを含む）は安定したlanguage-neutralな境界です。追加的で後方互換な変更を既定とし、破壊的な変更には新しいcontract version、migration plan、fixture更新、ADRが必要です。
+JSON Contract v1と、それに付随するプロンプト、Markdown、移行用テストデータは、特定のプログラミング言語に依存しない安定した境界です。追加的で後方互換な変更を原則とし、破壊的な変更には新しい契約バージョン、移行計画、テストデータの更新、ADRが必要です。
 
-## Secrets／Credentials
+## 秘密情報と認証情報
 
-- `.env`や実credentialをcommitしない。
-- 実API keyやcredentialをtest fixtureへ入れない。
-- testはKeychainやheadless-local credential fileを読まない。Fake Providerを使う。
-- testは実Provider APIを呼ばない。既存のFake Runner／Mock HTTP serverを使う。
-- testは実Vaultへ接続しない。temporary directoryを使う。
+- `.env`や実際の認証情報をコミットしないでください。
+- 実際のAPIキーや認証情報をテスト用データへ入れないでください。
+- テストではKeychainや`headless-local`の認証情報ファイルを読みません。テスト用プロバイダーを使用してください。
+- テストでは実際のプロバイダーAPIを呼びません。既存のテスト用Runnerまたは通信を模擬するHTTPサーバーを使用してください。
+- テストでは実際のVaultへ接続しません。一時ディレクトリを使用してください。
 
 ## UI変更
 
 `go/internal/httpapi/web/`を変更する場合、次を確認してください。
 
-- Light modeとDark modeの両方が正しく表示されること（色は`styles.css`の既存CSS変数を参照し、hard-codeしない）。
-- optionalな値が文字列として`null`／`undefined`をそのまま表示しないこと。
-- 製品自体がplatform-neutralな箇所で、copyもplatform-neutralなままであること。
-- 関連するbrowser testが成功すること（[Browser test](#browser-test)参照）。
+- ライトモードとダークモードの両方で正しく表示されること。色は`styles.css`の既存CSS変数を参照し、値を直接記述しないでください。
+- 省略可能な値を、文字列の`null`や`undefined`としてそのまま表示しないこと。
+- 製品自体が特定のOSに依存しない箇所では、表示文言も特定のOSに依存させないこと。
+- 関連するブラウザテストが成功すること。[ブラウザテスト](#ブラウザテスト)も参照してください。
 
-個々のAI社員名など、現在Public UIで意図的に非表示にしている情報があります。変更で再表示することになる場合は、見落としと決めつけず、先に`docs/adr/`と直近のPublic Beta ADRで設計意図を確認してください。
+個々のAI社員名など、現在の公開UIで意図的に非表示にしている情報があります。変更によって再表示される場合は、単なる見落としと決めつけず、先に`docs/adr/`と直近のPublic Beta関連ADRで設計意図を確認してください。
 
-## Browser test
+## ブラウザテスト
 
-`tests/browser/`はPlaywrightベースのtest専用harnessです（ADR-0043の境界は[AGENTS.md](AGENTS.md)参照）。初回だけ準備します。
+`tests/browser/`はPlaywrightを使用したテスト専用の検証環境です。ADR-0043で定めた境界については[AGENTS.md](AGENTS.md)を参照してください。初回だけ次の準備を行います。
 
 ```bash
 make public-beta-browser-setup
 ```
 
-その後は[AGENTS.md](AGENTS.md)の段階的検証に従います。
+その後は、[AGENTS.md](AGENTS.md)に記載された段階的な検証手順に従います。
 
 ```bash
 make check-ui-fast                # chromium-desktopのみ、@criticalタグだけ -- 実装中
-make check-ui-changed AREA=<tag>  # chromium-desktopのみ、該当tag -- その領域の実装完了時
-make check-ui-full                # Chromium＋WebKit iPhoneのフルsuite -- commit候補の直前に1回だけ
+make check-ui-changed AREA=<tag>  # chromium-desktopのみ、該当タグ -- その領域の実装完了時
+make check-ui-full                # Chromium＋WebKit iPhoneの全テスト -- コミット候補の直前に1回だけ
 ```
 
-full suiteを実装のたびに回さないでください。変更の途中ではなく、変更の終わりに1回実行するためのものです。
+全テストを実装のたびに実行しないでください。変更の途中ではなく、変更が完了した時点で1回実行するためのものです。
 
 ## ADR
 
-次のような変更にはADRが必要です: 新しいpersistent stateの追加、JSON Contractの変更、所有権の変更、retry／fallback semanticsの変更、Provider境界の変更、security境界の変更、storage architectureの変更。小さなbug fixには通常不要です。`docs/adr/ADR-template.md`から作成してください。Accepted ADRは、後のbrandingや用語変更に合わせて書き換えません。新しい判断は新しいADRとして記録します。
+次のような変更にはADRが必要です。新しい永続状態の追加、JSON Contractの変更、所有権の変更、再試行や代替経路に関する規則の変更、プロバイダー境界の変更、セキュリティ境界の変更、保存方式の設計変更などです。小さな不具合修正には通常必要ありません。`docs/adr/ADR-template.md`から作成してください。承認済みのADRは、後のブランド変更や用語変更に合わせて書き換えません。新しい判断は新しいADRとして記録します。
 
-## Documentation
+## 文書
 
-- [README.md](README.md)／[README.ja.md](README.ja.md)は一般利用者向けです。製品が何をするかを説明し、内部用語を持ち込みません。
-- [docs/OperatorGuide.md](docs/OperatorGuide.md)は運用者向けで、deploymentと運用の詳細を扱います。
-- [docs/Architecture.md](docs/Architecture.md)と`docs/adr/`はcontributor向けで、現在の構造と過去の設計判断を扱います。
+- [README.md](README.md)と[README.ja.md](README.ja.md)は一般利用者向けです。製品が何をするかを説明し、内部用語を持ち込みません。
+- [docs/OperatorGuide.md](docs/OperatorGuide.md)は運用者向けで、導入と運用の詳細を扱います。
+- [docs/Architecture.md](docs/Architecture.md)と`docs/adr/`は開発参加者向けで、現在の構造と過去の設計判断を扱います。
 
-利用手順を変更する場合は同じ変更内でREADME／Operator Guideを更新し、大きな設計判断であればADRとして記録してください。
+利用手順を変更する場合は、同じ変更内でREADMEと運用ガイドも更新してください。大きな設計判断であれば、ADRとして記録してください。
 
-## Pull request checklist
+## プルリクエストの確認項目
 
-1. 変更理由と対象scopeを説明する。
-2. 追加・変更した契約とfailure semanticsを明示する。
-3. 関連するtest、race test、`go vet`、`gofmt`、`git diff --check`を成功させる。UIを変更した場合は関連browser testも実行する。
-4. testのどこでも実API・実Vaultを使用していないことを確認する。
-5. 差分にgenerated artifact、secret、local pathが含まれないことを確認する — `bin/`、`dist/`、`node_modules/`、`test-results/`、`.env`、Vault dataなど。詳細は`.gitignore`を参照。
+1. 変更理由と対象範囲を説明する。
+2. 追加または変更した契約と、失敗時の動作を明示する。
+3. 関連するテスト、データ競合の検査、`go vet`、`gofmt`、`git diff --check`を成功させる。UIを変更した場合は、関連するブラウザテストも実行する。
+4. すべてのテストで、実際のAPIやVaultを使用していないことを確認する。
+5. 差分に生成物、秘密情報、ローカルパスが含まれないことを確認する。対象には`bin/`、`dist/`、`node_modules/`、`test-results/`、`.env`、Vaultデータなどがあります。詳細は`.gitignore`を参照してください。
 
-## Release
+## リリース
 
-tag作成、GitHub Release作成、`main`へのforce pushはmaintainerが行う操作です。contributorのPRで行うものではありません。
+タグの作成、GitHub Releaseの作成、`main`へのフォースプッシュは、保守担当者だけが行います。開発参加者のプルリクエストで行うものではありません。
