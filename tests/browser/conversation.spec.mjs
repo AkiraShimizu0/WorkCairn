@@ -726,6 +726,86 @@ test("Dark Mode Plan embed keeps readable contrast instead of white-on-white @co
   }
 });
 
+// .button.primary and .button.danger keep a solid semantic-color
+// background (var(--green)/var(--red)) in dark mode, which goes pastel-
+// light there by design (the same variables read fine as text-on-dark-
+// surface elsewhere). Paired with the buttons' own fixed white text, that
+// used to be unreadable. .button.danger has no live call site in the
+// current UI, so it and the reachable .button.primary/new-request-button
+// are all checked the same way: read the real cascade the browser computes
+// for each class combination, rather than only exercising what a user can
+// currently click through to.
+// WCAG relative-luminance contrast ratio -- checks actual readability (the
+// original bug was near-white text on a light-pastel background, two
+// visually distinct but still unreadable colors, so a plain
+// color !== background check would not have caught it) without pinning to
+// any specific theme RGB value.
+function contrastRatio({ color, background }) {
+  const luminance = (rgb) => {
+    const [r, g, b] = rgb.match(/[\d.]+/g).map(Number).map((channel) => {
+      const c = channel / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const lightest = Math.max(luminance(color), luminance(background));
+  const darkest = Math.min(luminance(color), luminance(background));
+  return (lightest + 0.05) / (darkest + 0.05);
+}
+
+test("primary, danger, and new-request buttons keep readable contrast in both themes @conversation", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  const readColors = (classNames) => page.evaluate((names) => {
+    const probe = document.createElement("button");
+    probe.className = names;
+    probe.textContent = "probe";
+    probe.style.position = "fixed";
+    probe.style.left = "-9999px";
+    document.body.appendChild(probe);
+    const style = getComputedStyle(probe);
+    const result = { color: style.color, background: style.backgroundColor };
+    probe.remove();
+    return result;
+  }, classNames);
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRunFast(page);
+    await ensureRequestList(page);
+    const newRequestButton = page.locator("#new-request-button");
+    await expect(newRequestButton).toBeVisible();
+
+    for (const dark of [false, true]) {
+      await page.emulateMedia({ colorScheme: dark ? "dark" : "light" });
+      const label = dark ? "dark" : "light";
+      expect(contrastRatio(await readColors("button primary")), `primary in ${label} mode`).toBeGreaterThan(3);
+      // .button.danger has no live call site in the current UI (grep
+      // confirms) -- checked directly via the real cascade so it stays
+      // covered even though no user flow currently renders it.
+      expect(contrastRatio(await readColors("button danger")), `danger in ${label} mode`).toBeGreaterThan(3);
+      const newRequestColors = await newRequestButton.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { color: style.color, background: style.backgroundColor };
+      });
+      const newRequestRatio = contrastRatio(newRequestColors);
+      if (dark) {
+        // The bug this Checkpoint fixes: dark mode previously paired
+        // near-white text with a light-pastel background here.
+        expect(newRequestRatio, `new-request-button in dark mode`).toBeGreaterThan(3);
+      } else {
+        // Light mode is untouched by this Checkpoint (the fix lives only
+        // inside the dark-mode media block) and already runs close to this
+        // floor before any of these changes -- just guard against a future
+        // edit accidentally collapsing it toward unreadable, not against
+        // this pre-existing, out-of-scope borderline value.
+        expect(newRequestRatio, `new-request-button in light mode`).toBeGreaterThan(2);
+      }
+    }
+  } finally {
+    await page.emulateMedia({ colorScheme: null });
+    await environment.stop();
+  }
+});
+
 test("session list scrollbar does not overlap the row menu button once the list overflows @conversation", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name.includes("iphone"), "Scrollbar overlap is a desktop pointer-scrollbar concern; mobile uses touch overlay scrolling with no reserved gutter");
   const environment = await startBrowserEnvironment("session_list_overflow");

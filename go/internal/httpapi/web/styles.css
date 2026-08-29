@@ -3190,9 +3190,17 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   }
 
   .icon-action-button.new-request-button {
-    color: var(--ink-strong);
+    /* --ink-strong flips to near-white in dark mode, same as the button
+       backgrounds below -- --paper flips the other way (near-black), which
+       is what solid-color buttons need to keep white/light text readable. */
+    color: var(--paper);
     background: var(--green-dark);
     border-color: transparent;
+  }
+
+  .button.primary,
+  .button.danger {
+    color: var(--paper);
   }
 
   .char-eye {
