@@ -26,7 +26,7 @@ Instead of you tracking every step yourself, WorkCairn keeps track of the work a
 
 ### Install
 
-Start with an empty, temporary folder rather than a real Vault.
+Start with an empty, temporary data folder — not any folder you already use for other files.
 
 **Build from source:**
 
@@ -52,7 +52,7 @@ bin/workcairn version
 bin/workcairn-daemon
 ```
 
-The first run opens a native macOS folder picker. Create a new, empty `WorkCairn` folder inside iCloud Drive (recommended, not required — any local folder works too) and the app opens once you select it. The location is remembered for next time. You can't select an existing personal Obsidian Vault, your home folder, or the iCloud Drive root itself.
+The first run opens a native macOS folder picker. Create a new, empty folder in a normal local location on your Mac — this becomes WorkCairn's dedicated data folder, and an ordinary local folder is all you need. iCloud Drive works too if you'd rather use it, but it's just one option, not a requirement. The app opens once you select the folder, and the location is remembered for next time. You can't select an existing personal Obsidian vault, your home folder, or the iCloud Drive root itself.
 
 A setup screen walks you through approving a starter team and connecting Claude — you never have to type a model ID or pick a route yourself. From there, `会社を始める` (Start) takes you to your first request.
 
@@ -73,7 +73,7 @@ See the [Public Beta Quickstart](docs/PublicBetaQuickstart.md) for a full first-
 - What you're delegating, whether review is required, and any limits are all shown to you as part of what you approve
 - A failure after something is published or saved is never hidden, and finished work is never silently deleted
 - If something is unclear, WorkCairn asks you to confirm what happened rather than guessing and retrying
-- Before real use, try it with a temporary Vault first and keep a backup ready
+- Before real use, try it with a temporary data folder first and keep a backup ready
 
 You don't need any credentials just to look around. Actually generating a plan or doing work requires connecting Claude from `Settings → AI Connections`. Whatever you enter there is stored only in macOS Keychain — it never reaches your browser, your files, or a log. You don't need to configure a model either; if nothing is connected, WorkCairn stops before sending anything rather than silently trying something else.
 
@@ -81,9 +81,11 @@ If something exits abnormally or asks for your attention unexpectedly, don't gue
 
 ## 6. Data storage
 
-WorkCairn stores results, review outcomes, and a record of what happened directly in your Vault — that's how it works, not an add-on. Obsidian is an **optional** way to browse that same folder; you can open it with `Open folder as vault` any time, but WorkCairn works fully without it.
+WorkCairn stores results, review outcomes, and a record of what happened directly in its own data folder — an ordinary folder on your Mac, not a database or a hidden system location. WorkCairn manages this data locally on its own; Obsidian, iCloud Drive, and other external storage or viewing services are not required. Right now, first-run setup requires choosing an empty, dedicated data folder — no existing personal Obsidian vault, iCloud Drive, or Obsidian install of any kind is needed, and the location is remembered after that.
 
-WorkCairn is not a backup tool. Try it with a temporary Vault before real use, and keep a backup made some other way. See the [Operator Guide](docs/OperatorGuide.md) and [Recovery Guide](docs/Recovery.md) for details.
+Obsidian is a completely optional way to browse that same folder, for anyone who wants to: no Obsidian account is required, and you can open the folder with `Open folder as vault` any time, but WorkCairn works fully without it.
+
+WorkCairn is not a backup tool. Try it with a temporary data folder before real use, and keep a backup made some other way. See the [Operator Guide](docs/OperatorGuide.md) and [Recovery Guide](docs/Recovery.md) for details.
 
 ## 7. Supported environment
 
@@ -120,11 +122,11 @@ tests/         Browser and integration tests
 scripts/       Build, release, and verification scripts
 ```
 
-There are three binaries: `workcairn-daemon` (what you run day to day), `workcairn` (an operator CLI for advanced/manual operations), and `workcairn-core` (a fixed JSON interface for other programs). The daemon accepts `--vault <path>` to set the Vault location and `--local-network` to allow another device on your network to connect; see the [Operator Guide](docs/OperatorGuide.md) for the rest.
+There are three binaries: `workcairn-daemon` (what you run day to day), `workcairn` (an operator CLI for advanced/manual operations), and `workcairn-core` (a fixed JSON interface for other programs). The daemon accepts `--vault <path>` — the current CLI option for setting the WorkCairn data folder's location — and `--local-network` to allow another device on your network to connect; see the [Operator Guide](docs/OperatorGuide.md) for the rest.
 
 ```bash
 make v1-release-gate     # build + full test suite + checks
-make public-beta-smoke   # quick end-to-end check with a temporary Vault
+make public-beta-smoke   # quick end-to-end check with a temporary data folder
 ```
 
 ## 10. Documentation

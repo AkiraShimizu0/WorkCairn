@@ -26,7 +26,7 @@ WorkCairnが作業の進行を管理するため、利用者が細かな進捗�
 
 ### インストール
 
-最初は実際のVaultではなく、空の一時的なフォルダで試してください。
+最初は普段使っているフォルダではなく、空の一時的なデータフォルダで試してください。
 
 **Sourceからbuild：**
 
@@ -52,7 +52,7 @@ bin/workcairn version
 bin/workcairn-daemon
 ```
 
-初回だけmacOSのフォルダ選択画面が開きます。推奨のiCloud Drive内に空の`WorkCairn`専用フォルダを新規作成して選ぶと画面が開きます（iCloud Driveは推奨であって必須ではなく、任意のローカルフォルダも選択できます）。選んだ場所は次回以降も使われます。既存の個人用Obsidian Vault、ホームディレクトリ、iCloudのルートフォルダは選択できません。
+初回だけmacOSのフォルダ選択画面が開きます。Mac上の通常の保存場所に、空の新しいフォルダを作成して選んでください。これがWorkCairn専用のデータフォルダになり、通常のローカルフォルダで十分です。iCloud Driveを使いたい場合はそれも選べますが、あくまで一つの選択肢であり、必須ではありません。フォルダを選ぶとアプリが開き、選んだ場所は次回以降も使われます。既存の個人用Obsidian vault、ホームディレクトリ、iCloudのルートフォルダは選択できません。
 
 画面の案内に沿って最初のAIチームを承認し、Claudeとの接続を行います。Model IDや接続先を自分で入力する必要はありません。`会社を始める`から最初の依頼へ進めます。
 
@@ -73,7 +73,7 @@ bin/workcairn-daemon
 - 何を任せるか、確認が必須かどうか、上限などは、承認の対象としてはっきり示されます
 - 公開後や保存後に問題が起きても隠さず、完了済みの内容を勝手に削除することもありません
 - 状況がはっきりしないときは、推測で処理をやり直さず、何が起きたかを確認するよう案内します
-- 実運用の前に、一時的なVaultでの試用と、バックアップの用意をおすすめします
+- 実運用の前に、一時的なデータフォルダでの試用と、バックアップの用意をおすすめします
 
 画面を見るだけなら認証情報は不要です。実際に作業計画を作ったり作業を進めたりするには、`設定 → AI Connections`からClaudeを接続します。入力した内容はmacOSのKeychainだけに保存され、ブラウザやファイル、記録には残りません。Model IDを自分で設定する必要もなく、接続が確認できない場合は、何もせず処理を止めます。
 
@@ -81,9 +81,11 @@ bin/workcairn-daemon
 
 ## 6. データ保存
 
-WorkCairnは、成果物、確認の結果、作業の記録をVault内に直接保存します。これはあとから追加した機能ではなく、基本的な動作です。Obsidianは同じフォルダを見るための**任意の**手段で、`Open folder as vault`でいつでも開けますが、Obsidianを使わなくてもWorkCairnは問題なく動作します。
+WorkCairnは、成果物、確認の結果、作業の記録を専用のデータフォルダへ直接保存します。Mac上のごく普通のフォルダであり、データベースや隠しシステム領域ではありません。WorkCairnはこのデータを単体でローカル管理でき、Obsidian、iCloud Drive、その他の外部の保存・閲覧サービスは必要ありません。現在のPublic Betaでは、初回に空の専用データフォルダを選ぶ必要があり、既存の個人用Obsidian vaultやiCloud Drive、Obsidianのインストールは一切不要です。選んだ場所はそれ以降も使われます。
 
-WorkCairnはバックアップのための製品ではありません。実運用の前に一時的なVaultで試し、別の方法でバックアップを用意してください。詳しくは[Operator Guide](docs/OperatorGuide.md)と[Recovery Guide](docs/Recovery.md)を参照してください。
+Obsidianは同じフォルダを見るための完全に任意の手段です。使いたい人だけが使えばよく、Obsidianアカウントは不要で、`Open folder as vault`でいつでも開けますが、Obsidianを使わなくてもWorkCairnは問題なく動作します。
+
+WorkCairnはバックアップのための製品ではありません。実運用の前に一時的なデータフォルダで試し、別の方法でバックアップを用意してください。詳しくは[Operator Guide](docs/OperatorGuide.md)と[Recovery Guide](docs/Recovery.md)を参照してください。
 
 ## 7. 対応環境
 
@@ -120,11 +122,11 @@ tests/         Browserテストなどの統合テスト
 scripts/       Build・Release・検証用スクリプト
 ```
 
-主なbinaryは3つです：`workcairn-daemon`（日常的に使うもの）、`workcairn`（高度な操作を明示的に行うためのCLI）、`workcairn-core`（他のプログラムとやり取りするための決まった形式のインターフェース）。daemonはVaultの場所を指定する`--vault <path>`と、同じネットワーク上の別デバイスからの接続を許可する`--local-network`を受け付けます。それ以外の詳細は[Operator Guide](docs/OperatorGuide.md)を参照してください。
+主なbinaryは3つです：`workcairn-daemon`（日常的に使うもの）、`workcairn`（高度な操作を明示的に行うためのCLI）、`workcairn-core`（他のプログラムとやり取りするための決まった形式のインターフェース）。daemonは、WorkCairnデータフォルダの場所を指定する現行のCLI option`--vault <path>`と、同じネットワーク上の別デバイスからの接続を許可する`--local-network`を受け付けます。それ以外の詳細は[Operator Guide](docs/OperatorGuide.md)を参照してください。
 
 ```bash
 make v1-release-gate     # build + 全testと各種チェック
-make public-beta-smoke   # 一時的なVaultを使った簡易な動作確認
+make public-beta-smoke   # 一時的なデータフォルダを使った簡易な動作確認
 ```
 
 ## 10. 詳細ドキュメント
