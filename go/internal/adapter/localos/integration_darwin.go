@@ -71,6 +71,16 @@ func newCommandExecutionError(err error, diagnostic, secret string) error {
 
 type DarwinWorkspaceSelector struct {
 	runner CommandRunner
+	// homeDir overrides os.UserHomeDir for tests, so the start-folder
+	// resolution below can be exercised against a temporary directory
+	// instead of the real home directory. nil means production default.
+	homeDir func() (string, error)
+	// documentsUsable overrides the check deciding whether the Documents
+	// start-folder fallback in Select() is safe to use. nil means the
+	// production check (dirIsUsableStartFolder). Tests can inject a fixed
+	// predicate to deterministically exercise the symlink / missing /
+	// access-failure branches without real filesystem permission changes.
+	documentsUsable func(path string) bool
 }
 
 func NewWorkspaceSelector() WorkspaceSelector {
@@ -78,17 +88,31 @@ func NewWorkspaceSelector() WorkspaceSelector {
 }
 
 func (selector *DarwinWorkspaceSelector) Select(ctx context.Context) (string, error) {
-	home, err := os.UserHomeDir()
+	homeDir := selector.homeDir
+	if homeDir == nil {
+		homeDir = os.UserHomeDir
+	}
+	home, err := homeDir()
 	if err != nil {
 		return "", err
 	}
-	start := filepath.Join(home, "Library", "Mobile Documents", "com~apple~CloudDocs")
-	if info, statErr := os.Stat(start); statErr != nil || !info.IsDir() {
-		start = home
+	// A normal local location is the default start position. ~/Documents is
+	// used when it is a real, accessible directory; a symlinked, missing,
+	// or inaccessible Documents falls back to home rather than resolving
+	// through the symlink. iCloud Drive is never the start position and is
+	// not recommended -- it remains a fully optional choice the picker
+	// still allows.
+	documentsUsable := selector.documentsUsable
+	if documentsUsable == nil {
+		documentsUsable = dirIsUsableStartFolder
+	}
+	start := home
+	if documents := filepath.Join(home, "Documents"); documentsUsable(documents) {
+		start = documents
 	}
 	script := `set startFolder to POSIX file ` + appleScriptString(start) + ` as alias
 try
-  set chosenFolder to choose folder with prompt "WorkCairn専用の新しいフォルダを作成または選択してください。iCloud Driveを推奨します。" default location startFolder
+  set chosenFolder to choose folder with prompt "WorkCairn専用の新しい空のデータフォルダを、Mac上の通常の保存場所に作成または選択してください。iCloud Driveは任意です。" default location startFolder
   return POSIX path of chosenFolder
 on error number -128
   return ""
@@ -241,6 +265,25 @@ func (viewer *DarwinWorkspaceViewer) OpenURL(ctx context.Context, url string) er
 }
 
 var urlpkgParse = urlpkg.Parse
+
+// dirIsUsableStartFolder reports whether path is a real (non-symlink)
+// directory that can actually be opened as a picker start location. Lstat
+// classifies the entry without dereferencing a symlink, so a symlinked
+// Documents folder is rejected rather than resolved through to whatever it
+// points at; Open/Close confirms the directory itself is accessible without
+// listing or modifying its contents.
+func dirIsUsableStartFolder(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return false
+	}
+	handle, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	_ = handle.Close()
+	return true
+}
 
 func appleScriptString(value string) string {
 	value = strings.ReplaceAll(value, `\`, `\\`)

@@ -1349,7 +1349,7 @@ async function connectClaudeOnMac() {
 async function revealWorkspaceOnMac() {
 	try {
 		await requestJSON("/v1/local-setup/reveal-workspace", { method: "POST", body: "{}" });
-		toast("Finderに会社データを表示しました。Obsidianでは「Open folder as vault」を選んでください。");
+		toast("Finderに会社データを表示しました。Obsidianを使う場合は「Open folder as vault」を選べます。");
 	} catch (error) {
 		toast(error.status === 403 ? "会社データを開く操作はこのデバイスで行ってください。" : "会社データをFinderに表示できませんでした。");
 	}
@@ -1423,16 +1423,16 @@ function providerSetupFailureCopy() {
 
 function storageStatusCopy() {
   const kind = state.workspaceStatus?.storage_kind;
-  if (kind === "icloud_drive") return ["iCloud DriveのWorkCairn専用Vault", "Obsidianから同じfolderをVaultとして開けます。同期中もcanonical metadataとCASを維持します。"];
-  if (kind === "temporary") return ["Temporary Vault", "Acceptance専用です。通常利用では既存Vaultと分離したiCloud Drive / WorkCairnを選んでください。"];
-  return ["WorkCairn専用のローカルVault", "既存の個人Obsidian Vaultは変更しません。後からこのfolderをObsidianで開けます。"];
+  if (kind === "icloud_drive") return ["WorkCairn専用データフォルダ", "iCloud Drive上の任意の保存先です。Obsidianは不要で、同じデータフォルダへ書き込むdaemonは1台だけにしてください。"];
+  if (kind === "temporary") return ["一時的なWorkCairnデータフォルダ", "Acceptance／test専用です。通常利用では新しい専用データフォルダを選んでください。iCloud DriveもObsidianも任意です。"];
+  return ["WorkCairn専用のローカルデータフォルダ", "Mac上の通常のローカル保存先です。iCloud DriveもObsidianも不要です。"];
 }
 
 function renderStorageSettings() {
   const [title, description] = storageStatusCopy();
   ui.storageSettings.replaceChildren(node("section", { class: "storage-card" },
 	node("strong", {}, title), node("small", {}, description),
-	state.localSetupAvailable ? button("会社データを見る", "quiet", revealWorkspaceOnMac) : node("small", {}, "Obsidianで見る場合は、このWorkCairn専用folderをVaultとして開きます。"),
+	state.localSetupAvailable ? button("会社データを見る", "quiet", revealWorkspaceOnMac) : node("small", {}, "この端末では保存先フォルダを直接開けません。"),
   ));
 }
 
@@ -3270,13 +3270,13 @@ function renderSetupWizard() {
         node("div", { class: "setup-step-heading" }, node("h3", {}, "1. 会社データの保存場所"), node("span", { class: "state-chip" }, workspace.layout_ready ? "準備済み" : "選択済み")),
         node("p", {}, storage[0]), node("p", {}, storage[1]),
         !workspace.layout_ready ? node("p", { class: "warning" }, "保存先は選択済みです。Starter Organizationの承認後、この専用directoryの中だけに会社データを準備します。") : null,
-        workspace.storage_kind === "icloud_drive" ? node("p", { class: "warning" }, "同じVaultへ書き込むWorkCairn daemonは1台だけにしてください。iCloud同期を複数writerの調停には使いません。") : null,
+        workspace.storage_kind === "icloud_drive" ? node("p", { class: "warning" }, "同じデータフォルダへ書き込むWorkCairn daemonは1台だけにしてください。iCloud同期を複数writerの調停には使いません。") : null,
       ),
       node("article", { class: `setup-step ${workspace.organization_ready ? "ready" : "attention"}` },
         node("div", { class: "setup-step-heading" }, node("h3", {}, "2. 最初のAIチーム"), node("span", { class: "state-chip" }, workspace.organization_ready ? "準備済み" : "承認が必要")),
         node("p", {}, "企画・作成・独立Reviewができる最小チームです。既存社員は変更しません。"),
         node("div", { class: "setup-people" }, ...people),
-        !workspace.organization_ready ? node("p", { class: "warning" }, "社員の追加は会社データへの変更です。下の確認画面で明示承認した場合だけ、この専用Vaultへ追加します。秘密情報はbrowserへ保存しません。") : null,
+        !workspace.organization_ready ? node("p", { class: "warning" }, "社員の追加は会社データへの変更です。下の確認画面で明示承認した場合だけ、この専用データフォルダへ追加します。秘密情報はbrowserへ保存しません。") : null,
       ),
       node("article", { class: `setup-step ${state.providerStatus?.configured ? "ready" : "attention"}` },
         node("div", { class: "setup-step-heading" }, node("h3", {}, "3. AI Connection"), node("span", { class: "state-chip" }, state.providerStatus?.configured ? "Connected" : "Setup required")),
@@ -3289,7 +3289,7 @@ function renderSetupWizard() {
         !workspace.organization_ready ? button("最初のAIチームを確認", "primary", () => renderSetupTeamApproval(workspace)) : null,
         !state.providerStatus?.configured ? button("AI Connectionsを確認", "primary", () => { ui.setupDialog.close(); openSettingsDialog(); }) : null,
         workspace.organization_ready && state.providerStatus?.configured ? button("会社を始める", "primary", () => { ui.setupDialog.close(); openNewRequestDraft(); }) : null,
-        workspace.layout_ready && state.localSetupAvailable ? button("Obsidianで会社データを見る", "quiet", revealWorkspaceOnMac) : null,
+        workspace.layout_ready && state.localSetupAvailable ? button("会社データを見る", "quiet", revealWorkspaceOnMac) : null,
         button("設定してから再確認", "quiet", async () => { await Promise.all([loadWorkspaceStatus(), loadProviderStatus(), loadOrganization().catch(() => null)]); renderSetupWizard(); }),
       ),
     ].filter(Boolean),
@@ -3384,14 +3384,14 @@ function renderSetupTeamApproval(workspace) {
   ui.setupContent.replaceChildren(
     node("article", { class: "setup-step attention" },
       node("h3", {}, "最小のAIチームを作成しますか？"),
-      node("p", {}, "承認すると、このWorkCairn専用Vaultだけに企画・コンテンツ・QA担当を追加します。既存社員や個人Vaultは変更しません。"),
+      node("p", {}, "承認すると、このWorkCairn専用データフォルダだけに企画・コンテンツ・QA担当を追加します。既存社員や個人Vaultは変更しません。"),
       node("div", { class: "setup-people" }, ...(workspace.starter_organization || []).map((candidate) =>
         // Same presentation reasoning as renderSetupWizard above.
         node("div", { class: "setup-person" }, node("span", {}, roleLabel(candidate.role)), node("strong", {}, candidate.name)),
       )),
       node("div", { class: "setup-actions" },
         button("承認してセットアップ", "primary", async () => {
-          const completed = await executeNextCommand({ operation: "workspace.setup" }, { current_time: now() }, "会社を準備しています", "専用VaultへStarter Organizationを安全に作成しています。", commandID());
+          const completed = await executeNextCommand({ operation: "workspace.setup" }, { current_time: now() }, "会社を準備しています", "専用データフォルダへStarter Organizationを安全に作成しています。", commandID());
           if (!completed) return;
           await Promise.all([loadWorkspaceStatus(), loadOrganization(true), loadCompanyActivity(true)]);
           renderEmployeesPane();

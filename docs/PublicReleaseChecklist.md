@@ -64,11 +64,11 @@ targetごとにclean output directoryを使います。PHASE PB-2でdarwin/arm64
 各native targetの新しいuser accountまたはclean runnerで確認します。
 
 - [ ] checksum確認、展開、3 binaryのversion表示が成功する。
-- [ ] 空のtemporary Vaultでloopback daemonが起動する。
+- [ ] 空の一時的なデータフォルダでloopback daemonが起動する。
 - [ ] `/healthz`と`/readyz`が成功する。
 - [ ] credentialなしでUIとread-only inspectionへ到達できる。
 - [ ] GUI Wizardだけで選択済みrootのlayoutとStarter Organizationを準備できる。
-- [ ] `--vault`なしのmacOS first-runでnative pickerがiCloud Driveを推奨し、明示選択した空の専用folderだけを保存する。
+- [ ] `--vault`なしのmacOS first-runでnative pickerが通常のローカル保存場所に空の専用データフォルダを選ばせる（iCloud Driveは任意で推奨しない）。明示選択したfolderだけを保存する。
 - [ ] daemon再起動時にfolder pickerを再表示せず、保存済みrootを再検証して過去Session／Timelineを表示する。
 - [ ] Mac native hidden-inputからClaudeをKeychainへ接続し、iPhone、HTTP payload、browser storage、Vault、logへsecretを出さない。
 - [ ] credentialが必要な操作は秘密情報を表示せず安全に拒否される。
@@ -98,16 +98,16 @@ iPhone Web UIはavailableな任意機能であり、Public Beta acceptanceの必
 
 ### Provider
 
-- [ ] temporary Vaultとtest用credentialでPlan生成1回、Task1件、Review1回を実行した。
+- [ ] 空の一時的なデータフォルダとtest用credentialでPlan生成1回、Task1件、Review1回を実行した。
 - [ ] Automatic policyが選ぶsupported Provider model、timeout、usage、error表示を確認した（利用者によるModel ID入力は不要）。
 - [ ] credentialをVault、Command、log、shell history、screenshotへ残していない。
 - [ ] test後にcredentialを失効またはrotationした。
 
 ### Filesystem／upgrade
 
-- [ ] Human Operator自身のMacで、選択した専用Vault root（iCloud Driveは推奨だが必須ではなく、任意のローカルfolderでもよい）でFirst-runを完了し、既存個人Vaultが変更されていないことを確認した。Obsidianから開けることの確認は任意（Obsidianは必須dependencyではない）。
+- [ ] Human Operator自身のMacで、選択した専用データフォルダ（通常のローカル保存場所。iCloud Driveは任意で推奨しない）でFirst-runを完了し、既存個人Vaultが変更されていないことを確認した。Obsidianから開けることの確認は任意（Obsidianは必須dependencyではない）。
 - [ ] [macOS First-run Acceptance](PublicBetaFirstRunAcceptance.md)の必須Mac loopback sectionだけを1回通し、再起動後のTimeline／persistent failureを確認した。
-- [ ] 同一Vaultへ複数daemonをwriterとして起動していない。
+- [ ] 同一データフォルダへ複数daemonをwriterとして起動していない。
 - [ ] SIGINT／SIGTERMでgraceful shutdownすることを確認した。
 
 任意／deferred。Public Beta blockerではない：

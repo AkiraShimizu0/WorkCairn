@@ -38,15 +38,15 @@ Go 1.23以上だけを使用します。別言語runtimeやpackage managerは不
 
 ## 一般ユーザーのmacOS First-run
 
-通常利用ではterminalでVault path、Employee ID、Role、Model IDを設定しません。
+通常利用ではterminalでデータフォルダのpath、Employee ID、Role、Model IDを設定しません。
 
 ```bash
 bin/workcairn-daemon
 ```
 
-初回だけnative folder pickerが開きます。推奨のiCloud Drive内に空の`WorkCairn`専用folderを新規作成して選び、Web WizardでStarter Organizationを承認します。iCloud Driveは推奨であって必須ではなく、任意のローカルfolderも選択できます。`AI Connections`はMacのnative hidden-inputからClaudeをmacOS Keychainへ接続し、RoutingはAutomaticのまま使用します。`会社を始める`から最初の依頼へ進みます。別デバイスから接続したい場合は[iPhone Local Web UI](#iphone-local-web-ui)を参照してください。
+初回だけnative folder pickerが開きます。通常のローカル保存場所に空の新しい`WorkCairn`専用データフォルダを作成して選び、Web WizardでStarter Organizationを承認します。iCloud Driveは希望する場合だけ選べる任意の保存先で、推奨はしません。`AI Connections`はMacのnative hidden-inputからClaudeをmacOS Keychainへ接続し、RoutingはAutomaticのまま使用します。`会社を始める`から最初の依頼へ進みます。別デバイスから接続したい場合は[iPhone Local Web UI](#iphone-local-web-ui)を参照してください。
 
-選択したpathはmacOS Application Supportへprivate local configとして保存され、再起動後に再検証されます。既存の個人Obsidian Vault、home、iCloud Drive root、別用途の非空directoryは受け入れません。同じVaultへ書くdaemonは1つだけです。
+選択したpathはmacOS Application Supportへprivate local configとして保存され、再起動後に再検証されます。既存の個人Obsidian Vault、home、iCloud Drive root、別用途の非空directoryは受け入れません。同じデータフォルダへ書くdaemonは1つだけです。
 
 ## Temporary Vaultを準備する（開発・自動test）
 

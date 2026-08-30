@@ -211,6 +211,143 @@ func TestDarwinBrowserOpenerAcceptsOnlyLocalHTTPURL(t *testing.T) {
 	}
 }
 
+func TestDarwinWorkspaceSelectorPromptDoesNotRecommendICloud(t *testing.T) {
+	home := t.TempDir()
+	runner := &recordingRunner{outputs: []string{"\n"}}
+	selector := &DarwinWorkspaceSelector{runner: runner, homeDir: func() (string, error) { return home, nil }}
+	if _, err := selector.Select(context.Background()); !errors.Is(err, ErrCanceled) {
+		t.Fatalf("Select() error = %v, want ErrCanceled", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("calls = %#v", runner.calls)
+	}
+	script := strings.Join(runner.calls[0].args, " ")
+	if strings.Contains(script, "推奨") {
+		t.Fatalf("prompt still recommends a specific location: %q", script)
+	}
+	if !strings.Contains(script, "通常の保存場所") {
+		t.Fatalf("prompt does not describe a normal local location: %q", script)
+	}
+	if !strings.Contains(script, "iCloud Driveは任意です") {
+		t.Fatalf("prompt does not state iCloud Drive is optional: %q", script)
+	}
+}
+
+func TestDarwinWorkspaceSelectorStartsAtDocumentsWhenPresent(t *testing.T) {
+	home := t.TempDir()
+	documents := filepath.Join(home, "Documents")
+	if err := os.Mkdir(documents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{outputs: []string{"\n"}}
+	selector := &DarwinWorkspaceSelector{runner: runner, homeDir: func() (string, error) { return home, nil }}
+	if _, err := selector.Select(context.Background()); !errors.Is(err, ErrCanceled) {
+		t.Fatalf("Select() error = %v, want ErrCanceled", err)
+	}
+	script := strings.Join(runner.calls[0].args, " ")
+	if !strings.Contains(script, appleScriptString(documents)) {
+		t.Fatalf("start folder is not ~/Documents when it exists: %q", script)
+	}
+}
+
+func TestDarwinWorkspaceSelectorFallsBackToHomeWhenDocumentsMissing(t *testing.T) {
+	home := t.TempDir()
+	runner := &recordingRunner{outputs: []string{"\n"}}
+	selector := &DarwinWorkspaceSelector{runner: runner, homeDir: func() (string, error) { return home, nil }}
+	if _, err := selector.Select(context.Background()); !errors.Is(err, ErrCanceled) {
+		t.Fatalf("Select() error = %v, want ErrCanceled", err)
+	}
+	script := strings.Join(runner.calls[0].args, " ")
+	if !strings.Contains(script, appleScriptString(home)) {
+		t.Fatalf("start folder does not fall back to home when Documents is missing: %q", script)
+	}
+	if strings.Contains(script, filepath.Join(home, "Documents")) {
+		t.Fatalf("start folder unexpectedly references a non-existent Documents path: %q", script)
+	}
+}
+
+func TestDarwinWorkspaceSelectorFallsBackToHomeWhenDocumentsIsSymlink(t *testing.T) {
+	home := t.TempDir()
+	target := t.TempDir()
+	documents := filepath.Join(home, "Documents")
+	if err := os.Symlink(target, documents); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{outputs: []string{"\n"}}
+	selector := &DarwinWorkspaceSelector{runner: runner, homeDir: func() (string, error) { return home, nil }}
+	if _, err := selector.Select(context.Background()); !errors.Is(err, ErrCanceled) {
+		t.Fatalf("Select() error = %v, want ErrCanceled", err)
+	}
+	script := strings.Join(runner.calls[0].args, " ")
+	if !strings.Contains(script, appleScriptString(home)) {
+		t.Fatalf("start folder does not fall back to home when Documents is a symlink: %q", script)
+	}
+	if strings.Contains(script, appleScriptString(documents)) || strings.Contains(script, appleScriptString(target)) {
+		t.Fatalf("start folder followed the Documents symlink instead of falling back: %q", script)
+	}
+}
+
+func TestDarwinWorkspaceSelectorFallsBackToHomeWhenDocumentsAccessCheckFails(t *testing.T) {
+	// A real, non-symlink Documents directory exists, but the injected
+	// accessibility predicate reports it unusable -- the same seam
+	// production uses to reject a stat/access failure it cannot follow,
+	// exercised here deterministically instead of via an unstable chmod.
+	home := t.TempDir()
+	documents := filepath.Join(home, "Documents")
+	if err := os.Mkdir(documents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{outputs: []string{"\n"}}
+	selector := &DarwinWorkspaceSelector{
+		runner:  runner,
+		homeDir: func() (string, error) { return home, nil },
+		documentsUsable: func(path string) bool {
+			if path != documents {
+				t.Fatalf("documentsUsable called with unexpected path: %q", path)
+			}
+			return false
+		},
+	}
+	if _, err := selector.Select(context.Background()); !errors.Is(err, ErrCanceled) {
+		t.Fatalf("Select() error = %v, want ErrCanceled", err)
+	}
+	script := strings.Join(runner.calls[0].args, " ")
+	if !strings.Contains(script, appleScriptString(home)) {
+		t.Fatalf("start folder does not fall back to home when Documents fails its access check: %q", script)
+	}
+	if strings.Contains(script, appleScriptString(documents)) {
+		t.Fatalf("start folder used Documents despite a failed access check: %q", script)
+	}
+}
+
+func TestDirIsUsableStartFolder(t *testing.T) {
+	real := t.TempDir()
+	if !dirIsUsableStartFolder(real) {
+		t.Fatalf("dirIsUsableStartFolder(%q) = false, want true for a real directory", real)
+	}
+	target := t.TempDir()
+	symlink := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(target, symlink); err != nil {
+		t.Fatal(err)
+	}
+	if dirIsUsableStartFolder(symlink) {
+		t.Fatalf("dirIsUsableStartFolder(%q) = true, want false for a symlink", symlink)
+	}
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	if dirIsUsableStartFolder(missing) {
+		t.Fatalf("dirIsUsableStartFolder(%q) = true, want false for a missing path", missing)
+	}
+}
+
+func TestDarwinWorkspaceSelectorStillValidatesSelectedPath(t *testing.T) {
+	home := t.TempDir()
+	runner := &recordingRunner{outputs: []string{filepath.Join(home, "does-not-exist") + "\n"}}
+	selector := &DarwinWorkspaceSelector{runner: runner, homeDir: func() (string, error) { return home, nil }}
+	if _, err := selector.Select(context.Background()); err == nil || errors.Is(err, ErrCanceled) {
+		t.Fatalf("Select() error = %v, want ValidateWorkspaceRoot rejection", err)
+	}
+}
+
 func TestDarwinIntegrationUsesOnlyFixedAbsoluteSystemTools(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join("integration_darwin.go"))
 	if err != nil {

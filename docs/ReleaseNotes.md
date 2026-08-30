@@ -48,4 +48,4 @@ Public Betaの正式サポート対象は**macOS／arm64のみ**です。macOS�
 
 ### データの安全性
 
-WorkCairn自身はVault backup製品ではありません。実運用前にtemporary Vaultで確認し、外部backupを別途用意してください。詳細は[Operator Guide](https://github.com/AkiraShimizu0/WorkCairn/blob/v1.0.0-beta.1/docs/OperatorGuide.md)と[Recovery Guide](https://github.com/AkiraShimizu0/WorkCairn/blob/v1.0.0-beta.1/docs/Recovery.md)を参照してください。
+WorkCairn自身はbackup製品ではありません。実運用前に空の一時的なデータフォルダで確認し、別の方法でbackupを用意してください。詳細は[Operator Guide](https://github.com/AkiraShimizu0/WorkCairn/blob/v1.0.0-beta.1/docs/OperatorGuide.md)と[Recovery Guide](https://github.com/AkiraShimizu0/WorkCairn/blob/v1.0.0-beta.1/docs/Recovery.md)を参照してください。

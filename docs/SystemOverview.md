@@ -18,7 +18,7 @@ First Run → Interaction Start → CEO Intent → Go Canonical Plan → Plan Ap
 
 一般daemonは`workspace.setup`とこのInteractionを進める5 operationだけをside-effect allow-listへ持ちます。direct Task／Review／Revision、plain／direct Reviewed Workflow、writer、Scheduler、External Actionはoperator CLI／内部Processとして維持しますが、一般Web UI／daemonから実行できません。
 
-macOSの初回起動では、利用者がnative pickerでWorkCairn専用directoryを明示選択します。iCloud Driveを推奨しますが、既存Vaultを探索・変更しません。選択済みrootはRuntime edgeのApplication Support configから再起動時にcomposeし、Starter Organizationは既存Organization writerを通します。対話利用のClaude credentialはMac native inputからanonymous socketでbounded helperへ渡し、Security.frameworkを直接呼ぶKeychain Adapterで保存・read-backします。ADR-0066の無人運用では、daemon operatorがsourceを明示し、environmentまたはOS user config root配下の固定・0600・現user所有fileだけを読みます。明示source間のfallbackはありません。iPhoneはpath／secretを送らず、redactedなsetup状態とNext Actionだけを表示します。
+macOSの初回起動では、利用者がnative pickerでWorkCairn専用directoryを明示選択します。通常のローカル保存場所を標準とし、iCloud Driveは任意です。既存Vaultを探索・変更しません。選択済みrootはRuntime edgeのApplication Support configから再起動時にcomposeし、Starter Organizationは既存Organization writerを通します。対話利用のClaude credentialはMac native inputからanonymous socketでbounded helperへ渡し、Security.frameworkを直接呼ぶKeychain Adapterで保存・read-backします。ADR-0066の無人運用では、daemon operatorがsourceを明示し、environmentまたはOS user config root配下の固定・0600・現user所有fileだけを読みます。明示source間のfallbackはありません。iPhoneはpath／secretを送らず、redactedなsetup状態とNext Actionだけを表示します。
 
 この文書は「現在どう動くか」を説明します。不変条件は[CONSTITUTION.md](CONSTITUTION.md)、個別判断の理由は[ADR](adr/)、詳細なpackage構造は[Architecture.md](Architecture.md)、安全な導入は[PublicBetaQuickstart.md](PublicBetaQuickstart.md)と[OperatorGuide.md](OperatorGuide.md)、HTTP運用は[HTTPAPI.md](HTTPAPI.md)、今後の順序は[ROADMAP.md](ROADMAP.md)を正とします。
 
@@ -155,7 +155,7 @@ Vaultは現在の運用データの正ですが、Go Coreからはport越しに�
 - `社員/`、`会社/Workspace State.md`: Employee identityをcanonical、会社一覧をprojectionとして扱う
 - `.workspace-os/schedules/`: 承認済みone-shot Command、due time、Version／CAS、dispatch／terminal stateを持つmachine metadata
 
-macOSではWorkCairn専用rootをiCloud Drive上に置き、Obsidianから同じfolderを開けます。ただしiCloudは同期transportであり複数writerのlock／transactionではありません。1 daemon writer、既存atomic replacement、file lock、Version／CASを維持し、同期競合を推測修復しません。
+macOSでは通常のローカル保存場所を標準とし、希望する場合だけWorkCairn専用rootをiCloud Drive上に置けます。Obsidianは任意のviewerとして同じfolderを開けます。ただしiCloudは同期transportであり複数writerのlock／transactionではありません。1 daemon writer、既存atomic replacement、file lock、Version／CASを維持し、同期競合を推測修復しません。
 
 単一ファイルは同一directoryのtemporary file、flush／sync、rename、directory syncで置換します。既存immutable artifactは上書きしません。Task表とmanaged metadataの欠落、破損、重複、不整合は推測せず拒否します。複数ファイル操作はtransactionではないため、各ADRのcommit orderingとpartial stateが回復判断の根拠です。
 

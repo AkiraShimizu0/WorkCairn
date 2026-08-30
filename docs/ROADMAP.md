@@ -516,6 +516,8 @@ PHASE PB-1で外部公開前のPublic Beta Readiness Inventoryを実施し、Int
 
 PHASE PB-2.11でCodexによる独立Final Public-Beta Cross-Reviewを実施し、Engineering Gate（`make v1-release-gate`、`make public-beta-smoke`、`make check-ui-full`）とArchitecture／Security実装はいずれもGreenでしたが、Release Notesのrepository-relative linkとcredential policyの記述にP1を2件発見しました。PHASE PB-2.12でこの2件のP1と、OperatorGuide／Architecture／Public Release Checklistの小さなP2／P3 docs driftを修正しました。PHASE PB-2.13とPB-2.13aのCodex focused re-reviewでは、Plan生成時にCommand LedgerとInteraction Sessionへ証拠を保存する境界までOperator Guideへ明記し、全findingの解消を確認しました。PHASE PB-2.14では、`CONTRIBUTING.ja.md`と`SECURITY.md`に残っていた一般語の不自然な英語混在を整理し、設定値や型名などの識別子を維持したまま日本語表現を統一します。PHASE PB-2.15で承認済みdocs差分を1 commitへ確定し、PHASE PB-2.16でその最終tag候補commitへ`make public-beta-smoke`／`make check-ui-full`／`make v1-release-gate`を再実行してGreenを確認しました。PHASE PB-2.17のCodex scope／fixture監査でP1を2件発見し、PHASE PB-2.17aでHuman Acceptanceの必須（macOS／arm64 loopbackだけで完結）と任意（iPhone、iCloud Drive、Obsidian等）の区分をFirst-run AcceptanceとPublic Release Checklistへ同期し、Git管理fixtureのsynthetic data provenance policyをCONTRIBUTINGへ追加しました。PB-3は引き続きpackaged-binary／Provider Human Acceptanceとして維持します。
 
+PHASE PB-2.22〜PB-2.24でREADME英日版のstorage positioningを、既存Vault／iCloud Drive／Obsidian前提から、通常のローカルデータフォルダを標準としiCloud Drive・Obsidianをいずれも完全に任意とする表現へ再構成し、PHASE PB-2.25の自動Gate確認とPHASE PB-2.27のmain push・remote同期を完了しました。PHASE PB-2.28のCodex監査で、README以外の公開docs（SECURITY.md、Release Notes、Public Beta Quickstart、Public Release Checklist、System Overview）とmacOS native folder picker、Web UIには同じstorage positioningとのズレが残っているとしてNO-GO判定を受けました。PHASE PB-2.28aで[ADR-0070](adr/ADR-0070-local-data-folder-default.md)を新設し、通常のローカルデータフォルダをPublic Beta first-run一般説明の標準とし、iCloud DriveとObsidianをいずれも完全な任意として扱う方針を確定しました（ADR-0038の「pickerはiCloud Driveを推奨開始位置とする」という現在状態記述の一文だけを限定的にsupersede、ADR-0037／ADR-0038本体とその他の判断は無変更）。この方針へ上記の公開docs、macOS native folder pickerの開始位置・prompt文言、Web UIのstorage copyを同期しました。folder-based persistence、`--vault`、Vault Adapter、Vault schema、JSON Contract、Provider接続要件はPublic Beta中いずれも変更していません。
+
 Public Beta公開前に残る人間／実環境確認：
 
 - WorkCairnの正式商標clearance、GitHub Private Vulnerability Reportingの有効化、GitHub Discussions有効化（support窓口として採用する場合）。GitHub repository slugは`WorkCairn`へ実rename済み（PHASE PB-2.1）
@@ -529,6 +531,7 @@ Public Beta公開前に残る人間／実環境確認：
 - Provider streamingはprogress観測、partial stream failure、cancellation、durable diagnosticsを設計する後続候補とし、Public Beta timeout安定化では導入しない
 - ADR-0036の`workcairn-auto`を起点に、複数Provider導入時だけEmployee Role／Task capability／接続済みRuntime／quality・cost・latency policyからtyped Routeを解決する拡張（暗黙fallbackなし）
 - 日本語／英語のUI切替（`M-UI-1 Bilingual Product UI Architecture`）は、初回画面とSettingsから変更できる明示切替、言語設定の保存方式、Task状態・Role・Command・JSON Contract等のcanonical valueは翻訳せず表示文言だけをlocaleへ対応させる分離、UI言語とAI成果物の出力言語を別の設定・責務として扱う設計、`ja`／`en`双方のBrowser Gate検証、hidden fallbackなしの閉じたlocale選択を、Public Beta公開後にArchitecture／ADRで先に設計する独立した将来Checkpointとする。今回は実装せず、PB-3の前提にもblockerにもしない
+- SQLite導入、業務データのApplication Support移行、Vault export adapterによるstorage migration（`M-0 Internal Storage Architecture`）は、ADR-0070が対象外とした設計課題として、Public Beta公開後にArchitecture／ADRで別途設計する独立した将来Checkpointとする。今回は実装せず、PB-3の前提にもblockerにもしない
 
 ## Cross-Cutting Gates
 
