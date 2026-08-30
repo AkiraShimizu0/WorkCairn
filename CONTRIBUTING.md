@@ -67,6 +67,19 @@ JSON Contract v1 (and the Prompt/Markdown/migration fixtures that go with it) is
 - Tests don't call a real Provider API — use the existing Fake Runner / Mock HTTP server.
 - Tests don't run against a real Vault — use a temporary directory.
 
+## Test-data provenance
+
+Every tracked fixture, test sample, test identity, Project name, request text, ID, timestamp, credential, and Provider response in this repository must be synthetic.
+
+- Never derive fixture content from a real user, real customer, real business, real Vault, or real Provider exchange — not even redacted or anonymized.
+- Credentials in fixtures are explicit fake values only.
+- Fixture and sample URLs use loopback addresses or reserved example domains. A publicly documented production endpoint may appear only in a configuration-policy test that makes no real network request and contains no real credential, request, or response data.
+- Timestamps and IDs are fixed test values, not captured from a live run.
+- Don't commit data whose provenance you can't account for.
+- The Starter Organization's `Product Manager`, `Content Writer`, and `QA Engineer` are synthetic bootstrap role labels the product ships with — not records of real people.
+
+A PB-2.17 audit of every tracked fixture found no evidence of real-data leakage, and the repository owner confirmed the current fixtures are test-only synthetic data.
+
 ## UI changes
 
 If you touch `go/internal/httpapi/web/`, verify:

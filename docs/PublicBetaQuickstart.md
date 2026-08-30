@@ -70,7 +70,7 @@ bin/workcairn-daemon --vault "$beta_vault"
 
 ## iPhone Local Web UI
 
-MacとiPhoneを同じ信頼できるWi-Fiへ接続します。
+これは任意機能です。実施しなくても、Mac loopbackだけで一般UIの正式経路が完結し、Public Beta GOの前提ではありません。MacとiPhoneを同じ信頼できるWi-Fiへ接続します。
 
 ```bash
 bin/workcairn-daemon --vault "$beta_vault" --local-network

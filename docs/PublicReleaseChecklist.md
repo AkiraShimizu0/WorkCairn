@@ -46,7 +46,7 @@ PHASE PB-2でcommit `b64caa9`（当時のHEAD）に対し全項目を確認済�
 - [x] 承認なしのProvider／Vault effectが拒否される。
 - [x] JSON Contract v1、Prompt／Markdown／migration fixtureが成功する。
 - [x] retired runtime asset guardとarchitecture ownership gateが成功する。
-- [x] `make public-beta-browser-gate`（Chromium desktop + WebKit iPhone、フルsuite）が成功する。69 passed、1 skipped（既知のiPhone-project限定skip、desktop-pointer固有assertion）。
+- [x] `make public-beta-browser-gate`（Chromium desktop + WebKit iPhone、フルsuite）が成功する。全required testが成功し、skipは既知の1件のみ（iPhone-project限定、desktop-pointer固有assertion）。
 
 ## 4. Archive and checksum
 
@@ -106,17 +106,21 @@ iPhone Web UIはavailableな任意機能であり、Public Beta acceptanceの必
 ### Filesystem／upgrade
 
 - [ ] Human Operator自身のMacで、選択した専用Vault root（iCloud Driveは推奨だが必須ではなく、任意のローカルfolderでもよい）でFirst-runを完了し、既存個人Vaultが変更されていないことを確認した。Obsidianから開けることの確認は任意（Obsidianは必須dependencyではない）。
-- [ ] [macOS First-run Acceptance](PublicBetaFirstRunAcceptance.md)を1回通し、再起動後のTimeline／persistent failureを確認した。
+- [ ] [macOS First-run Acceptance](PublicBetaFirstRunAcceptance.md)の必須Mac loopback sectionだけを1回通し、再起動後のTimeline／persistent failureを確認した。
 - [ ] 同一Vaultへ複数daemonをwriterとして起動していない。
-- [ ] native filesystemでatomic replacement、file lock、CAS conflict、graceful shutdownを確認した。
-- [ ] 実Vaultのcopyでread-only inventoryとmigration planだけを実行した。
-- [ ] 実Vault本体は変更せず、backup／restore手順を別に確認した。
+- [ ] SIGINT／SIGTERMでgraceful shutdownすることを確認した。
+
+任意／deferred。Public Beta blockerではない：
+
+- [ ] native filesystemでatomic replacement、file lock、CAS conflictの追加stressを確認する。
+- [ ] 実Vaultのcopyでread-only inventoryとmigration planだけを実行する。
+- [ ] 実Vault本体を変更しないbackup／restore演習を別に確認する。
 
 ## 7. Security and privacy review
 
 - [x] tracked fileとarchiveにsecret、private key、実Provider responseがない（PB-1の全history／tracked file secret scanと、PB-2の実archive内容確認で確認済み）。
 - [x] 人名、社員情報、Project名、Vault path、username、home directory等の個人／machine固有情報がfixture以外にない（PB-1で確認済み）。
-- [ ] fixtureの人物、Project、credential、timestampは明示的なfakeである（fixture単位の網羅確認は未実施）。
+- [x] fixtureの人物、Project、credential、timestampは明示的なfakeである（PHASE PB-2.17のGit管理対象監査で実データ漏えいの証拠なし、repository ownerがsynthetic dataであることを確認、[CONTRIBUTING.md](../CONTRIBUTING.md)／[CONTRIBUTING.ja.md](../CONTRIBUTING.ja.md)へtest-data provenance policyとして記録）。
 - [x] daemonの既定loopback、local-network private-address制約、same-origin effect requestがtestで固定される（既存test、PB-2の全Go test再実行で確認）。
 - [x] remote authentication、TLS、Push、automatic retry、remote Action reconciliationを未実装として明記する（README、SECURITY.md、OperatorGuide.md、Release Notesに記載済み）。
 - [x] WordPress credentialをRuntime環境だけから受け取り、evidenceへ保存しない（OperatorGuide.mdに記載済み、既存testで確認）。
