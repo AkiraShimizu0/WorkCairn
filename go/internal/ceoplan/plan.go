@@ -336,17 +336,29 @@ func validateDependencyGraph(tasks []ProposedTask) error {
 // the field, does.
 const placeholderTrimSet = "<>[]{}\"'“”‘’"
 
-// isPlaceholderValue reports whether value is exactly the literal token
-// "placeholder" (case-insensitive, surrounding whitespace and one layer of
-// wrapping punctuation trimmed) and nothing else. This is the one
-// evidence-backed token real Provider Planning output has repeatedly
-// produced (see docs/adr/ADR-0067-planning-placeholder-rejection.md) --
-// deliberately not a generic banned-word list or fuzzy/substring match.
+// nonContentTokens is the small, fixed set of exact literal tokens real
+// Provider Planning output has repeatedly produced in place of real content
+// (see docs/adr/ADR-0067-planning-placeholder-rejection.md). Each entry must
+// be backed by real observed evidence before being added -- this is
+// deliberately not a generic banned-word list.
+var nonContentTokens = []string{"placeholder", "junk"}
+
+// isPlaceholderValue reports whether value is exactly one of
+// nonContentTokens (case-insensitive, surrounding whitespace trimmed, and
+// wrapping punctuation characters from placeholderTrimSet trimmed from both
+// ends) and nothing else. A sentence that merely contains one of these
+// words (e.g. "junk dataを整理する") never matches -- deliberately not a
+// generic banned-word list or fuzzy/substring match.
 func isPlaceholderValue(value string) bool {
 	trimmed := strings.TrimSpace(value)
 	trimmed = strings.Trim(trimmed, placeholderTrimSet)
 	trimmed = strings.TrimSpace(trimmed)
-	return strings.EqualFold(trimmed, "placeholder")
+	for _, token := range nonContentTokens {
+		if strings.EqualFold(trimmed, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func requiredText(value, field string) (string, error) {

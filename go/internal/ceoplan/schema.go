@@ -90,7 +90,7 @@ func IntentJSONSchema(allowedRoles []string) (map[string]any, error) {
 			// instruction stays a short, non-duplicated pointer at this
 			// same rule -- this description is the one place the full
 			// wording lives.
-			"description":            intentString("The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value, and never return a placeholder token such as \"placeholder\" or \"TBD\" in place of real content."),
+			"description":            intentString("The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value, and never return a placeholder token such as \"placeholder\", \"junk\", or \"TBD\" in place of real content."),
 			"required_role":          roleSchema,
 			"parallel_with_previous": parallelWithPreviousSchema,
 		}
@@ -114,7 +114,7 @@ func IntentJSONSchema(allowedRoles []string) (map[string]any, error) {
 		"properties": map[string]any{
 			"project_name": intentString("A display name proposal. Must contain a non-whitespace character."),
 			"objective":    intentString("The requested outcome. Must contain a non-whitespace character."),
-			"summary":      intentString("A short plan summary. Must contain a non-whitespace character, and must never be a placeholder token such as \"placeholder\" or \"TBD\" in place of a real summary."),
+			"summary":      intentString("A short plan summary. Must contain a non-whitespace character, and must never be a placeholder token such as \"placeholder\", \"junk\", or \"TBD\" in place of a real summary."),
 			"steps": map[string]any{
 				"type": "array", "minItems": 1,
 				"items": map[string]any{"anyOf": []any{nonReviewStep, reviewStep}},

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
@@ -140,7 +141,7 @@ func TestIntentJSONSchemaStepDescriptionExplicitlyRejectsBlank(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantText = "The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value, and never return a placeholder token such as \"placeholder\" or \"TBD\" in place of real content."
+	const wantText = "The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value, and never return a placeholder token such as \"placeholder\", \"junk\", or \"TBD\" in place of real content."
 	stepsSchema := schema["properties"].(map[string]any)["steps"].(map[string]any)
 	stepUnion := stepsSchema["items"].(map[string]any)["anyOf"].([]any)
 	for index, rawStep := range stepUnion {
@@ -148,6 +149,24 @@ func TestIntentJSONSchemaStepDescriptionExplicitlyRejectsBlank(t *testing.T) {
 		if descriptionSchema["description"] != wantText {
 			t.Fatalf("steps item %d description schema text = %q, want %q", index, descriptionSchema["description"], wantText)
 		}
+	}
+}
+
+// TestIntentJSONSchemaSummaryDescriptionMentionsJunkToken is PB-3d's minimal
+// prompt/schema hardening check: the summary field's schema description
+// must name "junk" alongside "placeholder", so Structured Outputs sees the
+// evidence-backed non-content token in the same defensive wording. This is
+// recurrence-reduction only, not the runtime guarantee (that is
+// isPlaceholderValue via NormalizeCandidate, covered separately).
+func TestIntentJSONSchemaSummaryDescriptionMentionsJunkToken(t *testing.T) {
+	schema, err := IntentJSONSchema(testAllowedRoles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summarySchema := schema["properties"].(map[string]any)["summary"].(map[string]any)
+	description := summarySchema["description"].(string)
+	if !strings.Contains(description, "junk") {
+		t.Fatalf("summary schema description = %q, want it to mention %q", description, "junk")
 	}
 }
 

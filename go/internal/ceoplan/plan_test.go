@@ -63,11 +63,17 @@ func TestNormalizeCandidateAllowsBlankSummary(t *testing.T) {
 }
 
 // TestIsPlaceholderValueExactMatchOnly locks ADR-0067's narrow definition:
-// only the literal token "placeholder" (trimmed, case-insensitive, one
-// layer of wrapping punctuation stripped) matches -- a sentence that merely
-// contains the word must never be rejected.
+// only a literal token in nonContentTokens (whitespace trimmed,
+// case-insensitive, wrapping punctuation characters from the trim set
+// trimmed from both ends) matches -- a sentence that merely contains the
+// word must never be rejected. "junk" (added by PB-3d after real Provider
+// evidence) is covered alongside the original "placeholder".
 func TestIsPlaceholderValueExactMatchOnly(t *testing.T) {
-	rejected := []string{"placeholder", " placeholder ", "PLACEHOLDER", "Placeholder", "<placeholder>", "[placeholder]", "\"placeholder\"", "  <PlaceHolder>  "}
+	rejected := []string{
+		"placeholder", " placeholder ", "PLACEHOLDER", "Placeholder", "<placeholder>", "[placeholder]", "\"placeholder\"", "  <PlaceHolder>  ",
+		"junk", " junk ", "JUNK", "Junk", "<junk>", "[junk]", "\"junk\"",
+		"<<junk>>", // consecutive wrapping characters are all trimmed, not just one
+	}
 	for _, value := range rejected {
 		if !isPlaceholderValue(value) {
 			t.Errorf("isPlaceholderValue(%q) = false, want true", value)
@@ -80,6 +86,9 @@ func TestIsPlaceholderValueExactMatchOnly(t *testing.T) {
 		"This is a placeholder for now", // contains the word, not an exact value
 		"placeholders",
 		"replace this placeholder later",
+		"junk dataを整理する",
+		"迷惑メール（junk mail）を分類する",
+		"junkyard cleanup schedule",
 	}
 	for _, value := range accepted {
 		if isPlaceholderValue(value) {
@@ -94,7 +103,7 @@ func TestIsPlaceholderValueExactMatchOnly(t *testing.T) {
 // isPlaceholderValue directly.
 func TestParseRunnerOutputRejectsPlaceholderSummary(t *testing.T) {
 	fixture := loadGenerationFixture(t)
-	for _, value := range []string{"placeholder", " Placeholder ", "PLACEHOLDER"} {
+	for _, value := range []string{"placeholder", " Placeholder ", "PLACEHOLDER", "junk", " Junk ", "JUNK"} {
 		var candidate map[string]any
 		if err := json.Unmarshal(fixture.RunnerOutput, &candidate); err != nil {
 			t.Fatal(err)
@@ -114,17 +123,19 @@ func TestParseRunnerOutputRejectsPlaceholderSummary(t *testing.T) {
 func TestParseRunnerOutputRejectsPlaceholderTaskTitleAndRationale(t *testing.T) {
 	fixture := loadGenerationFixture(t)
 	for _, field := range []string{"title", "rationale"} {
-		var candidate map[string]any
-		if err := json.Unmarshal(fixture.RunnerOutput, &candidate); err != nil {
-			t.Fatal(err)
-		}
-		tasks := candidate["proposed_tasks"].([]any)
-		tasks[0].(map[string]any)[field] = "placeholder"
-		encoded, _ := json.Marshal(candidate)
-		_, err := ParseRunnerOutput(string(encoded), fixture.Employees)
-		var parseErr *ParseError
-		if !errors.As(err, &parseErr) || parseErr.Reason != ParseFailurePlaceholderValue {
-			t.Fatalf("task %s=placeholder: err=%v, want *ParseError{Reason: ParseFailurePlaceholderValue}", field, err)
+		for _, token := range []string{"placeholder", "junk"} {
+			var candidate map[string]any
+			if err := json.Unmarshal(fixture.RunnerOutput, &candidate); err != nil {
+				t.Fatal(err)
+			}
+			tasks := candidate["proposed_tasks"].([]any)
+			tasks[0].(map[string]any)[field] = token
+			encoded, _ := json.Marshal(candidate)
+			_, err := ParseRunnerOutput(string(encoded), fixture.Employees)
+			var parseErr *ParseError
+			if !errors.As(err, &parseErr) || parseErr.Reason != ParseFailurePlaceholderValue {
+				t.Fatalf("task %s=%s: err=%v, want *ParseError{Reason: ParseFailurePlaceholderValue}", field, token, err)
+			}
 		}
 	}
 }
@@ -143,16 +154,41 @@ func TestParseRunnerOutputAcceptsFullyValidPlanUnchanged(t *testing.T) {
 // TestValidateApprovedPlanRejectsPlaceholderValue is Step 16's Apply-safety
 // coverage: a Plan reaching ValidateApprovedPlan (the Apply-time path any
 // externally/manually supplied --plan-json also goes through) with a
-// placeholder Summary must be rejected there too, via the same shared
-// NormalizeCandidate boundary -- not a second, duplicated validator.
+// non-content Summary, Task Title, or Task Rationale must be rejected there
+// too, via the same shared NormalizeCandidate boundary -- not a second,
+// duplicated validator. Each case sets exactly one field, on its own fresh
+// loadGenerationFixture(t) call (a fresh json.Unmarshal per subtest, so
+// ProposedTasks -- a slice -- is never shared across cases; there is no
+// aliasing to guard against and no order dependency between subtests).
 func TestValidateApprovedPlanRejectsPlaceholderValue(t *testing.T) {
-	fixture := loadGenerationFixture(t)
-	plan := fixture.ExpectedPlan
-	plan.Summary = "placeholder"
-	_, err := ValidateApprovedPlan(plan, fixture.Employees)
-	var parseErr *ParseError
-	if !errors.As(err, &parseErr) || parseErr.Reason != ParseFailurePlaceholderValue {
-		t.Fatalf("err=%v, want *ParseError{Reason: ParseFailurePlaceholderValue}", err)
+	cases := []struct {
+		name  string
+		field string
+		token string
+	}{
+		{name: "placeholder_summary", field: "summary", token: "placeholder"},
+		{name: "junk_summary", field: "summary", token: "junk"},
+		{name: "junk_title", field: "title", token: "junk"},
+		{name: "junk_rationale", field: "rationale", token: "junk"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := loadGenerationFixture(t)
+			plan := fixture.ExpectedPlan
+			switch testCase.field {
+			case "summary":
+				plan.Summary = testCase.token
+			case "title":
+				plan.ProposedTasks[0].Title = testCase.token
+			case "rationale":
+				plan.ProposedTasks[0].Rationale = testCase.token
+			}
+			_, err := ValidateApprovedPlan(plan, fixture.Employees)
+			var parseErr *ParseError
+			if !errors.As(err, &parseErr) || parseErr.Reason != ParseFailurePlaceholderValue {
+				t.Fatalf("field=%s token=%s: err=%v, want *ParseError{Reason: ParseFailurePlaceholderValue}", testCase.field, testCase.token, err)
+			}
+		})
 	}
 }
 
@@ -270,6 +306,12 @@ func TestCEOPlanPromptIsDeterministicAndPreservesUnicodeJSON(t *testing.T) {
 	}
 	if want := `[{"department": "R&D <未来>", "id": "DEV-001", "role": "設計 \"Lead\""}]`; !strings.Contains(first.System, want) {
 		t.Fatalf("system does not preserve JSON: %s", first.System)
+	}
+	// PB-3d: the placeholder-avoidance instruction line must also name
+	// "junk", the evidence-backed non-content token found in real Provider
+	// output -- recurrence-reduction only, not the runtime guarantee.
+	if !strings.Contains(first.System, "junk") {
+		t.Fatalf("system prompt does not mention the junk token: %s", first.System)
 	}
 }
 

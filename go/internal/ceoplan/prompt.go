@@ -48,7 +48,7 @@ func BuildPrompt(request string, employees []organization.Identity) (worker.Prom
 		"JSONオブジェクトだけを返してください。前後にMarkdown、code fence（```）、説明文を一切含めないでください。",
 		"下記のtop-level fieldとsteps fieldの一覧にない、それ以外のfieldを一切追加しないでください。",
 		"top-level fieldはすべて必須です。該当しない配列も省略せず、空配列[]として出力してください。",
-		"summaryやdescriptionに「placeholder」「TBD」などの仮の値を出力しないでください。必ず実際の判断内容を記述してください。",
+		"summaryやdescriptionに「placeholder」「junk」「TBD」などの仮の値を出力しないでください。必ず実際の判断内容を記述してください。",
 		"",
 		"## top-level fields",
 		"project_name, objective, summary, steps, ceo_questions の5つだけを、この順序で出力してください。",

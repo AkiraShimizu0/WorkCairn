@@ -81,51 +81,79 @@ func TestGenerateCEOPlanUsesClaudeAdapterAndTemporaryVault(t *testing.T) {
 	}
 }
 
-// TestGenerateCEOPlanRejectsPlaceholderSummaryThroughRealPath is a
-// secret-free regression fixture for the real Human Acceptance evidence
-// that motivated ADR-0067: a request for a社内FAQページ作業計画 ("FAQ page
-// work plan, split into research / writing / confirmation") for which the
-// real Provider once returned a structurally valid Intent with
-// Summary="placeholder" and the second step's own description ("PROPOSED-002")
-// also "placeholder". No real Request ID, credential, or raw Provider
-// transcript is reproduced here -- only the reported request text and the
-// observed defect shape. This exercises the one production entrypoint
-// every Planning path shares (interaction.plan.generate,
-// GenerateResponsibilityPlan -- therefore both manual responsibility-plan
-// and Routine dispatch -- all call this exact GenerateCEOPlan function, see
-// internal/process/interaction.go and internal/process/responsibility_work.go):
-// the placeholder-laden response is rejected, not silently accepted, and no
-// second Provider call is made.
-func TestGenerateCEOPlanRejectsPlaceholderSummaryThroughRealPath(t *testing.T) {
-	fixture := loadCEOPlanFixture(t)
-	root := ceoPlanVault(t, fixture.Employees)
-	realRequest := "新しい社内FAQページを作るための作業計画を作ってください。調査、文章作成、確認の作業に分けてください。"
-	intentOutput, _ := json.Marshal(map[string]any{
-		"project_name": "社内FAQページ", "objective": "社内向けFAQページを新設する",
-		"summary": "placeholder",
-		"steps": []map[string]any{
-			{"kind": "research", "description": "既存の問い合わせ内容を調査する", "required_role": "Product Manager"},
-			{"kind": "write", "description": "placeholder", "required_role": "Product Manager"},
-			{"kind": "review", "description": "内容を確認する"},
+// TestGenerateCEOPlanRejectsNonContentTokenThroughRealPath is a secret-free
+// regression fixture for real Human Acceptance evidence that motivated
+// ADR-0067 (the original "placeholder" token, rejected via the Plan
+// Summary) and its PB-3d extension (the "junk" token, observed in the
+// actual PB-3 Human Provider Acceptance run as a non-review step's own
+// description -- which NormalizeIntent copies verbatim into the resulting
+// Task's Title/Rationale, rejected via that path instead of Summary, since
+// NormalizeCandidate validates Summary first and a case that set both
+// fields to the same token would only ever exercise the Summary check).
+// Each case sets exactly one field to the non-content token and keeps every
+// other field (including the review step's own description) as ordinary,
+// meaningful content, so each case genuinely reaches the code path its name
+// claims. No real Request ID, credential, or raw Provider transcript is
+// reproduced -- only synthetic request text and the observed defect shape.
+// This exercises the one production entrypoint every Planning path shares
+// (interaction.plan.generate, GenerateResponsibilityPlan -- therefore both
+// manual responsibility-plan and Routine dispatch -- all call this exact
+// GenerateCEOPlan function, see internal/process/interaction.go and
+// internal/process/responsibility_work.go): the non-content-laden response
+// is rejected, not silently accepted, and no second Provider call is made.
+func TestGenerateCEOPlanRejectsNonContentTokenThroughRealPath(t *testing.T) {
+	const meaningfulSummary = "社内向けFAQページを新設するための計画"
+	const meaningfulStepDescription = "既存の問い合わせ内容を調査する"
+	cases := []struct {
+		name             string
+		summary          string
+		writeStepSummary string
+		request          string
+	}{
+		{
+			name: "placeholder_summary", summary: "placeholder", writeStepSummary: meaningfulStepDescription,
+			request: "新しい社内FAQページを作るための作業計画を作ってください。調査、文章作成、確認の作業に分けてください。",
 		},
-		"ceo_questions": []string{},
-	})
-	providerResponse, _ := json.Marshal(map[string]any{
-		"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(intentOutput)}},
-		"usage": map[string]int{"input_tokens": 10, "output_tokens": 20},
-	})
-	calls := 0
-	client := ceoPlanHTTPDoer(func(request *http.Request) (*http.Response, error) {
-		calls++
-		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
-	})
-	_, err := GenerateCEOPlan(context.Background(), CEOPlanGenerationInput{VaultRoot: root, Request: realRequest, Model: "Claude Sonnet 5", Approved: true}, ClaudeProcessConfig{APIKey: "fake-key", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}, client)
-	var planError *service.CEOPlanError
-	if !errors.As(err, &planError) || planError.Stage != service.CEOPlanParserStage {
-		t.Fatalf("err=%v, want *service.CEOPlanError{Stage: CEOPlanParserStage}", err)
+		{
+			name: "junk_step_description", summary: meaningfulSummary, writeStepSummary: "junk",
+			request: "初めて使う人向けの短い歓迎メモを作成する作業計画を作ってください。",
+		},
 	}
-	if calls != 1 {
-		t.Fatalf("Provider called %d times, want exactly 1 (no hidden retry)", calls)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := loadCEOPlanFixture(t)
+			root := ceoPlanVault(t, fixture.Employees)
+			intentOutput, _ := json.Marshal(map[string]any{
+				"project_name": "テストProject", "objective": "テストObjective",
+				"summary": testCase.summary,
+				"steps": []map[string]any{
+					{"kind": "write", "description": testCase.writeStepSummary, "required_role": "Product Manager"},
+					{"kind": "review", "description": "内容を確認する"},
+				},
+				"ceo_questions": []string{},
+			})
+			providerResponse, _ := json.Marshal(map[string]any{
+				"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(intentOutput)}},
+				"usage": map[string]int{"input_tokens": 10, "output_tokens": 20},
+			})
+			calls := 0
+			client := ceoPlanHTTPDoer(func(request *http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
+			})
+			_, err := GenerateCEOPlan(context.Background(), CEOPlanGenerationInput{VaultRoot: root, Request: testCase.request, Model: "Claude Sonnet 5", Approved: true}, ClaudeProcessConfig{APIKey: "fake-key", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}, client)
+			var planError *service.CEOPlanError
+			if !errors.As(err, &planError) || planError.Stage != service.CEOPlanParserStage {
+				t.Fatalf("err=%v, want *service.CEOPlanError{Stage: CEOPlanParserStage}", err)
+			}
+			var parseErr *ceoplan.ParseError
+			if !errors.As(err, &parseErr) || parseErr.Reason != ceoplan.ParseFailurePlaceholderValue {
+				t.Fatalf("err=%v, want wrapped *ceoplan.ParseError{Reason: ParseFailurePlaceholderValue}", err)
+			}
+			if calls != 1 {
+				t.Fatalf("Provider called %d times, want exactly 1 (no hidden retry)", calls)
+			}
+		})
 	}
 }
 
