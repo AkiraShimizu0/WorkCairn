@@ -24,7 +24,7 @@
           },
           "summary": {
             "type": "string",
-            "description": "A short plan summary. Must contain a non-whitespace character, and must never be a placeholder token such as \"placeholder\" or \"TBD\" in place of a real summary."
+            "description": "A short plan summary. Must contain a non-whitespace character, and must never be a placeholder token such as \"placeholder\", \"junk\", or \"TBD\" in place of a real summary."
           },
           "steps": {
             "type": "array",
@@ -40,7 +40,7 @@
                     },
                     "description": {
                       "type": "string",
-                      "description": "The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value, and never return a placeholder token such as \"placeholder\" or \"TBD\" in place of real content."
+                      "description": "The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value, and never return a placeholder token such as \"placeholder\", \"junk\", or \"TBD\" in place of real content."
                     },
                     "required_role": {
                       "type": "string",
@@ -64,7 +64,7 @@
                     },
                     "description": {
                       "type": "string",
-                      "description": "The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value, and never return a placeholder token such as \"placeholder\" or \"TBD\" in place of real content."
+                      "description": "The actionable work instruction for this step. Must be a non-empty string describing what the assigned employee should actually do. Do not return an empty or whitespace-only value, and never return a placeholder token such as \"placeholder\", \"junk\", or \"TBD\" in place of real content."
                     },
                     "required_role": {
                       "type": "string",
