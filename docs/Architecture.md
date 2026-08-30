@@ -113,6 +113,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0065: Company Attention / Decision Feed v1](adr/ADR-0065-company-attention-feed.md)
 - [ADR-0066: Headless Credential Resolution for Unattended Operation](adr/ADR-0066-headless-credential-resolution.md)
 - [ADR-0070: Local Data Folder Default and Optional Storage/Viewers](adr/ADR-0070-local-data-folder-default.md)
+- [ADR-0071: macOS Developer ID Signing and Notarization Architecture](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -249,7 +250,9 @@ WorkCairnの移行は完了しています。`workcairn`、`workcairn-daemon`、
 
 Public BetaではmacOS／arm64をTier 1とし、macOS／amd64、Linux／amd64、Linux／arm64はcross-build後に各native smokeを要求します。WindowsはVault file lockが未対応のためsupportしません。このplatform境界はAdapterの制約であり、Domain／Service契約は変更しません。
 
-ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環境変数はWorkCairnへrenameしました。`Workspace`／`Workspace Kernel`は一般Architecture概念、`workspace-command.v1`、`workspace-interaction.v1`、`.workspace-os`、managed metadata markerは通信／永続化contractとして意図的に維持します。実GitHub repository slugは`WorkCairn`へrename済みで、Go module pathも`github.com/AkiraShimizu0/WorkCairn/go`へ同期済みです（ADR-0068）。RepositoryのPrivate → Public化は別のHuman release actionとして未完了です。
+ADR-0071により、macOS release archiveの生成境界（`scripts/package-release.sh`のdarwin経路）はDeveloper ID Application署名、Hardened Runtime、Apple notarizationを必須とし、ad-hoc署名やunsigned binaryのarchive化を恒久的に禁止します。macOS canonical distribution containerはDMG（tar.gzから移行）です。この境界はrelease packaging／verification scriptだけに閉じ、Domain／Service／Kernel契約、Linux archive形式、`go-build`／`v1-release-gate`のad-hoc署名は変更しません。署名・notarization実装自体とHuman Acceptanceは本ADR時点で未着手です。
+
+ADR-0034により公開名、binary、archive、Go module、WorkCairn固有環境変数はWorkCairnへrenameしました。`Workspace`／`Workspace Kernel`は一般Architecture概念、`workspace-command.v1`、`workspace-interaction.v1`、`.workspace-os`、managed metadata markerは通信／永続化contractとして意図的に維持します。実GitHub repository slugは`WorkCairn`へrename済みで、Go module pathも`github.com/AkiraShimizu0/WorkCairn/go`へ同期済みです（ADR-0068）。RepositoryはPrivateからPublicへ実際に切り替え済みで、Private Vulnerability Reportingも有効化済みです（PHASE PB-2.33）。`v1.0.0-beta.1`のtag作成、GitHub Release公開はいずれも別のHuman release actionとして未完了のままです。
 
 - 依存解析や実行可否判定などの副作用のないCoreを含め、中核ルールはGoを正本とします。
 - MarkdownやObsidianのファイルI/OはCoreの外側に置きます。

@@ -2,9 +2,18 @@
 
 この手順が実Keychain、実Providerを使う人間確認です。自動testはtemporary directoryとFakeだけを使い、既存の個人Obsidian Vaultには触れません。
 
-## A. 必須 — macOS／arm64 Acceptance
+**現在状態（PHASE PB-3n.2、[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)）**: セクションAは**ad-hoc署名binary時代のhistorical product-flow evidence**です。Provider Plan／Task／Reviewという一般利用フロー自体が動くことを示した記録として保持しますが、**セクションA単独ではPublic Beta GOと判断できません**。ADR-0071実装後、Public Beta GOに必須の条件は次のすべてです。
 
-必須手順はMacだけで完結します。iPhone、`--local-network`、iCloud Drive、Obsidianはいずれも不要です。
+- セクションC（signed build New-user Keychain Acceptance）
+- セクションD（signed build Upgrade Keychain Acceptance）
+- セクションE（quarantined download／Gatekeeper Acceptance）
+- Provider Plan／Task／Reviewの一般利用フロー自体のAcceptance（signed buildに対して別途必須。セクションAはこの一部をad-hoc buildで示した記録に過ぎず、signed buildでの再確認を代替しません）
+
+C・D・Eはいずれも**未実施**です。したがって**現時点のPublic BetaはNO-GOです**。セクションAの過去手順は削除せず、historical／旧candidate（ad-hoc署名）evidenceとして以下にそのまま残します。
+
+## A. Historical — ad-hoc署名binaryによるproduct-flow evidence（Public Beta GOの根拠にならない）
+
+必須手順はMacだけで完結します。iPhone、`--local-network`、iCloud Drive、Obsidianはいずれも不要です。**この手順はTeam IDなし・rebuildごとにdesignated requirementが変わるad-hoc署名binaryに対するものであり、単一buildの起動・Keychain登録・再起動継続だけを検証します。upgrade（build N→N+1）を跨いだKeychain継続アクセスはこの手順では検証できません（PB-3jで実際に破綻）。**
 
 1. final tag対象commitから作ったdarwin／arm64 packaged binaryのarchiveと隣接checksumを確認し、clean directoryへ展開する。
 2. 3 binaryの`version`出力でversion metadataとcommit metadataを確認する。
@@ -27,7 +36,7 @@
 19. test後にcredentialを失効またはrotationする。
 20. 同一Vaultへ複数daemonをwriterとして起動しない。
 
-上記の必須手順だけでPublic Beta GOと判断できます。
+**上記はProvider Plan／Task／Reviewというproduct flow自体がad-hoc署名buildで動作したことを示すhistorical evidenceであり、Public Beta GOの判断根拠にはなりません。** signed buildに対するProvider Acceptance、およびセクションC／D／Eが別途必須です。
 
 ## B. 任意確認
 
@@ -40,3 +49,64 @@
 - 実Vaultのcopy、migration
 - native filesystemでのCAS conflict追加stress
 - 実Vaultのbackup／restore演習
+
+## C. 署名済みbuild — New-user Keychain Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「8」、未実装 — signing実装後に実施、**Public Beta GO必須**）
+
+Developer ID署名・notarization・staple実装後のsigned build Nに対する手順です。現時点では`scripts/package-release.sh`が署名を行わないため実施不能であり、実施済みとして扱いません。`.app`ではないraw CLIであるため、「ダブルクリック起動」や特定の「開く」ダイアログではなく、**FinderでDMGをopenし、Terminalからraw CLIを実行する**という実際の操作へ手順を揃えます。
+
+1. clean macOS userまたは明示隔離環境を用意する。
+2. quarantine属性が付いた状態で、canonical Release asset（署名・notarization・staple済みDMG）を実際のdownload経路（ブラウザ等）から取得する。
+3. FinderでDMGファイル自体を通常のdouble-click openでmountする——`xattr`削除や右クリックoverrideを使わない。
+4. Terminalから、mountされたvolume配下の3 binaryそれぞれの`version`出力を確認する。
+5. macOS native hidden-inputでtest用credentialをWorkCairn Keychain item（`com.workcairn.provider.anthropic`）へ保存する（`workcairn-daemon`経由）。
+6. 同じbuild Nでread-backが成功することを確認する。
+7. graceful shutdownする。
+8. 同じbuild N（同一bytes）を再起動する。
+9. Keychainを再入力せずcredentialが読めることを確認する。
+10. credentialが値・一部・長さ・fingerprintのいずれの形でも露出しないことを確認する。
+11. 本Acceptance（C）専用のtest credentialを失効またはrotationする（セクションDとは別のcredential・別のsessionを使う。Dの手順が始まる前に失効してよい）。
+12. Acceptance evidence（署名identity SHA-1、Team ID、notarization submission ID、DMG／3 CLIそれぞれのGatekeeper検証結果、各step結果）を保持する。
+
+## D. 署名済みbuild — Upgrade Keychain Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「9」、未実装、**Public Beta GO必須**）
+
+signed build N→signed build N+1のKeychain継続アクセスを検証する手順です。PB-3jはad-hoc署名buildでこの継続アクセスが破綻したことを観測しており（causalityは未確定、[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「Unconfirmed hypotheses」参照）、本手順はDeveloper ID署名実装後に初めて実施できます。
+
+**Build N**: immutable commitまたはlocal annotated test tagへ拘束し、source commit SHA、version、build date、`workcairn-daemon`のSHA-256／CDHash、Developer ID identityのSHA-1、実Team ID、canonical identifier、`codesign -d -r-`のdesignated requirementを記録する。
+
+**Build N+1**: Nとは異なるimmutable commitまたはtagへ拘束し、source commit SHA、embedded commit metadata、daemon binary bytes、daemon SHA-256／CDHashがNと異なることを確認する。`RELEASE_EXPECTED_TEAM_ID`とcanonical identifierはNと同じであることを確認し、designated requirementを記録してNの記録と比較する。
+
+**Keychain test**（`workcairn-daemon`のみが対象。Keychainを読まない`workcairn`／`workcairn-core`は対象外）:
+
+1. build NでKeychain経由でtest credentialを登録する。
+2. build N再起動でread成功を確認する。
+3. Keychain項目を変更しないまま、daemon binaryだけをbuild N+1へ置換する。
+4. build N+1で、credentialを再入力せずreadが成功することを確認する。
+5. system prompt（Keychain access許可ダイアログの再表示等）や暗黙のmigration機構へ依存しないことを確認する。
+6. failure時はcredentialを変更せず、retry・別sourceへのfallbackをせず停止し、safe diagnostic（ADR-0066／PB-3m／PB-3m.2、`SafeCredentialSubstage()`／`SafeCredentialCategory()`）を記録する。
+
+**Distribution upgrade**（container自体の検証）: N・N+1ともDeveloper ID署名・notarize・staple・canonical DMG化されていることを確認し、DMG全体のupgrade取得（新しいDMGを別途download）とmountを確認し、Gatekeeper verification（DMG層・3 CLI層の両方、セクションE参照）をN・N+1両方で実施する。
+
+**Credential separation**: 本Acceptance（D）専用のtest credentialをbuild Nで登録し、build N+1でのread完了を確認した後に失効する。セクションC（New-user）とは別のtest credential・別のsessionを使う。Humanの既存real Anthropic credentialは使用しない。Acceptance evidence／記録データ自体は（credential値そのものを除き）削除せず保持する。
+
+## E. Gatekeeper／quarantined download Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「10」、未実装、**Public Beta GO必須**）
+
+DMG層と内部3 CLI層を分離して検証します。**両方が必須です（「または」ではありません）。**
+
+**DMG層**:
+
+1. quarantine属性が実際に付く経路（ブラウザ等）でcanonical Release assetを取得する。
+2. `spctl --assess --type open --context context:primary-signature <dmg>`でDMG自体のsignature／notarization／stapleを確認する。
+3. FinderでDMGを通常のdouble-click openでmountする（right-click override不要、`xattr`削除不要）。
+
+**内部3 CLI層**:
+
+4. mount済みDMG内の3 binaryそれぞれに`spctl --assess --type exec`を実行する。
+5. Terminalから3 binaryそれぞれのversion metadataを確認する。実際にdaemonとして起動するのは`workcairn-daemon`だけであり、`workcairn`／`workcairn-core`はversion出力とごく短いsmokeだけを確認する。
+6. 特定のGUI dialogが表示されること自体を成功条件にしない——「起動が拒否されないこと」を確認する。
+7. Gatekeeper rejectがないことを確認する。
+
+**両層共通**:
+
+8. macOS全体のSecurity設定の恒久的な緩和を要求しないことを確認する。
+9. `xattr`削除や右クリックoverrideを標準手順として案内しないことを確認する。
+10. Gatekeeper rejectが発生した場合はknown limitationとして容認せず、署名・notarization実装の不備として扱う。
