@@ -1,0 +1,5 @@
+success
+missing
+wrong_type_directory
+non_executable
+symlink

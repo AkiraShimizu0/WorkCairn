@@ -1,0 +1,11 @@
+#!/bin/sh
+# Fake-tool seam foundation (PB-3o.2 Slice 1). This placeholder exists
+# only to exercise scripts/lib/release_tools.sh's existence/type/
+# executable validation and to establish per-scenario invocation-log
+# isolation. It performs no Apple-specific, notarization-specific, or
+# hdiutil-specific behavior -- no such fixture is created in Slice 1.
+# It never touches a real Keychain, certificate, or network.
+if [ -n "${FAKE_TOOL_LOG:-}" ]; then
+  printf '%s %s\n' "$(basename "$0")" "$*" >> "$FAKE_TOOL_LOG"
+fi
+exit 0

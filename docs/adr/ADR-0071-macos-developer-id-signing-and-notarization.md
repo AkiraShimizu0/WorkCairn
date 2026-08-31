@@ -561,6 +561,34 @@ notarizationはApple外部への通信を伴う操作です。`go test`、`make 
 12. Gatekeeper／quarantined download Acceptance実施、DMG層・3 CLI層の両方（本ADR「10」）。
 13. Quickstart／Release Notes／README／SECURITY.mdの配布手順同期（DMG化・署名済み配布物への言及）。
 
+## PB-3o.2 addendum（2026-08-31）: release inspector classificationとcanonical binary signing order
+
+PHASE PB-3o.2（Slice 1）で、macOS signing／notarization実装（本ADR「6」以降）を支える最初のcharacterization不要なgeneric primitiveを実装しました。本addendumは、その実装と同一のbounded commitで確定する2つの新しいplan decisionを記録します。
+
+**Release inspector classification**: `go/internal/releaseinspector`（pure Go、`os/exec`・`StartProcess`を一切使わない）と、その薄いCLI wrapper`go/cmd/workcairn-release-inspector`は、次のとおりrelease-engineering-only／non-shipped source toolとして分類します。
+
+- Public CLIではなく、WorkCairnの正式製品surface（`workcairn`／`workcairn-daemon`／`workcairn-core`の3 binary）へ追加しません。
+- `make go-build`の対象外です。
+- release archive（tar.gz）／DMGのcontent allow-list対象外です。
+- product JSON Contract v1（`workcairn-core`）とは別の、versionedなinternal envelope（`release-inspector.v1`）を持ちます。
+- 外部processを一切起動しないため（`os/exec`未import、`StartProcess`未使用）、`go_only_release_gate_test.go`の`TestGoProductSourcesCannotLaunchExternalProcesses`が持つADR-0044スコープのallow-listを拡張する必要がありません（本Checkpointで実際にこのtestを変更なしで再実行し確認済み）。
+- 将来の実装でも、一時的なinspector binaryは常に`DIST_DIR`外でbuildされ、release archiveへ含まれません。
+- credential、PEM本体、certificateの実name、絶対pathのいずれも出力しません。
+- production signing workflowへは本Checkpoint時点で未接続です（Slice 1はtype-agnosticなPEM／DER parse、DER SHA-1再計算、expiry判定、genericなrecursive JSON duplicate-key検出だけを実装し、Developer ID Application type判定・notary／hdiutil／find-identity／codesignの各schemaはいずれも実装していません）。
+
+この分類は、既存の`go/internal/synthesisacceptance`／`go/cmd/workcairn-synthesis-acceptance`と`go/internal/planningacceptance`／`go/cmd/workcairn-planning-acceptance`という、`go/cmd/*`に存在しながら正式3 binaryでも`docs/Architecture.md`の中核package一覧にも含まれない、既にrepositoryに実在するprecedentへ倣ったものです。
+
+**Canonical binary signing order**: 将来のDeveloper ID署名実装（本ADR「6」step 7、「12」Execution Contract相当）が3 binaryへ適用するcanonical順序を次に固定します。
+
+```
+workcairn-core
+→ workcairn
+→ workcairn-daemon
+→ DMG
+```
+
+**これは既存ADRの過去判断ではありません。** 本ADRの他のどの節も3 binary間の署名順序を規定しておらず（本addendum作成時点で本文を再確認済み）、この順序は`scripts/package-release.sh`の既存build loop（`for command in workcairn-core workcairn workcairn-daemon`）に揃えるための、PHASE PB-3o.1系のplan-review loopで確定した**新しいimplementation decision**です。3 binary間に署名の相互依存はなく、既存の列挙順との一貫性・認知負荷の最小化を理由に採用しました。
+
 ## Official Apple references
 
 - [Developer ID](https://developer.apple.com/support/developer-id/)
