@@ -180,18 +180,20 @@ build後、各binaryを実行し、`version`／`--version`出力のversion／com
 
 canonical signing order（core → cli → daemon）で、1 binaryずつ署名します。
 
+`go build`が生成した各binaryには、Go linkerによる既存の`adhoc,linker-signed`署名が既に付与されています。`codesign`は既存署名の置換に`--force`を要求し、指定しない場合は署名処理が失敗します。したがって次の3 commandはいずれも`--force`を使用します——これはGo linkerの既存ad-hoc署名をDeveloper ID署名へ置換するためだけの使用であり、`--deep`は追加しません。
+
 1. `workcairn-core`を署名する。
    ```bash
-   codesign --sign <IDENTITY_SHA1> --identifier com.workcairn.cli.workcairn-core --options runtime --timestamp <STAGING_DIR>/<PACKAGE_ROOT>/bin/workcairn-core
+   codesign --force --sign <IDENTITY_SHA1> --identifier com.workcairn.cli.workcairn-core --options runtime --timestamp <STAGING_DIR>/<PACKAGE_ROOT>/bin/workcairn-core
    ```
 2. 実行結果（成功／failure／認証prompt）を確認してから次へ進む。
 3. `workcairn`を署名する。
    ```bash
-   codesign --sign <IDENTITY_SHA1> --identifier com.workcairn.cli.workcairn --options runtime --timestamp <STAGING_DIR>/<PACKAGE_ROOT>/bin/workcairn
+   codesign --force --sign <IDENTITY_SHA1> --identifier com.workcairn.cli.workcairn --options runtime --timestamp <STAGING_DIR>/<PACKAGE_ROOT>/bin/workcairn
    ```
 4. `workcairn-daemon`を署名する。
    ```bash
-   codesign --sign <IDENTITY_SHA1> --identifier com.workcairn.cli.workcairn-daemon --options runtime --timestamp <STAGING_DIR>/<PACKAGE_ROOT>/bin/workcairn-daemon
+   codesign --force --sign <IDENTITY_SHA1> --identifier com.workcairn.cli.workcairn-daemon --options runtime --timestamp <STAGING_DIR>/<PACKAGE_ROOT>/bin/workcairn-daemon
    ```
 
 ## 11. Verify 3 binaries
