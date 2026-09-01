@@ -20,17 +20,29 @@ WorkCairnのread-only操作とwriter操作は分離されています。`*-inspe
 
 ## 配布物の確認
 
-配布archiveはallow-listされたGo Only artifactです。展開前に同梱checksumを検証し、実行binaryのversionを確認します。初回導入だけを短く確認する場合は[PublicBetaQuickstart.md](PublicBetaQuickstart.md)を先に参照してください。
+配布物はallow-listされたGo Only artifactです。展開・mount前に同梱checksumを検証し、実行binaryのversionを確認します。初回導入だけを短く確認する場合は[PublicBetaQuickstart.md](PublicBetaQuickstart.md)を先に参照してください。
+
+**macOS（canonical asset — DMG）**: Developer ID署名済み・notarization済み・staple済みです。詳細は[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)を参照してください。
 
 ```bash
-shasum -a 256 -c workcairn_<version>_darwin_arm64.tar.gz.sha256
-tar -xzf workcairn_<version>_darwin_arm64.tar.gz
-workcairn_<version>_darwin_arm64/bin/workcairn version
-workcairn_<version>_darwin_arm64/bin/workcairn-daemon --version
-workcairn_<version>_darwin_arm64/bin/workcairn-core --version
+shasum -a 256 -c workcairn_<version>_darwin_arm64.dmg.sha256
+open workcairn_<version>_darwin_arm64.dmg
+/Volumes/workcairn_<version>_darwin_arm64/bin/workcairn version
+/Volumes/workcairn_<version>_darwin_arm64/bin/workcairn-daemon --version
+/Volumes/workcairn_<version>_darwin_arm64/bin/workcairn-core --version
 ```
 
-Linuxでは`sha256sum -c`を使用できます。`version`結果のrelease versionとcommitをRelease noteに記録します。sourceからbuildする場合はGo 1.23以上で`make go-build`を使用します。別言語runtimeやpackage managerは不要です。
+`xattr`削除、右クリックoverride、Gatekeeperのセキュリティ設定の恒久的な緩和はいずれも不要です。
+
+**Linux（release engineering用、tar.gz）**:
+
+```bash
+sha256sum -c workcairn_<version>_linux_<arch>.tar.gz.sha256
+tar -xzf workcairn_<version>_linux_<arch>.tar.gz
+workcairn_<version>_linux_<arch>/bin/workcairn version
+```
+
+`version`結果のrelease versionとcommitをRelease noteに記録します。sourceからbuildする場合はGo 1.23以上で`make go-build`を使用します。別言語runtimeやpackage managerは不要です。
 
 ## Temporary Vaultでの初回確認
 

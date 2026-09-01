@@ -589,6 +589,20 @@ workcairn-core
 
 **これは既存ADRの過去判断ではありません。** 本ADRの他のどの節も3 binary間の署名順序を規定しておらず（本addendum作成時点で本文を再確認済み）、この順序は`scripts/package-release.sh`の既存build loop（`for command in workcairn-core workcairn workcairn-daemon`）に揃えるための、PHASE PB-3o.1系のplan-review loopで確定した**新しいimplementation decision**です。3 binary間に署名の相互依存はなく、既存の列挙順との一貫性・認知負荷の最小化を理由に採用しました。
 
+## PB-3p.1 addendum（2026-09-01）: initial Public BetaはHuman-run manual signed release pathを採用（automationはM-RELEASE-1へ延期）
+
+PHASE PB-3o.3で、本ADRの署名・DMG・notarization・staple・検証・promotion workflowを`scripts/lib/release_tools.sh`／`scripts/package-release.sh`のdarwin経路へ実装する完全自動化を試みました（PB-3o.3 Slice 2 automation attempt）。独立review（PB-3o.3a）でrelease-safety findingsが報告され、focused correction（PB-3o.3a.1）で対応した後も、複雑性と追加findingsが残りました。この実装attemptは一度も本repositoryへcommitされていません。PHASE PB-3o.3cで、この未commitの変更一式をrepository外のbounded backupへ復元可能な形で退避した上で、working treeをPB-3o.2 Slice 1 commit（`1eae847`）のclean状態へ復元しました。backupの絶対pathは本ADRを含むいずれのrepository文書にも記載しません。詳細な経緯は[ROADMAP.md](../ROADMAP.md)を参照してください。
+
+**この結果、initial Public Beta releaseは、完全自動化されたscript workflowではなく、[Manual macOS Signed Release Procedure](../ManualMacOSReleaseProcedure.md)に沿ってHumanが1 stepずつApple標準command（`security`、`codesign`、`hdiutil`、`xcrun notarytool`、`xcrun stapler`、`spctl`）を明示実行するbounded manual procedureで行います。** hidden retry、hidden fallbackはなく、各effect（署名、DMG作成、notarization submit、staple、tag push、Release作成）の前にHuman確認を必須とし、予期しない認証画面が出た場合は入力せず停止します。
+
+**本addendumは、本ADR本文中の「将来の実装は〜」という表現（特に「1. Distribution identity」節のSHA-1／Team ID照合、「Certificate preflight」節）が、initial Public Beta向けには`scripts/package-release.sh`等の自動化scriptによる実装を必須と読める箇所について、initial releaseに限り次のように明確にsupersedeします**: 「将来の実装」が満たすべき契約（SHA-1完全一致によるidentity選択、`codesign -dvv`出力とのTeam ID完全一致照合、Certificate preflightの各条件等）は、initial Public Betaでは自動化scriptではなく、[Manual macOS Signed Release Procedure](../ManualMacOSReleaseProcedure.md)に沿ってHumanが個々のApple標準commandを実行し、その出力を目視確認することで満たします。本ADRが確定した**技術的要件そのもの**（Developer ID Application署名、3 CLI canonical identifier、Hardened Runtime、secure timestamp、Team ID完全一致、DMG固定contract、`notarytool submit ... --wait --timeout 90m`のcanonical invocation、staple、DMG／3 CLI二層Gatekeeper検証、checksum、New-user／Upgrade／Gatekeeper／Provider Acceptance、tag push・GitHub Release別承認、no retry・no fallback）は、実装方法（自動化script／Human手動実行）にかかわらず**一切変更・緩和していません**。automation実装の有無は、これらAcceptance条件の代替にも免除事由にもなりません。
+
+完全自動化されたrelease workflow（本ADRの署名・DMG・notarization手順をscript化するもの）は、initial Public Beta公開後の将来Checkpoint`M-RELEASE-1`へ延期します。この延期は、本ADRが決定した安全要件を一切弱めるものではなく、単に「誰が／何がApple standard commandを実行するか」という実装形態の選択です。manual procedureの存在を、release automationが製品architectureへ実装済みであることの根拠にしないでください。
+
+現在のSlice 1分類（`go/internal/releaseinspector`／`go/cmd/workcairn-release-inspector`はrelease-engineering-only source toolであり、正式3 binaryではなく、archive／DMGへ含まれず、production signing workflowへ未接続。`scripts/lib/release_tools.sh`はfixed absolute tool-path bundle contractのvalidationだけを提供するtool boundary library）は、PB-3o.2 addendum（上記）の記述どおり維持しています。
+
+**実際の署名・notarization・Human Acceptanceは本addendum時点でもいずれも未実施であり、Public Beta releaseは引き続きNO-GOです。** Apple Human prerequisite（Apple Developer Program加入、Developer ID証明書、`notarytool` profile）はいずれも未確認、signed candidateは未生成、notarizationは未実施、signed New-user／Upgrade／Gatekeeper／Provider Acceptance（PB-3節）はいずれも未実施、tag（`v1.0.0-beta.1`等）／GitHub Releaseはいずれも未作成のままです。
+
 ## Official Apple references
 
 - [Developer ID](https://developer.apple.com/support/developer-id/)

@@ -4,27 +4,26 @@
 
 第三者が実Vaultや実Providerを誤って使用せず、install、first-run、Local Web UI、Mock Provider E2Eを確認するための手順です。
 
-[GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases)から`workcairn_<version>_darwin_arm64.tar.gz`と対応する`.sha256`を選んでください。最初の正式サポート対象はmacOS／arm64です。
+[GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases)から`workcairn_<version>_darwin_arm64.dmg`と対応する`.sha256`を選んでください。最初の正式サポート対象はmacOS／arm64です。このDMGはDeveloper ID署名済み・notarization済み・staple済みです。
 
 ## Clean environmentからinstall
 
-### 配布archive
+### 配布DMG（macOS）
 
-1. OS／architectureに一致するarchiveと`.sha256`を同じdirectoryへ置く。
+1. `.dmg`と対応する`.sha256`を同じdirectoryへ置く。
 2. checksumを検証する。
-3. 新しいdirectoryへ展開する。
-4. 3 binaryのversionがarchive名、`VERSION`、Release noteと一致することを確認する。
+3. FinderでDMGを通常のdouble-click openでmountする（`xattr`削除や右クリックoverrideは不要、Gatekeeperのセキュリティ設定を恒久的に緩和する必要もない）。
+4. mountされたvolume配下の3 binaryのversionが`.dmg`のversion、`VERSION`、Release noteと一致することを確認する。
 
 ```bash
-shasum -a 256 -c workcairn_<version>_darwin_arm64.tar.gz.sha256
-tar -xzf workcairn_<version>_darwin_arm64.tar.gz
-cd workcairn_<version>_darwin_arm64
-bin/workcairn version
-bin/workcairn-daemon --version
-bin/workcairn-core --version
+shasum -a 256 -c workcairn_<version>_darwin_arm64.dmg.sha256
+open workcairn_<version>_darwin_arm64.dmg
+/Volumes/workcairn_<version>_darwin_arm64/bin/workcairn version
+/Volumes/workcairn_<version>_darwin_arm64/bin/workcairn-daemon --version
+/Volumes/workcairn_<version>_darwin_arm64/bin/workcairn-core --version
 ```
 
-Linuxではchecksum確認に`sha256sum -c`を使用できます。
+tar.gz形式の配布archiveは、macOS Public Betaのcanonical assetではありません（Linux向けrelease engineeringでは引き続き使用します）。
 
 ### Source checkout
 

@@ -37,14 +37,20 @@ make go-build
 bin/workcairn version
 ```
 
-**または[GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases)からdownload** — `workcairn_<version>_darwin_arm64.tar.gz`と対応する`.sha256`を選び（macOSでは`shasum`、Linuxでは`sha256sum`でチェックサムを確認）：
+**または[GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases)からdownload** — `workcairn_<version>_darwin_arm64.dmg`と対応する`.sha256`を選び、まずchecksumを確認します：
 
 ```bash
-shasum -a 256 -c workcairn_<version>_darwin_arm64.tar.gz.sha256
-tar -xzf workcairn_<version>_darwin_arm64.tar.gz
-cd workcairn_<version>_darwin_arm64
-bin/workcairn version
+shasum -a 256 -c workcairn_<version>_darwin_arm64.dmg.sha256
 ```
+
+次にFinderでDMGを開き、mountされたvolume内のbinaryをTerminalから使用します：
+
+```bash
+open workcairn_<version>_darwin_arm64.dmg
+/Volumes/workcairn_<version>_darwin_arm64/bin/workcairn version
+```
+
+このDMGはDeveloper ID署名済み・notarization済みのため、`xattr`削除、右クリックでのoverride、Gatekeeperのセキュリティ設定を恒久的に緩和する操作はいずれも不要です。
 
 ### 起動する
 
@@ -97,7 +103,7 @@ WorkCairnはバックアップのための製品ではありません。実運�
 | macOS / amd64、Linux / amd64、Linux / arm64 | buildは成功するが実機での確認は未実施 |
 | Windows | 非対応 |
 
-Sourceからbuildする場合はGo 1.23以上、`make`、POSIX shell、`tar`が必要です。配布パッケージを使う場合、Go toolchainは不要です。
+Sourceからbuildする場合はGo 1.23以上、`make`、POSIX shellが必要です。配布パッケージを使う場合、Go toolchainは不要です。
 
 ## 8. 現在の制限
 

@@ -37,14 +37,20 @@ make go-build
 bin/workcairn version
 ```
 
-**Or download a release** from [GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases) — look for `workcairn_<version>_darwin_arm64.tar.gz` and its matching `.sha256`, and verify the checksum first (`shasum` on macOS, `sha256sum` on Linux):
+**Or download a release** from [GitHub Releases](https://github.com/AkiraShimizu0/WorkCairn/releases) — look for `workcairn_<version>_darwin_arm64.dmg` and its matching `.sha256`. Verify the checksum first:
 
 ```bash
-shasum -a 256 -c workcairn_<version>_darwin_arm64.tar.gz.sha256
-tar -xzf workcairn_<version>_darwin_arm64.tar.gz
-cd workcairn_<version>_darwin_arm64
-bin/workcairn version
+shasum -a 256 -c workcairn_<version>_darwin_arm64.dmg.sha256
 ```
+
+Then open the DMG in Finder and use the binaries from the mounted volume in Terminal:
+
+```bash
+open workcairn_<version>_darwin_arm64.dmg
+/Volumes/workcairn_<version>_darwin_arm64/bin/workcairn version
+```
+
+The DMG is Developer ID signed and notarized, so no `xattr` removal, right-click override, or permanent change to your Gatekeeper security settings is needed.
 
 ### Run it
 
@@ -97,7 +103,7 @@ The initial Public Beta target is **macOS on Apple Silicon (arm64)**.
 | macOS / amd64, Linux / amd64, Linux / arm64 | Builds successfully; not yet verified on real hardware |
 | Windows | Not supported |
 
-You'll need Go 1.23+, `make`, a POSIX shell, and `tar` to build from source. A release archive doesn't need the Go toolchain at all.
+You'll need Go 1.23+, `make`, and a POSIX shell to build from source. A downloaded release doesn't need the Go toolchain at all.
 
 ## 8. Current limitations
 

@@ -62,17 +62,19 @@ targetごとにclean output directoryを使います。PHASE PB-2でdarwin/arm64
 - [x] source、test、fixture、`.git`、`.env`、Vault、cache、temporary file、local build outputを含まない。
 - [x] 展開後のbinaryがarchive外のruntimeやSDKを要求しない（temporary directoryへ展開し3 binaryを直接実行して確認）。
 
-## 4a. macOS Developer ID Signing and Notarization（ADR-0071 — 未実装）
+## 4a. macOS Developer ID Signing and Notarization（ADR-0071 — 未実施）
 
-以下は[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)が決定した方針の実装・検証項目です。すべて未実施です。実装完了までPublic Beta macOS配布はGatekeeperの通常経路を通りません。
+以下は[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)が決定した方針の実施・検証項目です。すべて未実施です。実施完了までPublic Beta macOS配布はGatekeeperの通常経路を通りません。
+
+**PHASE PB-3p.1で方針を更新しました**: initial Public Beta releaseは、未commitのまま複雑性と追加findingsが残ったPB-3o.3 Slice 2 automation attemptではなく、[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)に沿ってHumanが1 stepずつApple標準commandを明示実行するbounded manual procedureで生成します（ADR-0071 PB-3p.1 addendum参照）。この方針変更は、以下いずれの項目も緩和しません。automation実装の有無はAcceptance条件の代替にも免除事由にもならず、**signed／notarized／stapled／quarantined DMGが生成されたこと**が条件です。
 
 - [ ] Apple Developer Program（またはEnterprise Program）加入とAccount Holder権限をHumanが確認した。
-- [ ] Developer ID Application証明書を取得し、Humanのbuild host macOS Keychainへ保持した。SHA-1 fingerprint（`RELEASE_SIGNING_IDENTITY_SHA1`）、有効期限、revocation状態を記録した。
-- [ ] 実Team ID（`RELEASE_EXPECTED_TEAM_ID`）を確認し、`notarytool` profile作成時に同じTeam IDを使用したevidenceを記録した。
-- [ ] `notarytool` Keychain profile（`RELEASE_NOTARY_PROFILE`、名前のみ）をHumanが作成した（Apple ID／app-specific passwordまたはApp Store Connect API keyはWorkCairn scriptへ渡さない）。
-- [ ] `scripts/package-release.sh`のdarwin経路が、ADR-0071のcanonical identifier（`com.workcairn.cli.workcairn`／`com.workcairn.cli.workcairn-daemon`／`com.workcairn.cli.workcairn-core`）とHardened Runtime・secure timestampで3 binaryを署名し、`RELEASE_SIGNING_IDENTITY_SHA1`／`RELEASE_EXPECTED_TEAM_ID`／`RELEASE_NOTARY_PROFILE`未設定またはmismatch時はfail-closedで拒否する。
+- [ ] Developer ID Application証明書を取得し、Humanのbuild host macOS Keychainへ保持した。SHA-1 fingerprint、有効期限、revocation状態を記録した。
+- [ ] 実Team IDを確認し、`notarytool` profile作成時に同じTeam IDを使用したevidenceを記録した。
+- [ ] `notarytool` Keychain profile（名前のみ）をHumanが作成した（Apple ID／app-specific passwordまたはApp Store Connect API keyはWorkCairn scriptへもAIエージェントへも渡さない）。
+- [ ] [Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)に沿って、ADR-0071のcanonical identifier（`com.workcairn.cli.workcairn`／`com.workcairn.cli.workcairn-daemon`／`com.workcairn.cli.workcairn-core`）とHardened Runtime・secure timestampで3 binaryをHumanが署名し、各stepの結果を確認した。
 - [ ] canonical macOS distribution containerがADR-0071「5」固定contractのDMG（UDIF／UDZO、単一volume、`com.workcairn.dist.macos`で署名）へ移行し、`notarytool submit ... --wait --timeout 90m`（native timeout contract、client-side wait上限90分、ADR-0071「7」と一致）でnotarizationされ、`stapler staple`でticketが添付される。`--timeout`を省いたunbounded commandでこの項目を完了扱いにはできない。timeout発生時のHuman判断待ちという境界はADR-0071「7」のまま維持する。
-- [ ] `scripts/verify-release-archive.sh`相当が、ADR-0071「11」の5分類（Offline deterministic／Apple service evidence／Local policy evidence／Human evidence／Static fake-tool test）すべてを検査する。単一区分だけをもってPASSとしない。
+- [ ] 生成したDMGに対し、[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)の該当stepで、ADR-0071「11」の5分類（Offline deterministic／Apple service evidence／Local policy evidence／Human evidence／Static fake-tool test）に相当する確認をHumanが実施した。単一区分だけをもってPASSとしない。
 - [ ] New-user Keychain Acceptance（[PublicBetaFirstRunAcceptance.md](PublicBetaFirstRunAcceptance.md) §C、ADR-0071「8」）: signed build Nで初回Keychain登録・read-backが成功する。
 - [ ] Upgrade Keychain Acceptance（[PublicBetaFirstRunAcceptance.md](PublicBetaFirstRunAcceptance.md) §D、ADR-0071「9」）: signed build N→N+1でcredential再入力なしにKeychain readが成功し、designated requirementとN/N+1 provenanceが記録された。
 - [ ] Gatekeeper／quarantined download Acceptance（[PublicBetaFirstRunAcceptance.md](PublicBetaFirstRunAcceptance.md) §E、ADR-0071「10」）: DMG層・3 CLI層の両方でGatekeeperの通常経路が確認された（いずれか一方だけでは不可）。
@@ -117,7 +119,7 @@ iPhone Web UIはavailableな任意機能であり、Public Beta acceptanceの必
 
 ### Provider
 
-signed build（DMG署名・notarization実装後）に対して実施する。ad-hoc build時代の実施記録（[PublicBetaFirstRunAcceptance.md](PublicBetaFirstRunAcceptance.md)セクションA）はこの条件を代替しない。
+signed build（[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)によるDMG署名・notarization完了後）に対して実施する。ad-hoc build時代の実施記録（[PublicBetaFirstRunAcceptance.md](PublicBetaFirstRunAcceptance.md)セクションA）はこの条件を代替しない。
 
 - [ ] 空の一時的なデータフォルダとtest用credentialでPlan生成1回、Task1件、Review1回を実行した。credentialは本Acceptance専用とし、他のAcceptance（New-user／Upgrade）とは共有しない。
 - [ ] Automatic policyが選ぶsupported Provider model、timeout、usage、error表示を確認した（利用者によるModel ID入力は不要）。

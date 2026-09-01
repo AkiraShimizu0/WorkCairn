@@ -23,7 +23,7 @@ WorkCairnは、自分専用のAI会社へ自然言語で仕事を依頼するloc
 
 Public Betaの正式サポート対象は**macOS／arm64のみ**です。macOS／amd64、Linux／amd64、Linux／arm64はcross-buildで動作確認していますが、native smokeが未実施のためPublic Beta配布対象には含みません。Windowsはサポート対象外です（Vault file lock未対応）。
 
-必要環境はGo 1.23以上、`make`、POSIX shell、`tar`です。配布archiveを使う場合、Go toolchainは不要です。
+必要環境はGo 1.23以上、`make`、POSIX shellです。配布archiveを使う場合、Go toolchainは不要です。
 
 ### 既知の制限
 

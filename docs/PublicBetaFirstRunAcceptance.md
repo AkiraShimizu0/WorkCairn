@@ -50,9 +50,9 @@ C・D・Eはいずれも**未実施**です。したがって**現時点のPubli
 - native filesystemでのCAS conflict追加stress
 - 実Vaultのbackup／restore演習
 
-## C. 署名済みbuild — New-user Keychain Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「8」、未実装 — signing実装後に実施、**Public Beta GO必須**）
+## C. 署名済みbuild — New-user Keychain Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「8」、未実施 — manual signed candidate生成後に実施、**Public Beta GO必須**）
 
-Developer ID署名・notarization・staple実装後のsigned build Nに対する手順です。現時点では`scripts/package-release.sh`が署名を行わないため実施不能であり、実施済みとして扱いません。`.app`ではないraw CLIであるため、「ダブルクリック起動」や特定の「開く」ダイアログではなく、**FinderでDMGをopenし、Terminalからraw CLIを実行する**という実際の操作へ手順を揃えます。
+[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)に沿ってHumanが生成したsigned build Nに対する手順です。現時点ではmanual signed candidateがまだ生成されていないため実施不能であり、実施済みとして扱いません。automation実装の有無はこの条件の代替にも免除事由にもなりません。`.app`ではないraw CLIであるため、「ダブルクリック起動」や特定の「開く」ダイアログではなく、**FinderでDMGをopenし、Terminalからraw CLIを実行する**という実際の操作へ手順を揃えます。
 
 1. clean macOS userまたは明示隔離環境を用意する。
 2. quarantine属性が付いた状態で、canonical Release asset（署名・notarization・staple済みDMG）を実際のdownload経路（ブラウザ等）から取得する。
@@ -67,9 +67,9 @@ Developer ID署名・notarization・staple実装後のsigned build Nに対する
 11. 本Acceptance（C）専用のtest credentialを失効またはrotationする（セクションDとは別のcredential・別のsessionを使う。Dの手順が始まる前に失効してよい）。
 12. Acceptance evidence（署名identity SHA-1、Team ID、notarization submission ID、DMG／3 CLIそれぞれのGatekeeper検証結果、各step結果）を保持する。
 
-## D. 署名済みbuild — Upgrade Keychain Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「9」、未実装、**Public Beta GO必須**）
+## D. 署名済みbuild — Upgrade Keychain Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「9」、未実施、**Public Beta GO必須**）
 
-signed build N→signed build N+1のKeychain継続アクセスを検証する手順です。PB-3jはad-hoc署名buildでこの継続アクセスが破綻したことを観測しており（causalityは未確定、[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「Unconfirmed hypotheses」参照）、本手順はDeveloper ID署名実装後に初めて実施できます。
+signed build N→signed build N+1のKeychain継続アクセスを検証する手順です。PB-3jはad-hoc署名buildでこの継続アクセスが破綻したことを観測しており（causalityは未確定、[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「Unconfirmed hypotheses」参照）、本手順は[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)によるDeveloper ID署名済みcandidateの生成後に初めて実施できます。
 
 **Build N**: immutable commitまたはlocal annotated test tagへ拘束し、source commit SHA、version、build date、`workcairn-daemon`のSHA-256／CDHash、Developer ID identityのSHA-1、実Team ID、canonical identifier、`codesign -d -r-`のdesignated requirementを記録する。
 
@@ -88,7 +88,7 @@ signed build N→signed build N+1のKeychain継続アクセスを検証する手
 
 **Credential separation**: 本Acceptance（D）専用のtest credentialをbuild Nで登録し、build N+1でのread完了を確認した後に失効する。セクションC（New-user）とは別のtest credential・別のsessionを使う。Humanの既存real Anthropic credentialは使用しない。Acceptance evidence／記録データ自体は（credential値そのものを除き）削除せず保持する。
 
-## E. Gatekeeper／quarantined download Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「10」、未実装、**Public Beta GO必須**）
+## E. Gatekeeper／quarantined download Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「10」、未実施、**Public Beta GO必須**）
 
 DMG層と内部3 CLI層を分離して検証します。**両方が必須です（「または」ではありません）。**
 
