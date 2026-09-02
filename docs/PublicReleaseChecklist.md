@@ -77,7 +77,7 @@ targetごとにclean output directoryを使います。PHASE PB-2でdarwin/arm64
 - [ ] 生成したDMGに対し、[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)の該当stepで、ADR-0071「11」の5分類（Offline deterministic／Apple service evidence／Local policy evidence／Human evidence／Static fake-tool test）に相当する確認をHumanが実施した。単一区分だけをもってPASSとしない。
 - [ ] New-user Keychain Acceptance（[PublicBetaFirstRunAcceptance.md](PublicBetaFirstRunAcceptance.md) §C、ADR-0071「8」）: signed build Nで初回Keychain登録・read-backが成功する。
 - [ ] Upgrade Keychain Acceptance（[PublicBetaFirstRunAcceptance.md](PublicBetaFirstRunAcceptance.md) §D、ADR-0071「9」）: signed build N→N+1でcredential再入力なしにKeychain readが成功し、designated requirementとN/N+1 provenanceが記録された。
-- [ ] Gatekeeper／quarantined download Acceptance（[PublicBetaFirstRunAcceptance.md](PublicBetaFirstRunAcceptance.md) §E、ADR-0071「10」）: DMG層・3 CLI層の両方でGatekeeperの通常経路が確認された（いずれか一方だけでは不可）。
+- [ ] Gatekeeper／quarantined download Acceptance（[PublicBetaFirstRunAcceptance.md](PublicBetaFirstRunAcceptance.md) §E、ADR-0071「10」・「PB-3u.8b addendum」）: DMG層（`spctl --assess --type open`）・3 CLI層（`codesign --check-notarization -R="notarized"`＋実際のquarantined Terminal起動）の両方が確認された（いずれか一方だけでは不可）。bare CLIへの`spctl --assess --type exec`は必須検証から除外している。
 - [ ] signed buildに対するProvider Plan／Task／Review Acceptanceを別途実施した（[PublicBetaFirstRunAcceptance.md](PublicBetaFirstRunAcceptance.md)セクションA自体はad-hoc署名build時代のhistorical evidenceであり、この必須条件を代替しない）。
 
 ## 5. Clean install and first run

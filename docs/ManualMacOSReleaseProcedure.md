@@ -376,9 +376,11 @@ read-only・no-browseでfresh mountpointへmountし、plist形式の結果を、
 - `<DEVICE_IDENTIFIER>`が`/dev/diskN`または`/dev/diskNsM`のような、Apple disk device識別子の想定される形（`/dev/disk`で始まる文字列）であることを確認する。想定と異なる形の場合は停止する。
 - 値を記録した後、`<STAGING_DIR>/attach-result.plist`を削除する。この生plist（local絶対pathを含み得る）はdurable Release evidenceへ含めません——記録してよいのは抽出した`<DEVICE_IDENTIFIER>`の値だけです。
 
-## 18. Verify Gatekeeper（DMG層／3 CLI層）
+## 18. Verify Gatekeeper／Notarization（DMG層／3 CLI層）
 
 DMG層と内部3 CLI層を分離して検証します。**両方が必須です（どちらか一方では不可）。**
+
+PB-3u.8で、bare Mach-O CLI（`.app`ではない単体実行ファイル）に対する`spctl --assess --type exec`が、今回の対象macOS環境とcandidateにおいて「appではない」としてrejectされることを観測しました（普遍的・構造的なmacOS仕様としての断定ではなく、今回の実測結果として記録します）。この結果と、Apple DTSのproduct-type別notarization案内（bundle以外のcodeには`codesign --check-notarization`を使う）に基づき、bare CLIの署名・notarization妥当性の検証には`spctl --assess --type exec`を使いません（PB-3u.8／PB-3u.8a参照。診断結果は[ROADMAP.md](ROADMAP.md)、方針のsupersede先は[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「PB-3u.8b addendum」）。3 CLI層はこのApple DTS案内に沿ったnotarization ticketのonline検証（`--check-notarization`）で確認します。
 
 **DMG層**:
 
@@ -386,15 +388,26 @@ DMG層と内部3 CLI層を分離して検証します。**両方が必須です�
 spctl --assess --type open --context context:primary-signature <STAGED_DMG_PATH>
 ```
 
-**内部3 CLI層**（§17でmount済みの`<MOUNT_POINT>`を使用）:
+DMG層のGatekeeper rejectは、known limitationとして容認せず、署名・notarization手順のどこかに誤りがあるものとして扱い、停止します。
+
+**内部3 CLI層**（§17でmount済みの`<MOUNT_POINT>`を使用）。`--check-notarization`はApple notary serviceへ通信するonline確認であり、offlineのlocal-policy checkではありません：
 
 ```bash
-spctl --assess --type exec <MOUNT_POINT>/bin/workcairn-core
-spctl --assess --type exec <MOUNT_POINT>/bin/workcairn
-spctl --assess --type exec <MOUNT_POINT>/bin/workcairn-daemon
+codesign --verify --strict --check-notarization -R="notarized" <MOUNT_POINT>/bin/workcairn-core
+codesign --verify --strict --check-notarization -R="notarized" <MOUNT_POINT>/bin/workcairn
+codesign --verify --strict --check-notarization -R="notarized" <MOUNT_POINT>/bin/workcairn-daemon
 ```
 
-Gatekeeper rejectが1件でも発生した場合は、known limitationとして容認せず、署名・notarization手順のどこかに誤りがあるものとして扱い、停止します。
+続けて、3 CLIそれぞれについて通常の署名検証も維持します（§11で署名直後に確認した内容と同じ観点を、mountされたcopyへ改めて適用します）。
+
+```bash
+codesign -dvv <MOUNT_POINT>/bin/workcairn-core
+codesign -d --entitlements :- <MOUNT_POINT>/bin/workcairn-core
+```
+
+（`workcairn`、`workcairn-daemon`も同様に実施します。）`-dvv`出力から、`Identifier=`がcanonical identifierと完全一致すること、`TeamIdentifier=`が`<TEAM_ID>`と完全一致すること、`flags=`に`runtime`が含まれること（Hardened Runtime）、`Timestamp=`が具体的な日時であること（`Timestamp=none`ではない）を確認します。entitlements出力（stdout）が空であることを確認します。
+
+`--check-notarization`のfail、または上記いずれかの検証failが1件でもあれば、known limitationとして容認せず、署名・notarization手順のどこかに誤りがあるものとして扱い、停止します。bare CLIに対する`spctl --assess --type exec`のrejectは、この判定に使いません（署名・notarization失敗として扱いません）。
 
 ## 19. Check exact content
 

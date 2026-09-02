@@ -52,7 +52,7 @@ C・D・Eはいずれも**未実施**です。したがって**現時点のPubli
 
 ## C. 署名済みbuild — New-user Keychain Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「8」、未実施 — manual signed candidate生成後に実施、**Public Beta GO必須**）
 
-[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)に沿ってHumanが生成したsigned build Nに対する手順です。現時点ではmanual signed candidateがまだ生成されていないため実施不能であり、実施済みとして扱いません。automation実装の有無はこの条件の代替にも免除事由にもなりません。`.app`ではないraw CLIであるため、「ダブルクリック起動」や特定の「開く」ダイアログではなく、**FinderでDMGをopenし、Terminalからraw CLIを実行する**という実際の操作へ手順を揃えます。
+[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)に沿ってHumanが生成したsigned build Nに対する手順です。PB-3u.2〜7で生成したsigned candidateはdiagnostic evidence専用となり再利用できないため、現時点では本Acceptanceの対象となる新しいmanual signed candidateがまだ生成されておらず、実施済みとして扱いません。automation実装の有無はこの条件の代替にも免除事由にもなりません。`.app`ではないraw CLIであるため、「ダブルクリック起動」や特定の「開く」ダイアログではなく、**FinderでDMGをopenし、Terminalからraw CLIを実行する**という実際の操作へ手順を揃えます。
 
 1. clean macOS userまたは明示隔離環境を用意する。
 2. quarantine属性が付いた状態で、canonical Release asset（署名・notarization・staple済みDMG）を実際のdownload経路（ブラウザ等）から取得する。
@@ -98,15 +98,15 @@ DMG層と内部3 CLI層を分離して検証します。**両方が必須です�
 2. `spctl --assess --type open --context context:primary-signature <dmg>`でDMG自体のsignature／notarization／stapleを確認する。
 3. FinderでDMGを通常のdouble-click openでmountする（right-click override不要、`xattr`削除不要）。
 
-**内部3 CLI層**:
+**内部3 CLI層**（[PB-3u.8](ROADMAP.md)で、今回の対象macOS環境とcandidateにおいて、bare Mach-O CLIへの`spctl --assess --type exec`が「appではない」としてrejectされることを観測しました——普遍的・構造的なmacOS仕様としての断定ではなく、今回の実測結果です。この結果と、Apple DTSのproduct-type別notarization案内に基づき、bare CLIの署名・notarization妥当性は`--check-notarization`で確認します。詳細は[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「PB-3u.8b addendum」を参照）:
 
-4. mount済みDMG内の3 binaryそれぞれに`spctl --assess --type exec`を実行する。
-5. Terminalから3 binaryそれぞれのversion metadataを確認する。実際にdaemonとして起動するのは`workcairn-daemon`だけであり、`workcairn`／`workcairn-core`はversion出力とごく短いsmokeだけを確認する。
-6. 特定のGUI dialogが表示されること自体を成功条件にしない——「起動が拒否されないこと」を確認する。
-7. Gatekeeper rejectがないことを確認する。
+4. mount済みDMG内の3 binaryそれぞれに`codesign --verify --strict --check-notarization -R="notarized"`を実行する（Apple notary serviceへ通信するonline確認）。
+5. Terminalから3 binaryそれぞれのversion metadataを確認し、実際に**quarantine属性が付いたまま**起動する（`workcairn-daemon`はdaemonとして起動、`workcairn`／`workcairn-core`はversion出力とごく短いsmoke）。
+6. 特定のGUI dialogが表示されること自体を成功条件にしない——「実際のTerminal起動が拒否されないこと」を確認する。
+7. 手順5のTerminal起動がGatekeeperにrejectされた場合はblockerとして扱う。right-click override、`xattr`削除、Security設定の恒久的緩和のいずれによる回避も認めない。
 
 **両層共通**:
 
 8. macOS全体のSecurity設定の恒久的な緩和を要求しないことを確認する。
 9. `xattr`削除や右クリックoverrideを標準手順として案内しないことを確認する。
-10. Gatekeeper rejectが発生した場合はknown limitationとして容認せず、署名・notarization実装の不備として扱う。
+10. DMG層のGatekeeper reject、および手順5の実際のTerminal起動rejectは、known limitationとして容認せず、署名・notarization実装の不備として扱う。bare CLIに対する`spctl --assess --type exec`のrejectは、この判定に使わない（署名・notarization失敗の根拠にしない）。

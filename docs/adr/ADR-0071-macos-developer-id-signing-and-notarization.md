@@ -394,14 +394,14 @@ DMG層と内部3 CLI層を分離し、**両方を必須**とします（「ま�
 - right-click override不要。
 - `xattr`削除不要。
 
-**内部3 CLI層**:
+**内部3 CLI層**（**この節の`spctl --assess --type exec`によるbare CLI検証は、「PB-3u.8b addendum」により実際の運用要件としてはsupersededです。** 実装時点でこの節を参照する場合は先にaddendumを確認してください）:
 
-- mount済みDMG内の3 binaryそれぞれに対し`spctl --assess --type exec`を実行する。
+- ~~mount済みDMG内の3 binaryそれぞれに対し`spctl --assess --type exec`を実行する。~~（superseded。PB-3u.8で、今回の対象macOS環境とcandidateにおいて「appではない」としてrejectされることを観測しました——普遍的・構造的なmacOS仕様としての断定ではありません。bare CLIの署名・notarization妥当性検証には使いません。「PB-3u.8b addendum」参照）
 - Terminalから3 binaryそれぞれのversion metadata（`version`出力）を確認する。
 - 実際にdaemonとして起動するのは`workcairn-daemon`だけである（`workcairn`／`workcairn-core`はCLI呼び出しのみで常駐しない）。
 - `workcairn`／`workcairn-core`は、version出力とごく短いsmoke（例: `workcairn-core`のJSON Contract v1呼び出し1回）だけを確認対象とする。
-- 特定のGUI dialogが表示されること自体を成功条件にしない（Gatekeeperの確認ダイアログの文言や見た目に依存した判定をしない。「起動が拒否されないこと」を確認する）。
-- Gatekeeper rejectがないことを確認する。
+- 特定のGUI dialogが表示されること自体を成功条件にしない（Gatekeeperの確認ダイアログの文言や見た目に依存した判定をしない。「実際のTerminal起動が拒否されないこと」を確認する）。
+- 実際のTerminal起動のGatekeeper rejectがないことを確認する。
 
 **両層共通の禁止事項**:
 
@@ -435,12 +435,13 @@ DMG層と内部3 CLI層を分離し、**両方を必須**とします（「ま�
 - notary status `Accepted`
 - submission ID
 - sanitized notary result（本ADR「7」のevidence allow-list）
+- 3 CLIそれぞれに対する`codesign --verify --strict --check-notarization -R="notarized"`（「PB-3u.8b addendum」参照。Apple notary serviceへ通信するonline確認であり、次のLocal policy evidenceとは別区分）
 
 **Local policy evidence**（ローカルのmacOS policy engineによる評価、ネットワーク不要だがOS状態に依存）:
 
 - `stapler validate`
 - DMGに対する`spctl --assess --type open`
-- 3 CLIそれぞれに対する`spctl --assess --type exec`
+- ~~3 CLIそれぞれに対する`spctl --assess --type exec`~~（superseded。「PB-3u.8b addendum」参照。bare CLIの検証は上記Apple service evidenceの`--check-notarization`と、Human evidenceの実際のTerminal起動確認で代替します）
 
 **Human evidence**（自動化できず、Humanの実機操作でしか得られないもの）:
 
@@ -602,6 +603,21 @@ PHASE PB-3o.3で、本ADRの署名・DMG・notarization・staple・検証・prom
 現在のSlice 1分類（`go/internal/releaseinspector`／`go/cmd/workcairn-release-inspector`はrelease-engineering-only source toolであり、正式3 binaryではなく、archive／DMGへ含まれず、production signing workflowへ未接続。`scripts/lib/release_tools.sh`はfixed absolute tool-path bundle contractのvalidationだけを提供するtool boundary library）は、PB-3o.2 addendum（上記）の記述どおり維持しています。
 
 **実際の署名・notarization・Human Acceptanceは本addendum時点でもいずれも未実施であり、Public Beta releaseは引き続きNO-GOです。** Apple Human prerequisite（Apple Developer Program加入、Developer ID証明書、`notarytool` profile）はいずれも未確認、signed candidateは未生成、notarizationは未実施、signed New-user／Upgrade／Gatekeeper／Provider Acceptance（PB-3節）はいずれも未実施、tag（`v1.0.0-beta.1`等）／GitHub Releaseはいずれも未作成のままです。
+
+## PB-3u.8b addendum（2026-09-02）: bare CLIの`spctl --assess --type exec`要件をApple推奨の`--check-notarization`へsupersede
+
+PHASE PB-3u.2〜7で、[Manual macOS Signed Release Procedure](../ManualMacOSReleaseProcedure.md)に沿ってHumanが実際にtagged candidateを生成・署名・notarize・stapleしました。PHASE PB-3u.8で、このsigned／notarized／stapled DMG candidateに対し、本ADR「10」が定める2層Gatekeeper検証を実施したところ、DMG層（`spctl --assess --type open --context context:primary-signature`）はPASSしましたが、内部3 CLI層（`spctl --assess --type exec`）は3 binaryすべてが`rejected (the code is valid but does not seem to be an app)`でrejectされました——これは今回の対象macOS環境とcandidateにおける実測結果であり、普遍的・構造的なmacOS仕様として断定するものではありません。PHASE PB-3u.8aで、このrejectの性質を切り分けるため、mount済みの同じ3 binaryへ、Apple DTSがproduct type別に案内するnotarization確認方法のうちbundle以外のcodeに対応する`codesign --verify --strict --check-notarization -R="notarized"`を実行したところ、3 binaryすべてが`valid on disk`／`satisfies its Designated Requirement`／`explicit requirement satisfied`でPASSしました。診断の詳細な経緯は[ROADMAP.md](../ROADMAP.md)を参照してください。
+
+**この結果に基づき、本addendumは、本ADR「10」の内部3 CLI層における`spctl --assess --type exec`要件、および本ADR「11」のLocal policy evidence分類における同項目を、bare Mach-O CLI（`.app`ではない単体実行ファイル）に関する限り、次のようにsupersedeします**:
+
+- PB-3u.8で、`spctl --assess --type exec`が、今回の対象macOS環境とcandidateにおいて、bundle構造を持たないbare CLI実行ファイルに対し、署名・notarizationの妥当性とは独立に「appではない」としてrejectすることを実際に観測しました（普遍的・構造的なmacOS仕様としての断定ではなく、今回の実測結果として記録します）。この結果とApple DTSのproduct-type別notarization案内に基づき、bare CLIの署名・notarization妥当性の検証には`spctl --assess --type exec`を使いません。
+- 代わりに、Apple DTSがbundle以外のcodeへ案内する`codesign --verify --strict --check-notarization -R="notarized"`を、bare 3 CLIそれぞれに対する必須検証とします。この確認はApple notary serviceへ通信するonline確認であり、`stapler validate`や`spctl --assess --type open`のようなoffline／local-policy checkとは異なる区分です（本ADR「11」のApple service evidenceへ追加、Local policy evidenceからは削除）。
+- **DMG containerへstapleされたnotarization ticketと、DMGの中にnested状態で入っているbare CLI自体のticket確認は、別の事象です。** WorkCairnのrelease procedureでは、DMG containerだけへstapleし（本ADR「6」step 10）、直接stapleできないnested standalone CLI（bare Mach-O実行ファイル）は`--check-notarization`によるonline notarization checkで確認します。nested standalone CLI自体へticketをstapleできる、またはstapleしているとは記載しません。`--check-notarization`は、nested CLIについて「Apple notary serviceが把握しているnotarization ticketと一致する」ことをApple側へ都度online照会する確認であり、DMGのstapleとは独立した検証経路です。
+- 通常の署名検証（`codesign --verify --strict`、canonical identifier、`RELEASE_EXPECTED_TEAM_ID`との一致、Hardened Runtime、secure timestamp、entitlement allow-list（空集合）との一致）は、bare 3 CLIそれぞれについて引き続き必須です。本addendumはこれらの検証を一切緩和しません。
+- Human Acceptance（本ADR「8」「9」「10」、[PublicBetaFirstRunAcceptance.md](../PublicBetaFirstRunAcceptance.md) §C／D／E）における、quarantine属性が付いたままの実際のDMG download・Finder mount・**Terminalからの3 CLI実際の起動**は、bare CLIに対するGatekeeperの実質的な最終確認として引き続き必須です。この実際のTerminal起動がGatekeeperにrejectされた場合はblockerとして扱い、right-click override、`xattr`削除、macOS全体のSecurity設定の恒久的緩和のいずれによる回避も認めません。
+- `spctl --assess --type exec`のrejectそのものは、bare CLIについては署名・notarization失敗の根拠として扱いません。ただし、DMG層の`spctl --assess --type open`のrejectと、Human Acceptanceにおける実際のTerminal起動のrejectは、引き続きknown limitationとして容認せず、署名・notarization手順の誤りとして扱います。
+
+本addendumは、Developer ID Application署名、Hardened Runtime、secure timestamp、Team ID完全一致、DMG固定contract、`notarytool submit ... --wait --timeout 90m`のcanonical invocation、staple、checksum、New-user／Upgrade／Provider Acceptance、tag push・GitHub Release別承認、no retry・no fallbackという本ADRの他の決定を一切変更・緩和していません。**PB-3u.2〜7で生成・署名・notarize・stapleし、PB-3u.8／8aで検証したcandidate（DMG／3 CLIのbytes自体）は本addendum時点で一切変更していません。** ただし、このDMGはdiagnostic evidence専用として保持するものであり、本addendumが反映された後のmanual procedureに基づくrelease candidateとしては再利用しません。このDMGへのchecksum生成、final promotion、Human Acceptanceへの転用はいずれも禁止します。本addendum反映後は、[Manual macOS Signed Release Procedure](../ManualMacOSReleaseProcedure.md)に従って新しいcandidateを生成します。Public Beta releaseは引き続きNO-GOです。
 
 ## Official Apple references
 
