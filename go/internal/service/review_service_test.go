@@ -28,16 +28,23 @@ type capturingReviewRunner struct {
 	err        error
 	presence   map[string]bool
 	fieldShape map[string]failure.StructuredOutputFieldShape
+	stopReason worker.StopReason
+	calls      int
 }
 
 func (*capturingReviewRunner) Name() string { return "ClaudeRunner" }
 
 func (fake *capturingReviewRunner) Run(_ context.Context, request worker.RunRequest) (worker.RunResult, error) {
+	fake.calls++
 	fake.request = request
 	if fake.err != nil {
 		return worker.RunResult{}, fake.err
 	}
 	inputTokens, outputTokens := 12, 8
+	stopReason := fake.stopReason
+	if stopReason == "" {
+		stopReason = worker.StopReasonCompleted
+	}
 	return worker.RunResult{
 		Content:                    fake.content,
 		Runner:                     fake.Name(),
@@ -47,6 +54,7 @@ func (fake *capturingReviewRunner) Run(_ context.Context, request worker.RunRequ
 		Metadata:                   request.Metadata,
 		StructuredOutputPresence:   fake.presence,
 		StructuredOutputFieldShape: fake.fieldShape,
+		StopReason:                 stopReason,
 	}, nil
 }
 
@@ -120,6 +128,47 @@ func TestReviewServiceMapsBuilderAndStructuredResultFailures(t *testing.T) {
 	}
 	result, executeErr = parseService.Execute(context.Background(), fixture.Input)
 	assertReviewWorkerErrorKind(t, result, executeErr, WorkerErrorInvalidReviewResult)
+}
+
+// TestReviewServiceClassifiesMaxTokensAsOutputIncompleteBeforeParsing is the
+// Review-side counterpart to CEOPlanService.Generate's existing
+// StopReasonMaxTokens check (ADR-0058): a Runner call that succeeds but was
+// cut off by the Provider's own output ceiling must never reach
+// review.ParseTypedDecision -- even when, as here, Content still happens to
+// satisfy worker.RunResult.Validate() -- because parsing it would
+// misclassify a truncation as an ordinary Review parse failure
+// (REVIEW_RESULT_INVALID) instead of the typed OUTPUT_INCOMPLETE this
+// checks for. Also confirms exactly one Provider call: this classification
+// never retries or falls back.
+func TestReviewServiceClassifiesMaxTokensAsOutputIncompleteBeforeParsing(t *testing.T) {
+	fixture := loadReviewServiceFixture(t)
+	registry := runner.NewRegistry()
+	fake := &capturingReviewRunner{
+		content:    `{"verdict":"Approve","issues":[],"summary":"truncated`,
+		stopReason: worker.StopReasonMaxTokens,
+	}
+	if err := registry.Register(fake); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.MapModel(fixture.Input.Reviewer.Model, fake.Name()); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewReviewService(prompt.NewBuilder(), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, executeErr := service.Execute(context.Background(), fixture.Input)
+	assertReviewWorkerErrorKind(t, result, executeErr, WorkerErrorOutputIncomplete)
+	if !errors.Is(executeErr, ErrProviderOutputIncomplete) {
+		t.Fatalf("error = %v, want wrapped ErrProviderOutputIncomplete", executeErr)
+	}
+	var parseErr *review.ParseError
+	if errors.As(executeErr, &parseErr) {
+		t.Fatalf("max_tokens output must never reach review.ParseTypedDecision, got *review.ParseError: %v", parseErr)
+	}
+	if fake.calls != 1 {
+		t.Fatalf("Provider calls = %d, want exactly 1 (no retry/fallback)", fake.calls)
+	}
 }
 
 // TestReviewServiceAttachesRunnerPresenceOnlyToParseFailures proves the one

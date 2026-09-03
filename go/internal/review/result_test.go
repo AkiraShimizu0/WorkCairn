@@ -159,17 +159,42 @@ func TestParseTypedDecisionClassifiesSanitizedParseFailureReasonWithoutRawText(t
 	}
 }
 
+// TestParseTypedDecisionRejectsEveryKindOfTrailingContent is also the
+// regression for parseDecision's own top-level decoder.More() misuse (the
+// same bug the Adapter's classifyJSONShape had, see
+// TestClassifyJSONShapeStrictTopLevelEOF in the claude Adapter package): a
+// stray trailing "}" or "]" immediately after an otherwise-complete Typed
+// Decision object must be rejected, not silently accepted because it looks
+// like a legitimate close-delimiter to a peek-based top-level check.
 func TestParseTypedDecisionRejectsEveryKindOfTrailingContent(t *testing.T) {
 	valid := `{"verdict":"Approve","issues":[],"summary":"問題ありません。"}`
 	for _, content := range []string{
 		valid + " trailing prose",
+		valid + `}`,
+		valid + `]`,
 		valid + ` {"verdict":"Approve","issues":[],"summary":"second value"}`,
+		valid + ` [1,2]`,
+		valid + ` "second string"`,
+		valid + ` 42`,
+		valid + ` true`,
+		valid + ` null`,
 	} {
 		_, err := ParseTypedDecision(content)
 		var parseErr *ParseError
 		if !errors.As(err, &parseErr) || parseErr.Reason != ParseFailureTrailingContent {
-			t.Fatalf("error = %v, want trailing_content", err)
+			t.Fatalf("content %q: error = %v, want trailing_content", content, err)
 		}
+	}
+}
+
+// TestParseTypedDecisionAcceptsTrailingWhitespaceOnly confirms the strict
+// EOF check does not reject the one form of "extra bytes" that is not
+// trailing content: whitespace after the JSON value, which encoding/json
+// itself treats as insignificant.
+func TestParseTypedDecisionAcceptsTrailingWhitespaceOnly(t *testing.T) {
+	valid := `{"verdict":"Approve","issues":[],"summary":"問題ありません。"}`
+	if _, err := ParseTypedDecision(valid + "  \n\t "); err != nil {
+		t.Fatalf("trailing whitespace only: error = %v, want nil", err)
 	}
 }
 

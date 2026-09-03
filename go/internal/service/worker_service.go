@@ -32,6 +32,16 @@ const (
 	WorkerErrorCanceled            WorkerErrorKind = "CANCELED"
 	WorkerErrorInvalidRunnerResult WorkerErrorKind = "INVALID_RUNNER_RESULT"
 	WorkerErrorInvalidReviewResult WorkerErrorKind = "INVALID_REVIEW_RESULT"
+	// WorkerErrorOutputIncomplete means the Runner call itself succeeded
+	// (no transport/HTTP/API error, RunResult.Validate() passed) but the
+	// Provider's own output ceiling cut generation off
+	// (worker.StopReasonMaxTokens) before its Structured Output could be
+	// parsed -- the same ADR-0058 distinction CEOPlanService.Generate and
+	// ExecutionService.Execute already apply, extended to any caller of
+	// this package's typed error taxonomy that requests Structured
+	// Output. Never a Provider-call failure; never routed through this
+	// caller's ordinary parse-failure classification.
+	WorkerErrorOutputIncomplete WorkerErrorKind = "OUTPUT_INCOMPLETE"
 )
 
 // WorkerExecutionError exposes a stable error kind while retaining the cause

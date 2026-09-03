@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -169,7 +170,16 @@ func parseDecision(content []byte, requireSummary bool) (Decision, error) {
 		}
 		return Decision{}, newParseError(reason, fmt.Errorf("%w: malformed JSON", ErrInvalidResult))
 	}
-	if decoder.More() {
+	// Deliberately not decoder.More(): at the top level, More() reports
+	// whether the current decode context looks like it could hold another
+	// element, and a stray trailing "]" or "}" right after a complete
+	// object satisfies that heuristic -- wrongly reporting "no more
+	// content" for genuinely invalid trailing bytes. A second Decode call
+	// is the correct top-level "nothing else here" test: io.EOF means
+	// nothing remains; any other outcome (a second value, or a decode
+	// error from non-JSON trailing bytes) means trailing content follows.
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return Decision{}, newParseError(ParseFailureTrailingContent, fmt.Errorf("%w: trailing content after JSON object", ErrInvalidResult))
 	}
 	verdict, validVerdict := canonicalVerdict(string(candidate.Verdict))

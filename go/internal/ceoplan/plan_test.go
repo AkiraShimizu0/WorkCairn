@@ -394,6 +394,43 @@ func TestCEOPlanIntentPromptExampleIsValidAndContractIsExplicit(t *testing.T) {
 	}
 }
 
+// TestCEOPlanPromptRequiredFieldWordingMatchesSchema is the PB-3ah.1
+// regression for a docs/prompt-only defect found alongside the Structured
+// Output extraction bug: BuildPrompt used to instruct the Provider that
+// "top-level fieldはすべて必須です" (all top-level fields are required),
+// contradicting both ADR-0046 (project_name/objective/summary were
+// deliberately removed from the Provider-required set, since Go derives
+// them deterministically when omitted) and IntentJSONSchema's own actual
+// "required" array. This locks the Prompt to name exactly steps and
+// ceo_questions as required, to say project_name/objective/summary are
+// optional, and to never again claim all five top-level fields are
+// required.
+func TestCEOPlanPromptRequiredFieldWordingMatchesSchema(t *testing.T) {
+	employees := []organization.Identity{{ID: "CONTENT-001", Department: "コンテンツ部", Role: "Content Writer"}}
+	built, err := BuildPrompt("依頼", employees)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(built.System, "top-level fieldはすべて必須です") {
+		t.Fatal("Prompt still claims every top-level field is required, contradicting ADR-0046 and IntentJSONSchema")
+	}
+	if !strings.Contains(built.System, "stepsとceo_questionsは必須です") {
+		t.Fatal("Prompt does not state that steps and ceo_questions are the required top-level fields")
+	}
+	if !strings.Contains(built.System, "省略可能") {
+		t.Fatal("Prompt does not state that project_name/objective/summary are optional")
+	}
+
+	schema, err := IntentJSONSchema(CanonicalRoleTitles(employees))
+	if err != nil {
+		t.Fatal(err)
+	}
+	required, ok := schema["required"].([]string)
+	if !ok || len(required) != 2 || required[0] != "steps" || required[1] != "ceo_questions" {
+		t.Fatalf("IntentJSONSchema top-level required = %#v, want exactly [steps, ceo_questions]", schema["required"])
+	}
+}
+
 func TestParseRunnerOutputClassifiesSanitizedParseFailureReasonWithoutRawText(t *testing.T) {
 	employees := []organization.Identity{{ID: "CONTENT-001", Department: "コンテンツ部", Role: "Content Writer"}}
 	secret := "PROVIDER_SECRET_MARKER_MUST_NOT_APPEAR_IN_REASON"

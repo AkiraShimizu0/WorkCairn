@@ -86,6 +86,18 @@ func (service *ReviewService) Execute(ctx context.Context, input review.PromptIn
 		}
 		return review.ExecutionResult{}, newWorkerError(WorkerErrorInvalidRunnerResult, err)
 	}
+	// ADR-0058, extended to Review's Structured Output request: a Provider
+	// call that succeeds but was cut off by its own output ceiling is
+	// never accepted as a normal completion, and its (necessarily
+	// malformed-or-incomplete) Content must never even reach
+	// review.ParseTypedDecision -- that would misclassify a truncation as
+	// an ordinary Review parse failure (REVIEW_RESULT_INVALID) instead of
+	// the caller-visible OUTPUT_INCOMPLETE this checks for. Checked here,
+	// before parsing, exactly like CEOPlanService.Generate's identical
+	// check on the same worker.RunResult.StopReason field.
+	if runResult.StopReason == worker.StopReasonMaxTokens {
+		return review.ExecutionResult{}, newWorkerError(WorkerErrorOutputIncomplete, ErrProviderOutputIncomplete)
+	}
 
 	decision, err := review.ParseTypedDecision(runResult.Content)
 	if err != nil {

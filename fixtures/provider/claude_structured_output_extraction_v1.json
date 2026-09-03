@@ -37,6 +37,37 @@
     ],
     "usage": {"input_tokens": 1, "output_tokens": 1}
   },
+  "empty_text": {
+    "model": "claude-sonnet-5",
+    "content": [
+      {"type": "text", "text": "   "}
+    ],
+    "usage": {"input_tokens": 1, "output_tokens": 1}
+  },
+  "invalid_json_end_turn": {
+    "model": "claude-sonnet-5",
+    "content": [
+      {"type": "text", "text": "{\"verdict\":\"Approve\", \"issues\":["}
+    ],
+    "stop_reason": "end_turn",
+    "usage": {"input_tokens": 1, "output_tokens": 1}
+  },
+  "incomplete_json_max_tokens": {
+    "model": "claude-sonnet-5",
+    "content": [
+      {"type": "text", "text": "{\"verdict\":\"Approve\", \"issues\":["}
+    ],
+    "stop_reason": "max_tokens",
+    "usage": {"input_tokens": 1, "output_tokens": 1}
+  },
+  "no_text_max_tokens": {
+    "model": "claude-sonnet-5",
+    "content": [
+      {"type": "thinking", "thinking": "cut off mid-thought"}
+    ],
+    "stop_reason": "max_tokens",
+    "usage": {"input_tokens": 1, "output_tokens": 1}
+  },
   "refusal": {
     "model": "claude-sonnet-5",
     "content": [],

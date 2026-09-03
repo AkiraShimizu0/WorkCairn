@@ -77,9 +77,16 @@ type InteractionPlanResult struct {
 type ProviderFailure struct {
 	Category          string `json:"category"`
 	TransportCategory string `json:"transport_category,omitempty"`
-	HTTPStatus        int    `json:"http_status,omitempty"`
-	ProviderType      string `json:"provider_error_type,omitempty"`
-	RequestID         string `json:"request_id,omitempty"`
+	// TransportCategory and StructuredOutputReason are validated together,
+	// category-aware and fail-closed, by sanitizeProviderFailure before
+	// either ever reaches durable Ledger/FailureEnvelope evidence or Result
+	// JSON -- exported as plain strings for JSON serialization, but never
+	// trusted as pre-validated by any reader in or outside this package.
+	// See sanitizeProviderFailure's doc for the closed rules.
+	StructuredOutputReason string `json:"structured_output_reason,omitempty"`
+	HTTPStatus             int    `json:"http_status,omitempty"`
+	ProviderType           string `json:"provider_error_type,omitempty"`
+	RequestID              string `json:"request_id,omitempty"`
 }
 
 type InteractionApplyResult struct {
@@ -188,7 +195,7 @@ func ExecuteInteractionStart(
 		ctx, input.VaultRoot, candidate.SessionID, commit.Record.Version, input.CurrentTime, childCommandID, provider, httpClient,
 	)
 	if generationErr != nil {
-		envelope := chainedPlanGenerationEnvelope(generationErr, "INTERACTION_START_FAILED", "interaction_plan_generation")
+		envelope := chainedPlanGenerationEnvelope(generationErr, childCommandID, "INTERACTION_START_FAILED", "interaction_plan_generation")
 		return generationResult, finishDurableCommandWithEnvelope(ctx, claim, generationResult, generationErr, envelope, true)
 	}
 	return generationResult, finishDurableCommand(ctx, claim, generationResult, nil, "", "", false)
@@ -302,19 +309,31 @@ func executeInteractionPlanGenerationCommand(
 
 // chainedPlanGenerationEnvelope extracts the already-classified
 // failure.Envelope a chained interaction.plan.generate child recorded on
-// its own Ledger entry, forwarding it verbatim (never reclassifying) onto
-// the outer interaction.start/interaction.answer Command that triggered it.
-// The fallback only fires when the child never reached its own finish call
-// at all (e.g. the child claim itself failed before any Ledger write) --
-// residual, but still fail-closed rather than silently dropping the outer
-// Command's own failure classification.
-func chainedPlanGenerationEnvelope(err error, outerCode, outerStage string) *failure.Envelope {
+// its own Ledger entry, forwarding its Code/Stage/Category/Provider/Parse
+// facts verbatim (never reclassifying) onto the outer
+// interaction.start/interaction.answer Command that triggered it. The
+// child's OWN persisted Envelope (recorded.Envelope) is never mutated --
+// this returns a value-copy with the outer Command's own partial-commit
+// facts applied: the outer Command already committed a Session/Interaction
+// record before delegating to the child, so the outer Envelope's
+// Partial/RecoveryRequired describe THAT outer partial commit, not the
+// child's own (possibly false) scope, and ChildCommandID records which
+// child Ledger entry this outer failure was chained from. The fallback
+// only fires when the child never reached its own finish call at all (e.g.
+// the child claim itself failed before any Ledger write) -- residual, but
+// still fail-closed rather than silently dropping the outer Command's own
+// failure classification.
+func chainedPlanGenerationEnvelope(err error, childCommandID, outerCode, outerStage string) *failure.Envelope {
 	var recorded *RecordedCommandError
 	if errors.As(err, &recorded) && recorded.Envelope != nil {
-		return recorded.Envelope
+		outer := *recorded.Envelope
+		outer.Partial, outer.RecoveryRequired = true, true
+		outer.ChildCommandID = childCommandID
+		return &outer
 	}
 	envelope := failure.New(outerCode, outerStage)
 	envelope.Partial, envelope.RecoveryRequired = true, true
+	envelope.ChildCommandID = childCommandID
 	if errors.As(err, &recorded) {
 		if strings.TrimSpace(recorded.Code) != "" {
 			envelope.Code = recorded.Code
@@ -417,6 +436,14 @@ func interactionPlanValidationTaskIndex(err error) *int {
 }
 
 func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, result InteractionPlanResult, err error, stage string, partial bool) (InteractionPlanResult, error) {
+	// Normalized once, unconditionally, before anything below reads
+	// result.ProviderFailure.Category -- including the failure code
+	// classification two lines down. This guarantees an unknown, empty, or
+	// forged Category (whether it arrived via providerFailure()'s own
+	// construction-time sanitize call, or was set directly on the struct,
+	// e.g. by a test) is never classified, persisted to Envelope.Category /
+	// ProviderDiagnostic.Category, or marshaled into Result JSON.
+	sanitizeProviderFailure(result.ProviderFailure)
 	code := "INTERACTION_PLAN_FAILED"
 	if errors.Is(err, claude.ErrInvalidConfig) {
 		code = "PROVIDER_CONFIGURATION_REQUIRED"
@@ -453,12 +480,12 @@ func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, resul
 	}
 	if err != nil && result.ProviderFailure != nil {
 		envelope := failure.New(code, stage)
-		envelope.Substage = result.ProviderFailure.TransportCategory
+		envelope.Substage = providerFailureSubcategory(result.ProviderFailure)
 		envelope.Category = result.ProviderFailure.Category
 		envelope.Partial = partial
 		envelope.RecoveryRequired = partial
 		envelope.Provider = &failure.ProviderDiagnostic{
-			Category: result.ProviderFailure.Category, Subcategory: result.ProviderFailure.TransportCategory,
+			Category: result.ProviderFailure.Category, Subcategory: providerFailureSubcategory(result.ProviderFailure),
 			HTTPStatus: result.ProviderFailure.HTTPStatus, ProviderType: result.ProviderFailure.ProviderType,
 			RequestID: result.ProviderFailure.RequestID,
 		}
@@ -468,18 +495,145 @@ func finishInteractionPlan(ctx context.Context, claim durableCommandClaim, resul
 }
 
 func providerFailure(err error) *ProviderFailure {
-	var failure *claude.Error
-	if !errors.As(err, &failure) {
+	var claudeErr *claude.Error
+	if !errors.As(err, &claudeErr) {
 		return nil
 	}
-	category := failure.Category
+	category := claudeErr.Category
 	if category == "" {
 		category = claude.FailureUnknown
 	}
-	return &ProviderFailure{
-		Category: string(category), TransportCategory: string(failure.Transport), HTTPStatus: failure.StatusCode,
-		ProviderType: failure.ProviderType, RequestID: failure.RequestID,
+	provider := &ProviderFailure{
+		Category: string(category), TransportCategory: string(claudeErr.Transport),
+		StructuredOutputReason: string(claudeErr.StructuredOutputReason()),
+		HTTPStatus:             claudeErr.StatusCode, ProviderType: claudeErr.ProviderType, RequestID: claudeErr.RequestID,
 	}
+	sanitizeProviderFailure(provider)
+	return provider
+}
+
+// sanitizeProviderFailure is the single persistence-boundary normalizer for
+// a *ProviderFailure's three exported classification fields -- Category
+// itself, and its two subcategory fields (TransportCategory,
+// StructuredOutputReason) -- mutating provider in place. It is the one
+// place this package (shared by both the Interaction and Review
+// persistence paths, which never re-implement this validation separately)
+// closes those fields against their own allow-lists a second time -- never
+// trusting the Adapter's own accessors as the only gate. Every caller that
+// reads or persists a ProviderFailure (Provider failure code
+// classification, Envelope.Category, ProviderDiagnostic.Category,
+// providerFailureSubcategory below for Envelope.Substage /
+// ProviderDiagnostic.Subcategory, and Result JSON marshal onto the Command
+// Ledger) must call this first -- finishInteractionPlan and
+// reviewFailureEnvelope both call it unconditionally at their own entry
+// point, before either reads provider.Category for code classification, so
+// every later read in that call already sees the normalized value. Because
+// it mutates the same *ProviderFailure pointer a Result embeds, it also
+// closes Result JSON: even an exported field set directly (bypassing
+// providerFailure below -- e.g. a forged value in a test) is caught here.
+//
+// Fail-closed rules, in order:
+//   - Category survives only when it is one of the eleven closed
+//     claude.FailureCategory values this package's own Provider Adapter
+//     defines; every other value (empty, unknown, forged) normalizes to
+//     claude.FailureUnknown ("provider_failure") -- the same safe default
+//     failure.ClassifyProviderCategory already used for CODE
+//     classification, now also applied to the persisted Category value
+//     itself, not just the code derived from it.
+//   - both subcategory fields non-empty at once is itself anomalous (the
+//     two vocabularies are mutually exclusive by construction: a transport
+//     failure never also carries a Structured Output reason) and is never
+//     partially trusted by preferring one side -- both degrade to empty
+//     rather than risk hiding an inconsistent diagnostic. Category itself
+//     is left as-is (whatever it normalized to above) in this case.
+//   - TransportCategory survives only when the (now-normalized) Category
+//     is FailureTransport and the value is one of the five closed
+//     TransportFailureCategory values.
+//   - StructuredOutputReason survives only when the (now-normalized)
+//     Category is FailureStructuredOutputInvalid and the value is one of
+//     the six closed StructuredOutputInvalidReason values.
+//   - every other combination (category mismatch, unknown subcategory
+//     value, any other Category) degrades both subcategory fields to
+//     empty.
+func sanitizeProviderFailure(provider *ProviderFailure) {
+	if provider == nil {
+		return
+	}
+	if !isValidProviderCategory(provider.Category) {
+		provider.Category = string(claude.FailureUnknown)
+	}
+	transport, structuredReason := provider.TransportCategory, provider.StructuredOutputReason
+	provider.TransportCategory, provider.StructuredOutputReason = "", ""
+	if transport != "" && structuredReason != "" {
+		return
+	}
+	switch claude.FailureCategory(provider.Category) {
+	case claude.FailureTransport:
+		if isValidTransportCategory(transport) {
+			provider.TransportCategory = transport
+		}
+	case claude.FailureStructuredOutputInvalid:
+		if isValidStructuredOutputReason(structuredReason) {
+			provider.StructuredOutputReason = structuredReason
+		}
+	}
+}
+
+// isValidProviderCategory reports whether value is one of the eleven
+// closed claude.FailureCategory values the Claude Adapter defines. This is
+// the Process-layer's own closed allow-list for Category, checked
+// independently of whatever validation (if any) produced value -- the same
+// defense-in-depth posture this package already applies to
+// TransportCategory and StructuredOutputReason.
+func isValidProviderCategory(value string) bool {
+	switch claude.FailureCategory(value) {
+	case claude.FailureAuthentication, claude.FailureBilling, claude.FailurePermission, claude.FailureInvalidRequest,
+		claude.FailureRateLimited, claude.FailureUnavailable, claude.FailureTransport, claude.FailureResponse,
+		claude.FailureUnknown, claude.FailureRefusal, claude.FailureStructuredOutputInvalid:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidTransportCategory(value string) bool {
+	switch claude.TransportFailureCategory(value) {
+	case claude.TransportDNSFailed, claude.TransportConnectFailed, claude.TransportTLSFailed,
+		claude.TransportTimeout, claude.TransportConnectionReset:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidStructuredOutputReason(value string) bool {
+	switch claude.StructuredOutputInvalidReason(value) {
+	case claude.StructuredOutputUnexpectedBlock, claude.StructuredOutputBlockCountInvalid, claude.StructuredOutputEmptyText,
+		claude.StructuredOutputInvalidJSON, claude.StructuredOutputMultipleJSON, claude.StructuredOutputTrailingJSON:
+		return true
+	default:
+		return false
+	}
+}
+
+// providerFailureSubcategory returns the single closed sub-classification
+// belonging to a ProviderFailure's own Category, after first sanitizing
+// provider in place via sanitizeProviderFailure above -- so every caller of
+// this getter gets the fail-closed guarantee for free, including the
+// Result JSON persistence guarantee (see that function's doc), regardless
+// of how many times or where this is called. Exactly one of
+// TransportCategory/StructuredOutputReason is ever non-empty afterward, so
+// returning "whichever is set" never conflates one vocabulary's value into
+// the other's slot.
+func providerFailureSubcategory(provider *ProviderFailure) string {
+	if provider == nil {
+		return ""
+	}
+	sanitizeProviderFailure(provider)
+	if provider.TransportCategory != "" {
+		return provider.TransportCategory
+	}
+	return provider.StructuredOutputReason
 }
 
 // providerFailureCode keeps Interaction Plan's own historical default
@@ -589,7 +743,7 @@ func ExecuteInteractionAnswer(
 		ctx, input.VaultRoot, input.SessionID, commit.Record.Version, input.CurrentTime, childCommandID, provider, httpClient,
 	)
 	if generationErr != nil {
-		envelope := chainedPlanGenerationEnvelope(generationErr, "INTERACTION_FAILED", "interaction_plan_generation")
+		envelope := chainedPlanGenerationEnvelope(generationErr, childCommandID, "INTERACTION_FAILED", "interaction_plan_generation")
 		return generationResult, finishDurableCommandWithEnvelope(ctx, claim, generationResult, generationErr, envelope, true)
 	}
 	return generationResult, finishDurableCommand(ctx, claim, generationResult, nil, "", "", false)

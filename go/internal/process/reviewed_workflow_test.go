@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
@@ -304,6 +305,300 @@ func TestReviewedWorkflowReviewProviderFailureClassifiesOuterCommandAndPreserves
 		record.Failure.Details.Stage != "review_provider" || record.Failure.Details.Provider == nil ||
 		record.Failure.Details.Provider.Category != "rate_limited" || record.Failure.Details.Provider.RequestID != "req_review_safe" {
 		t.Fatalf("outer reviewed Workflow Ledger Details = %#v", record.Failure.Details)
+	}
+}
+
+// TestReviewedWorkflowExecutionProviderFailureClassifiesOuterCommandWithChildID
+// is the Task-execution counterpart to
+// TestReviewedWorkflowReviewProviderFailureClassifiesOuterCommandAndPreservesEvidence
+// above, with the outer ChildCommandID assertion PB-3ah.9 adds:
+// reviewedWorkflowOuterEnvelope must set the copied outer Envelope's
+// ChildCommandID to the actual task.execute child Command ID
+// (last.ExecutionCommandID) this test independently fetches from the
+// Ledger -- never a value recomputed only inside the test, which could
+// pass even if production forwarding were broken.
+func TestReviewedWorkflowExecutionProviderFailureClassifiesOuterCommandWithChildID(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 12, 15, 0, 0, time.FixedZone("JST", 9*60*60))
+	calls := 0
+	client := httpDoerFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests, Header: http.Header{"Request-Id": []string{"req_execution_safe"}},
+			Body: io.NopCloser(strings.NewReader(`{"type":"error","error":{"type":"rate_limit_error","message":"must not persist"}}`)),
+		}, nil
+	})
+	input := ExecuteReviewedWorkflowInput{
+		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
+			WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+			ReviewerID:        "QA-001",
+		},
+		Approved: true, ApprovalReference: "approval-execution-provider-failure", CommandID: "CMD-REVIEWED-EXECUTION-PROVIDER-FAILURE", MaxTasks: 10,
+	}
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}
+	result, err := ExecuteReviewedWorkflow(context.Background(), input, provider, client)
+	if err == nil || result.Status != "partial_failure" || len(result.Tasks) != 1 || calls != 1 {
+		t.Fatalf("ExecuteReviewedWorkflow() = %#v, %v calls=%d", result, err, calls)
+	}
+	current := result.Tasks[0]
+	if current.TaskID != "TASK-001" || current.Review != nil || current.Execution.ProviderFailure == nil ||
+		current.Execution.ProviderFailure.Category != "rate_limited" {
+		t.Fatalf("Task execution Provider failure = %#v", current)
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	executionChildCommandID, deriveErr := commandledger.DeriveChildCommandID(input.CommandID, "task.execute:TASK-001")
+	if deriveErr != nil {
+		t.Fatal(deriveErr)
+	}
+	record, getErr := ledger.Get(context.Background(), input.CommandID)
+	// Task execution's own failure classification (executionFailureEnvelope,
+	// unrelated to and unchanged by this Checkpoint) derives Code/Stage from
+	// execution.ExecutionError.Kind/.Stage -- WORKER_FAILED/worker for a
+	// Runner-level Provider failure -- not from the Provider category the
+	// way Interaction/Review do; only Category and the Provider diagnostic
+	// come from the ProviderFailure. This test only exercises the
+	// ChildCommandID forwarding this Checkpoint adds, not Task execution's
+	// own pre-existing Code taxonomy.
+	if getErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
+		record.Failure.Code != "WORKER_FAILED" || record.Failure.Stage != "worker" {
+		t.Fatalf("outer reviewed Workflow Ledger = %#v, %v", record, getErr)
+	}
+	if record.Failure.Details == nil || record.Failure.Details.Category != "rate_limited" ||
+		record.Failure.Details.Provider == nil || record.Failure.Details.Provider.Category != "rate_limited" ||
+		record.Failure.Details.Provider.RequestID != "req_execution_safe" ||
+		record.Failure.Details.ChildCommandID != executionChildCommandID {
+		t.Fatalf("outer reviewed Workflow Ledger Details = %#v, want ChildCommandID=%q", record.Failure.Details, executionChildCommandID)
+	}
+	// The task.execute child Command's own Ledger record is fetched and
+	// asserted independently: not just state/code and the absence of a
+	// nested ChildCommandID, but the full persisted diagnostic this
+	// Checkpoint fixes into the scenario -- Stage, Failure Details'
+	// Category, and the Provider diagnostic (Category/RequestID/Subcategory)
+	// -- so a future regression that drops or corrupts any of these on the
+	// child specifically (while leaving the outer's forwarded copy correct)
+	// is caught by this same durable scenario, not just by the outer
+	// assertion above. Provider.Subcategory stays empty here by the
+	// existing, unchanged contract: executionFailureEnvelope never sets it
+	// (Task execution has no transport/structured-output subcategory
+	// concept -- that vocabulary belongs to Interaction/Review only), so
+	// "the existing contract's value" for a rate_limited Category is "".
+	childRecord, childErr := ledger.Get(context.Background(), executionChildCommandID)
+	if childErr != nil || childRecord.State != commandledger.StateFailed || childRecord.Failure == nil ||
+		childRecord.Failure.Code != "WORKER_FAILED" || childRecord.Failure.Stage != "worker" {
+		t.Fatalf("task.execute child Ledger = %#v, %v", childRecord, childErr)
+	}
+	if childRecord.Failure.Details == nil || childRecord.Failure.Details.Category != "rate_limited" ||
+		childRecord.Failure.Details.Provider == nil || childRecord.Failure.Details.Provider.Category != "rate_limited" ||
+		childRecord.Failure.Details.Provider.RequestID != "req_execution_safe" ||
+		childRecord.Failure.Details.Provider.Subcategory != "" {
+		t.Fatalf("task.execute child Ledger Details = %#v", childRecord.Failure.Details)
+	}
+	if childRecord.Failure.Details.ChildCommandID != "" || childRecord.Failure.Details.Partial || childRecord.Failure.Details.RecoveryRequired {
+		t.Fatalf("task.execute child Ledger Details carries outer-only lineage facts it should not have: %#v", childRecord.Failure.Details)
+	}
+	if strings.Contains(string(childRecord.Result), "must not persist") || strings.Contains(string(childRecord.Result), "FORGED") {
+		t.Fatalf("task.execute child Result JSON leaked raw Provider error text or an unexpected marker: %s", childRecord.Result)
+	}
+}
+
+// TestReviewedWorkflowReviewStructuredOutputInvalidClassifiesOuterCommandAndPreservesEvidence
+// is the Structured Output counterpart to
+// TestReviewedWorkflowReviewProviderFailureClassifiesOuterCommandAndPreservesEvidence
+// above: the Review child's Adapter-level claude.FailureStructuredOutputInvalid
+// classification (here, trailing content after an otherwise-complete Typed
+// Decision JSON object -- the strict top-level EOF regression) must reach
+// the outer Reviewed Workflow Command's own Ledger record with the same
+// closed StructuredOutputInvalidReason, not the generic
+// REVIEWED_WORKFLOW_FAILED/review pair and not conflated with the
+// transport-failure vocabulary.
+func TestReviewedWorkflowReviewStructuredOutputInvalidClassifiesOuterCommandAndPreservesEvidence(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 12, 30, 0, 0, time.FixedZone("JST", 9*60*60))
+	calls := 0
+	client := httpDoerFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			encoded, _ := json.Marshal(map[string]any{
+				"model": "claude-test", "content": []map[string]string{{"type": "text", "text": "# TASK-001 deliverable\n\n本文"}},
+				"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+			})
+			return &http.Response{
+				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(string(encoded))),
+			}, nil
+		}
+		encoded, _ := json.Marshal(map[string]any{
+			"model": "claude-test",
+			"content": []map[string]string{{
+				"type": "text", "text": `{"verdict":"Approve","issues":[],"summary":"問題ありません。"} trailing`,
+			}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+		return &http.Response{
+			StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(string(encoded))),
+		}, nil
+	})
+	input := ExecuteReviewedWorkflowInput{
+		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
+			WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+			ReviewerID:        "QA-001",
+		},
+		Approved: true, ApprovalReference: "approval-review-structured-output-invalid", CommandID: "CMD-REVIEWED-REVIEW-STRUCTURED-OUTPUT-INVALID", MaxTasks: 10,
+	}
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}
+	result, err := ExecuteReviewedWorkflow(context.Background(), input, provider, client)
+	if err == nil || result.Status != "partial_failure" || len(result.Tasks) != 1 {
+		t.Fatalf("ExecuteReviewedWorkflow() = %#v, %v", result, err)
+	}
+	current := result.Tasks[0]
+	// current.Review.ProviderFailure is the legacy review.ProviderFailure
+	// copy (Category/HTTPStatus/ProviderType/RequestID only -- it never
+	// carried a subcategory even before this Checkpoint); the closed
+	// StructuredOutputInvalidReason itself is asserted below via the
+	// durable Ledger Details, which is what actually propagates end to end.
+	if current.TaskID != "TASK-001" || current.Review == nil || current.Review.ProviderFailure == nil ||
+		current.Review.ProviderFailure.Category != "structured_output_invalid" {
+		t.Fatalf("Review Structured Output failure = %#v", current.Review)
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, getErr := ledger.Get(context.Background(), input.CommandID)
+	if getErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
+		record.Failure.Code != "PROVIDER_RESPONSE_INVALID" {
+		t.Fatalf("outer reviewed Workflow Ledger = %#v, %v", record, getErr)
+	}
+	// The Review child Command's own Ledger record ("review.execute:TASK-001",
+	// derived the same way service.reviewedChildCommandID derives it in
+	// production) is fetched here (before the outer assertion below) so the
+	// outer's own ChildCommandID can be checked against the ID of a Review
+	// child record this test actually retrieved -- not a value recomputed
+	// independently, which could pass even if the outer's real forwarding
+	// were broken.
+	reviewChildCommandID, deriveErr := commandledger.DeriveChildCommandID(input.CommandID, "review.execute:TASK-001")
+	if deriveErr != nil {
+		t.Fatal(deriveErr)
+	}
+	if record.Failure.Details == nil || record.Failure.Details.Category != "structured_output_invalid" ||
+		record.Failure.Details.Substage != string(claude.StructuredOutputTrailingJSON) ||
+		record.Failure.Details.Provider == nil || record.Failure.Details.Provider.Category != "structured_output_invalid" ||
+		record.Failure.Details.Provider.Subcategory != string(claude.StructuredOutputTrailingJSON) ||
+		record.Failure.Details.ChildCommandID != reviewChildCommandID {
+		t.Fatalf("outer reviewed Workflow Ledger Details = %#v, want ChildCommandID=%q", record.Failure.Details, reviewChildCommandID)
+	}
+	// The Review child Command's own Ledger record is asserted
+	// independently -- not just the outer Reviewed Workflow record above --
+	// so a reason synthesized only at the outer layer (e.g. a bug that
+	// reclassifies instead of forwarding) cannot pass this test.
+	childRecord, childErr := ledger.Get(context.Background(), reviewChildCommandID)
+	if childErr != nil || childRecord.State != commandledger.StateFailed || childRecord.Failure == nil ||
+		childRecord.Failure.Code != "PROVIDER_RESPONSE_INVALID" || childRecord.Failure.Stage != "review_provider" {
+		t.Fatalf("Review child Ledger = %#v, %v", childRecord, childErr)
+	}
+	if childRecord.Failure.Details == nil || childRecord.Failure.Details.Category != "structured_output_invalid" ||
+		childRecord.Failure.Details.Substage != string(claude.StructuredOutputTrailingJSON) ||
+		childRecord.Failure.Details.Provider == nil || childRecord.Failure.Details.Provider.Category != "structured_output_invalid" ||
+		childRecord.Failure.Details.Provider.Subcategory != string(claude.StructuredOutputTrailingJSON) {
+		t.Fatalf("Review child Ledger Details = %#v", childRecord.Failure.Details)
+	}
+	// The child's own scope is never mutated with the outer's lineage
+	// facts -- Review's child finish never commits an artifact here, so
+	// Partial/RecoveryRequired stay false, and Review has no further child
+	// of its own to chain from.
+	if childRecord.Failure.Details.Partial || childRecord.Failure.Details.RecoveryRequired || childRecord.Failure.Details.ChildCommandID != "" {
+		t.Fatalf("Review child Ledger Details carries outer-only lineage facts: %#v", childRecord.Failure.Details)
+	}
+	var childResult ReviewExecutionResult
+	if decodeErr := json.Unmarshal(childRecord.Result, &childResult); decodeErr != nil ||
+		childResult.ProviderFailure == nil || childResult.ProviderFailure.Category != "structured_output_invalid" ||
+		childResult.ProviderFailure.StructuredOutputReason != string(claude.StructuredOutputTrailingJSON) ||
+		childResult.ProviderFailure.TransportCategory != "" {
+		t.Fatalf("Review child Result JSON ProviderFailure = %#v, decode=%v", childResult.ProviderFailure, decodeErr)
+	}
+	if strings.Contains(string(childRecord.Result), "must not persist") || strings.Contains(string(childRecord.Result), "FORGED") {
+		t.Fatalf("Review child Result JSON leaked raw response or a forged marker: %s", childRecord.Result)
+	}
+}
+
+// TestReviewedWorkflowReviewOutputIncompleteClassifiesOuterCommandWithoutArtifacts
+// proves the child Review's OUTPUT_INCOMPLETE classification (ADR-0058,
+// extended to Review) reaches the outer Reviewed Workflow Command unchanged
+// -- never reclassified into REVIEW_RESULT_INVALID or REVIEWED_WORKFLOW_FAILED
+// -- with exactly one Provider call for Review (no retry/fallback) and no
+// Review or Revision artifact created for the failed Task.
+func TestReviewedWorkflowReviewOutputIncompleteClassifiesOuterCommandWithoutArtifacts(t *testing.T) {
+	root := writeReviewedWorkflowVault(t)
+	at := time.Date(2026, time.August, 9, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	calls := 0
+	reviewCalls := 0
+	client := httpDoerFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		if calls == 2 {
+			reviewCalls++
+			encoded, _ := json.Marshal(map[string]any{
+				"model":       "claude-test",
+				"content":     []map[string]string{{"type": "text", "text": `{"verdict":"Approve","issues":[],"summary":"truncated mid-`}},
+				"usage":       map[string]int{"input_tokens": 1, "output_tokens": 1},
+				"stop_reason": "max_tokens",
+			})
+			return &http.Response{
+				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(string(encoded))),
+			}, nil
+		}
+		encoded, _ := json.Marshal(map[string]any{
+			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": "# TASK-001 deliverable\n\n本文"}},
+			"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+		return &http.Response{
+			StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(string(encoded))),
+		}, nil
+	})
+	input := ExecuteReviewedWorkflowInput{
+		ReviewedWorkflowPlanInput: ReviewedWorkflowPlanInput{
+			WorkflowPlanInput: WorkflowPlanInput{VaultRoot: root, ProjectID: "PROJECT-001", ProjectName: "ToDoアプリ", CurrentTime: at},
+			ReviewerID:        "QA-001",
+		},
+		Approved: true, ApprovalReference: "approval-review-output-incomplete", CommandID: "CMD-REVIEWED-REVIEW-OUTPUT-INCOMPLETE", MaxTasks: 10,
+	}
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}
+	result, err := ExecuteReviewedWorkflow(context.Background(), input, provider, client)
+	if err == nil || result.Status != "partial_failure" || len(result.Tasks) != 1 {
+		t.Fatalf("ExecuteReviewedWorkflow() = %#v, %v", result, err)
+	}
+	if reviewCalls != 1 {
+		t.Fatalf("Review Provider calls = %d, want exactly 1 (no retry/fallback)", reviewCalls)
+	}
+	current := result.Tasks[0]
+	if current.TaskID != "TASK-001" || current.Review == nil || current.Review.ProviderFailure != nil ||
+		current.Review.FailureCode != "OUTPUT_INCOMPLETE" || current.Review.FailureStage != "review_output_incomplete" ||
+		current.Review.Artifact != nil {
+		t.Fatalf("Review output-incomplete failure = %#v", current.Review)
+	}
+	if current.Review.FailureCode == "REVIEW_RESULT_INVALID" || current.Review.FailureCode == "REVIEWED_WORKFLOW_FAILED" {
+		t.Fatal("max_tokens truncation must never surface as an ordinary Review parse failure or the generic Reviewed Workflow fallback")
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, "ToDoアプリ")
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, getErr := ledger.Get(context.Background(), input.CommandID)
+	if getErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
+		record.Failure.Code != "OUTPUT_INCOMPLETE" || record.Failure.Stage != "review_output_incomplete" {
+		t.Fatalf("outer reviewed Workflow Ledger = %#v, %v", record, getErr)
+	}
+	project := filepath.Join(root, "プロジェクト", "ToDoアプリ")
+	if _, statErr := os.Stat(filepath.Join(project, "Reviews")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("output-incomplete failure created Review artifacts: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(project, "Revisions")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("output-incomplete failure created Revision artifacts: %v", statErr)
 	}
 }
 
@@ -774,15 +1069,53 @@ func TestReviewedWorkflowOuterEnvelopeClassifiesRevisionLimitAndNoProgress(t *te
 // selector never reclassifies a genuine child Execution/Review failure --
 // it must return exactly the child's own already-computed Envelope, not a
 // generic REVIEWED_WORKFLOW_FAILED fallback, whenever one is available.
+// TestReviewedWorkflowOuterEnvelopeForwardsChildEnvelopeUnchanged is the
+// direct unit test for reviewedWorkflowOuterEnvelope's two child-forwarding
+// branches (task_execute, review): the returned outer Envelope must be a
+// value-copy carrying the child's own Code/Stage/Category/Substage/Provider
+// diagnostic unchanged, plus the selected child's actual production-
+// recorded Command ID (last.ExecutionCommandID / last.ReviewCommandID,
+// never re-derived) as its own ChildCommandID -- while the child's own
+// Envelope object, still referenced by result.Tasks[...], is never mutated:
+// its ChildCommandID stays empty and its Partial/RecoveryRequired stay
+// whatever the child's own scope set them to.
 func TestReviewedWorkflowOuterEnvelopeForwardsChildEnvelopeUnchanged(t *testing.T) {
-	childEnvelope := failure.New("PROVIDER_REFUSED", "task_execute")
-	result := service.ReviewedWorkflowRunResult{Tasks: []service.ReviewedWorkflowTaskResult{
-		{TaskID: "TASK-001", Execution: execution.Result{Failure: &childEnvelope}},
-	}}
-	envelope := reviewedWorkflowOuterEnvelope(result, "task_execute", true, nil)
-	if envelope == nil || envelope.Code != "PROVIDER_REFUSED" || envelope.Stage != "task_execute" {
-		t.Fatalf("reviewedWorkflowOuterEnvelope() = %#v, want the child's own Envelope forwarded unchanged", envelope)
-	}
+	t.Run("task_execute", func(t *testing.T) {
+		childEnvelope := failure.New("PROVIDER_REFUSED", "task_execute")
+		childEnvelope.Category = "provider_refusal"
+		childEnvelope.Provider = &failure.ProviderDiagnostic{Category: "provider_refusal", RequestID: "req_child_execution"}
+		result := service.ReviewedWorkflowRunResult{Tasks: []service.ReviewedWorkflowTaskResult{
+			{TaskID: "TASK-001", ExecutionCommandID: "CMD-CHILD-EXECUTION", Execution: execution.Result{Failure: &childEnvelope}},
+		}}
+		envelope := reviewedWorkflowOuterEnvelope(result, "task_execute", true, nil)
+		if envelope == nil || envelope.Code != "PROVIDER_REFUSED" || envelope.Stage != "task_execute" ||
+			envelope.Category != "provider_refusal" || envelope.Provider == nil || envelope.Provider.RequestID != "req_child_execution" ||
+			envelope.ChildCommandID != "CMD-CHILD-EXECUTION" {
+			t.Fatalf("reviewedWorkflowOuterEnvelope() = %#v, want ChildCommandID=CMD-CHILD-EXECUTION with the child's own diagnostics forwarded", envelope)
+		}
+		if childEnvelope.ChildCommandID != "" || childEnvelope.Partial || childEnvelope.RecoveryRequired {
+			t.Fatalf("the child's own Envelope was mutated: %#v", childEnvelope)
+		}
+	})
+	t.Run("review", func(t *testing.T) {
+		childEnvelope := failure.New("PROVIDER_RESPONSE_INVALID", "review_provider")
+		childEnvelope.Category = "structured_output_invalid"
+		childEnvelope.Substage = "trailing_json_content"
+		childEnvelope.Provider = &failure.ProviderDiagnostic{Category: "structured_output_invalid", Subcategory: "trailing_json_content"}
+		result := service.ReviewedWorkflowRunResult{Tasks: []service.ReviewedWorkflowTaskResult{
+			{TaskID: "TASK-001", ReviewCommandID: "CMD-CHILD-REVIEW", Review: &review.OrchestrationResult{Failure: &childEnvelope}},
+		}}
+		envelope := reviewedWorkflowOuterEnvelope(result, "review", true, nil)
+		if envelope == nil || envelope.Code != "PROVIDER_RESPONSE_INVALID" || envelope.Stage != "review_provider" ||
+			envelope.Category != "structured_output_invalid" || envelope.Substage != "trailing_json_content" ||
+			envelope.Provider == nil || envelope.Provider.Subcategory != "trailing_json_content" ||
+			envelope.ChildCommandID != "CMD-CHILD-REVIEW" {
+			t.Fatalf("reviewedWorkflowOuterEnvelope() = %#v, want ChildCommandID=CMD-CHILD-REVIEW with the child's own diagnostics forwarded", envelope)
+		}
+		if childEnvelope.ChildCommandID != "" || childEnvelope.Partial || childEnvelope.RecoveryRequired {
+			t.Fatalf("the child's own Envelope was mutated: %#v", childEnvelope)
+		}
+	})
 }
 
 // TestReviewedWorkflowOuterEnvelopeClassifiesBudgetExceeded pins the exact

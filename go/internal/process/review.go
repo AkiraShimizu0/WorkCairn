@@ -311,6 +311,12 @@ func finishReviewCommand(ctx context.Context, claim reviewCommandClaim, result R
 // composing caller (Reviewed Workflow, Interaction Workflow) forwards this
 // value unchanged instead of reclassifying it.
 func reviewFailureEnvelope(reviewErr error, provider *ProviderFailure, artifact *review.Record) *failure.Envelope {
+	// Normalized once, unconditionally, before the provider != nil case
+	// below reads provider.Category for failure.ClassifyProviderCategory --
+	// the same persistence-boundary normalizer finishInteractionPlan calls
+	// at its own entry point (interaction.go), never a separate Review-only
+	// implementation. Safe on a nil provider.
+	sanitizeProviderFailure(provider)
 	partial := artifact != nil && artifact.CanonicalCommitted
 	var envelope failure.Envelope
 	switch {
@@ -321,9 +327,10 @@ func reviewFailureEnvelope(reviewErr error, provider *ProviderFailure, artifact 
 	case provider != nil:
 		envelope = failure.New(failure.ClassifyProviderCategory(provider.Category), "review_provider")
 		envelope.Category = provider.Category
+		envelope.Substage = providerFailureSubcategory(provider)
 		envelope.Provider = &failure.ProviderDiagnostic{
-			Category: provider.Category, HTTPStatus: provider.HTTPStatus,
-			ProviderType: provider.ProviderType, RequestID: provider.RequestID,
+			Category: provider.Category, Subcategory: providerFailureSubcategory(provider),
+			HTTPStatus: provider.HTTPStatus, ProviderType: provider.ProviderType, RequestID: provider.RequestID,
 		}
 	default:
 		var workerErr *service.WorkerExecutionError
@@ -338,6 +345,14 @@ func reviewFailureEnvelope(reviewErr error, provider *ProviderFailure, artifact 
 			envelope = failure.New("REVIEW_ROUTE_FAILED", "review_route")
 		case service.WorkerErrorInvalidRunnerResult:
 			envelope = failure.New("PROVIDER_RESPONSE_INVALID", "review_provider_response")
+		case service.WorkerErrorOutputIncomplete:
+			// ADR-0058: the Provider call itself succeeded but was cut off
+			// by its own output ceiling before Review's Structured Output
+			// could be parsed -- never a Review parse failure
+			// (REVIEW_RESULT_INVALID) or an ordinary Provider-response
+			// failure, matching the classification CEO Plan generation
+			// already uses for the same StopReasonMaxTokens condition.
+			envelope = failure.New("OUTPUT_INCOMPLETE", "review_output_incomplete")
 		case service.WorkerErrorInvalidReviewResult:
 			envelope = failure.New("REVIEW_RESULT_INVALID", "review_result_parser")
 			if reason := reviewParseFailureReason(reviewErr); reason != "" {

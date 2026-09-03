@@ -740,6 +740,287 @@ func TestRunnerRejectsStructuredOutputResponseContractViolations(t *testing.T) {
 	}
 }
 
+// TestRunnerClassifiesStructuredOutputInvalidReasonsIndependently locks the
+// closed, content-blind StructuredOutputInvalidReason for each distinct
+// extraction failure shape (PB-3ah.1): an unexpected content block, an
+// invalid text-block count, an empty text block, and the three ways the
+// text block's own bytes can fail to be exactly one JSON document (invalid
+// syntax, a second complete document following it, or non-JSON content
+// following it). Every case has stop_reason absent or "end_turn" -- none of
+// them is a Provider output-ceiling truncation, so all must still fail as
+// FailureStructuredOutputInvalid with the specific reason, never a generic
+// unclassified error.
+// TestErrorStructuredOutputReasonDegradesUnknownOrForgedValuesToEmpty is the
+// PB-3ah.3 regression for the private-field/closed-accessor boundary: the
+// unexported structuredOutputReason field is only reachable from within
+// this package, but the public StructuredOutputReason() accessor is the
+// only way any caller (in-package or not) may read it, and it must degrade
+// silently to "" for the zero value and for any string this package's own
+// construction never actually produces -- never pass an unvalidated value
+// through. This proves a forged or unrecognized value can never leave this
+// package as if it were a genuine classification.
+func TestErrorStructuredOutputReasonDegradesUnknownOrForgedValuesToEmpty(t *testing.T) {
+	var nilError *Error
+	if got := nilError.StructuredOutputReason(); got != "" {
+		t.Fatalf("nil *Error: StructuredOutputReason() = %q, want empty", got)
+	}
+	for _, forged := range []StructuredOutputInvalidReason{
+		"", "not_a_real_reason", "UNEXPECTED_CONTENT_BLOCK", "unexpected_content_block ", " ",
+	} {
+		err := &Error{Category: FailureStructuredOutputInvalid, structuredOutputReason: forged}
+		if got := err.StructuredOutputReason(); got != "" {
+			t.Fatalf("forged reason %q: StructuredOutputReason() = %q, want empty", forged, got)
+		}
+	}
+	for _, valid := range []StructuredOutputInvalidReason{
+		StructuredOutputUnexpectedBlock, StructuredOutputBlockCountInvalid, StructuredOutputEmptyText,
+		StructuredOutputInvalidJSON, StructuredOutputMultipleJSON, StructuredOutputTrailingJSON,
+	} {
+		err := &Error{Category: FailureStructuredOutputInvalid, structuredOutputReason: valid}
+		if got := err.StructuredOutputReason(); got != valid {
+			t.Fatalf("valid reason %q: StructuredOutputReason() = %q, want unchanged", valid, got)
+		}
+	}
+	// A valid allow-listed reason value must still degrade to empty when
+	// Category is anything other than FailureStructuredOutputInvalid -- the
+	// accessor's own contract ("never a reason outside
+	// structured_output_invalid") must hold on its own, not merely because
+	// every current caller happens to check Category first.
+	for _, category := range []FailureCategory{
+		FailureUnavailable, FailureRateLimited, FailureAuthentication, FailureRefusal, "", FailureUnknown,
+	} {
+		err := &Error{Category: category, structuredOutputReason: StructuredOutputInvalidJSON}
+		if got := err.StructuredOutputReason(); got != "" {
+			t.Fatalf("valid reason with wrong category %q: StructuredOutputReason() = %q, want empty", category, got)
+		}
+	}
+}
+
+func TestRunnerClassifiesStructuredOutputInvalidReasonsIndependently(t *testing.T) {
+	fixtures := loadStructuredOutputExtractionFixtures(t)
+	tests := []struct {
+		fixture string
+		want    StructuredOutputInvalidReason
+	}{
+		{"unexpected_content_block", StructuredOutputUnexpectedBlock},
+		{"multiple_text_blocks", StructuredOutputBlockCountInvalid},
+		{"empty_text", StructuredOutputEmptyText},
+		{"invalid_json_end_turn", StructuredOutputInvalidJSON},
+		{"second_json_value", StructuredOutputMultipleJSON},
+		{"trailing_prose", StructuredOutputTrailingJSON},
+	}
+	for _, test := range tests {
+		t.Run(string(test.want), func(t *testing.T) {
+			runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+				return jsonResponse(http.StatusOK, string(fixtures[test.fixture]), "req-reason"), nil
+			}))
+			request := validRunRequest()
+			request.StructuredOutput = &worker.StructuredOutputContract{Schema: review.TypedDecisionJSONSchema()}
+			_, err := runner.Run(context.Background(), request)
+			var failure *Error
+			if !errors.As(err, &failure) || failure.Category != FailureStructuredOutputInvalid || failure.StructuredOutputReason() != test.want {
+				t.Fatalf("fixture %q: err = %v, failure = %#v, want reason %q", test.fixture, err, failure, test.want)
+			}
+			if strings.Contains(failure.Error(), "Approve") || strings.Contains(err.Error(), "Approve") {
+				t.Fatalf("Error() leaked Provider content: %q", err.Error())
+			}
+		})
+	}
+}
+
+// TestClassifyJSONShapeStrictTopLevelEOF exercises classifyJSONShape
+// directly (a pure function of content string), covering every top-level
+// EOF shape the PB-3ah.2 review flagged decoder.More() as getting wrong: a
+// stray trailing "]" or "}" immediately after an otherwise-complete
+// document must be rejected as trailing content, not silently accepted as
+// "no more elements" the way More()'s peek-based heuristic did.
+func TestClassifyJSONShapeStrictTopLevelEOF(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    StructuredOutputInvalidReason // "" means valid (nil)
+	}{
+		{"valid single object", `{"a":1}`, ""},
+		{"valid single array", `[1,2,3]`, ""},
+		{"valid followed by trailing whitespace only", "{\"a\":1}  \n\t ", ""},
+		{"malformed first json", `{"a":`, StructuredOutputInvalidJSON},
+		{"trailing close brace after object", `{"a":1}}`, StructuredOutputTrailingJSON},
+		{"trailing close bracket after object", `{"a":1}]`, StructuredOutputTrailingJSON},
+		{"trailing close bracket after array", `[1,2,3]]`, StructuredOutputTrailingJSON},
+		{"trailing prose", `{"a":1} not json`, StructuredOutputTrailingJSON},
+		{"second object value", `{"a":1}{"b":2}`, StructuredOutputMultipleJSON},
+		{"second array value", `{"a":1}[1,2]`, StructuredOutputMultipleJSON},
+		{"second string value", `{"a":1}"trailing"`, StructuredOutputMultipleJSON},
+		{"second number value", `{"a":1} 42`, StructuredOutputMultipleJSON},
+		{"second boolean value", `{"a":1} true`, StructuredOutputMultipleJSON},
+		{"second null value", `{"a":1} null`, StructuredOutputMultipleJSON},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := classifyJSONShape(test.content)
+			if test.want == "" {
+				if got != nil {
+					t.Fatalf("classifyJSONShape(%q) = %#v, want nil (valid)", test.content, got)
+				}
+				return
+			}
+			if got == nil || got.reason != test.want {
+				t.Fatalf("classifyJSONShape(%q) = %#v, want reason %q", test.content, got, test.want)
+			}
+		})
+	}
+}
+
+// TestRunnerRoutesMaxTokensStructuredOutputToSuccessInsteadOfInvalid is a
+// regression for a possible max_tokens path behind the PB-3ag incident
+// (Provider Request ID req_011CegLuKMWjthaUTH2uGuSD): PB-3ag's saved
+// evidence confirms the exact Failure code/category/stage this fixture
+// reproduces (PROVIDER_RESPONSE_INVALID, structured_output_invalid,
+// ceo_plan_runner_failed), but never recorded a stop_reason, so
+// stop_reason=max_tokens here is this fixture's own plausible-but-unproven
+// mechanism for reaching that same code/category/stage, not a confirmed
+// reproduction of PB-3ag's actual cause. A Structured Output response cut
+// off by the Provider's own output ceiling produces malformed/incomplete
+// JSON by construction. Before this fix, that malformed JSON was extracted
+// and classified as FailureStructuredOutputInvalid before stop_reason was
+// ever consulted. After this fix, Run() must succeed with
+// StopReason=StopReasonMaxTokens and a fixed, content-blind placeholder
+// Content -- never the truncated fragment -- so the caller's own existing
+// StopReasonMaxTokens check (service.CEOPlanService.Generate,
+// service.ReviewService.Execute -- the two production Structured Output
+// callers) can route it through OUTPUT_INCOMPLETE semantics instead.
+// ExecutionService.Execute is not a Structured Output caller (Task
+// execution's output is plain content, not JSON); it independently checks
+// the same StopReasonMaxTokens on its own plain-content RunResult, unrelated
+// to this placeholder.
+func TestRunnerRoutesMaxTokensStructuredOutputToSuccessInsteadOfInvalid(t *testing.T) {
+	fixtures := loadStructuredOutputExtractionFixtures(t)
+	runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, string(fixtures["incomplete_json_max_tokens"]), "req-max-tokens"), nil
+	}))
+	request := validRunRequest()
+	request.StructuredOutput = &worker.StructuredOutputContract{Schema: review.TypedDecisionJSONSchema()}
+	result, err := runner.Run(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Run() must succeed for a max_tokens-truncated Structured Output response, got error: %v", err)
+	}
+	if result.StopReason != worker.StopReasonMaxTokens {
+		t.Fatalf("StopReason = %q, want %q", result.StopReason, worker.StopReasonMaxTokens)
+	}
+	if result.Content != truncatedStructuredOutputContent {
+		t.Fatalf("Content = %q, want the fixed safe placeholder", result.Content)
+	}
+	if strings.Contains(result.Content, "verdict") || strings.Contains(result.Content, "Approve") {
+		t.Fatal("Content leaked a fragment of the truncated Provider response")
+	}
+	if result.StructuredOutputPresence != nil || result.StructuredOutputFieldShape != nil || result.StructuredOutputStepDescriptionShape != nil {
+		t.Fatalf("structured output diagnostics must be nil when extraction was skipped: presence=%#v shape=%#v stepShape=%#v",
+			result.StructuredOutputPresence, result.StructuredOutputFieldShape, result.StructuredOutputStepDescriptionShape)
+	}
+}
+
+// TestRunnerMaxTokensStructuredOutputWithoutAnyTextBlockStillSucceeds covers
+// the edge case where the Provider's output ceiling cut generation off
+// before any "text" block was even started (only a "thinking" block is
+// present). The safe placeholder must still be used -- Run() must not
+// attempt best-effort text extraction from thinking content, and must not
+// fail with FailureResponse's "empty content" check either.
+func TestRunnerMaxTokensStructuredOutputWithoutAnyTextBlockStillSucceeds(t *testing.T) {
+	fixtures := loadStructuredOutputExtractionFixtures(t)
+	runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, string(fixtures["no_text_max_tokens"]), "req-max-tokens-no-text"), nil
+	}))
+	request := validRunRequest()
+	request.StructuredOutput = &worker.StructuredOutputContract{Schema: review.TypedDecisionJSONSchema()}
+	result, err := runner.Run(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Run() must succeed even with zero text blocks when stop_reason=max_tokens, got: %v", err)
+	}
+	if result.StopReason != worker.StopReasonMaxTokens || result.Content != truncatedStructuredOutputContent {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+// TestRunnerMaxTokensStructuredOutputWithUnexpectedBlockStillSucceeds is
+// the PB-3ah.9 regression for content-extraction-before-detection ordering:
+// a response with a genuinely unexpected content block type (the same
+// shape that produces StructuredOutputUnexpectedBlock outside a max_tokens
+// stop) must still succeed with the fixed placeholder when
+// stop_reason=max_tokens, because the max_tokens branch is selected before
+// either providerResponse.markdown() or providerResponse.structuredJSON()
+// -- which is what would classify this block shape -- is ever called.
+func TestRunnerMaxTokensStructuredOutputWithUnexpectedBlockStillSucceeds(t *testing.T) {
+	encoded, _ := json.Marshal(map[string]any{
+		"model":       "claude-sonnet-5",
+		"content":     []map[string]string{{"type": "tool_use", "id": "toolu_1", "name": "unexpected"}},
+		"usage":       map[string]int{"input_tokens": 1, "output_tokens": 1},
+		"stop_reason": "max_tokens",
+	})
+	runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, string(encoded), "req-max-tokens-unexpected-block"), nil
+	}))
+	request := validRunRequest()
+	request.StructuredOutput = &worker.StructuredOutputContract{Schema: review.TypedDecisionJSONSchema()}
+	result, err := runner.Run(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Run() must succeed for max_tokens even with an unexpected content block, got error: %v", err)
+	}
+	if result.StopReason != worker.StopReasonMaxTokens || result.Content != truncatedStructuredOutputContent {
+		t.Fatalf("result = %#v", result)
+	}
+	if strings.Contains(result.Content, "tool_use") || strings.Contains(result.Content, "unexpected") {
+		t.Fatal("Content leaked a fragment of the unexpected block")
+	}
+}
+
+// TestRunnerMaxTokensStructuredOutputWithEmptyTextBlockStillSucceeds covers
+// the shape distinct from "no text block at all"
+// (TestRunnerMaxTokensStructuredOutputWithoutAnyTextBlockStillSucceeds
+// above): a text block that is present but empty -- the same shape that
+// produces StructuredOutputEmptyText outside a max_tokens stop -- must
+// still succeed with the fixed placeholder when stop_reason=max_tokens,
+// never reaching the empty-text classification.
+func TestRunnerMaxTokensStructuredOutputWithEmptyTextBlockStillSucceeds(t *testing.T) {
+	encoded, _ := json.Marshal(map[string]any{
+		"model":       "claude-sonnet-5",
+		"content":     []map[string]string{{"type": "text", "text": ""}},
+		"usage":       map[string]int{"input_tokens": 1, "output_tokens": 1},
+		"stop_reason": "max_tokens",
+	})
+	runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, string(encoded), "req-max-tokens-empty-text"), nil
+	}))
+	request := validRunRequest()
+	request.StructuredOutput = &worker.StructuredOutputContract{Schema: review.TypedDecisionJSONSchema()}
+	result, err := runner.Run(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Run() must succeed for max_tokens even with an empty text block, got error: %v", err)
+	}
+	if result.StopReason != worker.StopReasonMaxTokens || result.Content != truncatedStructuredOutputContent {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+// TestRunnerValidSingleStructuredOutputJSONBlockStillSucceeds is the
+// control case: exactly one well-formed JSON text block, stop_reason
+// end_turn, must succeed exactly as before this fix, unaffected by the
+// reordering.
+func TestRunnerValidSingleStructuredOutputJSONBlockStillSucceeds(t *testing.T) {
+	fixtures := loadStructuredOutputExtractionFixtures(t)
+	runner := configuredRunner(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, string(fixtures["single_json_with_thinking"]), "req-valid"), nil
+	}))
+	request := validRunRequest()
+	request.StructuredOutput = &worker.StructuredOutputContract{Schema: review.TypedDecisionJSONSchema()}
+	result, err := runner.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Content != `{"verdict":"Approve","issues":[],"summary":"Approved."}` {
+		t.Fatalf("Content = %q", result.Content)
+	}
+}
+
 func loadStructuredOutputExtractionFixtures(t *testing.T) map[string]json.RawMessage {
 	t.Helper()
 	content, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "fixtures", "provider", "claude_structured_output_extraction_v1.json"))
@@ -869,6 +1150,14 @@ func TestRunnerNormalizesStopReasonToProviderNeutralValue(t *testing.T) {
 			}
 			if result.StopReason != test.want {
 				t.Fatalf("StopReason = %q, want %q", result.StopReason, test.want)
+			}
+			// A non-Structured-Output request (validRunRequest() sets no
+			// StructuredOutput contract) always takes the plain markdown()
+			// content-extraction path -- even for max_tokens -- never the
+			// Structured Output placeholder, which only exists for a
+			// Structured Output request cut off mid-generation.
+			if result.Content != "ok" {
+				t.Fatalf("non-Structured-Output Content = %q, want the plain extracted text %q", result.Content, "ok")
 			}
 		})
 	}

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -336,15 +337,192 @@ func TestInteractionPlanRecordsRedactedTypedProviderFailure(t *testing.T) {
 		result.ProviderFailure.ProviderType != "authentication_error" || result.ProviderFailure.RequestID != "req_auth_safe" {
 		t.Fatalf("typed Provider failure = %#v, %#v, %v", recorded, result.ProviderFailure, err)
 	}
+	// The outer interaction.start Command's own envelope must carry the
+	// outer Command's own partial-commit facts (it already committed the
+	// Session before delegating to the child), never the child
+	// interaction.plan.generate Command's own (correctly false, since
+	// GenerateCEOPlan makes no writes) Partial/RecoveryRequired scope, and
+	// must record which child Ledger entry it was chained from.
+	childCommandID, deriveErr := commandledger.DeriveChildCommandID(start.CommandID, "interaction.plan.generate:"+start.SessionID)
+	if deriveErr != nil {
+		t.Fatal(deriveErr)
+	}
+	if recorded.Envelope == nil || !recorded.Envelope.Partial || !recorded.Envelope.RecoveryRequired ||
+		recorded.Envelope.ChildCommandID != childCommandID {
+		t.Fatalf("outer lineage envelope = %#v", recorded.Envelope)
+	}
 	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
 	record, ledgerErr := ledger.Get(context.Background(), "CMD-PROVIDER-AUTH-START")
 	var stored InteractionPlanResult
 	decodeErr := json.Unmarshal(record.Result, &stored)
-	if ledgerErr != nil || record.Failure == nil || record.Failure.Code != "PROVIDER_AUTHENTICATION_REQUIRED" ||
+	if ledgerErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
+		record.Failure.Code != "PROVIDER_AUTHENTICATION_REQUIRED" || record.Failure.Details == nil ||
+		!record.Failure.Details.Partial || !record.Failure.Details.RecoveryRequired ||
+		record.Failure.Details.ChildCommandID != childCommandID ||
 		decodeErr != nil || stored.ProviderFailure == nil || stored.ProviderFailure.HTTPStatus != http.StatusUnauthorized ||
 		strings.Contains(string(record.Result), "must not be stored") {
-		t.Fatalf("redacted Provider Ledger = %#v, %v, decode=%v", record, ledgerErr, decodeErr)
+		t.Fatalf("redacted Provider outer Ledger = %#v, %v, decode=%v", record, ledgerErr, decodeErr)
 	}
+	// The child interaction.plan.generate Command's own Ledger record is
+	// asserted independently: it must retain its own (unmutated) scope --
+	// Partial/RecoveryRequired false, since the child itself never wrote
+	// anything -- and never has a ChildCommandID of its own.
+	childRecord, childLedgerErr := ledger.Get(context.Background(), childCommandID)
+	if childLedgerErr != nil || childRecord.State != commandledger.StateFailed || childRecord.Failure == nil ||
+		childRecord.Failure.Code != "PROVIDER_AUTHENTICATION_REQUIRED" || childRecord.Failure.Details == nil ||
+		childRecord.Failure.Details.Partial || childRecord.Failure.Details.RecoveryRequired ||
+		childRecord.Failure.Details.ChildCommandID != "" ||
+		strings.Contains(string(childRecord.Result), "must not be stored") {
+		t.Fatalf("redacted Provider child Ledger = %#v, %v", childRecord, childLedgerErr)
+	}
+}
+
+// TestInteractionAnswerRecordsChildOuterLineageOnPlanGenerationFailure is
+// the interaction.answer counterpart to
+// TestInteractionPlanRecordsRedactedTypedProviderFailure above (which only
+// covers interaction.start): ExecuteInteractionAnswer chains into its own
+// interaction.plan.generate child Command exactly like
+// ExecuteInteractionStart does (same childCommandID derivation, same
+// chainedPlanGenerationEnvelope call site), so the same outer/child
+// lineage invariants must hold on this second call site too.
+func TestInteractionAnswerRecordsChildOuterLineageOnPlanGenerationFailure(t *testing.T) {
+	fixture := loadCEOPlanFixture(t)
+	root := ceoPlanVault(t, fixture.Employees)
+	at := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	ceoQuestion := fixture.ExpectedPlan.CEOQuestions[0]
+	intentSteps := []map[string]any{
+		{"kind": "write", "description": "MVP要件を整理する", "required_role": "Product Manager"},
+		{"kind": "implement", "description": "収支登録画面を実装する", "required_role": "Backend Engineer"},
+	}
+	outputWithQuestion, _ := json.Marshal(map[string]any{
+		"project_name": fixture.ExpectedPlan.ProjectName, "objective": fixture.ExpectedPlan.Objective,
+		"summary": fixture.ExpectedPlan.Summary, "steps": intentSteps, "ceo_questions": []string{ceoQuestion},
+	})
+	providerCalls := 0
+	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
+		providerCalls++
+		if providerCalls == 1 {
+			providerResponse, _ := json.Marshal(map[string]any{
+				"model": "claude-test", "content": []map[string]string{{"type": "text", "text": string(outputWithQuestion)}},
+				"usage": map[string]int{"input_tokens": 10, "output_tokens": 20},
+			})
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
+		}
+		header := make(http.Header)
+		header.Set("request-id", "req_answer_auth_safe")
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized, Header: header,
+			Body: io.NopCloser(strings.NewReader(`{"type":"error","error":{"type":"authentication_error","message":"must not be stored"}}`)),
+		}, nil
+	})
+	provider := ClaudeProcessConfig{APIKey: "fake", ProviderModel: "claude-test", BaseURL: "https://provider.invalid"}
+	start := InteractionStartInput{
+		VaultRoot: root, SessionID: "SESSION-ANSWER-LINEAGE", Request: fixture.Request,
+		Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-ANSWER-LINEAGE-START",
+	}
+	plan, err := PlanInteractionStart(context.Background(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.RequestDigest = plan.Session.RequestDigest
+	started, err := ExecuteInteractionStart(context.Background(), start, provider, client, true)
+	if err != nil || started.Session.State != interaction.StateClarificationRequired || providerCalls != 1 {
+		t.Fatalf("start = %#v, %v calls=%d", started, err, providerCalls)
+	}
+	answerCommandID := "CMD-ANSWER-LINEAGE-ANSWER"
+	answered, err := ExecuteInteractionAnswer(context.Background(), InteractionAnswerInput{
+		VaultRoot: root, SessionID: start.SessionID, ExpectedVersion: started.Session.Version,
+		Answers:     []interaction.Answer{{Question: ceoQuestion, Answer: "はい、Webブラウザのみです"}},
+		CurrentTime: at.Add(time.Minute), CommandID: answerCommandID,
+	}, provider, client, true)
+	var recorded *RecordedCommandError
+	if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_AUTHENTICATION_REQUIRED" || !recorded.Partial ||
+		providerCalls != 2 || answered.ProviderFailure == nil || answered.ProviderFailure.Category != "authentication_required" {
+		t.Fatalf("answer Plan-generation failure = %#v, answered=%#v, calls=%d, err=%v", recorded, answered, providerCalls, err)
+	}
+	childCommandID, deriveErr := commandledger.DeriveChildCommandID(answerCommandID, "interaction.plan.generate:"+start.SessionID)
+	if deriveErr != nil {
+		t.Fatal(deriveErr)
+	}
+	if recorded.Envelope == nil || !recorded.Envelope.Partial || !recorded.Envelope.RecoveryRequired ||
+		recorded.Envelope.ChildCommandID != childCommandID {
+		t.Fatalf("outer answer lineage envelope = %#v", recorded.Envelope)
+	}
+	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
+	outerRecord, outerErr := ledger.Get(context.Background(), answerCommandID)
+	if outerErr != nil || outerRecord.State != commandledger.StatePartialFailure || outerRecord.Failure == nil ||
+		outerRecord.Failure.Code != "PROVIDER_AUTHENTICATION_REQUIRED" || outerRecord.Failure.Details == nil ||
+		!outerRecord.Failure.Details.Partial || !outerRecord.Failure.Details.RecoveryRequired ||
+		outerRecord.Failure.Details.ChildCommandID != childCommandID ||
+		strings.Contains(string(outerRecord.Result), "must not be stored") {
+		t.Fatalf("outer answer Ledger = %#v, %v", outerRecord, outerErr)
+	}
+	// The interaction.plan.generate child Command spawned by this SECOND
+	// call site (answer, not start) is asserted independently, with the
+	// same deterministic-derivation and unmutated-own-scope invariants
+	// already proven for the start call site.
+	childRecord, childErr := ledger.Get(context.Background(), childCommandID)
+	if childErr != nil || childRecord.State != commandledger.StateFailed || childRecord.Failure == nil ||
+		childRecord.Failure.Code != "PROVIDER_AUTHENTICATION_REQUIRED" || childRecord.Failure.Details == nil ||
+		childRecord.Failure.Details.Partial || childRecord.Failure.Details.RecoveryRequired ||
+		childRecord.Failure.Details.ChildCommandID != "" ||
+		strings.Contains(string(childRecord.Result), "must not be stored") {
+		t.Fatalf("answer child Ledger = %#v, %v", childRecord, childErr)
+	}
+}
+
+// TestChainedPlanGenerationEnvelopeFallbackNeverLeaksRawErrorAndAlwaysSetsChildID
+// is the direct unit test for chainedPlanGenerationEnvelope's fallback
+// branch -- reached when the chained child's own recorded failure carries
+// no full Envelope yet (e.g. an OUTPUT_INCOMPLETE child finished through
+// the pre-Envelope finishDurableCommand path) or when the wrapped error
+// isn't a *RecordedCommandError at all (the child claim itself failed
+// before any Ledger write). Both shapes must still receive the outer
+// Command's own childCommandID and partial/recovery facts, and must never
+// let the underlying error's own text reach the Envelope.
+func TestChainedPlanGenerationEnvelopeFallbackNeverLeaksRawErrorAndAlwaysSetsChildID(t *testing.T) {
+	const childCommandID = "CMD-CHAINED-FALLBACK-CHILD"
+	const secretMarker = "PROVIDER_SECRET_MARKER_MUST_NOT_APPEAR"
+
+	t.Run("recorded failure without its own Envelope", func(t *testing.T) {
+		recorded := &RecordedCommandError{Code: "OUTPUT_INCOMPLETE", Stage: "ceo_plan_output_incomplete", Envelope: nil}
+		err := errors.Join(recorded, fmt.Errorf("underlying cause: %s", secretMarker))
+		envelope := chainedPlanGenerationEnvelope(err, childCommandID, "INTERACTION_START_FAILED", "interaction_plan_generation")
+		if envelope.Code != "OUTPUT_INCOMPLETE" || envelope.Stage != "ceo_plan_output_incomplete" ||
+			!envelope.Partial || !envelope.RecoveryRequired || envelope.ChildCommandID != childCommandID {
+			t.Fatalf("fallback envelope (recorded, no Envelope) = %#v", envelope)
+		}
+		if encoded, marshalErr := json.Marshal(envelope); marshalErr != nil || strings.Contains(string(encoded), secretMarker) {
+			t.Fatalf("fallback envelope leaked raw error text: %s (err=%v)", encoded, marshalErr)
+		}
+	})
+
+	t.Run("err is not a RecordedCommandError at all (claim failed before any Ledger write)", func(t *testing.T) {
+		err := fmt.Errorf("raw claim failure: %s", secretMarker)
+		envelope := chainedPlanGenerationEnvelope(err, childCommandID, "INTERACTION_FAILED", "interaction_plan_generation")
+		if envelope.Code != "INTERACTION_FAILED" || envelope.Stage != "interaction_plan_generation" ||
+			!envelope.Partial || !envelope.RecoveryRequired || envelope.ChildCommandID != childCommandID {
+			t.Fatalf("fallback envelope (non-RecordedCommandError) = %#v", envelope)
+		}
+		if encoded, marshalErr := json.Marshal(envelope); marshalErr != nil || strings.Contains(string(encoded), secretMarker) {
+			t.Fatalf("fallback envelope leaked raw error text: %s (err=%v)", encoded, marshalErr)
+		}
+	})
+
+	t.Run("recorded failure with its own child Envelope is copied, not mutated in place", func(t *testing.T) {
+		child := failure.New("PROVIDER_RESPONSE_INVALID", "ceo_plan_runner_failed")
+		child.Category = "structured_output_invalid"
+		child.Partial, child.RecoveryRequired = false, false
+		recorded := &RecordedCommandError{Code: child.Code, Stage: child.Stage, Envelope: &child}
+		envelope := chainedPlanGenerationEnvelope(recorded, childCommandID, "INTERACTION_START_FAILED", "interaction_plan_generation")
+		if envelope.Code != child.Code || envelope.Stage != child.Stage || envelope.Category != child.Category ||
+			!envelope.Partial || !envelope.RecoveryRequired || envelope.ChildCommandID != childCommandID {
+			t.Fatalf("fallback envelope (child Envelope present) = %#v", envelope)
+		}
+		if child.Partial || child.RecoveryRequired || child.ChildCommandID != "" {
+			t.Fatalf("the child's own persisted Envelope was mutated: %#v", child)
+		}
+	})
 }
 
 func TestInteractionPlanPersistsSanitizedTransportSubcategoryInFailureEnvelope(t *testing.T) {
@@ -396,6 +574,420 @@ func TestInteractionPlanPersistsSanitizedTransportSubcategoryInFailureEnvelope(t
 				record.Failure.Details.Substage != string(test.want) ||
 				strings.Contains(string(encoded), "must-not-be-persisted") {
 				t.Fatalf("transport failure Ledger = %#v, %v", record, ledgerErr)
+			}
+		})
+	}
+}
+
+// TestInteractionPlanPersistsAllSixStructuredOutputReasonsThroughLedger is
+// the end-to-end safe-reason propagation regression: for every one of the
+// Adapter's six closed StructuredOutputInvalidReason values, a real
+// Provider response shaped to trigger that exact reason must carry it,
+// unchanged and un-conflated with the transport-failure vocabulary,
+// through claude.Error -> process.ProviderFailure -> failure.Envelope ->
+// the outer interaction.start Command's own Ledger record.
+func TestInteractionPlanPersistsAllSixStructuredOutputReasonsThroughLedger(t *testing.T) {
+	tests := []struct {
+		name    string
+		content []map[string]string
+		want    claude.StructuredOutputInvalidReason
+	}{
+		{
+			name:    "unexpected block",
+			content: []map[string]string{{"type": "tool_use"}},
+			want:    claude.StructuredOutputUnexpectedBlock,
+		},
+		{
+			name:    "block count invalid",
+			content: []map[string]string{{"type": "text", "text": `{"a":1}`}, {"type": "text", "text": `{"b":2}`}},
+			want:    claude.StructuredOutputBlockCountInvalid,
+		},
+		{
+			name:    "empty text",
+			content: []map[string]string{{"type": "text", "text": "   "}},
+			want:    claude.StructuredOutputEmptyText,
+		},
+		{
+			name:    "invalid json",
+			content: []map[string]string{{"type": "text", "text": `{"a":`}},
+			want:    claude.StructuredOutputInvalidJSON,
+		},
+		{
+			name:    "multiple json",
+			content: []map[string]string{{"type": "text", "text": `{"a":1}{"b":2}`}},
+			want:    claude.StructuredOutputMultipleJSON,
+		},
+		{
+			name:    "trailing json",
+			content: []map[string]string{{"type": "text", "text": `{"a":1} trailing`}},
+			want:    claude.StructuredOutputTrailingJSON,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := loadCEOPlanFixture(t)
+			root := ceoPlanVault(t, fixture.Employees)
+			at := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+			identifier := strings.ToUpper(strings.ReplaceAll(test.name, " ", "-"))
+			start := InteractionStartInput{
+				VaultRoot: root, SessionID: "SESSION-SOR-" + identifier, Request: fixture.Request,
+				Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-SOR-" + identifier + "-START",
+			}
+			plan, err := PlanInteractionStart(context.Background(), start)
+			if err != nil {
+				t.Fatal(err)
+			}
+			start.RequestDigest = plan.Session.RequestDigest
+			providerResponse, _ := json.Marshal(map[string]any{
+				"model": "claude-sonnet-5", "content": test.content,
+				"usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+			})
+			client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
+			})
+			result, err := ExecuteInteractionStart(context.Background(), start, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
+			var recorded *RecordedCommandError
+			if !errors.As(err, &recorded) || recorded.Code != "PROVIDER_RESPONSE_INVALID" ||
+				result.ProviderFailure == nil || result.ProviderFailure.Category != "structured_output_invalid" ||
+				result.ProviderFailure.StructuredOutputReason != string(test.want) || result.ProviderFailure.TransportCategory != "" {
+				t.Fatalf("structured output failure = %#v, result=%#v, err=%v", recorded, result, err)
+			}
+			if recorded.Envelope == nil || recorded.Envelope.Substage != string(test.want) ||
+				recorded.Envelope.Provider == nil || recorded.Envelope.Provider.Subcategory != string(test.want) {
+				t.Fatalf("envelope substage = %#v", recorded.Envelope)
+			}
+			ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
+			record, ledgerErr := ledger.Get(context.Background(), start.CommandID)
+			if ledgerErr != nil || record.Failure == nil || record.Failure.Details == nil ||
+				record.Failure.Details.Substage != string(test.want) ||
+				record.Failure.Details.Provider == nil || record.Failure.Details.Provider.Subcategory != string(test.want) ||
+				record.Failure.Details.Category != "structured_output_invalid" {
+				t.Fatalf("structured output failure outer Ledger = %#v, %v", record, ledgerErr)
+			}
+			// The persisted Result JSON itself (not just Failure.Details)
+			// must carry the identical closed reason -- decoded back from
+			// record.Result rather than trusting the in-memory `result`
+			// value above, since that is what a real Ledger reader
+			// (Recovery, HTTP, UI) actually observes.
+			var storedOuter InteractionPlanResult
+			if decodeErr := json.Unmarshal(record.Result, &storedOuter); decodeErr != nil ||
+				storedOuter.ProviderFailure == nil || storedOuter.ProviderFailure.StructuredOutputReason != string(test.want) ||
+				storedOuter.ProviderFailure.Category != "structured_output_invalid" || storedOuter.ProviderFailure.TransportCategory != "" {
+				t.Fatalf("structured output failure outer Result JSON = %#v, decode=%v", storedOuter, decodeErr)
+			}
+			// The child interaction.plan.generate Command's own Ledger
+			// record -- where this Structured Output reason was originally
+			// classified, before chainedPlanGenerationEnvelope forwarded it
+			// onto the outer Command -- is asserted independently, so a
+			// reason that only reaches the outer record (e.g. a bug in the
+			// forwarding path) cannot pass this test.
+			childCommandID, deriveErr := commandledger.DeriveChildCommandID(start.CommandID, "interaction.plan.generate:"+start.SessionID)
+			if deriveErr != nil {
+				t.Fatal(deriveErr)
+			}
+			childRecord, childLedgerErr := ledger.Get(context.Background(), childCommandID)
+			if childLedgerErr != nil || childRecord.Failure == nil || childRecord.Failure.Code != "PROVIDER_RESPONSE_INVALID" ||
+				childRecord.Failure.Details == nil || childRecord.Failure.Details.Substage != string(test.want) ||
+				childRecord.Failure.Details.Provider == nil || childRecord.Failure.Details.Provider.Subcategory != string(test.want) ||
+				childRecord.Failure.Details.Category != "structured_output_invalid" {
+				t.Fatalf("structured output failure child Ledger = %#v, %v", childRecord, childLedgerErr)
+			}
+		})
+	}
+}
+
+// TestFinishInteractionPlanNeverPersistsForgedProviderFailureFields is the
+// production-path persistence-boundary regression: even when a
+// *ProviderFailure's exported Category/TransportCategory/StructuredOutputReason
+// fields are set directly (bypassing providerFailure()'s own construction-
+// time sanitize call -- the shape a forged value, a future caller's bug, or
+// a marshaled-then-remarshaled value from elsewhere could take), the shared
+// finishInteractionPlan boundary must still catch it before this Result is
+// JSON-marshaled onto the Command Ledger. Checked at all four places a
+// forged value could otherwise survive: the ProviderFailure struct itself,
+// the raw persisted Result JSON, and the FailureEnvelope (both the
+// in-process value and the Ledger's own copy) -- for both the subcategory
+// fields (PB-3ah.5) and Category itself (PB-3ah.7).
+func TestFinishInteractionPlanNeverPersistsForgedProviderFailureFields(t *testing.T) {
+	tests := []struct {
+		name         string
+		forged       ProviderFailure
+		markers      []string
+		wantCategory claude.FailureCategory
+	}{
+		{
+			name: "forged unknown structured-output reason with matching category",
+			forged: ProviderFailure{
+				Category: string(claude.FailureStructuredOutputInvalid), StructuredOutputReason: "FORGED_UNKNOWN_REASON_MARKER",
+			},
+			markers: []string{"FORGED_UNKNOWN_REASON_MARKER"}, wantCategory: claude.FailureStructuredOutputInvalid,
+		},
+		{
+			name: "forged invalid transport reason with matching category",
+			forged: ProviderFailure{
+				Category: string(claude.FailureTransport), TransportCategory: "FORGED_INVALID_TRANSPORT_MARKER",
+			},
+			markers: []string{"FORGED_INVALID_TRANSPORT_MARKER"}, wantCategory: claude.FailureTransport,
+		},
+		{
+			name: "both subcategory fields set at once (anomalous tuple), valid Category kept",
+			forged: ProviderFailure{
+				Category:          string(claude.FailureStructuredOutputInvalid),
+				TransportCategory: string(claude.TransportDNSFailed), StructuredOutputReason: string(claude.StructuredOutputInvalidJSON),
+			},
+			markers:      []string{string(claude.TransportDNSFailed), string(claude.StructuredOutputInvalidJSON)},
+			wantCategory: claude.FailureStructuredOutputInvalid,
+		},
+		{
+			name: "valid structured-output reason value but category mismatch",
+			forged: ProviderFailure{
+				Category: string(claude.FailureRateLimited), StructuredOutputReason: string(claude.StructuredOutputMultipleJSON),
+			},
+			markers: []string{string(claude.StructuredOutputMultipleJSON)}, wantCategory: claude.FailureRateLimited,
+		},
+		{
+			name:         "unknown canonical-looking Category normalizes to provider_failure",
+			forged:       ProviderFailure{Category: "FORGED_UNKNOWN_CATEGORY_MARKER"},
+			markers:      []string{"FORGED_UNKNOWN_CATEGORY_MARKER"},
+			wantCategory: claude.FailureUnknown,
+		},
+		{
+			name:         "invalid Category containing a newline normalizes to provider_failure",
+			forged:       ProviderFailure{Category: "provider_failure\nFORGED_NEWLINE_MARKER"},
+			markers:      []string{"FORGED_NEWLINE_MARKER"},
+			wantCategory: claude.FailureUnknown,
+		},
+		{
+			name:         "empty Category normalizes to provider_failure",
+			forged:       ProviderFailure{Category: ""},
+			wantCategory: claude.FailureUnknown,
+		},
+		{
+			name: "unknown Category with an otherwise-valid TransportCategory: both normalize",
+			forged: ProviderFailure{
+				Category: "FORGED_UNKNOWN_CATEGORY_MARKER_2", TransportCategory: string(claude.TransportTimeout),
+			},
+			markers: []string{"FORGED_UNKNOWN_CATEGORY_MARKER_2"}, wantCategory: claude.FailureUnknown,
+		},
+		{
+			name: "unknown Category with an otherwise-valid StructuredOutputReason: both normalize",
+			forged: ProviderFailure{
+				Category: "FORGED_UNKNOWN_CATEGORY_MARKER_3", StructuredOutputReason: string(claude.StructuredOutputEmptyText),
+			},
+			markers: []string{"FORGED_UNKNOWN_CATEGORY_MARKER_3"}, wantCategory: claude.FailureUnknown,
+		},
+	}
+	for i, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			ctx := context.Background()
+			commandID := "CMD-FORGED-PROVIDER-FAILURE-" + strconv.Itoa(i)
+			claim, err := claimWorkspaceCommand(ctx, root, commandID, "interaction.plan.generate", "SESSION-FORGED", struct{ Marker string }{"forged"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			forged := test.forged
+			result := InteractionPlanResult{ProviderFailure: &forged}
+			_, finishErr := finishInteractionPlan(ctx, claim, result, errors.New("forged provider failure"), "ceo_plan_runner_failed", false)
+			var recorded *RecordedCommandError
+			if !errors.As(finishErr, &recorded) || recorded.Envelope == nil {
+				t.Fatalf("finish error = %v", finishErr)
+			}
+			// An unknown/empty/forged Category must classify identically to
+			// every other unrecognized Provider failure -- the existing
+			// generic INTERACTION_PLAN_FAILED code -- never leaking the
+			// forged string into the code itself.
+			if test.wantCategory == claude.FailureUnknown && recorded.Code != "INTERACTION_PLAN_FAILED" {
+				t.Fatalf("normalized-Category code = %q, want INTERACTION_PLAN_FAILED", recorded.Code)
+			}
+			if recorded.Envelope.Category != string(test.wantCategory) ||
+				recorded.Envelope.Provider == nil || recorded.Envelope.Provider.Category != string(test.wantCategory) {
+				t.Fatalf("in-process Envelope Category = %#v, want %q", recorded.Envelope, test.wantCategory)
+			}
+			if recorded.Envelope.Substage != "" || recorded.Envelope.Provider.Subcategory != "" {
+				t.Fatalf("forged value survived in the in-process Envelope: %#v", recorded.Envelope)
+			}
+			if forged.Category != string(test.wantCategory) || forged.TransportCategory != "" || forged.StructuredOutputReason != "" {
+				t.Fatalf("forged value survived on the ProviderFailure struct itself: %#v, want Category=%q", forged, test.wantCategory)
+			}
+			ledger, ledgerErr := vault.NewWorkspaceCommandLedgerStore(root)
+			if ledgerErr != nil {
+				t.Fatal(ledgerErr)
+			}
+			record, getErr := ledger.Get(ctx, commandID)
+			if getErr != nil {
+				t.Fatal(getErr)
+			}
+			for _, marker := range test.markers {
+				if strings.Contains(string(record.Result), marker) {
+					t.Fatalf("forged marker %q survived in Result JSON: %s", marker, record.Result)
+				}
+			}
+			var storedResult InteractionPlanResult
+			if decodeErr := json.Unmarshal(record.Result, &storedResult); decodeErr != nil ||
+				storedResult.ProviderFailure == nil || storedResult.ProviderFailure.Category != string(test.wantCategory) ||
+				storedResult.ProviderFailure.TransportCategory != "" || storedResult.ProviderFailure.StructuredOutputReason != "" {
+				t.Fatalf("Result JSON ProviderFailure = %#v, decode=%v, want Category=%q", storedResult.ProviderFailure, decodeErr, test.wantCategory)
+			}
+			if record.Failure == nil || record.Failure.Details == nil ||
+				record.Failure.Details.Category != string(test.wantCategory) || record.Failure.Details.Substage != "" ||
+				record.Failure.Details.Provider == nil || record.Failure.Details.Provider.Category != string(test.wantCategory) ||
+				record.Failure.Details.Provider.Subcategory != "" {
+				t.Fatalf("forged value survived in Ledger Envelope Details: %#v, want Category=%q", record.Failure, test.wantCategory)
+			}
+		})
+	}
+}
+
+// TestSanitizeProviderFailureIsCategoryAwareAndFailsClosedForAnomalousTuples
+// is the direct unit test for the single category-aware validator this
+// package uses at every ProviderFailure persistence boundary (Interaction
+// and Review alike). It replaces the earlier "prefers transport" behavior
+// for a both-set tuple with an explicit fail-closed rule: neither
+// vocabulary is trusted when both are populated at once, since that shape
+// is itself anomalous and never happens by legitimate construction.
+func TestSanitizeProviderFailureIsCategoryAwareAndFailsClosedForAnomalousTuples(t *testing.T) {
+	tests := []struct {
+		name               string
+		before             ProviderFailure
+		wantCategory       claude.FailureCategory
+		wantTransport      string
+		wantStructuredJSON string
+	}{
+		{
+			"nil-safe", ProviderFailure{}, claude.FailureUnknown, "", "",
+		},
+		{
+			"valid transport with matching category",
+			ProviderFailure{Category: string(claude.FailureTransport), TransportCategory: string(claude.TransportDNSFailed)},
+			claude.FailureTransport, string(claude.TransportDNSFailed), "",
+		},
+		{
+			"valid structured reason with matching category",
+			ProviderFailure{Category: string(claude.FailureStructuredOutputInvalid), StructuredOutputReason: string(claude.StructuredOutputInvalidJSON)},
+			claude.FailureStructuredOutputInvalid, "", string(claude.StructuredOutputInvalidJSON),
+		},
+		{
+			"forged transport value", ProviderFailure{Category: string(claude.FailureTransport), TransportCategory: "not_a_real_transport_category"},
+			claude.FailureTransport, "", "",
+		},
+		{
+			"forged structured reason value",
+			ProviderFailure{Category: string(claude.FailureStructuredOutputInvalid), StructuredOutputReason: "not_a_real_reason"},
+			claude.FailureStructuredOutputInvalid, "", "",
+		},
+		{
+			"valid transport value but category mismatch (rate limited)",
+			ProviderFailure{Category: string(claude.FailureRateLimited), TransportCategory: string(claude.TransportTimeout)},
+			claude.FailureRateLimited, "", "",
+		},
+		{
+			"valid structured reason value but category mismatch (transport)",
+			ProviderFailure{Category: string(claude.FailureTransport), StructuredOutputReason: string(claude.StructuredOutputMultipleJSON)},
+			claude.FailureTransport, "", "",
+		},
+		{
+			"valid transport value in the structured-output category's slot never leaks there",
+			ProviderFailure{Category: string(claude.FailureStructuredOutputInvalid), TransportCategory: string(claude.TransportDNSFailed)},
+			claude.FailureStructuredOutputInvalid, "", "",
+		},
+		{
+			"both set at once, both otherwise valid, is fail-closed to empty (never prefers transport)",
+			ProviderFailure{
+				Category:          string(claude.FailureTransport),
+				TransportCategory: string(claude.TransportTimeout), StructuredOutputReason: string(claude.StructuredOutputEmptyText),
+			},
+			claude.FailureTransport, "", "",
+		},
+		{
+			"other category leaves both empty even if a value is present",
+			ProviderFailure{Category: string(claude.FailureBilling), TransportCategory: string(claude.TransportDNSFailed)},
+			claude.FailureBilling, "", "",
+		},
+		{
+			"unknown Category normalizes to provider_failure",
+			ProviderFailure{Category: "not_a_real_category"},
+			claude.FailureUnknown, "", "",
+		},
+		{
+			"empty Category normalizes to provider_failure",
+			ProviderFailure{Category: ""},
+			claude.FailureUnknown, "", "",
+		},
+		{
+			"invalid Category containing a newline normalizes to provider_failure",
+			ProviderFailure{Category: "provider_failure\ninjected"},
+			claude.FailureUnknown, "", "",
+		},
+		{
+			"unknown Category with an otherwise-valid TransportCategory: both normalize",
+			ProviderFailure{Category: "not_a_real_category", TransportCategory: string(claude.TransportConnectFailed)},
+			claude.FailureUnknown, "", "",
+		},
+		{
+			"unknown Category with an otherwise-valid StructuredOutputReason: both normalize",
+			ProviderFailure{Category: "not_a_real_category", StructuredOutputReason: string(claude.StructuredOutputBlockCountInvalid)},
+			claude.FailureUnknown, "", "",
+		},
+		{
+			"every valid Category value is kept unchanged",
+			ProviderFailure{Category: string(claude.FailurePermission)},
+			claude.FailurePermission, "", "",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := test.before
+			sanitizeProviderFailure(&provider)
+			if provider.Category != string(test.wantCategory) ||
+				provider.TransportCategory != test.wantTransport || provider.StructuredOutputReason != test.wantStructuredJSON {
+				t.Fatalf("sanitizeProviderFailure(%#v) = category=%q transport=%q structured=%q, want category=%q transport=%q structured=%q",
+					test.before, provider.Category, provider.TransportCategory, provider.StructuredOutputReason,
+					test.wantCategory, test.wantTransport, test.wantStructuredJSON)
+			}
+		})
+	}
+	// nil provider must never panic.
+	sanitizeProviderFailure(nil)
+}
+
+// TestProviderFailureSubcategoryNeverConflatesTheTwoVocabularies confirms
+// TransportCategory and StructuredOutputReason are read into the single
+// Substage/Subcategory slot without either ever leaking into the other's
+// place, including the (should-never-happen) case where both are
+// populated on the same ProviderFailure -- which is now fail-closed to
+// empty rather than preferring transport.
+func TestProviderFailureSubcategoryNeverConflatesTheTwoVocabularies(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider *ProviderFailure
+		want     string
+	}{
+		{"nil provider", nil, ""},
+		{"neither set", &ProviderFailure{Category: "rate_limited"}, ""},
+		{
+			"transport only",
+			&ProviderFailure{Category: string(claude.FailureTransport), TransportCategory: string(claude.TransportDNSFailed)},
+			string(claude.TransportDNSFailed),
+		},
+		{
+			"structured output reason only",
+			&ProviderFailure{Category: string(claude.FailureStructuredOutputInvalid), StructuredOutputReason: string(claude.StructuredOutputTrailingJSON)},
+			string(claude.StructuredOutputTrailingJSON),
+		},
+		{
+			"both set (should never happen by construction) fails closed to empty",
+			&ProviderFailure{
+				Category:          string(claude.FailureTransport),
+				TransportCategory: string(claude.TransportTimeout), StructuredOutputReason: string(claude.StructuredOutputEmptyText),
+			},
+			"",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := providerFailureSubcategory(test.provider); got != test.want {
+				t.Fatalf("providerFailureSubcategory(%#v) = %q, want %q", test.provider, got, test.want)
 			}
 		})
 	}
@@ -504,15 +1096,138 @@ func TestInteractionPlanRecordsOutputIncompleteWithoutCommittingPlan(t *testing.
 		providerCalls != 1 || result.ProviderFailure != nil {
 		t.Fatalf("output-incomplete failure = %#v, result=%#v, calls=%d, err=%v", recorded, result, providerCalls, err)
 	}
+	// OUTPUT_INCOMPLETE is never a Structured Output invalid reason (ADR-0058
+	// Addendum, PB-3ah.7 canonical contract): ProviderFailure stays nil, so
+	// the Envelope carries no Provider diagnostic at all -- no Category, no
+	// Substage, and no StructuredOutputReason on any of the six canonical
+	// values. This must never be persisted as a seventh reason.
+	if recorded.Envelope == nil || recorded.Envelope.Provider != nil || recorded.Envelope.Substage != "" || recorded.Envelope.Category != "" {
+		t.Fatalf("OUTPUT_INCOMPLETE Envelope carries a Provider diagnostic: %#v", recorded.Envelope)
+	}
 	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
 	record, ledgerErr := ledger.Get(context.Background(), "CMD-PLAN-INCOMPLETE-START")
 	if ledgerErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
 		record.Failure.Code != "OUTPUT_INCOMPLETE" || record.Failure.Stage != "ceo_plan_output_incomplete" {
 		t.Fatalf("output-incomplete Ledger = %#v, %v", record, ledgerErr)
 	}
+	if record.Failure.Details == nil || record.Failure.Details.Provider != nil || record.Failure.Details.Substage != "" {
+		t.Fatalf("output-incomplete Ledger Details carries a Provider diagnostic: %#v", record.Failure.Details)
+	}
+	var storedResult InteractionPlanResult
+	if decodeErr := json.Unmarshal(record.Result, &storedResult); decodeErr != nil || storedResult.ProviderFailure != nil {
+		t.Fatalf("output-incomplete Result JSON carries a ProviderFailure: %#v, decode=%v", storedResult.ProviderFailure, decodeErr)
+	}
 	stored, inspectErr := InspectInteraction(context.Background(), root, start.SessionID)
 	if inspectErr != nil || stored.Version != 1 || stored.State != interaction.StatePlanGenerationApprovalRequired || len(stored.Turns) != 0 {
 		t.Fatalf("output-incomplete failure committed Plan = %#v, %v", stored, inspectErr)
+	}
+}
+
+// TestInteractionPlanRecordsOutputIncompleteForMalformedMaxTokensJSON is a
+// regression for a possible max_tokens path PB-3ag left undetermined
+// (PB-3ag's saved evidence never recorded a stop_reason, so this fixture's
+// shape reproduces a hypothesis, not a confirmed cause): unlike
+// TestInteractionPlanRecordsOutputIncompleteWithoutCommittingPlan above,
+// whose fixture is syntactically valid JSON on purpose (to prove
+// classification runs on stop_reason alone), this fixture's Structured
+// Output text block is genuinely malformed/incomplete -- the realistic
+// shape a Provider's own output ceiling produces when it cuts generation
+// off mid-JSON. Before the PB-3ah.1 fix, this exact shape was misclassified
+// as PROVIDER_RESPONSE_INVALID/structured_output_invalid (routed through
+// service.CEOPlanRunnerFailedStage) because messageResponse.structuredJSON()
+// rejected the malformed JSON before stop_reason was ever consulted. After
+// the fix, it must classify identically to the valid-JSON case:
+// OUTPUT_INCOMPLETE/ceo_plan_output_incomplete, forwarded onto the outer
+// interaction.start Command (chainedPlanGenerationEnvelope) with the outer
+// Command's own partial-commit facts, exactly one Provider call, no
+// retry/fallback, and no Plan or other business artifact committed beyond
+// the partial-failure record itself (the Session and both the child and
+// outer Ledger entries ARE committed, as they are for any Command).
+func TestInteractionPlanRecordsOutputIncompleteForMalformedMaxTokensJSON(t *testing.T) {
+	fixture := loadCEOPlanFixture(t)
+	root := ceoPlanVault(t, fixture.Employees)
+	at := time.Date(2026, 8, 25, 13, 0, 0, 0, time.UTC)
+	start := InteractionStartInput{
+		VaultRoot: root, SessionID: "SESSION-PLAN-INCOMPLETE-MALFORMED", Request: fixture.Request,
+		Model: "workcairn-auto", CurrentTime: at, CommandID: "CMD-PLAN-INCOMPLETE-MALFORMED-START",
+	}
+	plan, err := PlanInteractionStart(context.Background(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.RequestDigest = plan.Session.RequestDigest
+	providerCalls := 0
+	// Genuinely malformed/incomplete JSON -- the realistic shape a
+	// max_tokens-truncated Structured Output response actually has, not the
+	// syntactically-valid-on-purpose fixture the sibling test above uses.
+	truncatedIntent := `{"project_name":"P","objective":"O","summary":"S","steps":[{"kind":"write","description":"D","required_role":"`
+	providerResponse, _ := json.Marshal(map[string]any{
+		"model": "claude-sonnet-5", "content": []map[string]string{{"type": "text", "text": truncatedIntent}},
+		"usage": map[string]int{"input_tokens": 1, "output_tokens": 1}, "stop_reason": "max_tokens",
+	})
+	client := ceoPlanHTTPDoer(func(*http.Request) (*http.Response, error) {
+		providerCalls++
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(providerResponse))}, nil
+	})
+	result, err := ExecuteInteractionStart(context.Background(), start, ClaudeProcessConfig{APIKey: "fake", BaseURL: "https://provider.invalid"}, client, true)
+	var recorded *RecordedCommandError
+	if !errors.As(err, &recorded) || recorded.Code != "OUTPUT_INCOMPLETE" || recorded.Stage != "ceo_plan_output_incomplete" ||
+		providerCalls != 1 || result.ProviderFailure != nil {
+		t.Fatalf("malformed max_tokens failure = %#v, result=%#v, calls=%d, err=%v", recorded, result, providerCalls, err)
+	}
+	if recorded.Code == "PROVIDER_RESPONSE_INVALID" {
+		t.Fatal("regressed to PB-3ag's exact misclassification: malformed max_tokens JSON must never surface as PROVIDER_RESPONSE_INVALID")
+	}
+	// OUTPUT_INCOMPLETE is never a Structured Output invalid reason
+	// (PB-3ah.7 canonical contract): no Provider diagnostic at all, and the
+	// truncated/malformed fragment never reached the content parser (proven
+	// by the code above not being PROVIDER_RESPONSE_INVALID together with
+	// this: had the fragment reached classifyJSONShape, it would have
+	// produced a structured_output_invalid Category with a Provider
+	// diagnostic, not none).
+	if recorded.Envelope.Provider != nil || recorded.Envelope.Substage != "" || recorded.Envelope.Category != "" {
+		t.Fatalf("malformed max_tokens Envelope carries a Provider diagnostic: %#v", recorded.Envelope)
+	}
+	childCommandID, deriveErr := commandledger.DeriveChildCommandID(start.CommandID, "interaction.plan.generate:"+start.SessionID)
+	if deriveErr != nil {
+		t.Fatal(deriveErr)
+	}
+	if recorded.Envelope == nil || !recorded.Envelope.Partial || !recorded.Envelope.RecoveryRequired ||
+		recorded.Envelope.ChildCommandID != childCommandID {
+		t.Fatalf("outer lineage envelope = %#v", recorded.Envelope)
+	}
+	ledger, _ := vault.NewWorkspaceCommandLedgerStore(root)
+	record, ledgerErr := ledger.Get(context.Background(), "CMD-PLAN-INCOMPLETE-MALFORMED-START")
+	if ledgerErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
+		record.Failure.Code != "OUTPUT_INCOMPLETE" || record.Failure.Stage != "ceo_plan_output_incomplete" ||
+		record.Failure.Details == nil || !record.Failure.Details.Partial || !record.Failure.Details.RecoveryRequired ||
+		record.Failure.Details.ChildCommandID != childCommandID || record.Failure.Details.Provider != nil {
+		t.Fatalf("malformed max_tokens outer Ledger = %#v, %v", record, ledgerErr)
+	}
+	var storedOuter InteractionPlanResult
+	if decodeErr := json.Unmarshal(record.Result, &storedOuter); decodeErr != nil || storedOuter.ProviderFailure != nil {
+		t.Fatalf("malformed max_tokens outer Result JSON carries a ProviderFailure: %#v, decode=%v", storedOuter.ProviderFailure, decodeErr)
+	}
+	// The child interaction.plan.generate Command's own Ledger record is
+	// asserted independently: same Code/Stage (OUTPUT_INCOMPLETE never gets
+	// reclassified between child and outer), its own scope never mutated
+	// into the outer's partial/recovery facts, and no Provider diagnostic
+	// anywhere -- not the Envelope Details, not the child's own Result JSON.
+	childRecord, childLedgerErr := ledger.Get(context.Background(), childCommandID)
+	if childLedgerErr != nil || childRecord.State != commandledger.StateFailed || childRecord.Failure == nil ||
+		childRecord.Failure.Code != "OUTPUT_INCOMPLETE" || childRecord.Failure.Stage != "ceo_plan_output_incomplete" {
+		t.Fatalf("malformed max_tokens child Ledger = %#v, %v", childRecord, childLedgerErr)
+	}
+	if childRecord.Failure.Details != nil && childRecord.Failure.Details.Provider != nil {
+		t.Fatalf("malformed max_tokens child Ledger Details carries a Provider diagnostic: %#v", childRecord.Failure.Details)
+	}
+	var storedChild InteractionPlanResult
+	if decodeErr := json.Unmarshal(childRecord.Result, &storedChild); decodeErr != nil || storedChild.ProviderFailure != nil {
+		t.Fatalf("malformed max_tokens child Result JSON carries a ProviderFailure: %#v, decode=%v", storedChild.ProviderFailure, decodeErr)
+	}
+	stored, inspectErr := InspectInteraction(context.Background(), root, start.SessionID)
+	if inspectErr != nil || stored.Version != 1 || stored.State != interaction.StatePlanGenerationApprovalRequired || len(stored.Turns) != 0 {
+		t.Fatalf("malformed max_tokens failure committed Plan = %#v, %v", stored, inspectErr)
 	}
 }
 

@@ -25,6 +25,12 @@ const (
 	defaultAPIVersion = "2023-06-01"
 	defaultMaxTokens  = 3000
 	maxErrorBodyBytes = 64 << 10
+	// truncatedStructuredOutputContent is a fixed, content-blind
+	// placeholder used as RunResult.Content when a Structured Output
+	// request's generation was cut off by the Provider's own output
+	// ceiling (stop_reason=max_tokens) before extraction was even
+	// attempted. It never contains any fragment of the truncated response.
+	truncatedStructuredOutputContent = "(structured output truncated by max_tokens)"
 )
 
 // HTTPDoer is the transport seam used by Runtime composition and contract
@@ -190,26 +196,57 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 			ProviderType: safeDiagnosticToken(providerResponse.StopDetails.Category, 64),
 		}
 	}
+	// The safe, Provider-neutral stop reason is evaluated once, here, before
+	// any Structured Output extraction is attempted. A response cut off by
+	// the Provider's own output ceiling (max_tokens) is expected to produce
+	// malformed or incomplete JSON by construction -- that is never a
+	// genuine Structured Output contract violation, so extraction must
+	// never even be attempted for it (see the branch below). Evaluating
+	// stop_reason first, unconditionally, is what makes that ordering
+	// possible.
+	stopReason := mapStopReason(providerResponse.StopReason)
+
 	var structuredPresence map[string]bool
 	var structuredFieldShape map[string]failure.StructuredOutputFieldShape
 	var structuredStepDescriptionShape map[string]failure.StructuredOutputFieldShape
-	content := providerResponse.markdown()
-	if request.StructuredOutput != nil {
-		content, err = providerResponse.structuredJSON()
-		if err != nil {
+	var content string
+	switch {
+	case request.StructuredOutput != nil && stopReason == worker.StopReasonMaxTokens:
+		// ADR-0058, extended to every Structured Output caller: this branch
+		// is selected before either providerResponse.markdown() or
+		// providerResponse.structuredJSON() is ever called -- neither
+		// content-extraction path runs for a Structured Output response the
+		// Provider itself cut off before finishing, so no partial Provider
+		// output is ever aggregated even transiently. This fixed, content-
+		// blind placeholder is the only value Content takes on this path.
+		// Both current Structured Output callers -- CEOPlanService.Generate
+		// and ReviewService.Execute -- check StopReasonMaxTokens
+		// themselves, before parsing this placeholder, and route it through
+		// OUTPUT_INCOMPLETE semantics instead. ExecutionService.Execute
+		// does not request Structured Output at all (Task execution's
+		// output is plain content, not JSON) and never sees this
+		// placeholder, but has its own separate, pre-existing
+		// StopReasonMaxTokens check on the plain RunResult it receives.
+		content = truncatedStructuredOutputContent
+	case request.StructuredOutput != nil:
+		var shapeErr *structuredOutputError
+		content, shapeErr = providerResponse.structuredJSON()
+		if shapeErr != nil {
 			return worker.RunResult{}, &Error{
 				Kind: ErrInvalidResponse, RequestID: requestID,
-				Category: FailureStructuredOutputInvalid, Err: err,
+				Category: FailureStructuredOutputInvalid, structuredOutputReason: shapeErr.reason, Err: shapeErr,
 			}
 		}
 		structuredPresence = structuredOutputFieldPresence(request.StructuredOutput.Schema, content)
 		structuredFieldShape = structuredOutputFieldShape(request.StructuredOutput.Schema, content)
 		structuredStepDescriptionShape = structuredOutputStepDescriptionShape(request.StructuredOutput.Schema, content)
+	default:
+		content = providerResponse.markdown()
 	}
 	if content == "" || strings.TrimSpace(providerResponse.Model) == "" {
 		return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureResponse}
 	}
-	if request.StructuredOutput != nil && request.StructuredOutput.ContentField != "" {
+	if request.StructuredOutput != nil && request.StructuredOutput.ContentField != "" && stopReason != worker.StopReasonMaxTokens {
 		unwrapped, err := unwrapStructuredOutputField(content, request.StructuredOutput.ContentField)
 		if err != nil {
 			return worker.RunResult{}, &Error{Kind: ErrInvalidResponse, RequestID: requestID, Category: FailureStructuredOutputInvalid, Err: err}
@@ -226,7 +263,7 @@ func (claude *Runner) Run(ctx context.Context, request worker.RunRequest) (worke
 			OutputTokens: providerResponse.Usage.OutputTokens,
 		},
 		Duration:                             duration,
-		StopReason:                           mapStopReason(providerResponse.StopReason),
+		StopReason:                           stopReason,
 		Metadata:                             cloneMetadata(request.Metadata),
 		StructuredOutputPresence:             structuredPresence,
 		StructuredOutputFieldShape:           structuredFieldShape,
@@ -401,13 +438,27 @@ func (response messageResponse) markdown() string {
 	return strings.Join(texts, "\n")
 }
 
+// structuredOutputError is a small, content-blind error carrying exactly
+// one closed StructuredOutputInvalidReason. Its Error() text is a fixed
+// string derived only from the reason -- never Provider content -- so it
+// stays safe even if ever logged directly rather than through *Error.
+type structuredOutputError struct {
+	reason StructuredOutputInvalidReason
+}
+
+func (err *structuredOutputError) Error() string {
+	return "structured output extraction failed: " + string(err.reason)
+}
+
 // structuredJSON extracts the one direct-output text block promised by
 // Anthropic Structured Outputs. Sonnet may also return thinking or
 // redacted-thinking blocks; those are not part of the constrained direct
 // output. Multiple text blocks, other block types, or anything other than one
 // complete JSON document are Provider response contract violations and must
-// never be concatenated into Domain parser input.
-func (response messageResponse) structuredJSON() (string, error) {
+// never be concatenated into Domain parser input. Every rejection returns
+// one of the closed StructuredOutputInvalidReason values, never a
+// content-bearing message.
+func (response messageResponse) structuredJSON() (string, *structuredOutputError) {
 	var content string
 	textBlocks := 0
 	for _, block := range response.Content {
@@ -418,13 +469,52 @@ func (response messageResponse) structuredJSON() (string, error) {
 			textBlocks++
 			content = strings.TrimSpace(block.Text)
 		default:
-			return "", errors.New("structured output response contains an unexpected content block")
+			return "", &structuredOutputError{reason: StructuredOutputUnexpectedBlock}
 		}
 	}
-	if textBlocks != 1 || content == "" || !json.Valid([]byte(content)) {
-		return "", errors.New("structured output response must contain exactly one JSON text block")
+	if textBlocks != 1 {
+		return "", &structuredOutputError{reason: StructuredOutputBlockCountInvalid}
+	}
+	if content == "" {
+		return "", &structuredOutputError{reason: StructuredOutputEmptyText}
+	}
+	if shapeErr := classifyJSONShape(content); shapeErr != nil {
+		return "", shapeErr
 	}
 	return content, nil
+}
+
+// classifyJSONShape reports nil when content is exactly one complete JSON
+// document (optionally followed only by whitespace), or the specific closed
+// reason it is not otherwise. It distinguishes three shapes using only
+// encoding/json's own streaming decoder -- never a regexp or manual scan of
+// the bytes, and never inspecting the decoded values themselves.
+//
+// Deliberately does not use Decoder.More(): More() reports whether the
+// *current* array/object context has a next element, which at the top
+// level is only true while a delimiter like a stray trailing "]" or "}"
+// looks like it could start one -- it does not mean "more bytes remain",
+// and a document immediately followed by such a delimiter (as opposed to,
+// say, a strayed second '"' starting a string) would make More() report
+// false, wrongly treating the extra content as absent. The correct top-
+// level "is there really nothing else here" test is a second Decode call:
+// it succeeds only once, and returns io.EOF exactly when no further JSON
+// value or non-whitespace byte remains.
+func classifyJSONShape(content string) *structuredOutputError {
+	decoder := json.NewDecoder(strings.NewReader(content))
+	var first any
+	if err := decoder.Decode(&first); err != nil {
+		return &structuredOutputError{reason: StructuredOutputInvalidJSON}
+	}
+	var second any
+	switch err := decoder.Decode(&second); {
+	case errors.Is(err, io.EOF):
+		return nil
+	case err == nil:
+		return &structuredOutputError{reason: StructuredOutputMultipleJSON}
+	default:
+		return &structuredOutputError{reason: StructuredOutputTrailingJSON}
+	}
 }
 
 // structuredOutputFieldPresence reports, for a Structured Output request's

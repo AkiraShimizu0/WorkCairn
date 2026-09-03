@@ -9,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/claude"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/adapter/vault"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
@@ -176,6 +178,79 @@ func TestExecuteReviewRecordsParserSubstageWithoutArtifacts(t *testing.T) {
 	}
 }
 
+// TestExecuteReviewRecordsOutputIncompleteForMaxTokensWithoutArtifacts is
+// the real end-to-end Adapter->ReviewService->process.review regression for
+// ADR-0058 extended to Review (see TestReviewServiceClassifiesMaxTokensAsOutputIncompleteBeforeParsing
+// in package service for the ReviewService-only unit test): a Structured
+// Output response cut off by the Provider's own output ceiling
+// (stop_reason=max_tokens) must classify as OUTPUT_INCOMPLETE/
+// review_output_incomplete -- never REVIEW_RESULT_INVALID (an ordinary
+// Review parse failure) or PROVIDER_RESPONSE_INVALID -- with exactly one
+// Provider call, no retry/fallback, and no Review or Revision artifact
+// created.
+func TestExecuteReviewRecordsOutputIncompleteForMaxTokensWithoutArtifacts(t *testing.T) {
+	root := writeReviewProcessVault(t)
+	completeReviewSourceTask(t, root)
+	var providerCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		providerCalls.Add(1)
+		response.Header().Set("content-type", "application/json")
+		truncated := `{"verdict":"Approve","issues":[],"summary":"truncated mid-`
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"model":       "claude-test",
+			"content":     []map[string]string{{"type": "text", "text": truncated}},
+			"usage":       map[string]int{"input_tokens": 1, "output_tokens": 1},
+			"stop_reason": "max_tokens",
+		})
+	}))
+	defer server.Close()
+
+	input := ExecuteReviewInput{ReviewPlanInput: reviewPlanInput(root), Approved: true, CommandID: "CMD-REVIEW-OUTPUT-INCOMPLETE-001"}
+	result, err := ExecuteReview(context.Background(), input, ClaudeProcessConfig{
+		APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL,
+	}, server.Client())
+	if err == nil || providerCalls.Load() != 1 || result.Execution != nil || result.Artifact != nil || result.ProviderFailure != nil ||
+		result.FailureCode != "OUTPUT_INCOMPLETE" || result.FailureStage != "review_output_incomplete" {
+		t.Fatalf("output-incomplete result=%#v err=%v calls=%d", result, err, providerCalls.Load())
+	}
+	if result.FailureCode == "REVIEW_RESULT_INVALID" || result.FailureCode == "PROVIDER_RESPONSE_INVALID" {
+		t.Fatal("max_tokens truncation must never surface as an ordinary Review parse or Provider-response failure")
+	}
+	if result.Failure == nil || result.Failure.Code != "OUTPUT_INCOMPLETE" || result.Failure.Stage != "review_output_incomplete" {
+		t.Fatalf("Envelope = %#v", result.Failure)
+	}
+	// OUTPUT_INCOMPLETE is never a Structured Output invalid reason
+	// (PB-3ah.7 canonical contract): no Provider diagnostic on the Envelope
+	// at all, so it can never be confused with one of the six canonical
+	// structured_output_invalid reasons.
+	if result.Failure.Provider != nil || result.Failure.Substage != "" || result.Failure.Category != "" {
+		t.Fatalf("output-incomplete Envelope carries a Provider diagnostic: %#v", result.Failure)
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, input.ProjectName)
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, ledgerErr := ledger.Get(context.Background(), input.CommandID)
+	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil ||
+		record.Failure.Code != "OUTPUT_INCOMPLETE" || record.Failure.Stage != "review_output_incomplete" {
+		t.Fatalf("output-incomplete Ledger=%#v err=%v", record, ledgerErr)
+	}
+	if record.Failure.Details != nil && record.Failure.Details.Provider != nil {
+		t.Fatalf("output-incomplete Ledger Details carries a Provider diagnostic: %#v", record.Failure.Details)
+	}
+	var storedResult ReviewExecutionResult
+	if decodeErr := json.Unmarshal(record.Result, &storedResult); decodeErr != nil || storedResult.ProviderFailure != nil {
+		t.Fatalf("output-incomplete Result JSON carries a ProviderFailure: %#v, decode=%v", storedResult.ProviderFailure, decodeErr)
+	}
+	project := filepath.Join(root, "プロジェクト", input.ProjectName)
+	if _, statErr := os.Stat(filepath.Join(project, "Reviews")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("output-incomplete failure created Review artifacts: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(project, "Revisions")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("output-incomplete failure created Revision artifacts: %v", statErr)
+	}
+}
+
 func TestExecuteReviewRecordsRedactedProviderFailure(t *testing.T) {
 	root := writeReviewProcessVault(t)
 	completeReviewSourceTask(t, root)
@@ -235,6 +310,11 @@ func TestReviewFailureEnvelopeClassifiesEveryCase(t *testing.T) {
 		{"provider refusal", errors.New("x"), &ProviderFailure{Category: "provider_refusal"}, nil, "PROVIDER_REFUSED", "review_provider", "provider_refusal", false},
 		{"provider structured output invalid", errors.New("x"), &ProviderFailure{Category: "structured_output_invalid"}, nil, "PROVIDER_RESPONSE_INVALID", "review_provider", "structured_output_invalid", false},
 		{"provider rate limited with committed artifact", errors.New("x"), &ProviderFailure{Category: "rate_limited"}, committedArtifact, "PROVIDER_RATE_LIMITED", "review_provider", "rate_limited", true},
+		{
+			"provider output incomplete (max_tokens)",
+			&service.WorkerExecutionError{Kind: service.WorkerErrorOutputIncomplete, Err: service.ErrProviderOutputIncomplete},
+			nil, nil, "OUTPUT_INCOMPLETE", "review_output_incomplete", "", false,
+		},
 		{"generic non-worker error", errors.New("x"), nil, nil, "REVIEW_EXECUTION_FAILED", "process", "", false},
 	}
 	for _, test := range tests {
@@ -247,6 +327,143 @@ func TestReviewFailureEnvelopeClassifiesEveryCase(t *testing.T) {
 			}
 			if test.wantPartial && (envelope.Evidence == nil || !envelope.Evidence.ReviewCanonical) {
 				t.Fatalf("partial Envelope missing committed evidence: %#v", envelope.Evidence)
+			}
+		})
+	}
+}
+
+// TestReviewFailureEnvelopeNeverPersistsForgedProviderFailureFields is the
+// Review-path counterpart to
+// TestFinishInteractionPlanNeverPersistsForgedProviderFailureFields, and
+// (PB-3ah.9) goes through the same actual production path that one does:
+// a real temporary Vault, an actually-claimed Review Command
+// (claimReviewCommand), reviewFailureEnvelope() sanitizing the same
+// *ProviderFailure pointer this test forges, finishReviewCommand()
+// persisting it, and the resulting Command Ledger record read back and
+// decoded -- not a bare reviewFailureEnvelope() call followed by a manual
+// json.Marshal(), which never proved the actual finish/Ledger boundary
+// closes. Covers both Category itself (PB-3ah.7/9) and the two subcategory
+// fields (PB-3ah.5).
+func TestReviewFailureEnvelopeNeverPersistsForgedProviderFailureFields(t *testing.T) {
+	tests := []struct {
+		name         string
+		forged       ProviderFailure
+		markers      []string
+		wantCategory claude.FailureCategory
+	}{
+		{
+			name:         "forged unknown structured-output reason with matching category",
+			forged:       ProviderFailure{Category: string(claude.FailureStructuredOutputInvalid), StructuredOutputReason: "FORGED_UNKNOWN_REASON_MARKER"},
+			markers:      []string{"FORGED_UNKNOWN_REASON_MARKER"},
+			wantCategory: claude.FailureStructuredOutputInvalid,
+		},
+		{
+			name: "valid Category with both subcategory fields set at once (anomalous tuple)",
+			forged: ProviderFailure{
+				Category:          string(claude.FailureStructuredOutputInvalid),
+				TransportCategory: string(claude.TransportTimeout), StructuredOutputReason: string(claude.StructuredOutputTrailingJSON),
+			},
+			markers:      []string{string(claude.TransportTimeout), string(claude.StructuredOutputTrailingJSON)},
+			wantCategory: claude.FailureStructuredOutputInvalid,
+		},
+		{
+			name:         "unknown canonical-looking Category normalizes to provider_failure",
+			forged:       ProviderFailure{Category: "FORGED_UNKNOWN_CATEGORY_MARKER"},
+			markers:      []string{"FORGED_UNKNOWN_CATEGORY_MARKER"},
+			wantCategory: claude.FailureUnknown,
+		},
+		{
+			name:         "empty Category normalizes to provider_failure",
+			forged:       ProviderFailure{Category: ""},
+			wantCategory: claude.FailureUnknown,
+		},
+		{
+			name:         "invalid Category containing a newline normalizes to provider_failure",
+			forged:       ProviderFailure{Category: "provider_failure\nFORGED_NEWLINE_MARKER"},
+			markers:      []string{"FORGED_NEWLINE_MARKER"},
+			wantCategory: claude.FailureUnknown,
+		},
+		{
+			name: "unknown Category with an otherwise-valid TransportCategory: both normalize",
+			forged: ProviderFailure{
+				Category: "FORGED_UNKNOWN_CATEGORY_MARKER_2", TransportCategory: string(claude.TransportConnectFailed),
+			},
+			markers: []string{"FORGED_UNKNOWN_CATEGORY_MARKER_2"}, wantCategory: claude.FailureUnknown,
+		},
+		{
+			name: "unknown Category with an otherwise-valid StructuredOutputReason: both normalize",
+			forged: ProviderFailure{
+				Category: "FORGED_UNKNOWN_CATEGORY_MARKER_3", StructuredOutputReason: string(claude.StructuredOutputMultipleJSON),
+			},
+			markers: []string{"FORGED_UNKNOWN_CATEGORY_MARKER_3"}, wantCategory: claude.FailureUnknown,
+		},
+	}
+	for i, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := writeReviewProcessVault(t)
+			completeReviewSourceTask(t, root)
+			commandID := "CMD-REVIEW-FORGED-CATEGORY-" + strconv.Itoa(i)
+			input := ExecuteReviewInput{ReviewPlanInput: reviewPlanInput(root), Approved: true, CommandID: commandID}
+			claim, claimErr := claimReviewCommand(context.Background(), input, ClaudeProcessConfig{})
+			if claimErr != nil {
+				t.Fatal(claimErr)
+			}
+			forged := test.forged
+			reviewErr := errors.New("forged provider failure")
+			envelope := reviewFailureEnvelope(reviewErr, &forged, nil)
+			if envelope.Category != string(test.wantCategory) ||
+				envelope.Provider == nil || envelope.Provider.Category != string(test.wantCategory) {
+				t.Fatalf("Envelope Category = %#v, want %q", envelope, test.wantCategory)
+			}
+			// Review's own generic Provider failure code
+			// (failure.ClassifyProviderCategory's raw "PROVIDER_FAILURE"
+			// default) is intentionally different from Interaction's
+			// INTERACTION_PLAN_FAILED remapping (providerFailureCode) --
+			// Category normalization must not blur that existing
+			// per-caller code distinction.
+			if test.wantCategory == claude.FailureUnknown && envelope.Code != "PROVIDER_FAILURE" {
+				t.Fatalf("normalized-Category Review code = %q, want PROVIDER_FAILURE (distinct from Interaction's INTERACTION_PLAN_FAILED)", envelope.Code)
+			}
+			if envelope.Substage != "" || envelope.Provider.Subcategory != "" {
+				t.Fatalf("forged subcategory value survived in the Envelope: %#v", envelope)
+			}
+			if forged.Category != string(test.wantCategory) || forged.TransportCategory != "" || forged.StructuredOutputReason != "" {
+				t.Fatalf("forged value survived on the ProviderFailure struct itself: %#v, want Category=%q", forged, test.wantCategory)
+			}
+			result := ReviewExecutionResult{
+				ProviderFailure: &forged, Failure: envelope,
+				FailureCode: envelope.Code, FailureStage: envelope.Stage,
+			}
+			if finishErr := finishReviewCommand(context.Background(), claim, result, reviewErr); finishErr == nil {
+				t.Fatal("finishReviewCommand() = nil, want the forged provider failure error preserved")
+			}
+			ledger, ledgerErr := vault.NewCommandLedgerStore(root, input.ProjectName)
+			if ledgerErr != nil {
+				t.Fatal(ledgerErr)
+			}
+			record, getErr := ledger.Get(context.Background(), commandID)
+			if getErr != nil {
+				t.Fatal(getErr)
+			}
+			if record.State != commandledger.StateFailed || record.Failure == nil || record.Failure.Code != string(envelope.Code) {
+				t.Fatalf("persisted Ledger record = %#v, %v", record, getErr)
+			}
+			if record.Failure.Details == nil || record.Failure.Details.Category != string(test.wantCategory) ||
+				record.Failure.Details.Substage != "" ||
+				record.Failure.Details.Provider == nil || record.Failure.Details.Provider.Category != string(test.wantCategory) ||
+				record.Failure.Details.Provider.Subcategory != "" {
+				t.Fatalf("persisted Ledger Failure.Details = %#v, want Category=%q", record.Failure.Details, test.wantCategory)
+			}
+			var decoded ReviewExecutionResult
+			if decodeErr := json.Unmarshal(record.Result, &decoded); decodeErr != nil ||
+				decoded.ProviderFailure == nil || decoded.ProviderFailure.Category != string(test.wantCategory) ||
+				decoded.ProviderFailure.TransportCategory != "" || decoded.ProviderFailure.StructuredOutputReason != "" {
+				t.Fatalf("persisted Result JSON ProviderFailure = %#v, decode=%v, want Category=%q", decoded.ProviderFailure, decodeErr, test.wantCategory)
+			}
+			for _, marker := range test.markers {
+				if strings.Contains(string(record.Result), marker) {
+					t.Fatalf("forged marker %q survived in persisted Result JSON: %s", marker, record.Result)
+				}
 			}
 		})
 	}

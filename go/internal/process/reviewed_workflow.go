@@ -349,21 +349,33 @@ func reviewOrchestrationProviderFailure(failure *ProviderFailure) *review.Provid
 // new classification, just the same fallback this Command already used.
 func reviewedWorkflowOuterEnvelope(result service.ReviewedWorkflowRunResult, stage string, partial bool, runErr error) *failure.Envelope {
 	var child *failure.Envelope
+	var childCommandID string
 	if len(result.Tasks) > 0 {
 		last := result.Tasks[len(result.Tasks)-1]
 		switch stage {
 		case "task_execute":
 			child = last.Execution.Failure
+			childCommandID = last.ExecutionCommandID
 		case "review":
 			if last.Review != nil {
 				child = last.Review.Failure
+				childCommandID = last.ReviewCommandID
 			}
 		}
 	}
 	var envelope failure.Envelope
 	switch {
 	case child != nil:
+		// Value-copied from the child's own persisted Envelope (never the
+		// child's own pointer, which stays exactly what its own Command
+		// Ledger record already carries -- ChildCommandID empty,
+		// Partial/RecoveryRequired whatever the child's own scope
+		// determined). Only this outer-scoped copy's own ChildCommandID is
+		// set, from the same production-recorded command ID
+		// (last.ExecutionCommandID / last.ReviewCommandID) the child was
+		// actually claimed and finished under -- never re-derived here.
 		envelope = *child
+		envelope.ChildCommandID = childCommandID
 	case stage == "revision_limit":
 		// The Revision Guard's own stop, not a Task/Review execution
 		// failure: the last attempt's own execution and Review both
