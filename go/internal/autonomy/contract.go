@@ -136,7 +136,8 @@ func NewStandard(employeeIDs, models []string, executionLimit int) (Contract, er
 
 func (contract Contract) Validate() error {
 	if contract.SchemaVersion != SchemaVersion || contract.TaskExecution != PermissionDelegated ||
-		contract.Review != PermissionRequired || contract.Revision != PermissionDelegated ||
+		contract.Review != PermissionRequired ||
+		(contract.Revision != PermissionDelegated && contract.Revision != PermissionForbidden) ||
 		contract.ExternalPublish != PermissionSeparateApprove || contract.Spending != PermissionForbidden ||
 		contract.ExecutionLimit < 1 || contract.ExecutionLimit > 100 ||
 		// 0 is accepted as "unset" (a Contract persisted before this field
@@ -164,6 +165,27 @@ func (contract Contract) Validate() error {
 // EffectiveMaxParallelTasks is what callers should dispatch against: an
 // unset (zero-value / pre-ADR-0051) Contract behaves as
 // DefaultMaxParallelTasks, never as "0 concurrency allowed".
+// NewBoundedAcceptance builds the closed bounded_acceptance execution
+// profile (ADR-0072): the same standard Contract every caller already gets
+// from NewStandard, cloned and then narrowed on exactly three fields.
+// Revision is forbidden (no Revision/Recovery escape from this Contract),
+// MaxProviderCalls is fixed at 2 (Task execution + Review, Plan generation
+// is accounted separately at the Interaction Session layer), and
+// ExecutionLimit is fixed at maxTasks -- callers must also pass maxTasks=1
+// as the Reviewed Workflow's own MaxTasks to satisfy the existing
+// ExecutionLimit==MaxTasks invariant enforced elsewhere. Every other field
+// (AllowedEmployeeIDs, AllowedModels, MaxParallelTasks, MaxRevisionCount,
+// MaxRuntime) is left exactly as NewStandard computed it.
+func NewBoundedAcceptance(employeeIDs, models []string, maxTasks int) (Contract, error) {
+	standard, err := NewStandard(employeeIDs, models, maxTasks)
+	if err != nil {
+		return Contract{}, err
+	}
+	bounded := standard.Clone()
+	bounded.Revision, bounded.MaxProviderCalls, bounded.ExecutionLimit = PermissionForbidden, 2, maxTasks
+	return bounded, bounded.Validate()
+}
+
 func (contract Contract) EffectiveMaxParallelTasks() int {
 	if contract.MaxParallelTasks <= 0 {
 		return DefaultMaxParallelTasks

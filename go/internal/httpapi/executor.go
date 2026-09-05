@@ -327,6 +327,11 @@ type interactionStartPayload struct {
 	RequestDigest string    `json:"request_digest"`
 	Model         string    `json:"model"`
 	CurrentTime   time.Time `json:"current_time"`
+	// ExecutionProfile is the closed, optional bounded_acceptance opt-in
+	// (ADR-0072). Empty (the default) is the standard profile. Its value is
+	// already validated as a closed enum by commandcontract.ValidatePayload
+	// before this handler ever runs.
+	ExecutionProfile string `json:"execution_profile,omitempty"`
 }
 
 type interactionPlanGenerationPayload struct {
@@ -481,6 +486,7 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 		return workspaceprocess.ExecuteInteractionStart(ctx, workspaceprocess.InteractionStartInput{
 			VaultRoot: executor.vaultRoot, SessionID: payload.SessionID, Request: payload.Request,
 			RequestDigest: payload.RequestDigest, Model: payload.Model, CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
+			Profile: payload.ExecutionProfile,
 		}, executor.providerConfig(), executor.httpClient, true)
 	case "interaction.plan.generate":
 		var payload interactionPlanGenerationPayload

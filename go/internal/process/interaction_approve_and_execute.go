@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -12,6 +13,21 @@ import (
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
 )
+
+// ErrApprovalReservationAlreadyClaimed means a bounded_acceptance approval
+// target ({SessionID, ExpectedVersion, PlanDigest, Profile}) already has a
+// running or terminal reservation Command claimed by a different outer
+// Command (ADR-0072) -- this outer Command never proceeds to Child 1.
+var ErrApprovalReservationAlreadyClaimed = errors.New("bounded acceptance approval reservation is already claimed")
+
+// approvalReservationResult is the minimal, uninformative terminal payload
+// for a bounded_acceptance approval reservation Command (ADR-0072). It
+// carries no Project/Task/Workflow detail -- those live on the outer
+// Command's own result -- it only ever answers "was this approval slot
+// used."
+type approvalReservationResult struct {
+	Consumed bool `json:"consumed"`
+}
 
 type InteractionApproveAndExecuteResult struct {
 	Session           interaction.Record                `json:"session"`
@@ -90,12 +106,65 @@ func ExecuteInteractionPlanApproveAndExecute(
 	}
 	record, err := interactionService.Get(ctx, input.SessionID)
 	plan, digest, hasPlan := record.CurrentPlan()
-	if err != nil || record.Version != input.ExpectedVersion || record.State != interaction.StatePlanApprovalRequired || !hasPlan || digest != input.PlanDigest {
+	if err != nil || record.Version != input.ExpectedVersion || record.State != interaction.StatePlanApprovalRequired || !hasPlan || digest != input.PlanDigest ||
+		// ADR-0072: a bounded_acceptance Session's canonical Plan must be
+		// exactly one Task -- rejected here, before Project/Task creation or
+		// any Provider/Workflow effect. The Plan itself is never
+		// auto-corrected or regenerated.
+		(record.Profile == interaction.ProfileBoundedAcceptance && len(plan.ProposedTasks) != 1) {
 		if err == nil {
 			err = ErrInteractionPrecondition
 		}
 		result := InteractionApproveAndExecuteResult{Session: record}
 		return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_APPROVE_AND_EXECUTE_FAILED", "interaction_preflight", false)
+	}
+
+	// ADR-0072: bounded_acceptance approval reservation. A deterministic ID
+	// derived purely from {SessionID, ExpectedVersion, PlanDigest, Profile}
+	// (never from input.CommandID) means two different outer Commands
+	// approving the same target collide on the same Command Ledger claim --
+	// only the first (the "winner") proceeds to Child 1 below. The
+	// reservation is finished as a terminal, uninformative "consumed"
+	// marker immediately upon winning, before any Project/Task/Provider
+	// effect, so a later crash mid-effect can never be mistaken for "this
+	// approval slot is still available."
+	if record.Profile == interaction.ProfileBoundedAcceptance {
+		reservationRequest := commandledger.ApprovalReservationID{
+			SessionID: input.SessionID, ExpectedVersion: input.ExpectedVersion,
+			PlanDigest: input.PlanDigest, Profile: string(interaction.ProfileBoundedAcceptance),
+		}
+		reservationID, reservationIDErr := commandledger.DeriveApprovalReservationID(reservationRequest)
+		if reservationIDErr != nil {
+			result := InteractionApproveAndExecuteResult{Session: record}
+			return result, finishDurableCommand(ctx, claim, result, reservationIDErr, "INTERACTION_APPROVE_AND_EXECUTE_FAILED", "command_identity", false)
+		}
+		reservationClaim, reservationErr := claimWorkspaceCommand(
+			ctx, input.VaultRoot, reservationID, "interaction.plan.approve_and_execute.reservation", input.SessionID, reservationRequest,
+		)
+		if reservationErr != nil {
+			result := InteractionApproveAndExecuteResult{Session: record}
+			return result, finishDurableCommand(ctx, claim, result, reservationErr, "INTERACTION_APPROVE_AND_EXECUTE_FAILED", "approval_reservation", false)
+		}
+		if _, alreadyClaimed, replayErr := replayDurableCommand[approvalReservationResult](reservationClaim); alreadyClaimed {
+			// Never treat an existing reservation record (running, already
+			// consumed by a different outer Command, or a stored failure)
+			// as a successful replay of THIS outer Command -- it belongs to
+			// a different attempt at the same approval target. This outer
+			// Command's own claim is still fresh (its own replay check
+			// already passed above), so it is rejected here as a distinct,
+			// typed non-success and terminal-finished as such -- never left
+			// running.
+			rejectErr := ErrApprovalReservationAlreadyClaimed
+			if replayErr != nil {
+				rejectErr = replayErr
+			}
+			result := InteractionApproveAndExecuteResult{Session: record}
+			return result, finishDurableCommand(ctx, claim, result, rejectErr, "INTERACTION_APPROVE_AND_EXECUTE_FAILED", "approval_reservation", false)
+		}
+		if finishErr := finishDurableCommand(ctx, reservationClaim, approvalReservationResult{Consumed: true}, nil, "", "", false); finishErr != nil {
+			result := InteractionApproveAndExecuteResult{Session: record}
+			return result, finishDurableCommand(ctx, claim, result, finishErr, "INTERACTION_APPROVE_AND_EXECUTE_FAILED", "approval_reservation", false)
+		}
 	}
 
 	// Child 1: canonical Plan apply, its own deterministic child Command
@@ -141,11 +210,36 @@ func ExecuteInteractionPlanApproveAndExecute(
 	// without asking again. Reviewer, Autonomy Contract, and Task budget are
 	// all derived the same way the standalone command's own preview always
 	// has -- the CEO never customized them even under the pre-CP4 flow.
+	// ADR-0072: a bounded_acceptance Session's Reviewed Workflow scope is
+	// bound to exactly one Task (workflowMaxTasks=1), which is also the
+	// value its bounded Autonomy Contract's ExecutionLimit must equal (the
+	// existing ExecutionLimit==MaxTasks invariant resolveAutonomyContract
+	// enforces) -- both the plan and the eventual chain call below use the
+	// same value.
+	workflowMaxTasks := defaultWorkflowMaxTasks
+	if record.Profile == interaction.ProfileBoundedAcceptance {
+		workflowMaxTasks = 1
+	}
 	workflowPlanInput := InteractionWorkflowPlanInput{
 		VaultRoot: input.VaultRoot, SessionID: input.SessionID, ExpectedVersion: commit.Record.Version,
-		CurrentTime: input.CurrentTime, MaxTasks: defaultWorkflowMaxTasks,
+		CurrentTime: input.CurrentTime, MaxTasks: workflowMaxTasks,
 	}
-	if input.ProviderFixtureMaxCalls > 0 {
+	switch {
+	case record.Profile == interaction.ProfileBoundedAcceptance:
+		standardPlan, planErr := PlanInteractionWorkflow(ctx, workflowPlanInput)
+		if planErr != nil {
+			err = planErr
+		} else {
+			boundedContract, boundedErr := autonomy.NewBoundedAcceptance(
+				standardPlan.Autonomy.AllowedEmployeeIDs, standardPlan.Autonomy.AllowedModels, workflowMaxTasks,
+			)
+			if boundedErr != nil {
+				err = boundedErr
+			} else {
+				workflowPlanInput.Autonomy = &boundedContract
+			}
+		}
+	case input.ProviderFixtureMaxCalls > 0:
 		standardPlan, planErr := PlanInteractionWorkflow(ctx, workflowPlanInput)
 		if planErr != nil {
 			err = planErr
@@ -165,7 +259,7 @@ func ExecuteInteractionPlanApproveAndExecute(
 		return result, finishDurableCommandWithEnvelope(ctx, claim, result, err, &envelope, true)
 	}
 	workflowResult, envelope, workflowErr := runInteractionWorkflowChain(
-		ctx, input.VaultRoot, workflowPlan, commit.Record.Version, defaultWorkflowMaxTasks, input.CurrentTime,
+		ctx, input.VaultRoot, workflowPlan, commit.Record.Version, workflowMaxTasks, input.CurrentTime,
 		input.CommandID, "interaction.plan.approve_and_execute:"+input.CommandID,
 		"INTERACTION_APPROVE_AND_EXECUTE_FAILED", provider, httpClient, input.EventObservers,
 	)

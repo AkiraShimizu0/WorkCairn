@@ -1770,6 +1770,34 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   padding: 0;
 }
 
+.bounded-acceptance-row {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85em;
+}
+
+.bounded-acceptance-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.bounded-acceptance-constraints {
+  margin: 0;
+  padding: 0;
+  color: var(--ink-muted, var(--ink));
+}
+
+.bounded-acceptance-notice {
+  font-size: 0.85em;
+}
+
+.bounded-acceptance-notice p {
+  margin: 4px 0 0;
+  color: var(--ink-muted, var(--ink));
+}
+
 .composer-input-row {
   display: grid;
   grid-template-columns: 1fr auto;

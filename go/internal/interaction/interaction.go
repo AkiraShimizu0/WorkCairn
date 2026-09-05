@@ -52,14 +52,40 @@ func (state State) Valid() bool {
 		state == StateActionCompleted || state == StateActionAttentionRequired
 }
 
+// Profile is the closed, additive execution profile a Session is created
+// with (ADR-0072). ProfileStandard (the Go zero value) is every existing
+// Session's profile and is never written to JSON (omitempty) -- standard
+// Sessions are byte-for-byte unaffected by this type's existence.
+// ProfileBoundedAcceptance opts a Session into a bounded, closed execution
+// sequence (at most one Plan generation attempt, exactly one Task, at most
+// one Review, no Revision) enforced across the Process and Service layers.
+type Profile string
+
+const (
+	ProfileStandard          Profile = ""
+	ProfileBoundedAcceptance Profile = "bounded_acceptance"
+)
+
+func (profile Profile) Valid() bool {
+	return profile == ProfileStandard || profile == ProfileBoundedAcceptance
+}
+
 type TurnKind string
 
 const (
 	TurnPlanGenerated         TurnKind = "plan_generated"
 	TurnClarificationAnswered TurnKind = "clarification_answered"
 	TurnPlanApplied           TurnKind = "plan_applied"
-	TurnWorkflowRecorded      TurnKind = "workflow_recorded"
-	TurnActionRecorded        TurnKind = "action_recorded"
+	// TurnPlanGenerationReserved durably records, before any Provider call
+	// is attempted, that a bounded_acceptance Session's single allowed Plan
+	// generation attempt is now underway under a specific child Command ID
+	// (ReservedChildCommandID). It never changes Record.State -- it records
+	// that an attempt is authorized, not its outcome -- and it is valid
+	// only once per Session (see Validate()'s own case). Only Profile ==
+	// ProfileBoundedAcceptance Sessions may ever carry this Turn Kind.
+	TurnPlanGenerationReserved TurnKind = "plan_generation_reserved"
+	TurnWorkflowRecorded       TurnKind = "workflow_recorded"
+	TurnActionRecorded         TurnKind = "action_recorded"
 	// TurnArchived and TurnUnarchived record a CEO's visibility decision
 	// for this Session -- "hide from the active request list" and its
 	// reverse. They are deliberately orthogonal to every other Turn Kind
@@ -196,6 +222,12 @@ type Turn struct {
 	// Kind's own doc comment.
 	RecoveryTaskID   string `json:"recovery_task_id,omitempty"`
 	RecoveryGuidance string `json:"recovery_guidance,omitempty"`
+	// ReservedChildCommandID is set only on a TurnPlanGenerationReserved
+	// turn (ADR-0072) -- the exact child Command ID authorized to make this
+	// Session's single bounded_acceptance Plan generation Provider call.
+	// Every other Turn Kind must leave this empty (see Validate()'s
+	// cross-kind checks).
+	ReservedChildCommandID string `json:"reserved_child_command_id,omitempty"`
 }
 
 type Record struct {
@@ -208,6 +240,10 @@ type Record struct {
 	State         State     `json:"state"`
 	Version       uint64    `json:"version"`
 	Turns         []Turn    `json:"turns"`
+	// Profile is the closed, immutable execution profile this Session was
+	// created with (ADR-0072). ProfileStandard (empty) is omitted from JSON
+	// so every existing standard Session's serialized form is unchanged.
+	Profile Profile `json:"profile,omitempty"`
 }
 
 type NextActionKind string
@@ -266,6 +302,24 @@ func New(sessionID, request, model string, createdAt time.Time) (Record, error) 
 	return record, record.Validate()
 }
 
+// NewWithProfile is New plus an explicit, validated Profile selection
+// (ADR-0072). It delegates entirely to New for every existing invariant
+// (SessionID pattern, request/model shape, RequestDigest -- unaffected by
+// Profile, see requestDigest) and only additionally requires
+// profile.Valid(). New itself is unchanged and remains the standard-profile
+// entry point every existing caller keeps using.
+func NewWithProfile(sessionID, request, model string, profile Profile, createdAt time.Time) (Record, error) {
+	record, err := New(sessionID, request, model, createdAt)
+	if err != nil {
+		return Record{}, err
+	}
+	if !profile.Valid() {
+		return Record{}, ErrInvalidSession
+	}
+	record.Profile = profile
+	return record, record.Validate()
+}
+
 func ValidateSessionID(sessionID string) error {
 	if !sessionIDPattern.MatchString(strings.TrimSpace(sessionID)) {
 		return ErrInvalidSession
@@ -301,13 +355,24 @@ func (record Record) Validate() error {
 		record.Request == "" || record.Request != strings.TrimSpace(record.Request) || len(record.Request) > 32<<10 ||
 		record.Model == "" || record.Model != strings.TrimSpace(record.Model) || strings.ContainsAny(record.Model, "\r\n") ||
 		record.CreatedAt.IsZero() || !validDigest(record.RequestDigest) || digestErr != nil || record.RequestDigest != expectedRequestDigest ||
-		!record.State.Valid() || record.Version != uint64(len(record.Turns))+1 || record.Turns == nil {
+		!record.State.Valid() || record.Version != uint64(len(record.Turns))+1 || record.Turns == nil || !record.Profile.Valid() {
 		return ErrInvalidSession
 	}
 	state := StatePlanGenerationApprovalRequired
 	lastAt := record.CreatedAt
 	var activePlan *ceoplan.Plan
 	activeDigest := ""
+	// planGenerationReserved and reservedChildCommandID track whether a
+	// TurnPlanGenerationReserved Turn has already appeared in this
+	// bounded_acceptance Session's history (ADR-0072), and if so, the exact
+	// child Command ID it authorized. At most one reservation is ever
+	// valid -- see that Turn Kind's own case below -- and a bounded
+	// Session's TurnPlanGenerated must both be preceded by exactly one
+	// reservation and carry that same child Command ID (see TurnPlanGenerated's
+	// own case): the reservation and the Plan it authorizes are bound
+	// together, not just independently present.
+	planGenerationReserved := false
+	reservedChildCommandID := ""
 	// answeredCount tracks how many of activePlan.CEOQuestions (in order)
 	// already have a durable answer, across one or more
 	// TurnClarificationAnswered Turns since activePlan was generated. It
@@ -330,7 +395,22 @@ func (record Record) Validate() error {
 		switch turn.Kind {
 		case TurnPlanGenerated:
 			if state != StatePlanGenerationApprovalRequired || turn.Plan == nil || len(turn.Answers) != 0 ||
-				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || turn.Action != nil || validatePlanShape(*turn.Plan) != nil {
+				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || turn.Action != nil ||
+				validatePlanShape(*turn.Plan) != nil {
+				return ErrInvalidSession
+			}
+			// ADR-0072: a bounded_acceptance Session's Plan generation Turn
+			// must be preceded by exactly one reservation Turn, and must
+			// carry that exact same child Command ID -- the Provider
+			// attempt this Turn records the result of is only ever the one
+			// the reservation itself authorized, never a different or
+			// absent one. A standard Session must never carry this field at
+			// all on a TurnPlanGenerated Turn (unchanged from before).
+			if record.Profile == ProfileBoundedAcceptance {
+				if !planGenerationReserved || turn.ReservedChildCommandID != reservedChildCommandID {
+					return ErrInvalidSession
+				}
+			} else if turn.ReservedChildCommandID != "" {
 				return ErrInvalidSession
 			}
 			digest, err := DigestPlan(*turn.Plan)
@@ -347,6 +427,7 @@ func (record Record) Validate() error {
 		case TurnClarificationAnswered:
 			if state != StateClarificationRequired || turn.Plan != nil || turn.PlanDigest != activeDigest ||
 				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || turn.Action != nil || activePlan == nil ||
+				turn.ReservedChildCommandID != "" ||
 				validateIncrementalAnswers(activePlan.CEOQuestions, answeredCount, turn.Answers) != nil {
 				return ErrInvalidSession
 			}
@@ -358,6 +439,7 @@ func (record Record) Validate() error {
 			if state != StatePlanApprovalRequired || turn.Plan != nil || len(turn.Answers) != 0 ||
 				turn.PlanDigest != activeDigest || strings.TrimSpace(turn.ProjectID) == "" || turn.ProjectID != strings.TrimSpace(turn.ProjectID) ||
 				strings.TrimSpace(turn.ProjectName) == "" || turn.ProjectName != strings.TrimSpace(turn.ProjectName) || turn.Workflow != nil || turn.Action != nil ||
+				turn.ReservedChildCommandID != "" ||
 				turn.PreAuthorizedWorkflowCommandID != "" && commandledger.ValidateCommandID(turn.PreAuthorizedWorkflowCommandID) != nil {
 				return ErrInvalidSession
 			}
@@ -366,6 +448,7 @@ func (record Record) Validate() error {
 		case TurnWorkflowRecorded:
 			if state != StateReadyToExecute || turn.Plan != nil || turn.PlanDigest != "" || len(turn.Answers) != 0 ||
 				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow == nil || turn.Action != nil ||
+				turn.ReservedChildCommandID != "" ||
 				validateWorkflowEvidence(*turn.Workflow, activeProjectID, activeProjectName) != nil {
 				return ErrInvalidSession
 			}
@@ -382,6 +465,7 @@ func (record Record) Validate() error {
 		case TurnActionRecorded:
 			if state != StateCompleted || turn.Plan != nil || turn.PlanDigest != "" || len(turn.Answers) != 0 ||
 				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || turn.Action == nil || latestWorkflow == nil ||
+				turn.ReservedChildCommandID != "" ||
 				validateActionEvidence(*turn.Action, activeProjectID, activeProjectName, *latestWorkflow) != nil {
 				return ErrInvalidSession
 			}
@@ -393,26 +477,39 @@ func (record Record) Validate() error {
 		case TurnArchived:
 			if archived || turn.Plan != nil || turn.PlanDigest != "" || len(turn.Answers) != 0 ||
 				turn.ProjectID != "" || turn.ProjectName != "" || turn.PreAuthorizedWorkflowCommandID != "" ||
-				turn.Workflow != nil || turn.Action != nil {
+				turn.Workflow != nil || turn.Action != nil || turn.ReservedChildCommandID != "" {
 				return ErrInvalidSession
 			}
 			archived = true
 		case TurnUnarchived:
 			if !archived || turn.Plan != nil || turn.PlanDigest != "" || len(turn.Answers) != 0 ||
 				turn.ProjectID != "" || turn.ProjectName != "" || turn.PreAuthorizedWorkflowCommandID != "" ||
-				turn.Workflow != nil || turn.Action != nil {
+				turn.Workflow != nil || turn.Action != nil || turn.ReservedChildCommandID != "" {
 				return ErrInvalidSession
 			}
 			archived = false
 		case TurnRevisionRecoveryStarted:
 			if state != StateWorkflowAttentionRequired || turn.Plan != nil || turn.PlanDigest != "" || len(turn.Answers) != 0 ||
 				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || turn.Action != nil ||
+				turn.ReservedChildCommandID != "" ||
 				strings.TrimSpace(turn.RecoveryTaskID) != turn.RecoveryTaskID || turn.RecoveryTaskID == "" ||
 				strings.ContainsAny(turn.RecoveryTaskID, "\r\n") ||
 				(turn.RecoveryGuidance != "" && (strings.ContainsAny(turn.RecoveryGuidance, "\r\n") || len(turn.RecoveryGuidance) > revision.MaxAdditionalGuidanceLength)) {
 				return ErrInvalidSession
 			}
 			state = StateReadyToExecute
+		case TurnPlanGenerationReserved:
+			if record.Profile != ProfileBoundedAcceptance || state != StatePlanGenerationApprovalRequired ||
+				planGenerationReserved || turn.Plan != nil || turn.PlanDigest != "" || len(turn.Answers) != 0 ||
+				turn.ProjectID != "" || turn.ProjectName != "" || turn.Workflow != nil || turn.Action != nil ||
+				turn.PreAuthorizedWorkflowCommandID != "" || turn.RecoveryTaskID != "" || turn.RecoveryGuidance != "" ||
+				commandledger.ValidateCommandID(turn.ReservedChildCommandID) != nil {
+				return ErrInvalidSession
+			}
+			planGenerationReserved, reservedChildCommandID = true, turn.ReservedChildCommandID
+			// state is left unchanged (StatePlanGenerationApprovalRequired):
+			// this Turn records that an attempt is authorized, not its
+			// outcome.
 		default:
 			return ErrInvalidSession
 		}
@@ -423,9 +520,63 @@ func (record Record) Validate() error {
 	return nil
 }
 
+// PlanGenerationReservation reports whether this bounded_acceptance
+// Session has already reserved its single allowed Plan generation attempt
+// (ADR-0072), and if so, the exact child Command ID authorized to make it.
+// A caller uses this before ever attempting a Provider call: if reserved
+// is true, only a retry using exactly childCommandID may proceed (existing
+// Command Ledger replay already covers that case) -- any other attempt,
+// and any attempt at all once reserved is true and this Session's State is
+// no longer StatePlanGenerationApprovalRequired, must be rejected without
+// calling the Provider.
+func (record Record) PlanGenerationReservation() (childCommandID string, reserved bool) {
+	for _, turn := range record.Turns {
+		if turn.Kind == TurnPlanGenerationReserved {
+			return turn.ReservedChildCommandID, true
+		}
+	}
+	return "", false
+}
+
+// RecordPlanGenerationReservation durably commits the one-time reservation
+// Turn (ADR-0072) for a bounded_acceptance Session, before any Provider
+// call is attempted. It is the "v1 -> v2" transition in the ADR's Version
+// sequence: v1 is the Session as created (New/NewWithProfile), v2 is this
+// reservation, and only after v2 successfully commits may the caller
+// attempt the actual Provider call whose result becomes v3 (RecordPlan).
+func (record Record) RecordPlanGenerationReservation(childCommandID string, at time.Time) (Record, error) {
+	if record.Validate() != nil || record.Profile != ProfileBoundedAcceptance ||
+		record.State != StatePlanGenerationApprovalRequired || at.IsZero() ||
+		commandledger.ValidateCommandID(childCommandID) != nil {
+		return Record{}, ErrInvalidState
+	}
+	if _, reserved := record.PlanGenerationReservation(); reserved {
+		return Record{}, ErrInvalidState
+	}
+	next := record.Clone()
+	next.Turns = append(next.Turns, Turn{Kind: TurnPlanGenerationReserved, At: at, ReservedChildCommandID: childCommandID})
+	next.Version++
+	return next, next.Validate()
+}
+
 func (record Record) RecordPlan(plan ceoplan.Plan, at time.Time) (Record, error) {
 	if record.Validate() != nil || record.State != StatePlanGenerationApprovalRequired || at.IsZero() {
 		return Record{}, ErrInvalidState
+	}
+	// ADR-0072: a bounded_acceptance Session must already have reserved its
+	// one allowed Plan generation attempt (RecordPlanGenerationReservation)
+	// before RecordPlan may be called at all -- this is enforced here, in
+	// the domain constructor itself, not only by the Process layer's own
+	// call-site discipline. The Turn recorded below carries that exact
+	// reservation's child Command ID (see Validate()'s TurnPlanGenerated
+	// case), so the caller never needs to supply or re-assert it.
+	reservedChildCommandID := ""
+	if record.Profile == ProfileBoundedAcceptance {
+		childCommandID, reserved := record.PlanGenerationReservation()
+		if !reserved {
+			return Record{}, ErrInvalidState
+		}
+		reservedChildCommandID = childCommandID
 	}
 	// validatePlanShape's own error (a *PlanValidationError, sanitized
 	// reason/field/task-index only) is returned directly here, not
@@ -442,7 +593,7 @@ func (record Record) RecordPlan(plan ceoplan.Plan, at time.Time) (Record, error)
 	}
 	next := record.Clone()
 	cloned := clonePlan(plan)
-	next.Turns = append(next.Turns, Turn{Kind: TurnPlanGenerated, At: at, Plan: &cloned, PlanDigest: digest})
+	next.Turns = append(next.Turns, Turn{Kind: TurnPlanGenerated, At: at, Plan: &cloned, PlanDigest: digest, ReservedChildCommandID: reservedChildCommandID})
 	next.Version++
 	next.State = StatePlanApprovalRequired
 	if len(plan.CEOQuestions) > 0 {
@@ -774,22 +925,47 @@ func (record Record) Next() (NextAction, error) {
 	next.ProjectID, next.ProjectName = projectID, projectName
 	switch record.State {
 	case StatePlanGenerationApprovalRequired:
-		next.Kind, next.Operation, next.ApprovalRequired = NextApprovePlanGeneration, "interaction.plan.generate", true
-		next.RequiredFields = []string{"command_id", "current_time"}
+		// ADR-0072: a bounded_acceptance Session that has already reserved
+		// its one allowed Plan generation attempt (and is still sitting in
+		// this State, meaning that attempt never produced a TurnPlanGenerated
+		// -- it failed, timed out, or the process crashed mid-attempt) must
+		// never be offered a second attempt. Point at the exact reserved
+		// child Command instead of asking for approval again, reusing the
+		// existing NextInspectWorkflow kind (no new NextActionKind invented)
+		// -- the same "something is already decided, inspect it, don't
+		// approve again" role it already plays for a pre-authorized Workflow
+		// in StateReadyToExecute below.
+		if childCommandID, reserved := record.PlanGenerationReservation(); record.Profile == ProfileBoundedAcceptance && reserved {
+			next.Kind = NextInspectWorkflow
+			next.Commands = []CommandReference{{Scope: "workspace", CommandID: childCommandID}}
+		} else {
+			next.Kind, next.Operation, next.ApprovalRequired = NextApprovePlanGeneration, "interaction.plan.generate", true
+			next.RequiredFields = []string{"command_id", "current_time"}
+		}
 	case StateClarificationRequired:
 		plan, _, ok := record.CurrentPlan()
 		if !ok {
 			return NextAction{}, ErrInvalidSession
 		}
-		next.Kind, next.Operation, next.ApprovalRequired = NextAnswerClarifications, "interaction.answer", true
-		next.RequiredFields = []string{"answers", "command_id", "current_time"}
-		// Questions names only the single next unanswered CEOQuestion, not
-		// the full original list: answers are recorded one durable Turn
-		// at a time (RecordAnswers), in order, so this is always the exact
-		// next one a client should ask and submit.
-		answeredCount := record.answeredCountSinceCurrentPlan()
-		if answeredCount < len(plan.CEOQuestions) {
-			next.Questions = []string{plan.CEOQuestions[answeredCount]}
+		// ADR-0072: reaching this State at all already means a bounded
+		// Session's single allowed Plan generation attempt succeeded and
+		// returned CEOQuestions -- answering them would require a second
+		// (regenerate) Provider call, which this profile never allows. This
+		// is therefore always a dead end for a bounded Session, regardless
+		// of reservation bookkeeping.
+		if record.Profile == ProfileBoundedAcceptance {
+			next.Kind = NextInspectWorkflow
+		} else {
+			next.Kind, next.Operation, next.ApprovalRequired = NextAnswerClarifications, "interaction.answer", true
+			next.RequiredFields = []string{"answers", "command_id", "current_time"}
+			// Questions names only the single next unanswered CEOQuestion, not
+			// the full original list: answers are recorded one durable Turn
+			// at a time (RecordAnswers), in order, so this is always the exact
+			// next one a client should ask and submit.
+			answeredCount := record.answeredCountSinceCurrentPlan()
+			if answeredCount < len(plan.CEOQuestions) {
+				next.Questions = []string{plan.CEOQuestions[answeredCount]}
+			}
 		}
 	case StatePlanApprovalRequired:
 		plan, digest, ok := record.CurrentPlan()
@@ -926,7 +1102,8 @@ func (record Record) Clone() Record {
 
 func ValidateTransition(current, next Record, expectedVersion uint64) error {
 	if current.Validate() != nil || next.Validate() != nil || current.SessionID != next.SessionID ||
-		current.RequestDigest != next.RequestDigest || current.Version != expectedVersion || next.Version != current.Version+1 ||
+		current.RequestDigest != next.RequestDigest || current.Profile != next.Profile ||
+		current.Version != expectedVersion || next.Version != current.Version+1 ||
 		len(next.Turns) != len(current.Turns)+1 {
 		return ErrVersionConflict
 	}

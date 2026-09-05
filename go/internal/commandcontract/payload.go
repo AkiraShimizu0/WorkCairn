@@ -148,11 +148,12 @@ func ValidatePayload(operation string, content json.RawMessage) error {
 		}{}
 	case "interaction.start":
 		target = &struct {
-			SessionID     string    `json:"session_id"`
-			Request       string    `json:"request"`
-			RequestDigest string    `json:"request_digest"`
-			Model         string    `json:"model"`
-			CurrentTime   time.Time `json:"current_time"`
+			SessionID        string    `json:"session_id"`
+			Request          string    `json:"request"`
+			RequestDigest    string    `json:"request_digest"`
+			Model            string    `json:"model"`
+			CurrentTime      time.Time `json:"current_time"`
+			ExecutionProfile string    `json:"execution_profile,omitempty"`
 		}{}
 	case "interaction.plan.generate":
 		target = &struct {
@@ -324,6 +325,20 @@ func validateRequiredFields(operation string, content json.RawMessage) error {
 		record, err := interaction.New(sessionID, request, model, currentTime)
 		if err != nil || record.RequestDigest != digest {
 			return ErrInvalidPayload
+		}
+		// ADR-0072: execution_profile is optional and, if present, must be
+		// one of the closed enum values -- absent or empty means standard
+		// (byte-identical to every existing interaction.start payload), any
+		// other string (including a caller-forged "standard") is rejected
+		// rather than silently normalized to the standard profile.
+		if raw, ok := fields["execution_profile"]; ok {
+			var executionProfile string
+			if json.Unmarshal(raw, &executionProfile) != nil {
+				return ErrInvalidPayload
+			}
+			if !interaction.Profile(executionProfile).Valid() {
+				return ErrInvalidPayload
+			}
 		}
 	}
 	if operation == "interaction.plan.generate" || operation == "interaction.answer" || operation == "interaction.plan.apply" || operation == "interaction.plan.approve_and_execute" || operation == "interaction.workflow.execute" || operation == "interaction.workflow.recover_revision" || operation == "interaction.action.wordpress.publish" || operation == "interaction.archive" || operation == "interaction.unarchive" {

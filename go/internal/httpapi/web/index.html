@@ -107,6 +107,13 @@
                     <div class="composer-shell">
                     <p class="visually-hidden">この画面を閉じても処理はバックグラウンドで続きます。次に判断が必要になったら依頼詳細へ表示します。</p>
                     <p id="composer-status" class="composer-status visually-hidden" aria-hidden="true"></p>
+                    <div id="bounded-acceptance-row" class="bounded-acceptance-row" hidden>
+                      <label class="bounded-acceptance-label">
+                        <input type="checkbox" id="bounded-acceptance-toggle" />
+                        限定確認モード（Plan1回・Task1件・Review1回・最大3回で停止）
+                      </label>
+                      <p id="bounded-acceptance-constraints" class="bounded-acceptance-constraints" hidden>Plan 1回、Task 1件、Review 1回、Provider呼び出し最大3回。clarification／failure／timeout／Request Changesで停止します。retry、Revision、Recovery、fallbackはいずれも行いません。</p>
+                    </div>
                     <div class="composer-input-row">
                       <textarea id="composer-input" name="message" rows="2" placeholder="メッセージを入力..." aria-label="メッセージを入力"></textarea>
                       <button id="composer-send" class="button primary composer-send" type="submit" aria-label="送信" title="送信"><span class="composer-send-icon" aria-hidden="true">↑</span></button>

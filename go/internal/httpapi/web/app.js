@@ -121,6 +121,9 @@ const ui = {
   composerStatus: document.querySelector("#composer-status"),
   composerInput: document.querySelector("#composer-input"),
   composerSend: document.querySelector("#composer-send"),
+  boundedAcceptanceRow: document.querySelector("#bounded-acceptance-row"),
+  boundedAcceptanceToggle: document.querySelector("#bounded-acceptance-toggle"),
+  boundedAcceptanceConstraints: document.querySelector("#bounded-acceptance-constraints"),
   detailsPanel: document.querySelector("#details-panel"),
   details: document.querySelector("#details-content"),
   sessionList: document.querySelector("#session-list"),
@@ -652,6 +655,11 @@ function renderComposerState(next) {
   const capabilities = composerCapabilities(next);
   const fieldText = composerFieldText(next);
   const previousMode = state.composerRenderMode;
+  // ADR-0072: the bounded_acceptance toggle only ever applies before the
+  // Session is created -- hide it the instant the draft stops being the
+  // active composer target (submitted, cleared, or replaced by an existing
+  // Session's own composer state).
+  if (ui.boundedAcceptanceRow) ui.boundedAcceptanceRow.hidden = !isDraftRequestActive();
 
   if (capabilities.enabled) {
     ui.composerInput.readOnly = false;
@@ -1165,6 +1173,11 @@ function interactionErrorGuidance(code, stage = "") {
   if (code === "BUDGET_EXCEEDED") {
     return "この依頼は設定された実行上限に達したため、自動処理を停止しました。完了済みの成果は保存されています。";
   }
+  if (code === "REVIEWED_WORKFLOW_BOUNDED_STOP") {
+    // ADR-0072: bounded_acceptance Sessionでの意図的な停止。技術障害でも
+    // 成功完了でもなく、Revision／Recoveryは提示しない。
+    return "Reviewで修正要求が出たため、限定確認を終了しました。成果物とレビュー内容はそのまま保存されています。この確認方法ではRevisionや自動修正は行いません。";
+  }
   if (code === "DEPENDENCY_EVIDENCE_MISSING") {
     return "統合に必要な前段の成果物を確認できなかったため、作業を開始していません。完了済みの成果物を確認してください。";
   }
@@ -1174,10 +1187,16 @@ function interactionErrorGuidance(code, stage = "") {
 function showError(error, title = "処理を完了できませんでした") {
   setBusy(false);
   setBackgroundWorking(false);
-  const remembered = rememberError(error, title);
   const detail = error instanceof APIError ? error.detail : null;
   const code = detail?.code || error.message || "UNKNOWN_ERROR";
   const stage = detail?.stage;
+  // ADR-0072: a bounded_acceptance stop is neither a technical failure nor
+  // a successful completion -- never label it with the generic failure
+  // title used for every other error code here.
+  if (code === "REVIEWED_WORKFLOW_BOUNDED_STOP" && title === "処理を完了できませんでした") {
+    title = "限定確認を終了しました";
+  }
+  const remembered = rememberError(error, title);
   const providerSetupRequired = code === "PROVIDER_CONFIGURATION_REQUIRED";
   const providerGenerationFailed = code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_generation";
   const providerFailures = {
@@ -1858,7 +1877,7 @@ async function restoreDurableFailure(next) {
         code: record.failure.code,
         stage: record.failure.stage,
         command_id: reference.command_id,
-        recovery_required: record.state === "partial_failure",
+        recovery_required: recoveryRequiredFromRecord(record),
         ...diagnostics,
       }), "前回のCommandを完了できませんでした", reference.command_id);
       return;
@@ -2016,8 +2035,21 @@ function renderPlanApproval(next) {
       }, "仕事を開始しています", "Planの適用とReviewed Workflowを進めています。");
     }),
   ]);
-  ui.activeCard.hidden = true;
-  ui.activeCard.replaceChildren();
+  // ADR-0072: the Session's profile was fixed at interaction.start and
+  // cannot be changed here -- read-only display only, no control to alter
+  // it, and this branch never runs for a standard Session.
+  if (state.record?.profile === "bounded_acceptance") {
+    ui.activeCard.hidden = false;
+    ui.activeCard.replaceChildren(
+      node("div", { class: "bounded-acceptance-notice" },
+        node("strong", {}, "限定確認モード（変更不可）"),
+        node("p", {}, "Plan 1回、Task 1件、Review 1回、Provider呼び出し最大3回。clarification／failure／timeout／Request Changesで停止します。retry、Revision、Recovery、fallbackはいずれも行いません。"),
+      ),
+    );
+  } else {
+    ui.activeCard.hidden = true;
+    ui.activeCard.replaceChildren();
+  }
   state.forceScrollToBottom = true;
   renderTimeline();
 }
@@ -2278,7 +2310,7 @@ async function monitorAcceptedCommand(command) {
       throw new APIError(record.failure?.code || "COMMAND_FAILED", 422, {
         code: record.failure?.code || "COMMAND_FAILED",
         stage: record.failure?.stage,
-        recovery_required: record.state === "partial_failure",
+        recovery_required: recoveryRequiredFromRecord(record),
 		command_id: command.command_id,
 		...errorDiagnostics(record.failure?.details, record.result),
       });
@@ -2312,6 +2344,21 @@ function commandProviderFailure(result) {
 // only when `details` is absent -- pre-migration Ledger records, or
 // Commands not yet migrated this round. showError()/rememberError() keep
 // reading provider_failure/parse_failure_reason unchanged either way.
+// recoveryRequiredFromRecord is the single source of truth this client uses
+// for a polled/restored Command Ledger record's recovery_required
+// projection (ADR-0072 focused correction): when a typed failure.Envelope
+// (record.failure.details) is present, its own recovery_required is
+// authoritative -- it already reflects profile-specific exceptions (e.g. a
+// bounded_acceptance stop is a partial_failure state but never
+// recovery_required) that the coarser Ledger state string alone cannot
+// express. Only a legacy record with no details at all falls back to the
+// existing partial_failure-state heuristic. This must never independently
+// regenerate true from the state string alone once details exists.
+function recoveryRequiredFromRecord(record) {
+  if (record?.failure?.details) return Boolean(record.failure.details.recovery_required);
+  return record?.state === "partial_failure";
+}
+
 function errorDiagnostics(details, result) {
   return {
     details: details || null,
@@ -3056,6 +3103,7 @@ function renderDraftRequestDetail() {
   ui.details.replaceChildren();
   ui.composerInput.value = "";
   state.composerDraft = "";
+  if (ui.boundedAcceptanceRow) ui.boundedAcceptanceRow.hidden = false;
   renderAutonomy();
   renderProofOfWork();
   renderCEOAttention();
@@ -3415,6 +3463,10 @@ function openNewRequestDraft() {
   localStorage.removeItem(STORAGE_SESSION);
   clearActionSurface();
   ui.composerInput.value = "";
+  // ADR-0072: the bounded_acceptance toggle is default OFF for every new
+  // draft -- never carried over from a previous request.
+  if (ui.boundedAcceptanceToggle) ui.boundedAcceptanceToggle.checked = false;
+  if (ui.boundedAcceptanceConstraints) ui.boundedAcceptanceConstraints.hidden = true;
   setNav("request_detail");
   renderDraftRequestDetail();
 }
@@ -3428,18 +3480,26 @@ async function submitDraftRequest() {
   if (!request) return toast("依頼内容を入力してください。");
   submitDraftRequest.inFlight = true;
   const input = { version: INTERACTION_VERSION, session_id: state.draftRequest.sessionID, request, current_time: now() };
+  // ADR-0072: read the toggle once, at submit time -- never carried over
+  // between drafts, never editable once the Session exists (renderPlanApproval
+  // shows it read-only). Omitted entirely (not sent as "") when OFF, so a
+  // standard interaction.start payload is byte-for-byte unchanged.
+  const executionProfile = ui.boundedAcceptanceToggle?.checked ? "bounded_acceptance" : "";
   try {
     setBusy(true, "依頼内容を確認しています", "まだWorkspaceやProviderは変更しません。");
     const plan = await requestJSON("/v1/interaction-plans", { method: "POST", body: JSON.stringify(input) });
     setBusy(false);
     localStorage.setItem(STORAGE_SESSION, input.session_id);
-    const completed = await executeNextCommand({ operation: "interaction.start" }, {
+    const startPayload = {
       session_id: input.session_id,
       request,
       request_digest: plan.session.request_digest,
       model: plan.session.model,
       current_time: input.current_time,
-    }, "依頼を保存しています", "Sessionを作成しています。", commandID());
+    };
+    if (executionProfile) startPayload.execution_profile = executionProfile;
+    const completed = await executeNextCommand({ operation: "interaction.start" }, startPayload,
+      "依頼を保存しています", "Sessionを作成しています。", commandID());
     state.draftRequest = null;
     ui.composerInput.value = "";
     if (completed) {
@@ -3465,6 +3525,9 @@ function closeDialog(event) {
   if (dialog?.open) dialog.close();
 }
 
+ui.boundedAcceptanceToggle?.addEventListener("change", () => {
+  if (ui.boundedAcceptanceConstraints) ui.boundedAcceptanceConstraints.hidden = !ui.boundedAcceptanceToggle.checked;
+});
 ui.pairingForm.addEventListener("submit", pair);
 document.querySelector("#new-request-button")?.addEventListener("click", openNewRequestDraft);
 document.querySelector("#refresh-button").addEventListener("click", () => refreshCurrent());

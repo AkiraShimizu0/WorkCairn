@@ -216,6 +216,32 @@ func ExecuteInteractionWorkflow(
 	if replayed, ok, replayErr := replayDurableCommand[InteractionWorkflowResult](claim); ok {
 		return replayed, replayErr
 	}
+	// ADR-0072: a bounded_acceptance Session's only supported execution
+	// path is the combined interaction.plan.approve_and_execute chain
+	// (which calls PlanInteractionWorkflow/runInteractionWorkflowChain
+	// itself, below, with its own bounded Autonomy Contract derivation).
+	// The standalone interaction.workflow.execute command is rejected
+	// outright here, before any Provider/Task effect -- PlanInteractionWorkflow
+	// itself is shared with that legitimate chained caller and must not
+	// reject on Profile alone.
+	preflightService, preflightErr := newInteractionService(input.VaultRoot)
+	if preflightErr != nil {
+		return InteractionWorkflowResult{}, finishDurableCommand(
+			ctx, claim, InteractionWorkflowResult{}, preflightErr, "INTERACTION_WORKFLOW_FAILED", "interaction_composition", false,
+		)
+	}
+	preflightRecord, preflightErr := preflightService.Get(ctx, input.SessionID)
+	if preflightErr != nil {
+		return InteractionWorkflowResult{}, finishDurableCommand(
+			ctx, claim, InteractionWorkflowResult{}, preflightErr, "INTERACTION_WORKFLOW_FAILED", "interaction_preflight", false,
+		)
+	}
+	if preflightRecord.Profile == interaction.ProfileBoundedAcceptance {
+		return InteractionWorkflowResult{}, finishDurableCommand(
+			ctx, claim, InteractionWorkflowResult{Session: preflightRecord}, ErrInteractionBoundedOperationForbidden,
+			"INTERACTION_WORKFLOW_FAILED", "interaction_preflight", false,
+		)
+	}
 	currentPlan, err := PlanInteractionWorkflow(ctx, input.InteractionWorkflowPlanInput)
 	if err != nil || currentPlan.WorkflowPlanDigest != input.WorkflowPlanDigest || currentPlan.ReviewerID != input.ReviewerID {
 		return InteractionWorkflowResult{}, finishDurableCommand(
@@ -589,6 +615,11 @@ func workflowFailure(result service.ReviewedWorkflowRunResult, err error) *failu
 		partial = recorded.Partial || partial
 	}
 	envelope.Partial = partial
-	envelope.RecoveryRequired = partial
+	// ADR-0072: a bounded_acceptance profile stop (stage "revision_forbidden")
+	// must never offer Recovery, even at this outer re-wrap -- mirrors the
+	// same exception reviewedWorkflowOuterEnvelope (reviewed_workflow.go)
+	// applies to the child Envelope this function usually just copies
+	// verbatim via recorded.Envelope above.
+	envelope.RecoveryRequired = partial && envelope.Stage != "revision_forbidden"
 	return &envelope
 }

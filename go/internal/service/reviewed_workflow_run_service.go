@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/execution"
@@ -67,6 +68,14 @@ var (
 	// budgetTracker.reserveProviderCall for the race-safe path, which
 	// returns the more specific ErrProviderCallBudgetExceeded instead.
 	ErrBudgetExceeded = errors.New("budget exceeded for this reviewed Workflow execution")
+	// ErrRevisionForbiddenByProfile means this call's revisionPermission
+	// (resolved by the Process layer from the Session's own Autonomy
+	// Contract, ADR-0072) is autonomy.PermissionForbidden -- Go declines to
+	// create a Revision at all, regardless of MaxRevisionCount. Unlike
+	// ErrRevisionLimitReached, this is not a per-branch counter reaching
+	// its ceiling; it is a fixed profile-level policy that never allows a
+	// first Revision either.
+	ErrRevisionForbiddenByProfile = errors.New("revision is forbidden by this Session's execution profile")
 )
 
 type ReviewedWorkflowTaskExecutor interface {
@@ -79,6 +88,28 @@ type ReviewedWorkflowReviewer interface {
 
 type ReviewedWorkflowReviser interface {
 	Execute(ctx context.Context, sourceTaskID, commandID string) (revision.Result, error)
+}
+
+// executeRevisionIfAllowed is the sole caller of service.reviser.Execute in
+// this package (ADR-0072). revisionPermission is a per-call immutable
+// argument, resolved once by the Process layer from the Session's own
+// resolved Autonomy Contract (input.Autonomy.Revision) -- never stored as
+// mutable ReviewedWorkflowRunService state, unlike SetBudgetPolicy/
+// SetProgressPolicy above. The sequential Run, parallel runBranch (via
+// RunParallel), and ResumeRevision code paths all call this instead of
+// service.reviser.Execute directly. When revisionPermission is
+// autonomy.PermissionDelegated (the only other value autonomy.Contract.
+// Validate accepts, and always what a standard-profile Session resolves
+// to), this is exactly equivalent to calling service.reviser.Execute
+// directly -- standard profile's execution path and return value are
+// unchanged.
+func (service *ReviewedWorkflowRunService) executeRevisionIfAllowed(
+	ctx context.Context, taskID, revisionCommandID string, revisionPermission autonomy.Permission,
+) (revision.Result, error) {
+	if revisionPermission == autonomy.PermissionForbidden {
+		return revision.Result{}, ErrRevisionForbiddenByProfile
+	}
+	return service.reviser.Execute(ctx, taskID, revisionCommandID)
 }
 
 type ReviewedWorkflowTaskResult struct {
@@ -197,7 +228,9 @@ func (service *ReviewedWorkflowRunService) SetClock(clock func() time.Time) {
 	service.clock = clock
 }
 
-func (service *ReviewedWorkflowRunService) Run(ctx context.Context, parentCommandID string, maxTasks int) (ReviewedWorkflowRunResult, error) {
+func (service *ReviewedWorkflowRunService) Run(
+	ctx context.Context, parentCommandID string, maxTasks int, revisionPermission autonomy.Permission,
+) (ReviewedWorkflowRunResult, error) {
 	result := ReviewedWorkflowRunResult{Status: "running", Tasks: []ReviewedWorkflowTaskResult{}}
 	if ctx == nil || commandledger.ValidateCommandID(parentCommandID) != nil || maxTasks <= 0 || maxTasks > MaxWorkflowTasks {
 		return result, reviewedWorkflowFailure(&result, "validation", commandledger.ErrInvalidRecord)
@@ -248,15 +281,22 @@ func (service *ReviewedWorkflowRunService) Run(ctx context.Context, parentComman
 		case review.VerdictApprove:
 			continue
 		case review.VerdictRequestChanges:
+			// ADR-0072: checked before any revision.execute child Command ID
+			// is derived -- a forbidden stop must never populate this Task's
+			// RevisionCommandID/Revision evidence with a Command that was
+			// never actually claimed or executed.
+			if revisionPermission == autonomy.PermissionForbidden {
+				return result, reviewedWorkflowFailure(&result, "revision_forbidden", ErrRevisionForbiddenByProfile)
+			}
 			revisionCommandID, childErr := reviewedChildCommandID(parentCommandID, "revision.execute", taskID)
 			if childErr != nil {
 				return result, reviewedWorkflowFailure(&result, "command_identity", childErr)
 			}
-			revised, revisionErr := service.reviser.Execute(ctx, taskID, revisionCommandID)
+			revised, revisionErr := service.executeRevisionIfAllowed(ctx, taskID, revisionCommandID, revisionPermission)
 			result.Tasks[currentIndex].RevisionCommandID = revisionCommandID
 			result.Tasks[currentIndex].Revision = &revised
 			if revisionErr != nil {
-				return result, reviewedWorkflowFailure(&result, "revision", revisionErr)
+				return result, reviewedWorkflowFailure(&result, revisionFailureStage(revisionErr), revisionErr)
 			}
 			if revised.Intent == nil || !revised.Intent.Committed || revised.Task == nil || revised.Task.Status != task.StatusUnstarted {
 				return result, reviewedWorkflowFailure(&result, "revision", ErrInvalidReviewedWorkflowResult)
@@ -373,9 +413,10 @@ func (service *ReviewedWorkflowRunService) RunParallel(
 	maxTasks int,
 	maxParallelTasks int,
 	maxRevisionCount int,
+	revisionPermission autonomy.Permission,
 	batchPlanner WorkflowRunBatchPlanner,
 ) (ReviewedWorkflowRunResult, error) {
-	return service.runParallel(ctx, parentCommandID, correlationID, maxTasks, maxParallelTasks, maxRevisionCount, batchPlanner, "")
+	return service.runParallel(ctx, parentCommandID, correlationID, maxTasks, maxParallelTasks, maxRevisionCount, revisionPermission, batchPlanner, "")
 }
 
 // ResumeRevision continues one already-committed, still-unstarted Revision
@@ -395,6 +436,7 @@ func (service *ReviewedWorkflowRunService) ResumeRevision(
 	maxTasks int,
 	maxParallelTasks int,
 	maxRevisionCount int,
+	revisionPermission autonomy.Permission,
 	batchPlanner WorkflowRunBatchPlanner,
 ) (ReviewedWorkflowRunResult, error) {
 	revisionTaskID = strings.TrimSpace(revisionTaskID)
@@ -402,7 +444,19 @@ func (service *ReviewedWorkflowRunService) ResumeRevision(
 		result := ReviewedWorkflowRunResult{Status: "running", Tasks: []ReviewedWorkflowTaskResult{}}
 		return result, reviewedWorkflowFailure(&result, "validation", err)
 	}
-	return service.runParallel(ctx, parentCommandID, correlationID, maxTasks, maxParallelTasks, maxRevisionCount, batchPlanner, revisionTaskID)
+	// ADR-0072: a bounded_acceptance Session's Autonomy Contract always has
+	// Revision: PermissionForbidden, so resuming a Revision Task can never
+	// be legitimate for it. The Process layer already rejects
+	// interaction.workflow.recover_revision outright for such a Session
+	// before ever reaching here (defense in depth, not the only guard) --
+	// this Service-boundary check is the second, independent layer: even a
+	// caller that bypassed the Process-layer rejection cannot resume a
+	// Revision through this entry point.
+	if revisionPermission == autonomy.PermissionForbidden {
+		result := ReviewedWorkflowRunResult{Status: "running", Tasks: []ReviewedWorkflowTaskResult{}}
+		return result, reviewedWorkflowFailure(&result, "revision_forbidden", ErrRevisionForbiddenByProfile)
+	}
+	return service.runParallel(ctx, parentCommandID, correlationID, maxTasks, maxParallelTasks, maxRevisionCount, revisionPermission, batchPlanner, revisionTaskID)
 }
 
 func (service *ReviewedWorkflowRunService) runParallel(
@@ -412,6 +466,7 @@ func (service *ReviewedWorkflowRunService) runParallel(
 	maxTasks int,
 	maxParallelTasks int,
 	maxRevisionCount int,
+	revisionPermission autonomy.Permission,
 	batchPlanner WorkflowRunBatchPlanner,
 	firstRevisionTaskID string,
 ) (ReviewedWorkflowRunResult, error) {
@@ -505,7 +560,7 @@ func (service *ReviewedWorkflowRunService) runParallel(
 			go func(taskID string, startTargeted bool) {
 				defer waitGroup.Done()
 				defer func() { <-semaphore }()
-				branchResults, branchErr := service.runBranch(budgetCtx, parentCommandID, taskID, correlationID, maxRevisionCount, tracker, startTargeted)
+				branchResults, branchErr := service.runBranch(budgetCtx, parentCommandID, taskID, correlationID, maxRevisionCount, tracker, startTargeted, revisionPermission)
 				mu.Lock()
 				result.Tasks = append(result.Tasks, branchResults...)
 				mu.Unlock()
@@ -563,6 +618,20 @@ func stageError(stage string, err error) error {
 		return nil
 	}
 	return &branchStageError{stage: stage, err: err}
+}
+
+// revisionFailureStage classifies an executeRevisionIfAllowed error into
+// the closed stage vocabulary process/reviewed_workflow.go's envelope
+// construction already recognizes (ADR-0072): ErrRevisionForbiddenByProfile
+// is the profile's own deliberate stop ("revision_forbidden", distinct from
+// the Revision Guard's own "revision_limit"), anything else is a genuine
+// Revision execution failure ("revision", unchanged from before this
+// helper existed).
+func revisionFailureStage(err error) string {
+	if errors.Is(err, ErrRevisionForbiddenByProfile) {
+		return "revision_forbidden"
+	}
+	return "revision"
 }
 
 // branchFailureStage extracts the stage a runBranch error was tagged with,
@@ -756,6 +825,7 @@ func (service *ReviewedWorkflowRunService) runBranch(
 	maxRevisionCount int,
 	tracker *budgetTracker,
 	startTargeted bool,
+	revisionPermission autonomy.Permission,
 ) ([]ReviewedWorkflowTaskResult, error) {
 	var branchResults []ReviewedWorkflowTaskResult
 	currentTaskID := startTaskID
@@ -925,6 +995,15 @@ func (service *ReviewedWorkflowRunService) runBranch(
 						fmt.Errorf("%w: task %s lineage %s", ErrNoProgressDetected, currentTaskID, startTaskID))
 				}
 			}
+			// ADR-0072: checked before revision_limit and before any
+			// revision.execute child Command ID is even derived -- matching
+			// the revision_limit guard's own shape immediately below, a
+			// forbidden stop must never populate this Task's
+			// RevisionCommandID/Revision evidence with a Command that was
+			// never actually claimed or executed.
+			if revisionPermission == autonomy.PermissionForbidden {
+				return branchResults, stageError("revision_forbidden", ErrRevisionForbiddenByProfile)
+			}
 			if revisionCount >= maxRevisionCount {
 				return branchResults, stageError("revision_limit",
 					fmt.Errorf("%w: task %s (limit %d)", ErrRevisionLimitReached, currentTaskID, maxRevisionCount))
@@ -934,11 +1013,11 @@ func (service *ReviewedWorkflowRunService) runBranch(
 				return branchResults, stageError("command_identity", revisionIdentityErr)
 			}
 			revisionCtx := event.WithCorrelation(ctx, event.Correlation{CorrelationID: correlationID, CausationID: revisionCommandID})
-			revised, revisionErr := service.reviser.Execute(revisionCtx, currentTaskID, revisionCommandID)
+			revised, revisionErr := service.executeRevisionIfAllowed(revisionCtx, currentTaskID, revisionCommandID, revisionPermission)
 			branchResults[lastIndex].RevisionCommandID = revisionCommandID
 			branchResults[lastIndex].Revision = &revised
 			if revisionErr != nil {
-				return branchResults, stageError("revision", revisionErr)
+				return branchResults, stageError(revisionFailureStage(revisionErr), revisionErr)
 			}
 			if revised.Intent == nil || !revised.Intent.Committed || revised.Task == nil || revised.Task.Status != task.StatusUnstarted {
 				return branchResults, stageError("revision", ErrInvalidReviewedWorkflowResult)

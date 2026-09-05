@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/autonomy"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/event"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/execution"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/policy"
@@ -115,7 +116,7 @@ func TestReviewedWorkflowRunsRequestChangesRevisionReviewThenContinues(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.Run(context.Background(), fixture.ParentCommandID, 10)
+	result, err := service.Run(context.Background(), fixture.ParentCommandID, 10, autonomy.PermissionDelegated)
 	if err != nil || result.Status != fixture.Expected.Status || len(result.Tasks) != 3 {
 		t.Fatalf("Run() = %#v, %v", result, err)
 	}
@@ -141,7 +142,7 @@ func TestReviewedWorkflowRunsRequestChangesRevisionReviewThenContinues(t *testin
 	replayReviewer := &reviewedReviewerFake{verdicts: fixture.Verdicts}
 	replayReviser := &reviewedReviserFake{}
 	replayService, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{steps: planner.steps}, replayExecutor, replayReviewer, replayReviser)
-	_, _ = replayService.Run(context.Background(), fixture.ParentCommandID, 10)
+	_, _ = replayService.Run(context.Background(), fixture.ParentCommandID, 10, autonomy.PermissionDelegated)
 	if !reflect.DeepEqual(executor.commands, replayExecutor.commands) || !reflect.DeepEqual(reviewer.commands, replayReviewer.commands) || !reflect.DeepEqual(reviser.commands, replayReviser.commands) {
 		t.Fatal("reviewed child Command IDs are not deterministic")
 	}
@@ -168,7 +169,7 @@ func TestReviewedWorkflowStopsOnReviewPartialFailureAndPreservesResult(t *testin
 		&reviewedReviewerFake{verdicts: []review.Verdict{review.VerdictApprove}, failAt: 1},
 		&reviewedReviserFake{},
 	)
-	result, err := service.Run(context.Background(), "CMD-REVIEWED-WORKFLOW-001", 10)
+	result, err := service.Run(context.Background(), "CMD-REVIEWED-WORKFLOW-001", 10, autonomy.PermissionDelegated)
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "review" || result.Status != "partial_failure" ||
 		len(result.Tasks) != 1 || result.Tasks[0].Review == nil || result.Tasks[0].Review.Artifact == nil ||
@@ -184,7 +185,7 @@ func TestReviewedWorkflowLimitKeepsCommittedRevisionAsExplicitNext(t *testing.T)
 		&reviewedReviewerFake{verdicts: []review.Verdict{review.VerdictRequestChanges}},
 		&reviewedReviserFake{},
 	)
-	result, err := service.Run(context.Background(), "CMD-REVIEWED-WORKFLOW-001", 1)
+	result, err := service.Run(context.Background(), "CMD-REVIEWED-WORKFLOW-001", 1, autonomy.PermissionDelegated)
 	if err != nil || result.Status != "limit_reached" || result.Next == nil || result.Next.Action != "execute_revision_task" ||
 		result.Next.TaskID != "TASK-002" || result.Tasks[0].Revision == nil || result.Tasks[0].Revision.Task == nil {
 		t.Fatalf("Run() = %#v, %v", result, err)
@@ -318,7 +319,7 @@ func TestRunParallelDispatchesTwoIndependentTasksConcurrently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.RunParallel(context.Background(), "CMD-PARALLEL-001", "CMD-PARALLEL-001", 10, 2, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-PARALLEL-001", "CMD-PARALLEL-001", 10, 2, 5, autonomy.PermissionDelegated, planner)
 	if err != nil || result.Status != "completed" || len(result.Tasks) != 2 {
 		t.Fatalf("RunParallel() = %#v, %v", result, err)
 	}
@@ -339,7 +340,7 @@ func TestRunParallelDispatchesThreeIndependentTasksConcurrently(t *testing.T) {
 		{Completed: true},
 	}}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
-	result, err := service.RunParallel(context.Background(), "CMD-PARALLEL-002", "CMD-PARALLEL-002", 10, 3, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-PARALLEL-002", "CMD-PARALLEL-002", 10, 3, 5, autonomy.PermissionDelegated, planner)
 	if err != nil || result.Status != "completed" || len(result.Tasks) != 3 {
 		t.Fatalf("RunParallel() = %#v, %v", result, err)
 	}
@@ -360,7 +361,7 @@ func TestRunParallelMaxParallelTasksBoundsConcurrency(t *testing.T) {
 			taskIDs := []string{"TASK-A", "TASK-B", "TASK-C", "TASK-D", "TASK-E", "TASK-F"}
 			planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: taskIDs}, {Completed: true}}}
 			service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
-			result, err := service.RunParallel(context.Background(), "CMD-PARALLEL-BOUND", "CMD-PARALLEL-BOUND", 10, bound, 5, planner)
+			result, err := service.RunParallel(context.Background(), "CMD-PARALLEL-BOUND", "CMD-PARALLEL-BOUND", 10, bound, 5, autonomy.PermissionDelegated, planner)
 			if err != nil || result.Status != "completed" || len(result.Tasks) != len(taskIDs) {
 				t.Fatalf("RunParallel() = %#v, %v", result, err)
 			}
@@ -409,7 +410,7 @@ func TestRunParallelOutputIncompleteBranchIsPartialFailureNotSilentSuccess(t *te
 	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A", "TASK-B", "TASK-C"}}}}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
 
-	result, err := service.RunParallel(context.Background(), "CMD-OUTPUT-INCOMPLETE", "CMD-OUTPUT-INCOMPLETE", 10, 3, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-OUTPUT-INCOMPLETE", "CMD-OUTPUT-INCOMPLETE", 10, 3, 5, autonomy.PermissionDelegated, planner)
 
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "task_execute" || result.Status != "partial_failure" {
@@ -446,7 +447,7 @@ func TestRunParallelBranchFailureIsNotHiddenAsOverallSuccess(t *testing.T) {
 	reviewer := &approvingReviewerFake{}
 	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A", "TASK-B", "TASK-C"}}}}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
-	result, err := service.RunParallel(context.Background(), "CMD-PARALLEL-003", "CMD-PARALLEL-003", 10, 3, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-PARALLEL-003", "CMD-PARALLEL-003", 10, 3, 5, autonomy.PermissionDelegated, planner)
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "task_execute" || result.Status != "partial_failure" {
 		t.Fatalf("RunParallel() = %#v, %v", result, err)
@@ -487,7 +488,7 @@ func TestRunParallelCancellationStopsNewDispatchAndReportsPartialResult(t *testi
 		},
 	}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
-	result, err := service.RunParallel(ctx, "CMD-PARALLEL-004", "CMD-PARALLEL-004", 10, 2, 5, planner)
+	result, err := service.RunParallel(ctx, "CMD-PARALLEL-004", "CMD-PARALLEL-004", 10, 2, 5, autonomy.PermissionDelegated, planner)
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "task_execute" && typed.Stage != "cancelled" {
 		t.Fatalf("RunParallel() error = %#v, want a cancellation-attributed failure", err)
@@ -587,7 +588,7 @@ func TestRunParallelStampsSharedCorrelationAndPerBranchCausation(t *testing.T) {
 	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-001", "TASK-002"}}, {Completed: true}}}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
 
-	result, err := service.RunParallel(context.Background(), "CMD-ROOT-PARALLEL", "CMD-ROOT-PARALLEL", 10, 2, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-ROOT-PARALLEL", "CMD-ROOT-PARALLEL", 10, 2, 5, autonomy.PermissionDelegated, planner)
 	if err != nil || result.Status != "completed" {
 		t.Fatalf("RunParallel() = %#v, %v", result, err)
 	}
@@ -670,7 +671,7 @@ func TestRunParallelCorrelationIDCanDifferFromParentCommandID(t *testing.T) {
 	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-001"}}, {Completed: true}}}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
 
-	result, err := service.RunParallel(context.Background(), "CMD-WORKFLOW-CHILD", "CMD-OUTER-APPROVE-AND-EXECUTE", 10, 2, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-WORKFLOW-CHILD", "CMD-OUTER-APPROVE-AND-EXECUTE", 10, 2, 5, autonomy.PermissionDelegated, planner)
 	if err != nil || result.Status != "completed" {
 		t.Fatalf("RunParallel() = %#v, %v", result, err)
 	}
@@ -705,7 +706,7 @@ func TestRunParallelSynthesisTaskWaitsForAllBranches(t *testing.T) {
 		{Completed: true},
 	}}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
-	result, err := service.RunParallel(context.Background(), "CMD-SYNTHESIS", "CMD-SYNTHESIS", 10, 3, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-SYNTHESIS", "CMD-SYNTHESIS", 10, 3, 5, autonomy.PermissionDelegated, planner)
 	if err != nil || result.Status != "completed" || len(result.Tasks) != 4 {
 		t.Fatalf("RunParallel() = %#v, %v", result, err)
 	}
@@ -736,7 +737,7 @@ func TestResumeRevisionRunsCommittedRevisionBeforeSynthesisAndUsesFreshBudget(t 
 	original, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, originalExecutor, originalReviewer, originalReviser)
 	original.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxProviderCalls: 2})
 	original.SetBudgetLimits(2, 0)
-	stopped, stopErr := original.RunParallel(context.Background(), "CMD-BUDGET-ORIGINAL", "CMD-BUDGET-ROOT", 10, 3, 2, originalPlanner)
+	stopped, stopErr := original.RunParallel(context.Background(), "CMD-BUDGET-ORIGINAL", "CMD-BUDGET-ROOT", 10, 3, 2, autonomy.PermissionDelegated, originalPlanner)
 	if !errors.Is(stopErr, ErrProviderCallBudgetExceeded) || len(stopped.Tasks) != 1 ||
 		stopped.Tasks[0].Revision == nil || stopped.Tasks[0].Revision.Task == nil || stopped.Tasks[0].Revision.Task.ID != "TASK-002" {
 		t.Fatalf("original RunParallel() = %#v, %v", stopped, stopErr)
@@ -761,7 +762,7 @@ func TestResumeRevisionRunsCommittedRevisionBeforeSynthesisAndUsesFreshBudget(t 
 	recovery, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, recoveryExecutor, recoveryReviewer, &noopReviserFake{t: t})
 	recovery.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxProviderCalls: 4})
 	recovery.SetBudgetLimits(4, 0)
-	completed, recoverErr := recovery.ResumeRevision(context.Background(), "CMD-BUDGET-RECOVERY", "CMD-BUDGET-ROOT", "TASK-002", 10, 3, 2, recoveryPlanner)
+	completed, recoverErr := recovery.ResumeRevision(context.Background(), "CMD-BUDGET-RECOVERY", "CMD-BUDGET-ROOT", "TASK-002", 10, 3, 2, autonomy.PermissionDelegated, recoveryPlanner)
 	if recoverErr != nil || completed.Status != "completed" || len(completed.Tasks) != 2 {
 		t.Fatalf("ResumeRevision() = %#v, %v", completed, recoverErr)
 	}
@@ -783,7 +784,7 @@ func TestResumeRevisionCancellationDoesNotDispatchSynthesis(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		cancel()
 	}()
-	result, err := runService.ResumeRevision(ctx, "CMD-RECOVERY-CANCEL", "CMD-ROOT-CANCEL", "TASK-002", 10, 2, 2, planner)
+	result, err := runService.ResumeRevision(ctx, "CMD-RECOVERY-CANCEL", "CMD-ROOT-CANCEL", "TASK-002", 10, 2, 2, autonomy.PermissionDelegated, planner)
 	if !errors.Is(err, context.Canceled) || result.Status == "completed" {
 		t.Fatalf("ResumeRevision() = %#v, %v", result, err)
 	}
@@ -810,7 +811,7 @@ func TestResumeRevisionUsesFreshRuntimeBudgetAfterCreatedRevisionStop(t *testing
 	original.SetClock(clock)
 	original.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxRuntime: time.Minute})
 	original.SetBudgetLimits(0, time.Minute)
-	stopped, stopErr := original.RunParallel(context.Background(), "CMD-RUNTIME-ORIGINAL", "CMD-RUNTIME-ROOT", 10, 1, 2,
+	stopped, stopErr := original.RunParallel(context.Background(), "CMD-RUNTIME-ORIGINAL", "CMD-RUNTIME-ROOT", 10, 1, 2, autonomy.PermissionDelegated,
 		&scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-001"}}}})
 	if !errors.Is(stopErr, ErrRuntimeBudgetExceeded) || len(stopped.Tasks) != 1 || stopped.Tasks[0].Revision == nil ||
 		stopped.Tasks[0].Revision.Task == nil || stopped.Tasks[0].Revision.Task.ID != "TASK-002" {
@@ -823,7 +824,7 @@ func TestResumeRevisionUsesFreshRuntimeBudgetAfterCreatedRevisionStop(t *testing
 	recovery.SetClock(func() time.Time { return start })
 	recovery.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxRuntime: time.Minute})
 	recovery.SetBudgetLimits(0, time.Minute)
-	completed, recoverErr := recovery.ResumeRevision(context.Background(), "CMD-RUNTIME-RECOVERY", "CMD-RUNTIME-ROOT", "TASK-002", 10, 1, 2,
+	completed, recoverErr := recovery.ResumeRevision(context.Background(), "CMD-RUNTIME-RECOVERY", "CMD-RUNTIME-ROOT", "TASK-002", 10, 1, 2, autonomy.PermissionDelegated,
 		&scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{Completed: true}}})
 	if recoverErr != nil || completed.Status != "completed" || len(completed.Tasks) != 1 || !completed.Tasks[0].Targeted {
 		t.Fatalf("runtime ResumeRevision() = %#v, %v", completed, recoverErr)
@@ -839,7 +840,7 @@ func TestResumeRevisionBudgetFailureStopsWithoutDispatchingSynthesisOrAutoRecove
 	// not dispatch Synthesis or start another Recovery scope automatically.
 	runService.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxProviderCalls: 1})
 	runService.SetBudgetLimits(1, 0)
-	result, err := runService.ResumeRevision(context.Background(), "CMD-RECOVERY-BUDGET-AGAIN", "CMD-ORIGINAL-ROOT", "TASK-002", 10, 2, 2, planner)
+	result, err := runService.ResumeRevision(context.Background(), "CMD-RECOVERY-BUDGET-AGAIN", "CMD-ORIGINAL-ROOT", "TASK-002", 10, 2, 2, autonomy.PermissionDelegated, planner)
 	if !errors.Is(err, ErrProviderCallBudgetExceeded) || result.Status != "partial_failure" || len(result.Tasks) != 1 ||
 		result.Tasks[0].TaskID != "TASK-002" || !result.Tasks[0].Targeted || result.Tasks[0].Review != nil {
 		t.Fatalf("ResumeRevision() = %#v, %v", result, err)
@@ -852,16 +853,16 @@ func TestResumeRevisionBudgetFailureStopsWithoutDispatchingSynthesisOrAutoRecove
 
 func TestRunParallelValidatesInput(t *testing.T) {
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, &concurrencyTrackingExecutorFake{}, &approvingReviewerFake{}, &noopReviserFake{t: t})
-	if _, err := service.RunParallel(nil, "CMD-X", "CMD-X", 10, 2, 5, &scriptedBatchPlannerFake{}); err == nil {
+	if _, err := service.RunParallel(nil, "CMD-X", "CMD-X", 10, 2, 5, autonomy.PermissionDelegated, &scriptedBatchPlannerFake{}); err == nil {
 		t.Fatal("RunParallel() with nil context should fail")
 	}
-	if _, err := service.RunParallel(context.Background(), "", "", 10, 2, 5, &scriptedBatchPlannerFake{}); err == nil {
+	if _, err := service.RunParallel(context.Background(), "", "", 10, 2, 5, autonomy.PermissionDelegated, &scriptedBatchPlannerFake{}); err == nil {
 		t.Fatal("RunParallel() with empty parentCommandID should fail")
 	}
-	if _, err := service.RunParallel(context.Background(), "CMD-X", "CMD-X", 0, 2, 5, &scriptedBatchPlannerFake{}); err == nil {
+	if _, err := service.RunParallel(context.Background(), "CMD-X", "CMD-X", 0, 2, 5, autonomy.PermissionDelegated, &scriptedBatchPlannerFake{}); err == nil {
 		t.Fatal("RunParallel() with maxTasks=0 should fail")
 	}
-	if _, err := service.RunParallel(context.Background(), "CMD-X", "CMD-X", 10, 2, 5, nil); err == nil {
+	if _, err := service.RunParallel(context.Background(), "CMD-X", "CMD-X", 10, 2, 5, autonomy.PermissionDelegated, nil); err == nil {
 		t.Fatal("RunParallel() with nil batch planner should fail")
 	}
 }
@@ -931,7 +932,7 @@ func TestRunParallelRevisionGuardStopsAfterMaxRevisionCount(t *testing.T) {
 	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
 
-	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT", "CMD-REVISION-LIMIT", 10, 2, 2, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT", "CMD-REVISION-LIMIT", 10, 2, 2, autonomy.PermissionDelegated, planner)
 
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "revision_limit" || !errors.Is(err, ErrRevisionLimitReached) {
@@ -972,7 +973,7 @@ func TestRunParallelRevisionGuardCountsIndependentlyPerBranch(t *testing.T) {
 	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1", "TASK-B1"}}}}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
 
-	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT-INDEPENDENT", "CMD-REVISION-LIMIT-INDEPENDENT", 10, 2, 1, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT-INDEPENDENT", "CMD-REVISION-LIMIT-INDEPENDENT", 10, 2, 1, autonomy.PermissionDelegated, planner)
 
 	if !errors.Is(err, ErrRevisionLimitReached) {
 		t.Fatalf("RunParallel() error = %v, want ErrRevisionLimitReached", err)
@@ -998,7 +999,7 @@ func TestRunParallelZeroOrNegativeMaxParallelTasksDefaultsToOne(t *testing.T) {
 	reviewer := &approvingReviewerFake{}
 	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A", "TASK-B"}}, {Completed: true}}}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
-	result, err := service.RunParallel(context.Background(), "CMD-ZERO", "CMD-ZERO", 10, 0, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-ZERO", "CMD-ZERO", 10, 0, 5, autonomy.PermissionDelegated, planner)
 	if err != nil || result.Status != "completed" {
 		t.Fatalf("RunParallel() = %#v, %v", result, err)
 	}
@@ -1031,7 +1032,7 @@ func TestRunParallelRevisionGuardLimitOnePermitsExactlyOneRevisionTwoAttemptsTot
 	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
 
-	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT-ONE", "CMD-REVISION-LIMIT-ONE", 10, 2, 1, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT-ONE", "CMD-REVISION-LIMIT-ONE", 10, 2, 1, autonomy.PermissionDelegated, planner)
 
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "revision_limit" || !errors.Is(err, ErrRevisionLimitReached) {
@@ -1063,7 +1064,7 @@ func TestRunParallelRevisionGuardApproveBeforeLimitNeverCallsReviser(t *testing.
 	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
 
-	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT-APPROVE", "CMD-REVISION-LIMIT-APPROVE", 10, 2, 1, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT-APPROVE", "CMD-REVISION-LIMIT-APPROVE", 10, 2, 1, autonomy.PermissionDelegated, planner)
 	if err != nil || result.Status != "completed" || len(result.Tasks) != 1 || result.Tasks[0].Verdict != review.VerdictApprove {
 		t.Fatalf("RunParallel() = %#v, %v", result, err)
 	}
@@ -1087,7 +1088,7 @@ func TestRunParallelZeroMaxRevisionCountDefaultsToOneNotTwo(t *testing.T) {
 	planner := &scriptedBatchPlannerFake{plans: []WorkflowBatchPlan{{TaskIDs: []string{"TASK-A1"}}}}
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
 
-	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT-ZERO", "CMD-REVISION-LIMIT-ZERO", 10, 2, 0, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-REVISION-LIMIT-ZERO", "CMD-REVISION-LIMIT-ZERO", 10, 2, 0, autonomy.PermissionDelegated, planner)
 
 	if !errors.Is(err, ErrRevisionLimitReached) {
 		t.Fatalf("RunParallel() error = %v, want ErrRevisionLimitReached", err)
@@ -1140,7 +1141,7 @@ func TestRunParallelNoProgressPolicyStopsBranchBeforeRevisionLimit(t *testing.T)
 	// maxRevisionCount is deliberately generous (5) so a stop here can only
 	// be attributed to the ProgressPolicy, never to the Revision Guard's own
 	// count.
-	result, err := service.RunParallel(context.Background(), "CMD-NO-PROGRESS", "CMD-NO-PROGRESS", 10, 2, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-NO-PROGRESS", "CMD-NO-PROGRESS", 10, 2, 5, autonomy.PermissionDelegated, planner)
 
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "no_progress" || !errors.Is(err, ErrNoProgressDetected) {
@@ -1183,7 +1184,7 @@ func TestRunParallelNoProgressPolicyEscalatesOnRepeatedFeedbackBeforeRevisionLim
 	// count -- scriptedVerdictReviewerFake returns the exact same static
 	// Issue text for every Request Changes verdict, so the second attempt's
 	// normalizedReviewFeedback is guaranteed identical to the first.
-	result, err := service.RunParallel(context.Background(), "CMD-NO-PROGRESS-REPEATED", "CMD-NO-PROGRESS-REPEATED", 10, 2, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-NO-PROGRESS-REPEATED", "CMD-NO-PROGRESS-REPEATED", 10, 2, 5, autonomy.PermissionDelegated, planner)
 
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "no_progress" || !errors.Is(err, ErrNoProgressDetected) {
@@ -1220,7 +1221,7 @@ func TestRunParallelNilProgressPolicyIsFullyBackwardCompatible(t *testing.T) {
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
 	// No SetProgressPolicy call -- service.progressPolicy stays nil.
 
-	result, err := service.RunParallel(context.Background(), "CMD-NO-POLICY", "CMD-NO-POLICY", 10, 2, 2, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-NO-POLICY", "CMD-NO-POLICY", 10, 2, 2, autonomy.PermissionDelegated, planner)
 
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "revision_limit" || !errors.Is(err, ErrRevisionLimitReached) {
@@ -1243,7 +1244,7 @@ func TestRunParallelProgressPolicyErrorStopsBranchAsNoProgressStage(t *testing.T
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
 	service.SetProgressPolicy(&stubProgressPolicy{err: policy.ErrInvalidProgressInput})
 
-	_, err := service.RunParallel(context.Background(), "CMD-POLICY-ERROR", "CMD-POLICY-ERROR", 10, 2, 5, planner)
+	_, err := service.RunParallel(context.Background(), "CMD-POLICY-ERROR", "CMD-POLICY-ERROR", 10, 2, 5, autonomy.PermissionDelegated, planner)
 
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "no_progress" || !errors.Is(err, policy.ErrInvalidProgressInput) {
@@ -1336,7 +1337,7 @@ func TestRunParallelCompoundProgressPolicyEscalatesWhenReviewAndDeliverableAndRe
 	// maxRevisionCount is deliberately generous (5) so a stop here can only
 	// be attributed to CompoundProgressPolicy, never to the Revision
 	// Guard's own count.
-	result, err := service.RunParallel(context.Background(), "CMD-COMPOUND-PROGRESS", "CMD-COMPOUND-PROGRESS", 10, 2, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-COMPOUND-PROGRESS", "CMD-COMPOUND-PROGRESS", 10, 2, 5, autonomy.PermissionDelegated, planner)
 
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "no_progress" || !errors.Is(err, ErrNoProgressDetected) {
@@ -1379,7 +1380,7 @@ func TestRunParallelCompoundProgressPolicyContinuesWhenDeliverableKeepsChanging(
 	// never escalates, this must stop via the ordinary Revision Guard
 	// instead -- proving the Deliverable-changing case falls through to
 	// existing, unmodified behavior rather than being silently swallowed.
-	result, err := service.RunParallel(context.Background(), "CMD-COMPOUND-CHANGING", "CMD-COMPOUND-CHANGING", 10, 2, 2, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-COMPOUND-CHANGING", "CMD-COMPOUND-CHANGING", 10, 2, 2, autonomy.PermissionDelegated, planner)
 
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "revision_limit" || !errors.Is(err, ErrRevisionLimitReached) {
@@ -1403,7 +1404,7 @@ func TestRunParallelCompoundProgressPolicyNeverEscalatesOnFirstAttemptAlone(t *t
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
 	service.SetProgressPolicy(policy.CompoundProgressPolicy{})
 
-	result, err := service.RunParallel(context.Background(), "CMD-COMPOUND-FIRST", "CMD-COMPOUND-FIRST", 10, 2, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-COMPOUND-FIRST", "CMD-COMPOUND-FIRST", 10, 2, 5, autonomy.PermissionDelegated, planner)
 	if err != nil || result.Status != "completed" || len(result.Tasks) != 1 || result.Tasks[0].Verdict != review.VerdictApprove {
 		t.Fatalf("RunParallel() = %#v, %v", result, err)
 	}
@@ -1425,7 +1426,7 @@ func TestRunParallelCompoundProgressPolicyObservesResourceSignals(t *testing.T) 
 	stub := &stubProgressPolicy{decision: policy.ProgressContinue}
 	service.SetProgressPolicy(stub)
 
-	_, err := service.RunParallel(context.Background(), "CMD-RESOURCE-SIGNALS", "CMD-RESOURCE-SIGNALS", 10, 2, 5, planner)
+	_, err := service.RunParallel(context.Background(), "CMD-RESOURCE-SIGNALS", "CMD-RESOURCE-SIGNALS", 10, 2, 5, autonomy.PermissionDelegated, planner)
 	if err != nil {
 		t.Fatalf("RunParallel() error = %v, want nil (branch converges to Approve on the 2nd attempt)", err)
 	}
@@ -1574,7 +1575,7 @@ func TestRunParallelProviderCallBudgetEnforcedByReservationAloneWithoutPolicy(t 
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, &noopReviserFake{t: t})
 	service.SetBudgetLimits(3, 0) // no SetBudgetPolicy call
 
-	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-RESERVATION-ONLY", "CMD-BUDGET-RESERVATION-ONLY", 10, 3, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-RESERVATION-ONLY", "CMD-BUDGET-RESERVATION-ONLY", 10, 3, 5, autonomy.PermissionDelegated, planner)
 
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "budget" || !errors.Is(err, ErrProviderCallBudgetExceeded) {
@@ -1596,7 +1597,7 @@ func TestRunParallelProviderCallBudgetStopsBeforeExceedingLimit(t *testing.T) {
 	service.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxProviderCalls: 3})
 	service.SetBudgetLimits(3, 0)
 
-	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-CALLS", "CMD-BUDGET-CALLS", 10, 3, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-CALLS", "CMD-BUDGET-CALLS", 10, 3, 5, autonomy.PermissionDelegated, planner)
 
 	// With a BudgetPolicy configured, its own pure read (checked before the
 	// tracker's atomic reservation is even attempted) is what actually
@@ -1638,7 +1639,7 @@ func TestRunParallelBudgetPartialFailurePreservesOtherBranches(t *testing.T) {
 	service.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxProviderCalls: 4})
 	service.SetBudgetLimits(4, 0)
 
-	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-PARTIAL", "CMD-BUDGET-PARTIAL", 10, 3, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-PARTIAL", "CMD-BUDGET-PARTIAL", 10, 3, 5, autonomy.PermissionDelegated, planner)
 
 	if !errors.Is(err, ErrBudgetExceeded) {
 		t.Fatalf("RunParallel() error = %v, want ErrBudgetExceeded", err)
@@ -1664,7 +1665,7 @@ func TestRunParallelNilBudgetPolicyAndZeroLimitsFullyBackwardCompatible(t *testi
 	// Neither SetBudgetPolicy nor SetBudgetLimits called -- must behave
 	// exactly as before BudgetGuard existed.
 
-	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-NONE", "CMD-BUDGET-NONE", 10, 3, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-NONE", "CMD-BUDGET-NONE", 10, 3, 5, autonomy.PermissionDelegated, planner)
 	if err != nil || result.Status != "completed" || len(result.Tasks) != 3 {
 		t.Fatalf("RunParallel() = %#v, %v, want a plain completed 3-Task result with no Budget enforcement configured", result, err)
 	}
@@ -1695,7 +1696,7 @@ func TestRunParallelRuntimeBudgetStopsViaFakeClock(t *testing.T) {
 	service.SetBudgetPolicy(policy.FixedBudgetPolicy{MaxRuntime: time.Minute})
 	service.SetBudgetLimits(0, time.Minute)
 
-	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-RUNTIME", "CMD-BUDGET-RUNTIME", 10, 3, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-RUNTIME", "CMD-BUDGET-RUNTIME", 10, 3, 5, autonomy.PermissionDelegated, planner)
 
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) || typed.Stage != "budget" || !errors.Is(err, ErrBudgetExceeded) {
@@ -1775,7 +1776,7 @@ func TestRunParallelRuntimeBudgetDeadlineExceededInsideBranchClassifiesAsBudgetN
 	service, _ := NewReviewedWorkflowRunService(&workflowRunPlannerFake{}, executor, reviewer, reviser)
 	service.SetBudgetLimits(0, 5*time.Millisecond) // real deadline, no BudgetPolicy configured
 
-	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-DEADLINE", "CMD-BUDGET-DEADLINE", 10, 1, 5, planner)
+	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-DEADLINE", "CMD-BUDGET-DEADLINE", 10, 1, 5, autonomy.PermissionDelegated, planner)
 
 	var typed *ReviewedWorkflowRunError
 	if !errors.As(err, &typed) {

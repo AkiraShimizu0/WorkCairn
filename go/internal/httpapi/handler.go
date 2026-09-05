@@ -804,6 +804,23 @@ func (handler *Handler) Shutdown(ctx context.Context) error {
 	return handler.asyncCommands.shutdown(ctx)
 }
 
+// recoveryRequiredFor is the single source of truth for a RecordedCommandError's
+// top-level RecoveryRequired projection (ADR-0072 focused correction): when
+// a typed failure.Envelope is present, its own RecoveryRequired is
+// authoritative -- it already reflects profile-specific exceptions (e.g. a
+// bounded_acceptance stop is Partial but never RecoveryRequired) that the
+// coarser Partial bool alone cannot express. Only a legacy record with no
+// Envelope at all (pre-ADR-0041 Ledger entries) falls back to Partial.
+// recorded.Partial itself is never independently re-derived from a State
+// string like "partial_failure" -- it is always the same bool this same
+// RecordedCommandError already carries.
+func recoveryRequiredFor(recorded *workspaceprocess.RecordedCommandError) bool {
+	if recorded.Envelope != nil {
+		return recorded.Envelope.RecoveryRequired
+	}
+	return recorded.Partial
+}
+
 func mapCommandError(err error) (int, *CommandError) {
 	var recorded *workspaceprocess.RecordedCommandError
 	switch {
@@ -820,7 +837,7 @@ func mapCommandError(err error) (int, *CommandError) {
 	case errors.Is(err, commandledger.ErrInvalidRecord):
 		return http.StatusInternalServerError, &CommandError{Code: "COMMAND_LEDGER_INVALID", Stage: "command_claim", RecoveryRequired: true}
 	case errors.As(err, &recorded):
-		return http.StatusUnprocessableEntity, &CommandError{Code: recorded.Code, Stage: recorded.Stage, RecoveryRequired: recorded.Partial, Details: recorded.Envelope}
+		return http.StatusUnprocessableEntity, &CommandError{Code: recorded.Code, Stage: recorded.Stage, RecoveryRequired: recoveryRequiredFor(recorded), Details: recorded.Envelope}
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout, &CommandError{Code: "COMMAND_TIMEOUT", RecoveryRequired: true}
 	case errors.Is(err, context.Canceled):

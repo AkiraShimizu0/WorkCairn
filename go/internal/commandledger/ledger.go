@@ -188,6 +188,60 @@ func DeriveChildCommandID(parentCommandID, aggregateID string) (string, error) {
 	return "CHILD-" + hex.EncodeToString(digest[:16]), nil
 }
 
+// ApprovalReservationID is the closed, versioned input to
+// DeriveApprovalReservationID (ADR-0072). Field order, field types, and the
+// JSON encoding they produce are all fixed by this struct's own
+// declaration -- adding, removing, reordering, or retyping a field changes
+// every existing reservation ID and requires a new domain separator (bump
+// the "v1" suffix on approvalReservationIDDomainSeparator below), never
+// silently reusing "v1" with a different shape.
+type ApprovalReservationID struct {
+	SessionID       string `json:"session_id"`
+	ExpectedVersion uint64 `json:"expected_version"`
+	PlanDigest      string `json:"plan_digest"`
+	Profile         string `json:"profile"`
+}
+
+// approvalReservationIDDomainSeparator scopes this primitive's hash input
+// to exactly this typed struct/version, so a value that happens to
+// canonical-JSON-encode the same way for an unrelated purpose can never
+// collide with a reservation ID.
+const approvalReservationIDDomainSeparator = "workcairn.approval-reservation.v1"
+
+// approvalReservationProfileBoundedAcceptance mirrors
+// interaction.ProfileBoundedAcceptance's exact string value. commandledger
+// cannot import the interaction package (interaction already imports
+// commandledger), so this is a deliberately duplicated closed-enum literal,
+// not an independent definition -- the only Profile value this primitive
+// (and every production caller deriving a reservation ID) ever accepts.
+// Matched exactly, with no surrounding-whitespace tolerance: unlike
+// SessionID/PlanDigest below, a caller passing anything other than this
+// exact string (including a value that would trim down to it) is treated
+// as a malformed request, not silently normalized.
+const approvalReservationProfileBoundedAcceptance = "bounded_acceptance"
+
+// DeriveApprovalReservationID gives one deterministic durable identity to
+// the single-use "this exact approval target may be acted on at most once"
+// reservation Command (ADR-0072). Unlike DeriveChildCommandID, it never
+// depends on a caller-supplied outer Command ID -- two different outer
+// Commands approving the same {SessionID, ExpectedVersion, PlanDigest,
+// Profile} tuple always compute the same reservation ID and therefore
+// collide on the same Command Ledger claim.
+func DeriveApprovalReservationID(input ApprovalReservationID) (string, error) {
+	input.SessionID = strings.TrimSpace(input.SessionID)
+	input.PlanDigest = strings.TrimSpace(input.PlanDigest)
+	if !canonicalText(input.SessionID) || input.ExpectedVersion == 0 || !validDigest(input.PlanDigest) ||
+		input.Profile != approvalReservationProfileBoundedAcceptance {
+		return "", ErrInvalidRecord
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return "", fmt.Errorf("encode approval reservation request: %w", err)
+	}
+	digest := sha256.Sum256(append([]byte(approvalReservationIDDomainSeparator+"\x00"), encoded...))
+	return "RESERVE-" + hex.EncodeToString(digest[:16]), nil
+}
+
 func validDigest(value string) bool {
 	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+64 {
 		return false

@@ -305,9 +305,9 @@ func ExecuteReviewedWorkflow(
 	var result service.ReviewedWorkflowRunResult
 	var runErr error
 	if continuation != nil {
-		result, runErr = runService.ResumeRevision(ctx, strings.TrimSpace(input.CommandID), correlationID, continuation.RevisionTaskID, input.MaxTasks, maxParallelTasks, maxRevisionCount, batchPlanner)
+		result, runErr = runService.ResumeRevision(ctx, strings.TrimSpace(input.CommandID), correlationID, continuation.RevisionTaskID, input.MaxTasks, maxParallelTasks, maxRevisionCount, input.Autonomy.Revision, batchPlanner)
 	} else {
-		result, runErr = runService.RunParallel(ctx, strings.TrimSpace(input.CommandID), correlationID, input.MaxTasks, maxParallelTasks, maxRevisionCount, batchPlanner)
+		result, runErr = runService.RunParallel(ctx, strings.TrimSpace(input.CommandID), correlationID, input.MaxTasks, maxParallelTasks, maxRevisionCount, input.Autonomy.Revision, batchPlanner)
 	}
 	stage := "workflow_reviewed_execute"
 	var typed *service.ReviewedWorkflowRunError
@@ -399,6 +399,20 @@ func reviewedWorkflowOuterEnvelope(result service.ReviewedWorkflowRunResult, sta
 		// guard actually stopped the branch.
 		envelope = failure.New("NO_PROGRESS_DETECTED", stage)
 		envelope.Evidence = &failure.CommittedEvidence{Deliverable: true, TaskState: true, ReviewCanonical: true}
+	case stage == "revision_forbidden":
+		// The bounded_acceptance profile's own stop (ADR-0072): same shape
+		// as revision_limit/no_progress above -- the last attempt's
+		// execution and Review both committed canonically, and Go declined
+		// to create a Revision at all because this Session's Autonomy
+		// Contract has Revision: PermissionForbidden, not because a
+		// Revision/No-Progress guard's counter reached its limit. A
+		// distinct Code (not REVISION_LIMIT_REACHED) so a human can tell
+		// this was a profile-level policy stop, not a converging-but-slow
+		// branch. RecoveryRequired is forced false below regardless of
+		// partial -- unlike revision_limit/no_progress, this profile never
+		// offers a Revision/Recovery action for it.
+		envelope = failure.New("REVIEWED_WORKFLOW_BOUNDED_STOP", stage)
+		envelope.Evidence = &failure.CommittedEvidence{Deliverable: true, TaskState: true, ReviewCanonical: true}
 	case stage == "budget":
 		// BudgetGuard v1's own stop (ADR-0054): distinct from both guards
 		// above -- a Budget stop is never a judgement about convergence,
@@ -429,7 +443,10 @@ func reviewedWorkflowOuterEnvelope(result service.ReviewedWorkflowRunResult, sta
 		envelope = failure.New("REVIEWED_WORKFLOW_FAILED", stage)
 	}
 	envelope.Partial = partial
-	envelope.RecoveryRequired = partial
+	// ADR-0072: a bounded_acceptance profile stop never offers Recovery --
+	// this is the one deliberate deviation from every other case's
+	// otherwise-uniform partial-derived value.
+	envelope.RecoveryRequired = partial && stage != "revision_forbidden"
 	return &envelope
 }
 

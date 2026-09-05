@@ -114,6 +114,17 @@ func ExecuteInteractionRecoverRevision(
 		result := InteractionRecoverRevisionResult{Session: record}
 		return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_RECOVER_REVISION_FAILED", "interaction_preflight", false)
 	}
+	// ADR-0072: a bounded_acceptance Session's Autonomy Contract always has
+	// Revision: PermissionForbidden (6節), so no Revision-driven recovery
+	// target can ever legitimately exist for it. Next() already never
+	// offers "interaction.workflow.recover_revision" for such a Session
+	// (REVIEWED_WORKFLOW_BOUNDED_STOP is not one of the Codes its own
+	// recovery-offer switch recognizes), so this is a defense-in-depth
+	// rejection at the Process entry, independent of that.
+	if record.Profile == interaction.ProfileBoundedAcceptance {
+		result := InteractionRecoverRevisionResult{Session: record}
+		return result, finishDurableCommand(ctx, claim, result, ErrInteractionBoundedOperationForbidden, "INTERACTION_RECOVER_REVISION_FAILED", "interaction_preflight", false)
+	}
 	projectID, projectName, ok := record.AppliedProject()
 	if !ok {
 		result := InteractionRecoverRevisionResult{Session: record}

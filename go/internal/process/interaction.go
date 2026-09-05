@@ -20,6 +20,17 @@ import (
 var (
 	ErrInteractionApprovalRequired = errors.New("explicit Interaction approval is required")
 	ErrInteractionPrecondition     = errors.New("interaction precondition failed")
+	// ErrInteractionBoundedPlanAlreadyReserved means a bounded_acceptance
+	// Session's single allowed Plan generation attempt is already reserved
+	// under a different Command ID (ADR-0072) -- returned before any
+	// Provider call, regardless of whether that reserved attempt ever
+	// succeeded, failed, timed out, or crashed.
+	ErrInteractionBoundedPlanAlreadyReserved = errors.New("bounded acceptance Session's Plan generation attempt is already reserved")
+	// ErrInteractionBoundedOperationForbidden means a Command operation
+	// this profile does not allow was invoked against a bounded_acceptance
+	// Session (ADR-0072) -- returned before any Provider/Project/Task
+	// effect.
+	ErrInteractionBoundedOperationForbidden = errors.New("operation is not permitted for a bounded acceptance Session")
 )
 
 type InteractionStartInput struct {
@@ -30,6 +41,10 @@ type InteractionStartInput struct {
 	Model         string
 	CurrentTime   time.Time
 	CommandID     string
+	// Profile is the closed, optional execution profile (ADR-0072): empty
+	// (the default) selects the standard profile, "bounded_acceptance"
+	// opts into the bounded execution profile. Any other value is rejected.
+	Profile string
 }
 
 type InteractionStartPlan struct {
@@ -152,7 +167,7 @@ func ExecuteInteractionStart(
 	if err != nil {
 		return InteractionPlanResult{}, err
 	}
-	candidate, err := interaction.New(input.SessionID, input.Request, input.Model, input.CurrentTime)
+	candidate, err := interaction.NewWithProfile(input.SessionID, input.Request, input.Model, interaction.Profile(strings.TrimSpace(input.Profile)), input.CurrentTime)
 	if err != nil || candidate.RequestDigest != strings.TrimSpace(input.RequestDigest) || commandledger.ValidateCommandID(input.CommandID) != nil {
 		return InteractionPlanResult{}, ErrInteractionPrecondition
 	}
@@ -160,8 +175,9 @@ func ExecuteInteractionStart(
 		SessionID     string    `json:"session_id"`
 		RequestDigest string    `json:"request_digest"`
 		Model         string    `json:"model"`
+		Profile       string    `json:"profile,omitempty"`
 		CurrentTime   time.Time `json:"current_time"`
-	}{candidate.SessionID, candidate.RequestDigest, candidate.Model, candidate.CreatedAt})
+	}{candidate.SessionID, candidate.RequestDigest, candidate.Model, string(candidate.Profile), candidate.CreatedAt})
 	if err != nil {
 		return InteractionPlanResult{}, err
 	}
@@ -274,6 +290,32 @@ func executeInteractionPlanGenerationCommand(
 			err = ErrInteractionPrecondition
 		}
 		return finishInteractionPlan(ctx, claim, InteractionPlanResult{Session: record}, err, "interaction_preflight", false)
+	}
+	// ADR-0072: a bounded_acceptance Session gets at most one Plan
+	// generation Provider attempt for its entire lifetime. The reservation
+	// Turn is committed durably here, before GenerateCEOPlan is ever
+	// called, so a failed/timed-out/crashed attempt still permanently
+	// consumes the one allowed attempt -- success is never the basis for
+	// this guard. Reused unchanged by the standalone interaction.plan.generate
+	// operation and by interaction.start/interaction.answer's chained
+	// continuation, since both call this single shared function.
+	if record.Profile == interaction.ProfileBoundedAcceptance {
+		if reservedChildCommandID, reserved := record.PlanGenerationReservation(); reserved {
+			if reservedChildCommandID != commandID {
+				return finishInteractionPlan(ctx, claim, InteractionPlanResult{Session: record}, ErrInteractionBoundedPlanAlreadyReserved, "interaction_preflight", false)
+			}
+		} else {
+			reservedNext, reserveErr := record.RecordPlanGenerationReservation(commandID, currentTime)
+			if reserveErr != nil {
+				return finishInteractionPlan(ctx, claim, InteractionPlanResult{Session: record}, reserveErr, "interaction_preflight", false)
+			}
+			reservedCommit, reserveCommitErr := interactionService.Update(ctx, reservedNext, record.Version)
+			if reserveCommitErr != nil {
+				result := InteractionPlanResult{Session: reservedCommit.Record, SessionCommitted: reservedCommit.Committed}
+				return finishInteractionPlan(ctx, claim, result, reserveCommitErr, "interaction_state_commit", true)
+			}
+			record = reservedCommit.Record
+		}
 	}
 	request, err := record.PlanningRequest()
 	if err != nil {
@@ -712,6 +754,18 @@ func ExecuteInteractionAnswer(
 		result := InteractionPlanResult{Session: record}
 		return result, finishDurableCommand(ctx, claim, result, err, "INTERACTION_FAILED", "interaction_preflight", false)
 	}
+	// ADR-0072: bounded_acceptance Sessions get at most one Plan generation
+	// Provider attempt. Reaching StateClarificationRequired at all already
+	// means that one attempt succeeded and returned CEOQuestions -- a
+	// structural dead end for this profile, since answering would chain
+	// into a second (regenerate) Provider call this profile never allows.
+	// Rejected here, before RecordAnswers, rather than only at the chained
+	// Plan-generation reservation guard, so the Answer Turn itself is never
+	// pointlessly recorded.
+	if record.Profile == interaction.ProfileBoundedAcceptance {
+		result := InteractionPlanResult{Session: record}
+		return result, finishDurableCommand(ctx, claim, result, ErrInteractionBoundedOperationForbidden, "INTERACTION_FAILED", "interaction_preflight", false)
+	}
 	next, err := record.RecordAnswers(input.Answers, input.CurrentTime)
 	if err != nil {
 		result := InteractionPlanResult{Session: record}
@@ -798,6 +852,17 @@ func ExecuteInteractionPlanApply(ctx context.Context, input InteractionApplyInpu
 			err = ErrInteractionPrecondition
 		}
 		return finishInteractionApply(ctx, claim, InteractionApplyResult{Session: record}, err, "interaction_preflight", false)
+	}
+	// ADR-0072: a bounded_acceptance Session's only supported execution
+	// path is the combined interaction.plan.approve_and_execute chain,
+	// which carries its own 1-Task preflight, deterministic approval
+	// reservation, and bounded Autonomy Contract derivation. The standalone
+	// two-step interaction.plan.apply / interaction.workflow.execute pair
+	// does not reimplement that machinery -- it is rejected outright here,
+	// before any Project/Task/Provider effect, rather than relying on the
+	// general UI never calling it.
+	if record.Profile == interaction.ProfileBoundedAcceptance {
+		return finishInteractionApply(ctx, claim, InteractionApplyResult{Session: record}, ErrInteractionBoundedOperationForbidden, "interaction_preflight", false)
 	}
 	applyResult, applyErr := ExecuteCEOPlanApply(ctx, CEOPlanApplyInput{
 		VaultRoot: input.VaultRoot, ProjectID: input.ProjectID, Plan: plan,

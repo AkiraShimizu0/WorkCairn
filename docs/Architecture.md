@@ -114,6 +114,7 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0066: Headless Credential Resolution for Unattended Operation](adr/ADR-0066-headless-credential-resolution.md)
 - [ADR-0070: Local Data Folder Default and Optional Storage/Viewers](adr/ADR-0070-local-data-folder-default.md)
 - [ADR-0071: macOS Developer ID Signing and Notarization Architecture](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)
+- [ADR-0072: Bounded Provider Acceptance Profile — Optional, Closed, Session-scoped Execution Bound](adr/ADR-0072-bounded-provider-acceptance-profile.md)
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
@@ -182,8 +183,8 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Company Attention / Decision Feed | ADR-0065の`internal/attention`（Type／EntityType／ActionKind／Item、Domain非依存の純粋read model）と`process.InspectAttention`（`internal/routine`・`internal/interaction`のみをread-only集約、新規state保存なし）。v1 type: `approval_required`／`human_input_required`／`interaction_attention_required`（Interaction`State`/`Next()`をそのまま分類）、`routine_recovery_required`（`InspectRoutineScheduleHealth`をそのまま再利用）。`recovery_required`／Task Hold／project-scope Routine／Responsibility未割当／Responsibility無しGoalはv1で意図的に不採用（根拠はADR-0065）。Dedupe・Sortは決定的（Type順→ObservedAt→EntityID）でAI rankingなし。`workcairn attention-list`／`GET /v1/attention`（`CompanyActivityInspector`と同型のoptional-capability interfaceで配線） |
 | Go Notification／Metrics Subscriber | Runtime edgeから既存Eventへ接続し、payload-free immutable Inboxとbounded process-local counterを提供する。Task状態、Event、Auditを変更しない |
 | Go External Action Service／WordPress Adapter | 既存Deliverableをtyped intentへ変換し、明示承認、immutable request／result evidence、外部公開、`action.completed`を調停する。credentialとHTTPはAdapter edgeだけに置く |
-| Go Interaction Domain／Service | 自然言語request、CEO質問回答、plan digest承認、適用済みProject、Reviewed Workflow／External Actionのtyped summaryとResult digestをappend-only turn／Version/CASで調停する。Provider、Vault、Task状態を知らない |
-| Go Autonomy Contract | Workflow承認で委任するTask実行、必須Review、Revision、別承認のExternal Action、禁止された支出、Employee／model allow-list、実行上限をProvider／Vault非依存のtyped valueへ固定する。Execution PolicyやApprovalを置き換えない |
+| Go Interaction Domain／Service | 自然言語request、CEO質問回答、plan digest承認、適用済みProject、Reviewed Workflow／External Actionのtyped summaryとResult digestをappend-only turn／Version/CASで調停する。Provider、Vault、Task状態を知らない。[ADR-0072](adr/ADR-0072-bounded-provider-acceptance-profile.md)（Status: Accepted、実装済み。実Provider Acceptanceは未完了）により、新規依頼開始前だけ選べる既定OFFのoptional `bounded_acceptance` profile（Plan生成1回・Task1件・Review1回・Provider call合計最大3回で必ず停止）を、検証済みconstructor（`NewWithProfile`）とappend-only `TurnPlanGenerationReserved`（Plan生成のProvider呼び出し前durable reservation、成功・失敗・timeout・crashを問わず再試行を拒否）でSessionへ拘束する。`Record.Validate()`／`RecordPlan`自身が「先行reservationと一致する`ReservedChildCommandID`を持つ`TurnPlanGenerated`」というinvariantを強制する（PB-3an.2bで追加） |
+| Go Autonomy Contract | Workflow承認で委任するTask実行、必須Review、Revision、別承認のExternal Action、禁止された支出、Employee／model allow-list、実行上限をProvider／Vault非依存のtyped valueへ固定する。Execution PolicyやApprovalを置き換えない。[ADR-0072](adr/ADR-0072-bounded-provider-acceptance-profile.md)（Status: Accepted、実装済み。実Provider Acceptanceは未完了）により、既存`Revision`（`Permission`列挙の既存だが未使用のfield）へ`forbidden`を許容するclosed拡張と、既存`NewStandard`のcloneにだけ`Revision=forbidden`／`MaxProviderCalls=2`／`ExecutionLimit=1`（対応する`MaxTasks=1`との既存invariantも維持）を適用する`NewBoundedAcceptance`を追加した——標準profile（`NewStandard`）の挙動・`MaxRuntime`等の他のfieldは無変更 |
 | Go Work Report | Interaction、Task、Deliverable、canonical Review、Revision intent、Command Ledger、AuditからProof of WorkとCEO Attentionを再構成するread-only projection。新しいStore、状態修復、自動retryを持たない |
 | Go Workflow Core | タスク依存関係の解析、検証、実行可否判定を純粋なドメインロジックとして提供する |
 | Go Project Core | TASK-ID採番、Task検証、状態と遷移規則を純粋なドメインロジックとして提供する |
