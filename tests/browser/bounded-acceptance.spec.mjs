@@ -167,6 +167,155 @@ test("Bounded Acceptance: Approve verdict reaches Task+Review completion @bounde
   }
 });
 
+// PB-3bb.2 (Codex focused correction, P1/P2): the generic
+// `input, textarea, select` rule (width:100%, min-height:50px) was
+// leaking onto this checkbox, turning it into a full-width 50px+ box
+// that pushed the label text off-screen on real Safari -- with zero
+// Provider calls involved (this is a pure layout regression on the draft
+// screen, before anything is ever sent). PB-3bb's first pass proved the
+// checkbox itself shrank back to normal but only proved the label's full
+// text is present in the DOM (`toContainText`), which still passes under
+// CSS clipping (`overflow:hidden`) -- a false positive for the actual
+// "not clipped" claim. This version replaces that with real rendered-box
+// measurements: the label's own `scrollWidth <= clientWidth` (no internal
+// clip) and its bounding box fully contained inside both the composer and
+// the viewport (not just "visible somewhere"), for every
+// unchecked/checked x desktop/375px combination. @mobile puts this on the
+// webkit-iphone project too, the same browser engine family the
+// regression was actually observed on.
+test("Bounded Acceptance: checkbox renders at normal size with no horizontal overflow, desktop and 375px @bounded @mobile", async ({ page }) => {
+  const environment = await startBrowserEnvironment("bounded_acceptance_approve");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRunFast(page);
+
+    const toggle = page.locator("#bounded-acceptance-toggle");
+    const label = page.locator(".bounded-acceptance-label");
+    const composer = page.locator("#thread-composer");
+    const constraints = page.locator("#bounded-acceptance-constraints");
+    const fullLabelText = "限定確認モード（Plan1回・Task1件・Review1回・最大3回で停止）";
+
+    async function assertCheckboxAndLabelFullyVisible() {
+      // 1) A real, normal-sized checkbox -- not the generic rule's
+      // 50px+ box, and not shrunk to nothing either.
+      const box = await toggle.boundingBox();
+      expect(box.width).toBeGreaterThanOrEqual(12);
+      expect(box.width).toBeLessThanOrEqual(24);
+      expect(box.height).toBeGreaterThanOrEqual(12);
+      expect(box.height).toBeLessThanOrEqual(24);
+
+      await expect(label).toBeVisible();
+      await expect(label).toContainText(fullLabelText);
+
+      // 2) No internal clip inside the label element itself -- a real
+      // scrollWidth/clientWidth measurement, so a regression to
+      // `overflow:hidden`/fixed-width clipping would fail here even
+      // though the full text still sits unchanged in the DOM.
+      const unclipped = await label.evaluate((element) => element.scrollWidth <= element.clientWidth + 1);
+      expect(unclipped).toBe(true);
+
+      // 3) The label's rendered box is fully inside both its composer
+      // container and the current viewport -- not off-screen, not
+      // overflowing past either edge.
+      const labelBox = await label.boundingBox();
+      const composerBox = await composer.boundingBox();
+      const viewport = page.viewportSize();
+      const epsilon = 1;
+      expect(labelBox.x).toBeGreaterThanOrEqual(composerBox.x - epsilon);
+      expect(labelBox.y).toBeGreaterThanOrEqual(composerBox.y - epsilon);
+      expect(labelBox.x + labelBox.width).toBeLessThanOrEqual(composerBox.x + composerBox.width + epsilon);
+      expect(labelBox.y + labelBox.height).toBeLessThanOrEqual(composerBox.y + composerBox.height + epsilon);
+      expect(labelBox.x).toBeGreaterThanOrEqual(0 - epsilon);
+      expect(labelBox.x + labelBox.width).toBeLessThanOrEqual(viewport.width + epsilon);
+
+      // 4) No horizontal scroll on the page as a whole.
+      const overflowX = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflowX).toBeLessThanOrEqual(1);
+    }
+
+    // This project's own viewport (1280x800 desktop Chromium, or the
+    // iPhone 13 device under webkit-iphone), unchecked then checked.
+    await expect(toggle).not.toBeChecked();
+    await expect(constraints).toBeHidden();
+    await assertCheckboxAndLabelFullyVisible();
+    await toggle.check();
+    await expect(constraints).toBeVisible();
+    await assertCheckboxAndLabelFullyVisible();
+    await toggle.uncheck();
+    await expect(constraints).toBeHidden();
+
+    // 375px width named in the report, unchecked then checked again.
+    await page.setViewportSize({ width: 375, height: 812 });
+    await assertCheckboxAndLabelFullyVisible();
+    await expect(constraints).toBeHidden();
+    await toggle.check();
+    await expect(constraints).toBeVisible();
+    await assertCheckboxAndLabelFullyVisible();
+  } finally {
+    await environment.stop();
+  }
+});
+
+// PB-3bb.2 item P2: label click, verified on both engines (Chromium
+// desktop and WebKit iPhone) with no fixed coordinate. label.click()'s
+// default click point is the center of the label's own bounding box --
+// since the checkbox is a small, fixed-left ~16px column against a much
+// wider label (the full constraint-summary sentence), that center point
+// reliably lands on the text regardless of viewport, wrapping, or engine,
+// without guessing a pixel offset the way `position: {x, y}` did.
+test("Bounded Acceptance: label click toggles the checkbox on both engines @bounded @mobile", async ({ page }) => {
+  const environment = await startBrowserEnvironment("bounded_acceptance_approve");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRunFast(page);
+
+    const toggle = page.locator("#bounded-acceptance-toggle");
+    const label = page.locator(".bounded-acceptance-label");
+    const constraints = page.locator("#bounded-acceptance-constraints");
+
+    await expect(toggle).not.toBeChecked();
+    await expect(constraints).toBeHidden();
+    await label.click();
+    await expect(toggle).toBeChecked();
+    await expect(constraints).toBeVisible();
+    await label.click();
+    await expect(toggle).not.toBeChecked();
+    await expect(constraints).toBeHidden();
+  } finally {
+    await environment.stop();
+  }
+});
+
+// Keyboard focus/activation, desktop only: real iOS/iPadOS Safari does
+// not put checkboxes in the Tab order at all (a platform limitation,
+// matching this codebase's existing documented finding in
+// detail-pane.spec.mjs that synthetic keyboard activation is unreliable
+// under WebKit's touch/mobile emulation) -- so this stays untagged for
+// @mobile, the same way that file's own keyboard-reachability test is.
+// It runs on chromium-desktop, a real keyboard-driven engine.
+test("Bounded Acceptance: checkbox is keyboard-focusable via Tab and Space @bounded", async ({ page }) => {
+  const environment = await startBrowserEnvironment("bounded_acceptance_approve");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRunFast(page);
+
+    const toggle = page.locator("#bounded-acceptance-toggle");
+    const constraints = page.locator("#bounded-acceptance-constraints");
+
+    // Tab reaches the checkbox (the last focusable control before the
+    // composer textarea in DOM order) and Space toggles it -- this fix
+    // only touched sizing/color, not focus or activation behavior.
+    await page.locator("#composer-input").focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(toggle).toBeFocused();
+    await page.keyboard.press(" ");
+    await expect(toggle).toBeChecked();
+    await expect(constraints).toBeVisible();
+  } finally {
+    await environment.stop();
+  }
+});
+
 // PB-3an.2d item 2: the toggle's default OFF state must have a real
 // wire-level consequence, not just a hidden UI default -- a standard
 // (non-bounded) Session's interaction.start payload must never carry the

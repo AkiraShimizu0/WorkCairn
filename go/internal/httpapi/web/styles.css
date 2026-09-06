@@ -1781,6 +1781,31 @@ dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-wei
   align-items: center;
   gap: 6px;
   cursor: pointer;
+  min-width: 0;
+}
+
+/* PB-3bb: the generic `input, textarea, select` rule (width:100%,
+   min-height:50px, padding, border, background) is meant for text
+   fields and turns this checkbox into a full-width 50px+ box that
+   pushes the label text off-screen on real Safari. Reset it back to a
+   normal, native-sized checkbox -- scoped to this one control only. */
+#bounded-acceptance-toggle {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  flex: 0 0 auto;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-strong);
+  accent-color: var(--accent);
+}
+
+#bounded-acceptance-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .bounded-acceptance-constraints {
