@@ -12,6 +12,7 @@ import (
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
 	workspaceprocess "github.com/AkiraShimizu0/WorkCairn/go/internal/process"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/review"
 )
 
 // TestBoundedAcceptanceHTTPExecutorPropagatesProfileToSession is the
@@ -113,7 +114,7 @@ func TestBoundedAcceptanceHTTPRequestChangesRecoveryRequiredFalseInInitialAndPol
 	providerOutputs := []string{
 		planOutput(),
 		"# 下書き\n\nまだ荒削りです。",
-		typedReviewOutput("Request Changes", `[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}]`, "要件不足のため修正を依頼します。"),
+		typedReviewOutput("Request Changes", `[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}]`, review.SummaryRequestChanges),
 	}
 	providerCalls := 0
 	providerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

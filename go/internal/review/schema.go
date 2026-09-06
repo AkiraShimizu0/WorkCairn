@@ -1,20 +1,39 @@
 package review
 
+// SummaryApprove and SummaryRequestChanges are the exact fixed strings
+// TypedDecisionJSONSchema closes each anyOf branch's "summary" field to via
+// a per-verdict `const` (PB-3bo.1). Anthropic's supported Structured
+// Outputs subset has no "minLength"/"pattern" keywords, so a plain
+// `{"type":"string"}` summary field could not be schema-enforced non-empty
+// — only Go's ParseTypedDecision rejected an empty one, after the fact.
+// `const` closes that gap at the Provider boundary itself: a schema-valid
+// Structured Output response can no longer carry an empty or freely
+// invented summary. The real per-Review reasoning still lives entirely in
+// Issues (category/severity/description/suggested_action); these two
+// values only mark which verdict path produced the Decision, the same way
+// Approve/Request Changes already close "verdict" itself.
+const (
+	SummaryApprove        = "レビューの結果、問題は見つかりませんでした。"
+	SummaryRequestChanges = "レビューの結果、修正が必要な指摘があります。詳細は下記の指摘事項を参照してください。"
+)
+
 // TypedDecisionJSONSchema returns the JSON Schema used to request Anthropic
 // Structured Outputs for Review execution. Unlike the retired marker-based
 // contract, the schema's own JSON output *is* the desired Runner Content —
 // no wrapper/ContentField is needed (mirrors ceoplan.IntentJSONSchema()'s
 // usage). The three top-level fields are exactly what the LLM is now
-// responsible for: verdict, issues, and a short qualitative summary. Task
+// responsible for: verdict, issues, and a fixed per-verdict summary. Task
 // ID, Reviewer ID, Review ID, artifact paths, and canonical metadata are
 // Go's responsibility and never appear here.
 //
 // The Provider schema deliberately uses only Anthropic's supported
 // Structured Outputs subset (see ceoplan.IntentJSONSchema's identical
-// rationale) — no "pattern" or "minLength" constraints. Semantic
-// constraints such as non-whitespace text remain strict in
-// ParseTypedDecision/Decision.Validate after a Structured Output response
-// is decoded, independent of what the wire schema hints to the Provider.
+// rationale) — no "pattern" or "minLength" constraints. "const" is
+// confirmed supported (already used on "verdict" below, and on ceoplan's
+// step "kind" field), so it is the mechanism used to close "summary" to a
+// non-empty, verdict-specific fixed value instead. Decision.Validate still
+// performs its own independent semantic checks after a Structured Output
+// response is decoded, unchanged by what the wire schema enforces.
 func TypedDecisionJSONSchema() map[string]any {
 	issueSchema := map[string]any{
 		"type": "object",
@@ -38,12 +57,16 @@ func TypedDecisionJSONSchema() map[string]any {
 			// schema enforce the same conditional rule as Decision.Validate.
 			issues["minItems"] = 1
 		}
+		summary := SummaryApprove
+		if verdict == VerdictRequestChanges {
+			summary = SummaryRequestChanges
+		}
 		return map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"verdict": map[string]any{"type": "string", "const": string(verdict)},
 				"issues":  issues,
-				"summary": stringSchema("A short qualitative summary of the review decision. Must contain a non-whitespace character."),
+				"summary": map[string]any{"type": "string", "const": summary},
 			},
 			"required":             []string{"verdict", "issues", "summary"},
 			"additionalProperties": false,

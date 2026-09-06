@@ -84,8 +84,10 @@ type ReviewExecutionResult struct {
 	// It is a sanitized review.ParseFailureReason value, never raw Provider text.
 	ParseFailureReason string `json:"parse_failure_reason,omitempty"`
 	// ParseFailureField is the optional sanitized review.ParseError.Field
-	// (e.g. "issues", "summary"), set only when ParseFailureReason is
-	// missing_required_field. It never contains a field value.
+	// (e.g. "issues", "summary"), set for missing_required_field,
+	// invalid_summary (PB-3bo.3), and approve_issues_forbidden (PB-3bo.5)
+	// -- every Reason whose failure is scoped to one specific top-level
+	// field. It never contains a field value.
 	ParseFailureField string `json:"parse_failure_field,omitempty"`
 	// Failure is the single typed classification this Command determines
 	// exactly once (see reviewFailureEnvelope), forwarded unchanged by

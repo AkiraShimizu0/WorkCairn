@@ -618,7 +618,7 @@ func TestReviewedWorkflowReviewResultInvalidClassifiesOuterCommandWithoutProvide
 		calls++
 		text := "# TASK-001 deliverable\n\n本文"
 		if calls == 2 {
-			text = `{"verdict":"Request Changes","issues":[{"category":"unsupported","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`
+			text = `{"verdict":"Request Changes","issues":[{"category":"unsupported","severity":"high","description":"x","suggested_action":"y"}],"summary":"` + review.SummaryRequestChanges + `"}`
 		}
 		encoded, _ := json.Marshal(map[string]any{
 			"model": "claude-test", "content": []map[string]string{{"type": "text", "text": text}},
@@ -1156,11 +1156,15 @@ func TestReviewedWorkflowOuterEnvelopeClassifiesBudgetExceeded(t *testing.T) {
 	}
 }
 
+// reviewProviderOutput's summary is PB-3bo.3's fixed per-verdict const, not
+// arbitrary text -- review.ParseTypedDecision now rejects any Review
+// Typed Decision content whose summary does not exactly match
+// review.SummaryApprove/SummaryRequestChanges for its own verdict.
 func reviewProviderOutput(verdict review.Verdict) string {
-	issues, summary := `[]`, "問題ありません。"
+	issues, summary := `[]`, review.SummaryApprove
 	if verdict == review.VerdictRequestChanges {
 		issues = `[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}]`
-		summary = "要件不足のため修正を依頼します。"
+		summary = review.SummaryRequestChanges
 	}
 	encoded, err := json.Marshal(map[string]any{
 		"verdict": string(verdict), "issues": json.RawMessage(issues), "summary": summary,

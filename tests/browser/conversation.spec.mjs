@@ -73,7 +73,7 @@ test("Public Beta browser happy path survives polling, reload, and daemon restar
 
     // review approved must show the canonical review_summary text, never
     // an internal status/error value as the message body.
-    await expect(page.locator("#activity-timeline")).toContainText("利用開始の案内が追加され、要件を満たしています。");
+    await expect(page.locator("#activity-timeline")).toContainText("レビューの結果、問題は見つかりませんでした。");
     const companyFactTexts = await page.locator("#activity-timeline .msg-company-fact-copy").allTextContents();
     for (const text of companyFactTexts) {
       expect(text.trim()).not.toMatch(/^error$/i);
@@ -197,7 +197,7 @@ test("conversation projection renders canonical chat categories @conversation", 
       "最初の依頼を入力する案内を追記してください。",
     );
     await expect(timeline.locator(".msg-company-fact-copy").filter({ hasText: "レビューが完了しました" })).toContainText(
-      "利用開始の案内が追加され、要件を満たしています。",
+      "レビューの結果、問題は見つかりませんでした。",
     );
 
     const allMessageBodyTexts = await timeline

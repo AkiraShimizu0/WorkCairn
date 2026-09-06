@@ -41,11 +41,21 @@ Reviewerには、本文だけを根拠に作成者不明と判断せず、確認
 
 ## 構造化結果
 
-ADR-0040に従い、Runnerはマーカーや人間向けMarkdownを含まない、flatなJSONオブジェクトだけを出力します（Anthropic Structured Outputsの制約に合わせ、`pattern`／`minLength`等の非対応キーワードは使わず、非空文字列の検証はGo側の`ParseTypedDecision`が行います）。
+ADR-0040に従い、Runnerはマーカーや人間向けMarkdownを含まない、flatなJSONオブジェクトだけを出力します（Anthropic Structured Outputsの制約に合わせ、`pattern`／`minLength`等の非対応キーワードは使いません）。PB-3bo.1で、`summary`はverdictごとに異なる固定`const`へ閉じました。`const`はAnthropic対応Schema subsetで利用可能（`verdict`自身が既に使用）なため、Provider Structured Output自体がこの値を機械的に強制し、空文字列や自由記述のsummaryは構造的に発生しなくなりました。PB-3bo.3で、Go側（`ParseTypedDecision`）もverdict別のこの固定値との完全一致を検証するようになり、Structured Outputsを経由しない経路でも同じ契約が強制されます。
+
+Request Changesの個別の指摘内容は引き続き`issues`（category／severity／description／suggested_action）に記述されます。一方、`summary`はverdict確定と同時に決まる固定outcome labelであり、Approveについて以前LLMが記述できた「なぜ問題なしと判断したか」という自由記述の肯定的理由は、fresh Reviewではもう収集されません（詳細はADR-0040「PB-3bo.3 Correction」節）。
 
 ```text
 {
-  "verdict": "Approve または Request Changes",
+  "verdict": "Approve",
+  "issues": [],
+  "summary": "レビューの結果、問題は見つかりませんでした。"
+}
+```
+
+```text
+{
+  "verdict": "Request Changes",
   "issues": [
     {
       "category": "date|format|requirements|context|todo|other",
@@ -54,16 +64,17 @@ ADR-0040に従い、Runnerはマーカーや人間向けMarkdownを含まない�
       "suggested_action": "修正案"
     }
   ],
-  "summary": "判定理由の短い要約"
+  "summary": "レビューの結果、修正が必要な指摘があります。詳細は下記の指摘事項を参照してください。"
 }
 ```
 
 保存前にJSONを検証します。
 
 - verdictは`Approve`または`Request Changes`のみ
+- Approveではissuesが必ず空配列（PB-3bo.5。1件以上あれば`approve_issues_forbidden`として拒否）
 - Request Changesではissuesが1件以上必要
 - categoryとseverityは許可値のみ
-- summaryは空文字列不可
+- summaryは空文字列・空白のみ不可、かつverdictごとの固定文字列（`review.SummaryApprove`／`review.SummaryRequestChanges`）と完全一致しない限り不可（Go側`ParseTypedDecision`がPB-3bo.3以降、両方とも直接検証します。前後空白を加えた値・反対verdict用の値・任意の非空値はいずれも`invalid_summary`として拒否されます）
 - 不正JSON・未知fieldはレビュー保存前に拒否
 
 人間向けMarkdown（`Reviews/TASK-XXX.review.md`）はLLMが書きません。GoがcanonicalなDecision（verdict／issues／summary）から決定的に生成します。

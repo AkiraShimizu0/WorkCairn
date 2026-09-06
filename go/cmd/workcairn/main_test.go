@@ -1347,7 +1347,7 @@ func TestReviewCommandsPlanWithoutSecretsAndExecuteWithMockProvider(t *testing.T
 		text := `# 成果物\n\n本文`
 		if strings.Contains(string(content), "レビュー方針") {
 			encoded, err := json.Marshal(map[string]any{
-				"verdict": "Approve", "issues": []any{}, "summary": "問題ありません。",
+				"verdict": "Approve", "issues": []any{}, "summary": review.SummaryApprove,
 			})
 			if err != nil {
 				t.Fatal(err)

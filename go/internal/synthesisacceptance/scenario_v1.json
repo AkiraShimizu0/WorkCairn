@@ -97,7 +97,7 @@
       "headers": {"content-type": "application/json", "request-id": "req_synthesis_review_fixture"},
       "body": {
         "model": "claude-sonnet-5",
-        "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"Acceptance用の固定Review判定\"}"}],
+        "content": [{"type": "text", "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"レビューの結果、問題は見つかりませんでした。\"}"}],
         "usage": {"input_tokens": 20, "output_tokens": 10}
       }
     }

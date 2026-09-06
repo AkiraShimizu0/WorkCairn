@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -45,6 +46,19 @@ func TestTypedDecisionJSONSchemaShape(t *testing.T) {
 		if _, exists := summary["pattern"]; exists {
 			t.Fatalf("variant %d summary contains Provider-unsupported semantic pattern: %#v", index, summary)
 		}
+		if _, exists := summary["minLength"]; exists {
+			t.Fatalf("variant %d summary contains Provider-unsupported semantic minLength: %#v", index, summary)
+		}
+		// PB-3bo.1: summary must be closed to a non-empty const, one
+		// distinct value per verdict branch -- the fix for the P1 Schema/
+		// parser semantic mismatch (a plain type:"string" summary field
+		// let a schema-valid Structured Output response carry an empty
+		// summary, which ParseTypedDecision then rejected regardless of
+		// how valid verdict/issues were).
+		summaryConst, hasSummaryConst := summary["const"].(string)
+		if !hasSummaryConst || strings.TrimSpace(summaryConst) == "" {
+			t.Fatalf("variant %d summary const = %#v, want a non-empty fixed string", index, summary["const"])
+		}
 		issue := issues["items"].(map[string]any)
 		issueProperties := issue["properties"].(map[string]any)
 		if issue["additionalProperties"] != false ||
@@ -65,9 +79,15 @@ func TestTypedDecisionJSONSchemaShape(t *testing.T) {
 			if _, exists := issues["minItems"]; exists {
 				t.Fatalf("Approve issues unexpectedly constrained: %#v", issues)
 			}
+			if summaryConst != SummaryApprove {
+				t.Fatalf("Approve summary const = %q, want %q", summaryConst, SummaryApprove)
+			}
 		case string(VerdictRequestChanges):
 			if issues["minItems"] != 1 {
 				t.Fatalf("Request Changes minItems = %#v", issues["minItems"])
+			}
+			if summaryConst != SummaryRequestChanges {
+				t.Fatalf("Request Changes summary const = %q, want %q", summaryConst, SummaryRequestChanges)
 			}
 		default:
 			t.Fatalf("variant %d verdict = %#v", index, verdict)
@@ -94,11 +114,13 @@ func sameStrings(got, want []string) bool {
 // ParseTypedDecision correctly parses content shaped exactly as the Claude
 // Adapter would deliver it as Runner Content when TypedDecisionJSONSchema()
 // is requested — i.e. Structured Outputs changes nothing about the
-// parser's own contract, it only guarantees the shape.
+// parser's own contract, it only guarantees the shape. The summary here is
+// the actual fixed const a schema-compliant Approve response now carries
+// (PB-3bo.1), not arbitrary free text.
 func TestParseTypedDecisionAcceptsStructuredOutputContent(t *testing.T) {
-	content := `{"verdict":"Approve","issues":[],"summary":"問題ありません。"}`
+	content := `{"verdict":"Approve","issues":[],"summary":"` + SummaryApprove + `"}`
 	decision, err := ParseTypedDecision(content)
-	if err != nil || decision.Verdict != VerdictApprove || decision.Summary != "問題ありません。" {
+	if err != nil || decision.Verdict != VerdictApprove || decision.Summary != SummaryApprove {
 		t.Fatalf("ParseTypedDecision() = %#v, %v", decision, err)
 	}
 }

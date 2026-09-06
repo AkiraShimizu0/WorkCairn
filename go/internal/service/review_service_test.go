@@ -66,7 +66,7 @@ func (builder failingReviewBuilder) BuildReview(context.Context, review.PromptIn
 
 func TestReviewServiceUsesConcreteBuilderAndRunnerRegistry(t *testing.T) {
 	fixture := loadReviewServiceFixture(t)
-	fake := &capturingReviewRunner{content: `{"verdict":"Approve","issues":[],"summary":"問題ありません。"}`}
+	fake := &capturingReviewRunner{content: `{"verdict":"Approve","issues":[],"summary":"` + review.SummaryApprove + `"}`}
 	registry := runner.NewRegistry()
 	if err := registry.Register(fake); err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestReviewServiceUsesConcreteBuilderAndRunnerRegistry(t *testing.T) {
 		!reflect.DeepEqual(fake.request.StructuredOutput.Schema, review.TypedDecisionJSONSchema()) {
 		t.Fatalf("Runner request did not carry the Review Structured Output contract: %#v", fake.request.StructuredOutput)
 	}
-	if result.Decision.Verdict != review.VerdictApprove || result.Decision.Summary != "問題ありません。" {
+	if result.Decision.Verdict != review.VerdictApprove || result.Decision.Summary != review.SummaryApprove {
 		t.Fatalf("result = %#v", result)
 	}
 	if result.ReviewerID != "QA-001" || result.TaskID != "TASK-001" {

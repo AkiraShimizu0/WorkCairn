@@ -405,13 +405,16 @@ func watchedTitleReferencesLineage(title string, watched map[string]bool) bool {
 
 // distinctRequestChangesOutput builds a Request Changes verdict whose
 // finding description differs on every attempt, so the No-Progress
-// Foundation's repeated-feedback signal never fires for it.
+// Foundation's repeated-feedback signal never fires for it. summary is the
+// fixed PB-3bo.3 const (ParseTypedDecision now rejects anything else for
+// this verdict) -- it carries no distinguishing content, so it does not
+// affect this per-attempt distinctness, which comes entirely from issues.
 func distinctRequestChangesOutput(attempt int) string {
 	issues := `[{"category":"requirements","severity":"medium","description":"要件が不足しています（指摘` +
 		strconv.Itoa(attempt) + `件目）。","suggested_action":"要件を追記してください（指摘` + strconv.Itoa(attempt) + `件目）。"}]`
 	encoded, err := json.Marshal(map[string]any{
 		"verdict": string(review.VerdictRequestChanges), "issues": json.RawMessage(issues),
-		"summary": "要件不足のため修正を依頼します（指摘" + strconv.Itoa(attempt) + "件目）。",
+		"summary": review.SummaryRequestChanges,
 	})
 	if err != nil {
 		panic(err)

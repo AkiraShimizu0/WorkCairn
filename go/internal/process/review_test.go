@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,7 +69,7 @@ func TestExecuteReviewUsesGoRuntimeAndCommitsCanonicalArtifacts(t *testing.T) {
 			t.Error("unexpected Review Provider request")
 		}
 		response.Header().Set("content-type", "application/json")
-		reviewText := `{"verdict":"Request Changes","issues":[{"category":"requirements","severity":"medium","description":"要件の説明が不足しています。","suggested_action":"要件の根拠を追記してください。"}],"summary":"要件の説明を追加してください。"}`
+		reviewText := `{"verdict":"Request Changes","issues":[{"category":"requirements","severity":"medium","description":"要件の説明が不足しています。","suggested_action":"要件の根拠を追記してください。"}],"summary":"` + review.SummaryRequestChanges + `"}`
 		_ = json.NewEncoder(response).Encode(map[string]any{
 			"model":   "claude-sonnet-5",
 			"content": []map[string]string{{"type": "text", "text": reviewText}},
@@ -141,7 +142,7 @@ func TestExecuteReviewRecordsParserSubstageWithoutArtifacts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		providerCalls.Add(1)
 		response.Header().Set("content-type", "application/json")
-		reviewText := `{"verdict":"Request Changes","issues":[{"category":"unsupported","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`
+		reviewText := `{"verdict":"Request Changes","issues":[{"category":"unsupported","severity":"high","description":"x","suggested_action":"y"}],"summary":"` + review.SummaryRequestChanges + `"}`
 		_ = json.NewEncoder(response).Encode(map[string]any{
 			"model":   "claude-test",
 			"content": []map[string]string{{"type": "text", "text": reviewText}},
@@ -175,6 +176,152 @@ func TestExecuteReviewRecordsParserSubstageWithoutArtifacts(t *testing.T) {
 	project := filepath.Join(root, "プロジェクト", input.ProjectName)
 	if _, statErr := os.Stat(filepath.Join(project, "Reviews")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("parser failure created Review artifacts: %v", statErr)
+	}
+}
+
+// TestExecuteReviewRecordsInvalidSummaryWithoutRawBodyExposure is PB-3bo.3's
+// required end-to-end non-exposure test: a fresh Review whose summary does
+// not match its verdict's fixed const must fail as
+// REVIEW_RESULT_INVALID/review_result_parser/invalid_summary/field=summary
+// -- and the actual (arbitrary, potentially Provider- or attacker-authored)
+// summary text must never appear anywhere durable: not in the in-memory
+// Result, not in the persisted Command Ledger record (Result JSON or
+// Failure.Details), and not in the Audit Log. No Review artifact is
+// created either, matching every other parser-failure path.
+func TestExecuteReviewRecordsInvalidSummaryWithoutRawBodyExposure(t *testing.T) {
+	root := writeReviewProcessVault(t)
+	completeReviewSourceTask(t, root)
+	secretSummary := "PROVIDER_SECRET_MARKER_MUST_NOT_APPEAR_ANYWHERE_DURABLE"
+	var providerCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		providerCalls.Add(1)
+		response.Header().Set("content-type", "application/json")
+		reviewText := `{"verdict":"Approve","issues":[],"summary":"` + secretSummary + `"}`
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"model":   "claude-test",
+			"content": []map[string]string{{"type": "text", "text": reviewText}},
+			"usage":   map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer server.Close()
+
+	input := ExecuteReviewInput{ReviewPlanInput: reviewPlanInput(root), Approved: true, CommandID: "CMD-REVIEW-INVALID-SUMMARY-001"}
+	result, err := ExecuteReview(context.Background(), input, ClaudeProcessConfig{
+		APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL,
+	}, server.Client())
+	if err == nil || providerCalls.Load() != 1 || result.Execution != nil || result.Artifact != nil || result.ProviderFailure != nil ||
+		result.FailureCode != "REVIEW_RESULT_INVALID" || result.FailureStage != "review_result_parser" ||
+		result.ParseFailureReason != string(review.ParseFailureInvalidSummary) || result.ParseFailureField != "summary" {
+		t.Fatalf("invalid summary result=%#v err=%v calls=%d", result, err, providerCalls.Load())
+	}
+	if strings.Contains(fmt.Sprintf("%#v", result), secretSummary) {
+		t.Fatalf("in-memory Result exposed the raw invalid summary body: %#v", result)
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, input.ProjectName)
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, ledgerErr := ledger.Get(context.Background(), input.CommandID)
+	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil ||
+		record.Failure.Code != "REVIEW_RESULT_INVALID" || record.Failure.Stage != "review_result_parser" {
+		t.Fatalf("invalid summary Ledger=%#v err=%v", record, ledgerErr)
+	}
+	var storedResult ReviewExecutionResult
+	if json.Unmarshal(record.Result, &storedResult) != nil ||
+		storedResult.ParseFailureReason != string(review.ParseFailureInvalidSummary) || storedResult.ParseFailureField != "summary" {
+		t.Fatalf("stored parse failure reason/field = %#v", storedResult)
+	}
+	if strings.Contains(string(record.Result), secretSummary) {
+		t.Fatalf("persisted Ledger Result JSON leaked the raw invalid summary body: %s", record.Result)
+	}
+	encodedDetails, detailsErr := json.Marshal(record.Failure.Details)
+	if detailsErr != nil {
+		t.Fatal(detailsErr)
+	}
+	if strings.Contains(string(encodedDetails), secretSummary) {
+		t.Fatalf("persisted Ledger Failure.Details leaked the raw invalid summary body: %s", encodedDetails)
+	}
+	project := filepath.Join(root, "プロジェクト", input.ProjectName)
+	if _, statErr := os.Stat(filepath.Join(project, "Reviews")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("invalid summary failure created Review artifacts: %v", statErr)
+	}
+	if auditLog, readErr := os.ReadFile(filepath.Join(project, "Audit Log.md")); readErr == nil &&
+		strings.Contains(string(auditLog), secretSummary) {
+		t.Fatalf("Audit Log leaked the raw invalid summary body: %s", auditLog)
+	}
+}
+
+// TestExecuteReviewRecordsApproveIssuesForbiddenWithoutRawBodyExposure is
+// PB-3bo.5's required end-to-end non-exposure test: a fresh Review whose
+// verdict is Approve but whose issues array is non-empty must fail as
+// REVIEW_RESULT_INVALID/review_result_parser/approve_issues_forbidden/
+// field=issues -- never reaching canonical Review commit or a success
+// state -- and the actual (arbitrary, potentially Provider- or attacker-
+// authored) issue body text must never appear anywhere durable: not in
+// the in-memory Result, not in the persisted Command Ledger record
+// (Result JSON or Failure.Details), and not in the Audit Log. No Review
+// artifact is created either, matching every other parser-failure path.
+func TestExecuteReviewRecordsApproveIssuesForbiddenWithoutRawBodyExposure(t *testing.T) {
+	root := writeReviewProcessVault(t)
+	completeReviewSourceTask(t, root)
+	secretIssueText := "PROVIDER_SECRET_MARKER_MUST_NOT_APPEAR_ANYWHERE_DURABLE"
+	var providerCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		providerCalls.Add(1)
+		response.Header().Set("content-type", "application/json")
+		reviewText := `{"verdict":"Approve","issues":[{"category":"requirements","severity":"medium","description":"` +
+			secretIssueText + `","suggested_action":"` + secretIssueText + `"}],"summary":"` + review.SummaryApprove + `"}`
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"model":   "claude-test",
+			"content": []map[string]string{{"type": "text", "text": reviewText}},
+			"usage":   map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer server.Close()
+
+	input := ExecuteReviewInput{ReviewPlanInput: reviewPlanInput(root), Approved: true, CommandID: "CMD-REVIEW-APPROVE-ISSUES-001"}
+	result, err := ExecuteReview(context.Background(), input, ClaudeProcessConfig{
+		APIKey: "fake", ProviderModel: "claude-test", BaseURL: server.URL,
+	}, server.Client())
+	if err == nil || providerCalls.Load() != 1 || result.Execution != nil || result.Artifact != nil || result.ProviderFailure != nil ||
+		result.FailureCode != "REVIEW_RESULT_INVALID" || result.FailureStage != "review_result_parser" ||
+		result.ParseFailureReason != string(review.ParseFailureIssuesForbidden) || result.ParseFailureField != "issues" {
+		t.Fatalf("approve+issues result=%#v err=%v calls=%d", result, err, providerCalls.Load())
+	}
+	if strings.Contains(fmt.Sprintf("%#v", result), secretIssueText) {
+		t.Fatalf("in-memory Result exposed the raw invalid issue body: %#v", result)
+	}
+	ledger, ledgerErr := vault.NewCommandLedgerStore(root, input.ProjectName)
+	if ledgerErr != nil {
+		t.Fatal(ledgerErr)
+	}
+	record, ledgerErr := ledger.Get(context.Background(), input.CommandID)
+	if ledgerErr != nil || record.State != commandledger.StateFailed || record.Failure == nil ||
+		record.Failure.Code != "REVIEW_RESULT_INVALID" || record.Failure.Stage != "review_result_parser" {
+		t.Fatalf("approve+issues Ledger=%#v err=%v", record, ledgerErr)
+	}
+	var storedResult ReviewExecutionResult
+	if json.Unmarshal(record.Result, &storedResult) != nil ||
+		storedResult.ParseFailureReason != string(review.ParseFailureIssuesForbidden) || storedResult.ParseFailureField != "issues" {
+		t.Fatalf("stored parse failure reason/field = %#v", storedResult)
+	}
+	if strings.Contains(string(record.Result), secretIssueText) {
+		t.Fatalf("persisted Ledger Result JSON leaked the raw invalid issue body: %s", record.Result)
+	}
+	encodedDetails, detailsErr := json.Marshal(record.Failure.Details)
+	if detailsErr != nil {
+		t.Fatal(detailsErr)
+	}
+	if strings.Contains(string(encodedDetails), secretIssueText) {
+		t.Fatalf("persisted Ledger Failure.Details leaked the raw invalid issue body: %s", encodedDetails)
+	}
+	project := filepath.Join(root, "プロジェクト", input.ProjectName)
+	if _, statErr := os.Stat(filepath.Join(project, "Reviews")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("approve+issues failure created Review artifacts: %v", statErr)
+	}
+	if auditLog, readErr := os.ReadFile(filepath.Join(project, "Audit Log.md")); readErr == nil &&
+		strings.Contains(string(auditLog), secretIssueText) {
+		t.Fatalf("Audit Log leaked the raw invalid issue body: %s", auditLog)
 	}
 }
 
@@ -474,13 +621,65 @@ func TestReviewFailureEnvelopeNeverPersistsForgedProviderFailureFields(t *testin
 // must carry the sanitized review.ParseFailureReason as a Parse
 // diagnostic, domain-tagged "review".
 func TestReviewFailureEnvelopeCarriesParseDiagnosticForInvalidReviewResult(t *testing.T) {
-	_, parseErr := review.ParseTypedDecision(`{"verdict":"Request Changes","issues":[{"category":"unsupported","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`)
+	_, parseErr := review.ParseTypedDecision(`{"verdict":"Request Changes","issues":[{"category":"unsupported","severity":"high","description":"x","suggested_action":"y"}],"summary":"` + review.SummaryRequestChanges + `"}`)
 	workerErr := &service.WorkerExecutionError{Kind: service.WorkerErrorInvalidReviewResult, Err: parseErr}
 	envelope := reviewFailureEnvelope(workerErr, nil, nil)
 	if envelope.Code != "REVIEW_RESULT_INVALID" || envelope.Stage != "review_result_parser" ||
 		envelope.Parse == nil || envelope.Parse.Domain != "review" ||
 		envelope.Parse.Reason != string(review.ParseFailureInvalidIssueCategory) {
 		t.Fatalf("reviewFailureEnvelope() = %#v", envelope)
+	}
+}
+
+// TestReviewFailureEnvelopeCarriesInvalidSummaryReasonWithoutRawBody is
+// PB-3bo.3's required FailureEnvelope propagation test: a fresh Review
+// whose summary does not match its verdict's fixed value must surface as
+// reason=invalid_summary/field=summary in the Envelope's Parse diagnostic
+// -- and only that sanitized classification, never the actual (arbitrary,
+// potentially attacker- or Provider-authored) summary text the Runner
+// produced.
+func TestReviewFailureEnvelopeCarriesInvalidSummaryReasonWithoutRawBody(t *testing.T) {
+	secretSummary := "PROVIDER_SECRET_MARKER_MUST_NOT_APPEAR_IN_ENVELOPE"
+	_, parseErr := review.ParseTypedDecision(`{"verdict":"Approve","issues":[],"summary":"` + secretSummary + `"}`)
+	workerErr := &service.WorkerExecutionError{Kind: service.WorkerErrorInvalidReviewResult, Err: parseErr}
+	envelope := reviewFailureEnvelope(workerErr, nil, nil)
+	if envelope.Code != "REVIEW_RESULT_INVALID" || envelope.Stage != "review_result_parser" ||
+		envelope.Parse == nil || envelope.Parse.Domain != "review" ||
+		envelope.Parse.Reason != string(review.ParseFailureInvalidSummary) || envelope.Parse.Field != "summary" {
+		t.Fatalf("reviewFailureEnvelope() = %#v", envelope)
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), secretSummary) {
+		t.Fatalf("serialized Envelope leaked the raw invalid summary body: %s", encoded)
+	}
+}
+
+// TestReviewFailureEnvelopeCarriesApproveIssuesForbiddenReasonWithoutRawBody
+// is PB-3bo.5's required FailureEnvelope propagation test: a fresh Approve
+// Review carrying issues must surface as reason=approve_issues_forbidden/
+// field=issues in the Envelope's Parse diagnostic -- and only that
+// sanitized classification, never the actual (arbitrary, potentially
+// attacker- or Provider-authored) issue body text the Runner produced.
+func TestReviewFailureEnvelopeCarriesApproveIssuesForbiddenReasonWithoutRawBody(t *testing.T) {
+	secretIssueText := "PROVIDER_SECRET_MARKER_MUST_NOT_APPEAR_IN_ENVELOPE"
+	_, parseErr := review.ParseTypedDecision(`{"verdict":"Approve","issues":[{"category":"requirements","severity":"medium","description":"` +
+		secretIssueText + `","suggested_action":"` + secretIssueText + `"}],"summary":"` + review.SummaryApprove + `"}`)
+	workerErr := &service.WorkerExecutionError{Kind: service.WorkerErrorInvalidReviewResult, Err: parseErr}
+	envelope := reviewFailureEnvelope(workerErr, nil, nil)
+	if envelope.Code != "REVIEW_RESULT_INVALID" || envelope.Stage != "review_result_parser" ||
+		envelope.Parse == nil || envelope.Parse.Domain != "review" ||
+		envelope.Parse.Reason != string(review.ParseFailureIssuesForbidden) || envelope.Parse.Field != "issues" {
+		t.Fatalf("reviewFailureEnvelope() = %#v", envelope)
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), secretIssueText) {
+		t.Fatalf("serialized Envelope leaked the raw invalid issue body: %s", encoded)
 	}
 }
 
@@ -516,7 +715,7 @@ func TestReviewFailureEnvelopeCarriesParseFieldForMissingRequiredField(t *testin
 // (invalid enum value, blank text, ...) already has a more specific cause
 // that presence data cannot add to.
 func TestReviewFailureEnvelopeOmitsPresenceForNonMissingFieldReasons(t *testing.T) {
-	_, parseErr := review.ParseTypedDecision(`{"verdict":"Request Changes","issues":[{"category":"unsupported","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`)
+	_, parseErr := review.ParseTypedDecision(`{"verdict":"Request Changes","issues":[{"category":"unsupported","severity":"high","description":"x","suggested_action":"y"}],"summary":"` + review.SummaryRequestChanges + `"}`)
 	parseErr.(*review.ParseError).Presence = map[string]bool{"verdict": true, "issues": true, "summary": true}
 	workerErr := &service.WorkerExecutionError{Kind: service.WorkerErrorInvalidReviewResult, Err: parseErr}
 	envelope := reviewFailureEnvelope(workerErr, nil, nil)

@@ -94,15 +94,15 @@ func (builder Builder) BuildReview(ctx context.Context, input review.PromptInput
 		"人間向けのレビュー本文（Markdown）はWorkCairnが機械的に生成するため、あなたは作成しません。",
 		"1. JSONのtop-level fieldはverdict・issues・summaryの3つだけにしてください。それ以外のfieldを追加しないでください。",
 		`2. verdictの値は、次の2つの文字列のどちらか一方をそのまま使用してください（言い換え・翻訳・組み合わせは禁止）: "Approve" または "Request Changes"`,
-		"3. issuesは常にJSON配列にしてください（指摘がない場合は空配列[]、verdictがRequest Changesの場合は1件以上）。",
+		"3. issuesは常にJSON配列にしてください。verdictが\"Approve\"の場合は必ず空配列[]にしてください（指摘がある場合はverdictを\"Request Changes\"にしてください。ApproveとissuesのペアリングはWorkCairnが型として拒否します）。verdictが\"Request Changes\"の場合は1件以上にしてください。",
 		"4. issuesの各要素は、category・severity・description・suggested_actionの4 fieldだけを持つオブジェクトにしてください。",
 		"5. categoryの値は date, format, requirements, context, todo, other のいずれか1つの文字列にしてください。",
 		"6. severityの値は high, medium, low のいずれか1つの文字列にしてください。",
 		"7. descriptionとsuggested_actionは空文字列にせず、具体的な内容を記述してください。",
-		"8. summaryは、今回の判定理由を短く要約した文字列にしてください。空文字列は禁止です。",
+		`8. summaryは、verdictに応じて次の文字列をそのまま出力してください（言い換え・要約・追記は禁止です。判定理由や指摘の詳細はissuesにだけ記述してください）: verdictが"Approve"の場合は"` + review.SummaryApprove + `"、verdictが"Request Changes"の場合は"` + review.SummaryRequestChanges + `"。`,
 		"",
-		"## 出力例（構造の見本です。この値をそのままコピーせず、あなた自身の判断内容に差し替えてください）",
-		`{"verdict":"Request Changes","issues":[{"category":"requirements","severity":"medium","description":"要件Xへの言及がありません。","suggested_action":"要件Xについて追記してください。"}],"summary":"要件Xの記載漏れのため修正を依頼します。"}`,
+		"## 出力例（構造の見本です。issuesの内容はあなた自身の判断内容に差し替えてください。verdictとsummaryはこの通りの文字列を使用してください）",
+		`{"verdict":"Request Changes","issues":[{"category":"requirements","severity":"medium","description":"要件Xへの言及がありません。","suggested_action":"要件Xについて追記してください。"}],"summary":"` + review.SummaryRequestChanges + `"}`,
 	}, "\n")
 
 	frontmatter := input.Deliverable.Frontmatter

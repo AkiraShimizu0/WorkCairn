@@ -73,8 +73,9 @@ func TestReviewBuilderIsDeterministicAndKeepsSectionOrder(t *testing.T) {
 		t.Fatal("output format contract must appear before the example")
 	}
 	if !strings.Contains(first.System, "人間向けのレビュー本文（Markdown）はWorkCairnが機械的に生成するため、あなたは作成しません。") ||
-		!strings.Contains(first.System, "summaryは、今回の判定理由を短く要約した文字列にしてください。空文字列は禁止です。") {
-		t.Fatal("Review Prompt does not make the Go-owned Markdown / required summary responsibility explicit")
+		!strings.Contains(first.System, review.SummaryApprove) ||
+		!strings.Contains(first.System, review.SummaryRequestChanges) {
+		t.Fatal("Review Prompt does not make the Go-owned Markdown / fixed per-verdict summary responsibility explicit")
 	}
 	if strings.Contains(first.System, "成果物はMarkdownで出力してください。") ||
 		!strings.Contains(first.System, "レビュー結果は、後述するJSON形式だけで出力してください。") {

@@ -82,7 +82,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"初めての利用者が次に何をすればよいかが不明確です。\",\"suggested_action\":\"最初の依頼を入力する案内を追記してください。\"}],\"summary\":\"利用開始の案内を追加すると目的を満たします。\"}"
+       "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"初めての利用者が次に何をすればよいかが不明確です。\",\"suggested_action\":\"最初の依頼を入力する案内を追記してください。\"}],\"summary\":\"レビューの結果、修正が必要な指摘があります。詳細は下記の指摘事項を参照してください。\"}"
       }
      ],
      "usage": {
@@ -126,7 +126,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"利用開始の案内が追加され、要件を満たしています。\"}"
+       "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"レビューの結果、問題は見つかりませんでした。\"}"
       }
      ],
      "usage": {
@@ -216,7 +216,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"clarification gate用の成果物として問題ありません。\"}"
+       "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"レビューの結果、問題は見つかりませんでした。\"}"
       }
      ],
      "usage": {
@@ -370,7 +370,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"表の内容は要件を満たしています。\"}"
+       "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"レビューの結果、問題は見つかりませんでした。\"}"
       }
      ],
      "usage": {
@@ -772,7 +772,7 @@
       "content": [
        {
         "type": "text",
-        "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"問題ありません。\"}"
+        "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"レビューの結果、問題は見つかりませんでした。\"}"
        }
       ],
       "usage": {
@@ -794,7 +794,7 @@
       "content": [
        {
         "type": "text",
-        "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"問題ありません。\"}"
+        "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"レビューの結果、問題は見つかりませんでした。\"}"
        }
       ],
       "usage": {
@@ -816,7 +816,7 @@
       "content": [
        {
         "type": "text",
-        "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"問題ありません。\"}"
+        "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"レビューの結果、問題は見つかりませんでした。\"}"
        }
       ],
       "usage": {
@@ -838,7 +838,7 @@
       "content": [
        {
         "type": "text",
-        "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"問題ありません。\"}"
+        "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"レビューの結果、問題は見つかりませんでした。\"}"
        }
       ],
       "usage": {
@@ -1024,7 +1024,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"初めての利用者が次に何をすればよいかが不明確です。\",\"suggested_action\":\"最初の依頼を入力する案内を追記してください。\"}],\"summary\":\"利用開始の案内を追加すると目的を満たします。\"}"
+       "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"初めての利用者が次に何をすればよいかが不明確です。\",\"suggested_action\":\"最初の依頼を入力する案内を追記してください。\"}],\"summary\":\"レビューの結果、修正が必要な指摘があります。詳細は下記の指摘事項を参照してください。\"}"
       }
      ],
      "usage": {
@@ -1068,7 +1068,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"具体的な利用例が不足しています。\",\"suggested_action\":\"最初の依頼の具体例を1つ追記してください。\"}],\"summary\":\"具体例を追加すると目的を満たします。\"}"
+       "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"具体的な利用例が不足しています。\",\"suggested_action\":\"最初の依頼の具体例を1つ追記してください。\"}],\"summary\":\"レビューの結果、修正が必要な指摘があります。詳細は下記の指摘事項を参照してください。\"}"
       }
      ],
      "usage": {
@@ -1112,7 +1112,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"注意点の記載が不足しています。\",\"suggested_action\":\"依頼前に確認すべき注意点を追記してください。\"}],\"summary\":\"注意点を追加すると目的を満たします。\"}"
+       "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"注意点の記載が不足しています。\",\"suggested_action\":\"依頼前に確認すべき注意点を追記してください。\"}],\"summary\":\"レビューの結果、修正が必要な指摘があります。詳細は下記の指摘事項を参照してください。\"}"
       }
      ],
      "usage": {
@@ -1156,7 +1156,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"注意点が追加され、要件を満たしています。\"}"
+       "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"レビューの結果、問題は見つかりませんでした。\"}"
       }
      ],
      "usage": {
@@ -1204,7 +1204,7 @@
       "content": [
        {
         "type": "text",
-        "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"要件を満たしています。\"}"
+        "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"レビューの結果、問題は見つかりませんでした。\"}"
        }
       ],
       "usage": {
@@ -1226,7 +1226,7 @@
       "content": [
        {
         "type": "text",
-        "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"判断根拠が不足しています。\",\"suggested_action\":\"根拠を1点追加してください。\"}],\"summary\":\"根拠を追加すると目的を満たします。\"}"
+        "text": "{\"verdict\":\"Request Changes\",\"issues\":[{\"category\":\"requirements\",\"severity\":\"medium\",\"description\":\"判断根拠が不足しています。\",\"suggested_action\":\"根拠を1点追加してください。\"}],\"summary\":\"レビューの結果、修正が必要な指摘があります。詳細は下記の指摘事項を参照してください。\"}"
        }
       ],
       "usage": {
@@ -1248,7 +1248,7 @@
       "content": [
        {
         "type": "text",
-        "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"要件を満たしています。\"}"
+        "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"レビューの結果、問題は見つかりませんでした。\"}"
        }
       ],
       "usage": {
@@ -1270,7 +1270,7 @@
       "content": [
        {
         "type": "text",
-        "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"指摘が反映されています。\"}"
+        "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"レビューの結果、問題は見つかりませんでした。\"}"
        }
       ],
       "usage": {
@@ -1292,7 +1292,7 @@
       "content": [
        {
         "type": "text",
-        "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"統合結果は要件を満たしています。\"}"
+        "text": "{\"verdict\":\"Approve\",\"issues\":[],\"summary\":\"レビューの結果、問題は見つかりませんでした。\"}"
        }
       ],
       "usage": {
@@ -1495,7 +1495,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\": \"Request Changes\", \"issues\": [{\"category\": \"requirements\", \"severity\": \"medium\", \"description\": \"利用開始の案内に関する要件が不足しています。\", \"suggested_action\": \"利用開始の案内について追記してください。\"}], \"summary\": \"利用開始の案内を追加すると目的を満たします。\"}"
+       "text": "{\"verdict\": \"Request Changes\", \"issues\": [{\"category\": \"requirements\", \"severity\": \"medium\", \"description\": \"利用開始の案内に関する要件が不足しています。\", \"suggested_action\": \"利用開始の案内について追記してください。\"}], \"summary\": \"レビューの結果、修正が必要な指摘があります。詳細は下記の指摘事項を参照してください。\"}"
       }
      ],
      "usage": {
@@ -1539,7 +1539,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\": \"Request Changes\", \"issues\": [{\"category\": \"requirements\", \"severity\": \"medium\", \"description\": \"導入手順の案内に関する要件が不足しています。\", \"suggested_action\": \"導入手順の案内について追記してください。\"}], \"summary\": \"導入手順の案内を追加すると目的を満たします。\"}"
+       "text": "{\"verdict\": \"Request Changes\", \"issues\": [{\"category\": \"requirements\", \"severity\": \"medium\", \"description\": \"導入手順の案内に関する要件が不足しています。\", \"suggested_action\": \"導入手順の案内について追記してください。\"}], \"summary\": \"レビューの結果、修正が必要な指摘があります。詳細は下記の指摘事項を参照してください。\"}"
       }
      ],
      "usage": {
@@ -1583,7 +1583,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\": \"Request Changes\", \"issues\": [{\"category\": \"requirements\", \"severity\": \"medium\", \"description\": \"次のステップの案内に関する要件が不足しています。\", \"suggested_action\": \"次のステップの案内について追記してください。\"}], \"summary\": \"次のステップの案内を追加すると目的を満たします。\"}"
+       "text": "{\"verdict\": \"Request Changes\", \"issues\": [{\"category\": \"requirements\", \"severity\": \"medium\", \"description\": \"次のステップの案内に関する要件が不足しています。\", \"suggested_action\": \"次のステップの案内について追記してください。\"}], \"summary\": \"レビューの結果、修正が必要な指摘があります。詳細は下記の指摘事項を参照してください。\"}"
       }
      ],
      "usage": {
@@ -1627,7 +1627,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"案内が追加され、要件を満たしています。\"}"
+       "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"レビューの結果、問題は見つかりませんでした。\"}"
       }
      ],
      "usage": {
@@ -1695,7 +1695,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\": \"Request Changes\", \"issues\": [{\"category\": \"requirements\", \"severity\": \"medium\", \"description\": \"限定確認モードであることの案内が不足しています。\", \"suggested_action\": \"限定確認モードである旨を追記してください。\"}], \"summary\": \"限定確認モードの案内を追加すると目的を満たします。\"}"
+       "text": "{\"verdict\": \"Request Changes\", \"issues\": [{\"category\": \"requirements\", \"severity\": \"medium\", \"description\": \"限定確認モードであることの案内が不足しています。\", \"suggested_action\": \"限定確認モードである旨を追記してください。\"}], \"summary\": \"レビューの結果、修正が必要な指摘があります。詳細は下記の指摘事項を参照してください。\"}"
       }
      ],
      "usage": {
@@ -1763,7 +1763,7 @@
      "content": [
       {
        "type": "text",
-       "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"要件を満たしています。\"}"
+       "text": "{\"verdict\": \"Approve\", \"issues\": [], \"summary\": \"レビューの結果、問題は見つかりませんでした。\"}"
       }
      ],
      "usage": {

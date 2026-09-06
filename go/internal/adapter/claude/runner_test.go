@@ -384,7 +384,16 @@ func TestRunnerSerializesReviewTypedDecisionRequestFixture(t *testing.T) {
 	}
 
 	// Both anyOf branches must independently require summary — the
-	// concrete regression this fixture guards against.
+	// concrete regression this fixture guards against. PB-3bo.1: each
+	// branch's summary must also be closed to its own non-empty `const`,
+	// matching the verdict that branch declares — a Schema/parser semantic
+	// contract mismatch (Provider Schema allowed an empty summary; Go's
+	// ParseTypedDecision rejected one) would otherwise let a fully valid
+	// Structured Output response fail Review for no domain reason.
+	wantSummaryByVerdict := map[string]string{
+		string(review.VerdictApprove):        review.SummaryApprove,
+		string(review.VerdictRequestChanges): review.SummaryRequestChanges,
+	}
 	schema, ok := wantJSON.(map[string]any)["output_config"].(map[string]any)["format"].(map[string]any)["schema"].(map[string]any)
 	if !ok {
 		t.Fatalf("fixture schema shape = %#v", wantJSON)
@@ -393,6 +402,7 @@ func TestRunnerSerializesReviewTypedDecisionRequestFixture(t *testing.T) {
 	if !ok || len(variants) != 2 {
 		t.Fatalf("fixture anyOf = %#v", schema["anyOf"])
 	}
+	seenVerdicts := map[string]bool{}
 	for index, rawVariant := range variants {
 		variant := rawVariant.(map[string]any)
 		required, ok := variant["required"].([]any)
@@ -408,6 +418,23 @@ func TestRunnerSerializesReviewTypedDecisionRequestFixture(t *testing.T) {
 		if !found {
 			t.Fatalf("variant %d does not require summary: %#v", index, required)
 		}
+		properties, ok := variant["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("variant %d properties = %#v", index, variant["properties"])
+		}
+		verdictConst, _ := properties["verdict"].(map[string]any)["const"].(string)
+		wantSummary, knownVerdict := wantSummaryByVerdict[verdictConst]
+		if !knownVerdict {
+			t.Fatalf("variant %d verdict const = %#v", index, verdictConst)
+		}
+		seenVerdicts[verdictConst] = true
+		summary, ok := properties["summary"].(map[string]any)
+		if !ok || summary["type"] != "string" || summary["const"] != wantSummary || strings.TrimSpace(wantSummary) == "" {
+			t.Fatalf("variant %d (%s) summary = %#v, want const=%q", index, verdictConst, summary, wantSummary)
+		}
+	}
+	if len(seenVerdicts) != 2 {
+		t.Fatalf("fixture verdicts seen = %#v, want both Approve and Request Changes", seenVerdicts)
 	}
 }
 

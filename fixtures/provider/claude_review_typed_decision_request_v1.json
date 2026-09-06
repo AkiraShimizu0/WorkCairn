@@ -49,7 +49,7 @@
               },
               "summary": {
                 "type": "string",
-                "description": "A short qualitative summary of the review decision. Must contain a non-whitespace character."
+                "const": "レビューの結果、問題は見つかりませんでした。"
               }
             },
             "required": ["verdict", "issues", "summary"],
@@ -92,7 +92,7 @@
               },
               "summary": {
                 "type": "string",
-                "description": "A short qualitative summary of the review decision. Must contain a non-whitespace character."
+                "const": "レビューの結果、修正が必要な指摘があります。詳細は下記の指摘事項を参照してください。"
               }
             },
             "required": ["verdict", "issues", "summary"],

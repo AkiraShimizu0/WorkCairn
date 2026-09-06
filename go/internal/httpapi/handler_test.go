@@ -1008,7 +1008,7 @@ func TestMobileInteractionHTTPFlowUsesMockProviderAndTemporaryVaultToCompletion(
 		planOutput([]string{"対象はiPhoneを優先しますか？"}),
 		planOutput([]string{}),
 		"# 完成した成果物\n\niPhone向けの要件です。",
-		typedReviewOutput("Approve", `[]`, "問題ありません。"),
+		typedReviewOutput("Approve", `[]`, review.SummaryApprove),
 	}
 	providerCalls := 0
 	providerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -1153,10 +1153,10 @@ func TestMobileInteractionHTTPFlowRequestChangesRevisionReReviewToCompletion(t *
 		"ceo_questions": []string{},
 	})
 	reviewOutput := func(verdict string) string {
-		issues, summary := `[]`, "問題ありません。"
+		issues, summary := `[]`, review.SummaryApprove
 		if verdict == "Request Changes" {
 			issues = `[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}]`
-			summary = "要件不足のため修正を依頼します。"
+			summary = review.SummaryRequestChanges
 		}
 		return typedReviewOutput(verdict, issues, summary)
 	}
@@ -1347,7 +1347,7 @@ func TestMobileInteractionHTTPFlowStructuredReviewResponseViolationClassifiesOut
 		// Synthetic Provider contract violation: Structured Outputs promises
 		// one JSON document, so a Markdown fence must be rejected by the
 		// Adapter rather than forwarded to the Review Domain parser.
-		"```json\n" + typedReviewOutput("Approve", `[]`, "問題ありません。") + "\n```",
+		"```json\n" + typedReviewOutput("Approve", `[]`, review.SummaryApprove) + "\n```",
 	}
 	providerCalls := 0
 	providerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -1492,7 +1492,7 @@ func TestMobileInteractionHTTPFlowSameRequestTwiceCreatesDistinctProjectsSafely(
 		"steps":         []map[string]any{{"kind": "write", "description": "要件をまとめる", "required_role": "Product Manager"}},
 		"ceo_questions": []string{},
 	})
-	approveReview := typedReviewOutput("Approve", `[]`, "問題ありません。")
+	approveReview := typedReviewOutput("Approve", `[]`, review.SummaryApprove)
 	providerOutputs := []string{
 		string(planOutput), "# 成果物（1回目）\n\n最初の依頼の成果物です。", approveReview,
 		string(planOutput), "# 成果物（2回目）\n\n2回目の依頼の成果物です。", approveReview,

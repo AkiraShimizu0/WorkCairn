@@ -13,7 +13,7 @@ func TestParseTypedDecisionMatchesCanonicalNormalization(t *testing.T) {
 			`"category":"date","severity":"high",` +
 			`"description":"  日付が矛盾しています。  ",` +
 			`"suggested_action":" executed_atに合わせてください。 "}],` +
-			`"summary":"  日付の不整合を修正してください。  "}`,
+			`"summary":"` + SummaryRequestChanges + `"}`,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -24,32 +24,94 @@ func TestParseTypedDecisionMatchesCanonicalNormalization(t *testing.T) {
 			Category: "date", Severity: "high",
 			Description: "日付が矛盾しています。", SuggestedAction: "executed_atに合わせてください。",
 		}},
-		Summary: "日付の不整合を修正してください。",
+		Summary: SummaryRequestChanges,
 	}
 	if !reflect.DeepEqual(decision, want) {
 		t.Fatalf("decision = %#v, want %#v", decision, want)
 	}
 }
 
-func TestParseTypedDecisionAcceptsApproveWithEmptyIssues(t *testing.T) {
-	decision, err := ParseTypedDecision(`{"verdict":"Approve","issues":[],"summary":"問題ありません。"}`)
-	if err != nil {
-		t.Fatal(err)
+// TestParseTypedDecisionAcceptsFixedSummaryForItsOwnVerdict is PB-3bo.3's
+// positive contract test: both verdicts, each with exactly its own fixed
+// summary const, succeed and round-trip Summary unchanged.
+func TestParseTypedDecisionAcceptsFixedSummaryForItsOwnVerdict(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		verdict Verdict
+		summary string
+	}{
+		{
+			name:    "Approve",
+			content: `{"verdict":"Approve","issues":[],"summary":"` + SummaryApprove + `"}`,
+			verdict: VerdictApprove, summary: SummaryApprove,
+		},
+		{
+			name: "Request Changes",
+			content: `{"verdict":"Request Changes","issues":[{"category":"requirements","severity":"medium",` +
+				`"description":"要件が不足しています。","suggested_action":"要件を追記してください。"}],"summary":"` + SummaryRequestChanges + `"}`,
+			verdict: VerdictRequestChanges, summary: SummaryRequestChanges,
+		},
 	}
-	if decision.Verdict != VerdictApprove || len(decision.Issues) != 0 || decision.Summary != "問題ありません。" {
-		t.Fatalf("decision = %#v", decision)
+	for _, current := range tests {
+		t.Run(current.name, func(t *testing.T) {
+			decision, err := ParseTypedDecision(current.content)
+			if err != nil || decision.Verdict != current.verdict || decision.Summary != current.summary {
+				t.Fatalf("ParseTypedDecision(%s) = %#v, %v", current.name, decision, err)
+			}
+		})
 	}
 }
 
-func TestParseTypedDecisionAcceptsRequestChangesWithValidIssue(t *testing.T) {
-	decision, err := ParseTypedDecision(`{"verdict":"Request Changes","issues":[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}],"summary":"修正が必要です。"}`)
-	if err != nil || decision.Verdict != VerdictRequestChanges || len(decision.Issues) != 1 {
-		t.Fatalf("decision = %#v, error = %v", decision, err)
+// TestParseTypedDecisionRejectsSummaryMismatch is PB-3bo.3's negative
+// contract test: an arbitrary non-blank summary, the *other* verdict's
+// fixed value, and the correct value with added leading/trailing
+// whitespace are all rejected as ParseFailureInvalidSummary/"summary" --
+// the same semantics Provider Schema `const` enforcement already has.
+func TestParseTypedDecisionRejectsSummaryMismatch(t *testing.T) {
+	validRequestChangesIssues := `[{"category":"requirements","severity":"medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}]`
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"arbitrary non-blank summary (Approve)", `{"verdict":"Approve","issues":[],"summary":"問題ありません。"}`},
+		{"arbitrary non-blank summary (Request Changes)", `{"verdict":"Request Changes","issues":` + validRequestChangesIssues + `,"summary":"修正が必要です。"}`},
+		{"opposite verdict's fixed summary on Approve", `{"verdict":"Approve","issues":[],"summary":"` + SummaryRequestChanges + `"}`},
+		{"opposite verdict's fixed summary on Request Changes", `{"verdict":"Request Changes","issues":` + validRequestChangesIssues + `,"summary":"` + SummaryApprove + `"}`},
+		{"correct value with leading whitespace", `{"verdict":"Approve","issues":[],"summary":" ` + SummaryApprove + `"}`},
+		{"correct value with trailing whitespace", `{"verdict":"Approve","issues":[],"summary":"` + SummaryApprove + ` "}`},
+		{"correct value with surrounding whitespace", `{"verdict":"Request Changes","issues":` + validRequestChangesIssues + `,"summary":"  ` + SummaryRequestChanges + `  "}`},
+	}
+	for _, current := range tests {
+		t.Run(current.name, func(t *testing.T) {
+			_, err := ParseTypedDecision(current.content)
+			var parseErr *ParseError
+			if !errors.As(err, &parseErr) || parseErr.Reason != ParseFailureInvalidSummary || parseErr.Field != "summary" {
+				t.Fatalf("ParseTypedDecision(%q) = %v, want invalid_summary/summary", current.content, err)
+			}
+		})
+	}
+}
+
+// TestParseTypedDecisionRejectsApproveWithNonEmptyIssues is PB-3bo.5's
+// negative contract test: the only two valid fresh combinations are
+// Approve+empty-issues and Request Changes+non-empty-issues. Approve with
+// one or more issues -- even with an otherwise-correct fixed summary and
+// otherwise-valid issue fields -- is rejected as
+// ParseFailureIssuesForbidden/"issues", never reaching per-issue field
+// validation (so an invalid issue body inside a rejected Approve response
+// is never even inspected).
+func TestParseTypedDecisionRejectsApproveWithNonEmptyIssues(t *testing.T) {
+	content := `{"verdict":"Approve","issues":[{"category":"requirements","severity":"medium","description":"x","suggested_action":"y"}],"summary":"` + SummaryApprove + `"}`
+	_, err := ParseTypedDecision(content)
+	var parseErr *ParseError
+	if !errors.As(err, &parseErr) || parseErr.Reason != ParseFailureIssuesForbidden || parseErr.Field != "issues" {
+		t.Fatalf("ParseTypedDecision(%q) = %v, want approve_issues_forbidden/issues", content, err)
 	}
 }
 
 func TestParseTypedDecisionCanonicalizesOnlyDocumentedEnumCasingVariation(t *testing.T) {
-	decision, err := ParseTypedDecision(`{"verdict":"Request changes","issues":[{"category":"Requirements","severity":"Medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}],"summary":"修正が必要です。"}`)
+	decision, err := ParseTypedDecision(`{"verdict":"Request changes","issues":[{"category":"Requirements","severity":"Medium","description":"要件が不足しています。","suggested_action":"要件を追記してください。"}],"summary":"` + SummaryRequestChanges + `"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,15 +191,16 @@ func TestParseTypedDecisionClassifiesSanitizedParseFailureReasonWithoutRawText(t
 		{"summary present but empty string", `{"verdict":"Approve","issues":[],"summary":""}`, ParseFailureMissingRequiredField},
 		{"summary present but whitespace only", `{"verdict":"Approve","issues":[],"summary":"   "}`, ParseFailureMissingRequiredField},
 		{"invalid verdict value", `{"verdict":"` + secret + `","issues":[],"summary":"x"}`, ParseFailureInvalidVerdict},
+		{"summary present but does not match fixed value", `{"verdict":"Approve","issues":[],"summary":"` + secret + `"}`, ParseFailureInvalidSummary},
 		{"issues not an array", `{"verdict":"Approve","issues":"` + secret + `","summary":"x"}`, ParseFailureJSONDecodeFailed},
 		{"issues null", `{"verdict":"Approve","issues":null,"summary":"x"}`, ParseFailureMissingRequiredField},
 		{"issues object", `{"verdict":"Approve","issues":{},"summary":"x"}`, ParseFailureJSONDecodeFailed},
 		{"issue unknown field", `{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","description":"x","suggested_action":"y","extra":"` + secret + `"}],"summary":"x"}`, ParseFailureUnknownField},
-		{"invalid issue category", `{"verdict":"Request Changes","issues":[{"category":"` + secret + `","severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`, ParseFailureInvalidIssueCategory},
-		{"invalid issue severity", `{"verdict":"Request Changes","issues":[{"category":"date","severity":"` + secret + `","description":"x","suggested_action":"y"}],"summary":"x"}`, ParseFailureInvalidIssueSeverity},
-		{"missing issue description", `{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","suggested_action":"y"}],"summary":"x"}`, ParseFailureIssueTextRequired},
-		{"empty issue text", `{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","description":" ","suggested_action":"y"}],"summary":"x"}`, ParseFailureIssueTextRequired},
-		{"empty issues on Request Changes", `{"verdict":"Request Changes","issues":[],"summary":"x"}`, ParseFailureIssuesRequired},
+		{"invalid issue category", `{"verdict":"Request Changes","issues":[{"category":"` + secret + `","severity":"high","description":"x","suggested_action":"y"}],"summary":"` + SummaryRequestChanges + `"}`, ParseFailureInvalidIssueCategory},
+		{"invalid issue severity", `{"verdict":"Request Changes","issues":[{"category":"date","severity":"` + secret + `","description":"x","suggested_action":"y"}],"summary":"` + SummaryRequestChanges + `"}`, ParseFailureInvalidIssueSeverity},
+		{"missing issue description", `{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","suggested_action":"y"}],"summary":"` + SummaryRequestChanges + `"}`, ParseFailureIssueTextRequired},
+		{"empty issue text", `{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","description":" ","suggested_action":"y"}],"summary":"` + SummaryRequestChanges + `"}`, ParseFailureIssueTextRequired},
+		{"empty issues on Request Changes", `{"verdict":"Request Changes","issues":[],"summary":"` + SummaryRequestChanges + `"}`, ParseFailureIssuesRequired},
 	}
 	for _, current := range tests {
 		t.Run(current.name, func(t *testing.T) {
@@ -192,24 +255,25 @@ func TestParseTypedDecisionRejectsEveryKindOfTrailingContent(t *testing.T) {
 // trailing content: whitespace after the JSON value, which encoding/json
 // itself treats as insignificant.
 func TestParseTypedDecisionAcceptsTrailingWhitespaceOnly(t *testing.T) {
-	valid := `{"verdict":"Approve","issues":[],"summary":"問題ありません。"}`
+	valid := `{"verdict":"Approve","issues":[],"summary":"` + SummaryApprove + `"}`
 	if _, err := ParseTypedDecision(valid + "  \n\t "); err != nil {
 		t.Fatalf("trailing whitespace only: error = %v, want nil", err)
 	}
 }
 
-// TestParseTypedDecisionParseErrorFieldOnlyForMissingRequiredField locks
-// which of the seven required Review Typed Decision fields can actually
-// produce Reason == ParseFailureMissingRequiredField, and that Field is
-// populated only for those two (issues, summary). verdict and the four
+// TestParseTypedDecisionParseErrorFieldScopedToFieldSpecificReasons locks
+// exactly which Reason values populate ParseError.Field, and with what
+// value: ParseFailureMissingRequiredField ("issues"/"summary"),
+// ParseFailureInvalidSummary (PB-3bo.3, "summary"), and
+// ParseFailureIssuesForbidden (PB-3bo.5, "issues") — every Reason whose
+// failure is scoped to one specific top-level field. verdict and the four
 // issue fields fail JSON decode into their zero value ("") when absent,
 // which is indistinguishable from an explicitly wrong value, so they
 // already carry a more specific Reason (invalid_verdict,
 // invalid_issue_category, invalid_issue_severity, issue_text_required)
 // instead — ParseError.Field stays empty for those, matching
-// ceoplan.IntentParseError's identical scoping of Field to
-// missing_required_field only.
-func TestParseTypedDecisionParseErrorFieldOnlyForMissingRequiredField(t *testing.T) {
+// ceoplan.IntentParseError's identical scoping.
+func TestParseTypedDecisionParseErrorFieldScopedToFieldSpecificReasons(t *testing.T) {
 	tests := []struct {
 		name      string
 		output    string
@@ -219,24 +283,30 @@ func TestParseTypedDecisionParseErrorFieldOnlyForMissingRequiredField(t *testing
 		{"missing verdict", `{"issues":[],"summary":"x"}`, ParseFailureInvalidVerdict, ""},
 		{"missing issues", `{"verdict":"Approve","summary":"x"}`, ParseFailureMissingRequiredField, "issues"},
 		{"missing summary", `{"verdict":"Approve","issues":[]}`, ParseFailureMissingRequiredField, "summary"},
+		{"summary mismatched for verdict", `{"verdict":"Approve","issues":[],"summary":"x"}`, ParseFailureInvalidSummary, "summary"},
+		{
+			"issues forbidden for Approve",
+			`{"verdict":"Approve","issues":[{"category":"date","severity":"high","description":"x","suggested_action":"y"}],"summary":"` + SummaryApprove + `"}`,
+			ParseFailureIssuesForbidden, "issues",
+		},
 		{
 			"missing issue.category",
-			`{"verdict":"Request Changes","issues":[{"severity":"high","description":"x","suggested_action":"y"}],"summary":"x"}`,
+			`{"verdict":"Request Changes","issues":[{"severity":"high","description":"x","suggested_action":"y"}],"summary":"` + SummaryRequestChanges + `"}`,
 			ParseFailureInvalidIssueCategory, "",
 		},
 		{
 			"missing issue.severity",
-			`{"verdict":"Request Changes","issues":[{"category":"date","description":"x","suggested_action":"y"}],"summary":"x"}`,
+			`{"verdict":"Request Changes","issues":[{"category":"date","description":"x","suggested_action":"y"}],"summary":"` + SummaryRequestChanges + `"}`,
 			ParseFailureInvalidIssueSeverity, "",
 		},
 		{
 			"missing issue.description",
-			`{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","suggested_action":"y"}],"summary":"x"}`,
+			`{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","suggested_action":"y"}],"summary":"` + SummaryRequestChanges + `"}`,
 			ParseFailureIssueTextRequired, "",
 		},
 		{
 			"missing issue.suggested_action",
-			`{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","description":"x"}],"summary":"x"}`,
+			`{"verdict":"Request Changes","issues":[{"category":"date","severity":"high","description":"x"}],"summary":"` + SummaryRequestChanges + `"}`,
 			ParseFailureIssueTextRequired, "",
 		},
 	}
@@ -271,5 +341,24 @@ func TestDecodeDecisionAcceptsCanonicalJSONWithAndWithoutSummary(t *testing.T) {
 	}
 	if current.Summary != "問題ありません。" {
 		t.Fatalf("summary = %q", current.Summary)
+	}
+}
+
+// TestDecodeDecisionAcceptsLegacyApproveWithIssuesAndFreeTextSummary is
+// PB-3bo.5's legacy-compatibility test: a historical canonical Review
+// record committed before this Checkpoint's Approve+empty-issues closure
+// (or before PB-3bo.3's fixed-summary closure) -- one with a genuinely
+// free-text summary and, hypothetically, an Approve verdict carrying
+// issues -- must still decode via DecodeDecision without error. Neither
+// the ParseFailureIssuesForbidden check nor the ParseFailureInvalidSummary
+// check runs on the requireSummary=false path.
+func TestDecodeDecisionAcceptsLegacyApproveWithIssuesAndFreeTextSummary(t *testing.T) {
+	content := `{"verdict":"Approve","issues":[{"category":"requirements","severity":"medium","description":"x","suggested_action":"y"}],"summary":"以前は自由記述だった要約文。"}`
+	decision, err := DecodeDecision([]byte(content))
+	if err != nil {
+		t.Fatalf("legacy Approve+issues+free-text summary must still decode: %v", err)
+	}
+	if decision.Verdict != VerdictApprove || len(decision.Issues) != 1 || decision.Summary != "以前は自由記述だった要約文。" {
+		t.Fatalf("decoded legacy decision = %#v", decision)
 	}
 }

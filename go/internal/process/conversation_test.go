@@ -527,7 +527,7 @@ func TestInspectConversationProjectsFullReviewedWorkflowDeterministically(t *tes
 		case KindReviewRequestChanges:
 			if entry.Category == CategoryDirectedCommunication && entry.MentionAllowed() {
 				directedRequestChanges++
-				if entry.Speaker.EmployeeID != "QA-001" || entry.ReviewSummary != "要件不足のため修正を依頼します。" {
+				if entry.Speaker.EmployeeID != "QA-001" || entry.ReviewSummary != review.SummaryRequestChanges {
 					t.Fatalf("request changes entry = %#v", entry)
 				}
 			}

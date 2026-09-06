@@ -32,8 +32,10 @@ type OrchestrationResult struct {
 	// It is a sanitized ParseFailureReason value, never raw Provider text.
 	ParseFailureReason string `json:"parse_failure_reason,omitempty"`
 	// ParseFailureField is the optional sanitized ParseError.Field (e.g.
-	// "issues", "summary"), set only when ParseFailureReason is
-	// missing_required_field. It never contains a field value.
+	// "issues", "summary"), set for missing_required_field, invalid_summary
+	// (PB-3bo.3), and approve_issues_forbidden (PB-3bo.5) -- every Reason
+	// whose failure is scoped to one specific top-level field. It never
+	// contains a field value.
 	ParseFailureField string `json:"parse_failure_field,omitempty"`
 	// Failure is the single typed classification this Review Command
 	// determined once, forwarded unchanged by every composing caller

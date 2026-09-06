@@ -28,6 +28,22 @@ const (
 	ParseFailureObjectRequired       ParseFailureReason = "object_required"
 	ParseFailureMissingRequiredField ParseFailureReason = "missing_required_field"
 	ParseFailureInvalidVerdict       ParseFailureReason = "invalid_verdict"
+	// ParseFailureInvalidSummary means a fresh Review's summary was present
+	// and non-blank but did not exactly match the fixed value
+	// TypedDecisionJSONSchema's Provider-side `const` requires for that
+	// verdict (PB-3bo.3) -- an arbitrary non-blank summary, a summary
+	// matching the *other* verdict's fixed value, or the correct value with
+	// added leading/trailing whitespace, all land here. Only ever set when
+	// requireSummary is true (the LLM-output boundary); DecodeDecision's
+	// legacy/historical re-read path never performs this check.
+	ParseFailureInvalidSummary ParseFailureReason = "invalid_summary"
+	// ParseFailureIssuesForbidden means a fresh Review's verdict forbids any
+	// issues at all (Approve is the only such verdict today) but at least
+	// one was present (PB-3bo.5). Only ever set when requireSummary is
+	// true; DecodeDecision's legacy/historical re-read path never performs
+	// this check, so an old committed Approve record that happens to carry
+	// issues (if one exists) still decodes unchanged.
+	ParseFailureIssuesForbidden ParseFailureReason = "approve_issues_forbidden"
 	// ParseFailureInvalidIssuesShape is retained so pre-migration Ledger
 	// evidence remains meaningful. New parse failures use the narrower
 	// reasons below and never rewrite an existing record.
@@ -45,9 +61,11 @@ type ParseError struct {
 	Reason ParseFailureReason
 	// Field is a sanitized Review Typed Decision contract field identifier
 	// such as "issues" or "summary". It never contains a field value, array
-	// index, raw Provider output, or user-authored text. Set only when
-	// Reason is ParseFailureMissingRequiredField (mirrors
-	// ceoplan.IntentParseError.Field).
+	// index, raw Provider output, or user-authored text. Set for
+	// ParseFailureMissingRequiredField (mirrors ceoplan.IntentParseError.Field),
+	// ParseFailureInvalidSummary (PB-3bo.3), and ParseFailureIssuesForbidden
+	// (PB-3bo.5) -- every Reason whose failure is scoped to one specific
+	// top-level field. Empty for every other Reason.
 	Field string
 	// Presence is the optional Provider-neutral top-level key presence
 	// diagnostic the Adapter captured at Provider response receipt time
@@ -94,12 +112,15 @@ type Issue struct {
 type Decision struct {
 	Verdict Verdict `json:"verdict"`
 	Issues  []Issue `json:"issues"`
-	// Summary is the Reviewer's short qualitative summary. It is left out
-	// of Validate()'s requirements deliberately: pre-migration canonical
-	// Review JSON committed before this field existed has no summary key
-	// and must keep decoding via DecodeDecision without error. New Reviews
-	// always carry a non-empty Summary because ParseTypedDecision requires
-	// it at the LLM-output boundary, before a Decision is ever constructed.
+	// Summary is a fixed, verdict-determined outcome label for every fresh
+	// Review (SummaryApprove or SummaryRequestChanges, enforced exactly by
+	// ParseTypedDecision at the LLM-output boundary, PB-3bo.3/PB-3bo.5) --
+	// not a Reviewer-authored free-text rationale. It is left out of
+	// Validate()'s requirements deliberately: pre-migration canonical
+	// Review JSON committed before this field existed (and, for records
+	// committed before PB-3bo.3, with genuinely free-text summary content)
+	// has no summary key or an unconstrained one, and must keep decoding
+	// via DecodeDecision without error.
 	Summary string `json:"summary,omitempty"`
 }
 
@@ -189,9 +210,31 @@ func parseDecision(content []byte, requireSummary bool) (Decision, error) {
 	if candidate.Issues == nil {
 		return Decision{}, newFieldParseError(ParseFailureMissingRequiredField, "issues", fmt.Errorf("%w: issues must be an array", ErrInvalidResult))
 	}
+	// PB-3bo.5: at the fresh LLM-output boundary, the only two valid
+	// combinations are Approve+empty-issues and Request Changes+non-empty
+	// issues -- checked here, before any per-issue field is even read, so
+	// an Approve response's issue bodies are never inspected or leaked
+	// through a validation error once the verdict alone already settles
+	// the outcome. requireSummary=false (DecodeDecision) never runs this
+	// check, matching the existing summary-const scoping.
+	if requireSummary && verdict == VerdictApprove && len(candidate.Issues) > 0 {
+		return Decision{}, newFieldParseError(ParseFailureIssuesForbidden, "issues", fmt.Errorf("%w: issues must be empty for Approve", ErrInvalidResult))
+	}
 	summary := strings.TrimSpace(candidate.Summary)
 	if requireSummary && summary == "" {
 		return Decision{}, newFieldParseError(ParseFailureMissingRequiredField, "summary", fmt.Errorf("%w: summary", ErrInvalidResult))
+	}
+	// PB-3bo.3: at the fresh LLM-output boundary, Go now enforces the exact
+	// same closed value TypedDecisionJSONSchema's Provider-side `const`
+	// already requires for this verdict -- checked against the raw,
+	// untrimmed candidate.Summary so a correct value with added
+	// leading/trailing whitespace is rejected exactly like Provider `const`
+	// enforcement would reject it, not silently accepted via trimming.
+	// requireSummary=false (DecodeDecision's historical re-read path) never
+	// runs this check, so pre-migration and legacy canonical Review JSON
+	// keeps decoding unchanged.
+	if requireSummary && candidate.Summary != summaryForVerdict(verdict) {
+		return Decision{}, newFieldParseError(ParseFailureInvalidSummary, "summary", fmt.Errorf("%w: summary does not match the fixed value for this verdict", ErrInvalidResult))
 	}
 	issues := candidate.Issues
 	decision := Decision{Verdict: verdict, Issues: issues, Summary: summary}
@@ -219,6 +262,21 @@ func parseDecision(content []byte, requireSummary bool) (Decision, error) {
 		return Decision{}, newParseError(ParseFailureIssuesRequired, err)
 	}
 	return decision, nil
+}
+
+// summaryForVerdict returns the exact fixed summary TypedDecisionJSONSchema
+// closes each verdict's anyOf branch to (PB-3bo.3). verdict is always
+// already-canonicalized by the caller (canonicalVerdict), so the default
+// case is unreachable in practice.
+func summaryForVerdict(verdict Verdict) string {
+	switch verdict {
+	case VerdictApprove:
+		return SummaryApprove
+	case VerdictRequestChanges:
+		return SummaryRequestChanges
+	default:
+		return ""
+	}
 }
 
 // canonicalVerdict accepts only the two closed Review verdicts. Anthropic's
