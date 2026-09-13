@@ -2,14 +2,18 @@
 
 この手順が実Keychain、実Providerを使う人間確認です。自動testはtemporary directoryとFakeだけを使い、既存の個人Obsidian Vaultには触れません。
 
-**現在状態（PHASE PB-3n.2、[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)）**: セクションAは**ad-hoc署名binary時代のhistorical product-flow evidence**です。Provider Plan／Task／Reviewという一般利用フロー自体が動くことを示した記録として保持しますが、**セクションA単独ではPublic Beta GOと判断できません**。ADR-0071実装後、Public Beta GOに必須の条件は次のすべてです。
+**公開後の現在状態（PHASE PB-3co）**: `v1.0.0-beta.1`は、署名・notarization・staple済みのmacOS／arm64 DMGとしてGitHub prereleaseへ公開済みです。次の必須Acceptanceは、tag対象candidateとは別に保持したcredential非包含のsanitized evidenceによってすべてCOMPLETE／PASSと確認されました。
 
-- セクションC（signed build New-user Keychain Acceptance）
-- セクションD（signed build Upgrade Keychain Acceptance）
-- セクションE（quarantined download／Gatekeeper Acceptance）
-- Provider Plan／Task／Reviewの一般利用フロー自体のAcceptance（signed buildに対して別途必須。セクションAはこの一部をad-hoc buildで示した記録に過ぎず、signed buildでの再確認を代替しません）
+- セクションC（signed build New-user Keychain Acceptance）: PASS
+- セクションD（signed build Upgrade Keychain Acceptance）: PASS
+- セクションE（quarantined download／Gatekeeper Acceptance）: PASS
+- bounded Provider Acceptance（Plan 1回、Task 1件、Review 1回、Revision／Recovery／retry／fallbackなし）: PASS
+- PB-3cm public asset post-publish verification: PASS
+- PB-3cn Safari download／quarantine／Finder mount／Gatekeeper smoke: PASS
 
-C・D・Eはいずれも**未実施**です。したがって**現時点のPublic BetaはNO-GOです**。セクションAの過去手順は削除せず、historical／旧candidate（ad-hoc署名）evidenceとして以下にそのまま残します。
+tag対象sourceと配布candidate内に残るrelease前のNO-GO文言は、candidateを凍結した時点のhistorical snapshotです。公開後の完了状態は上記の外部sanitized evidenceと本PHASE PB-3co記録で追補し、既存tag、Release、assetは変更しません。今後の機能追加や再Acceptanceは次versionの新しいcandidateを対象とし、`v1.0.0-beta.1` candidateを再利用しません。
+
+以下ではセクションAをad-hoc署名binary時代のhistorical product-flow evidenceとして保持し、C／D／Eは将来candidateでも再実施する正式手順として残します。
 
 ## A. Historical — ad-hoc署名binaryによるproduct-flow evidence（Public Beta GOの根拠にならない）
 
@@ -50,9 +54,9 @@ C・D・Eはいずれも**未実施**です。したがって**現時点のPubli
 - native filesystemでのCAS conflict追加stress
 - 実Vaultのbackup／restore演習
 
-## C. 署名済みbuild — New-user Keychain Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「8」、未実施 — manual signed candidate生成後に実施、**Public Beta GO必須**）
+## C. 署名済みbuild — New-user Keychain Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「8」、`v1.0.0-beta.1`: COMPLETE／PASS）
 
-[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)に沿ってHumanが生成したsigned build Nに対する手順です。PB-3u.2〜7で生成したsigned candidateはdiagnostic evidence専用となり再利用できないため、現時点では本Acceptanceの対象となる新しいmanual signed candidateがまだ生成されておらず、実施済みとして扱いません。automation実装の有無はこの条件の代替にも免除事由にもなりません。`.app`ではないraw CLIであるため、「ダブルクリック起動」や特定の「開く」ダイアログではなく、**FinderでDMGをopenし、Terminalからraw CLIを実行する**という実際の操作へ手順を揃えます。
+[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)に沿ってHumanが生成したsigned build Nに対する手順です。`v1.0.0-beta.1`では新規final candidateに対して初回登録、read-back、同一build再起動後の再入力なしread-backを確認しました。PB-3u.2〜7のdiagnostic candidateはこのAcceptanceへ再利用していません。automation実装の有無はこの条件の代替にも免除事由にもなりません。`.app`ではないraw CLIであるため、「ダブルクリック起動」や特定の「開く」ダイアログではなく、**FinderでDMGをopenし、Terminalからraw CLIを実行する**という実際の操作へ手順を揃えます。
 
 1. clean macOS userまたは明示隔離環境を用意する。
 2. quarantine属性が付いた状態で、canonical Release asset（署名・notarization・staple済みDMG）を実際のdownload経路（ブラウザ等）から取得する。
@@ -67,9 +71,9 @@ C・D・Eはいずれも**未実施**です。したがって**現時点のPubli
 11. 本Acceptance（C）専用のtest credentialを失効またはrotationする（セクションDとは別のcredential・別のsessionを使う。Dの手順が始まる前に失効してよい）。
 12. Acceptance evidence（署名identity SHA-1、Team ID、notarization submission ID、DMG／3 CLIそれぞれのGatekeeper検証結果、各step結果）を保持する。
 
-## D. 署名済みbuild — Upgrade Keychain Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「9」、未実施、**Public Beta GO必須**）
+## D. 署名済みbuild — Upgrade Keychain Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「9」、`v1.0.0-beta.1`: COMPLETE／PASS）
 
-signed build N→signed build N+1のKeychain継続アクセスを検証する手順です。PB-3jはad-hoc署名buildでこの継続アクセスが破綻したことを観測しており（causalityは未確定、[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「Unconfirmed hypotheses」参照）、本手順は[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)によるDeveloper ID署名済みcandidateの生成後に初めて実施できます。
+signed build N→signed build N+1のKeychain継続アクセスを検証する手順です。`v1.0.0-beta.1`では、別々に生成・署名・notarize・stapleしたN／N+1を用い、同じtest credentialを再入力せずにN+1からreadできることを確認しました。PB-3jはad-hoc署名buildでこの継続アクセスが破綻したことを観測しており（causalityは未確定、[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「Unconfirmed hypotheses」参照）、将来candidateでも本手順を省略しません。
 
 **Build N**: immutable commitまたはlocal annotated test tagへ拘束し、source commit SHA、version、build date、`workcairn-daemon`のSHA-256／CDHash、Developer ID identityのSHA-1、実Team ID、canonical identifier、`codesign -d -r-`のdesignated requirementを記録する。
 
@@ -88,9 +92,9 @@ signed build N→signed build N+1のKeychain継続アクセスを検証する手
 
 **Credential separation**: 本Acceptance（D）専用のtest credentialをbuild Nで登録し、build N+1でのread完了を確認した後に失効する。セクションC（New-user）とは別のtest credential・別のsessionを使う。Humanの既存real Anthropic credentialは使用しない。Acceptance evidence／記録データ自体は（credential値そのものを除き）削除せず保持する。
 
-## E. Gatekeeper／quarantined download Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「10」、未実施、**Public Beta GO必須**）
+## E. Gatekeeper／quarantined download Acceptance（[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)「10」、`v1.0.0-beta.1`: COMPLETE／PASS）
 
-DMG層と内部3 CLI層を分離して検証します。**両方が必須です（「または」ではありません）。**
+DMG層と内部3 CLI層を分離して検証します。**両方が必須です（「または」ではありません）。** `v1.0.0-beta.1`ではrelease前Acceptanceに加え、PB-3cmで公開assetのbyte一致、PB-3cnで公開URLからのSafari download、quarantine保持、Finder mount、DMG Gatekeeper、3 CLIのonline notarizationとTerminal実起動を確認しました。
 
 **DMG層**:
 

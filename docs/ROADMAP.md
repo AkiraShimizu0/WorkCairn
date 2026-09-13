@@ -531,9 +531,13 @@ Phase PQ-1で[ADR-0067](adr/ADR-0067-planning-placeholder-rejection.md)に基づ
 
 ADR-0033に基づき、外部公開前に移行用compatibility distribution、tests、entry point、package metadata、SDK依存、専用build／release toolingを撤去しました。JSON Contract v1、Prompt golden、Markdown／migration fixtureはGo testsが直接検証するlanguage-neutralな契約資産として残します。完了記録は[MigrationHistory.md](MigrationHistory.md)を参照してください。
 
-## Current — Public Beta Preparation
+## Completed — Public Beta Release
 
-大規模機能追加を止め、第三者がclone／installして安全に試せる状態を固定します。候補versionは`v1.0.0-beta.1`です。
+`v1.0.0-beta.1`はmacOS／arm64向けGitHub prereleaseとして公開済みです。release commit、local／GitHub annotated tag、GitHub mainはいずれも`851de754838847d379bce43cefa7ad8813a9e75c`を指し、公開assetはDeveloper ID署名、notarization、staple、checksum検証を完了したDMGとそのchecksumです。Gatekeeper、New-user Keychain、Upgrade Keychain、bounded Provider AcceptanceはすべてCOMPLETE／PASSで、PB-3cmのpublic asset post-publish verificationとPB-3cnのSafari download／quarantine／Finder mount／Gatekeeper smokeもPASSしました。
+
+tag対象sourceとcandidate内の旧NO-GO文言は、release前に凍結したhistorical snapshotです。公開後の完了状態はcredential非包含のrepository外sanitized evidenceと本PHASE PB-3coで追補し、`v1.0.0-beta.1`のtag、Release、assetはimmutableとして変更しません。今後の機能追加は次versionの新しいcandidateへ行い、既存candidateやAcceptance evidenceを新candidateへ再利用しません。Public Beta Preparationは完了し、以降は公開後の機能開発と運用follow-upへ移ります。
+
+公開準備期間は大規模機能追加を止め、第三者がclone／installして安全に試せる状態を固定しました。以下はその完了記録です。
 
 実装済み：
 
@@ -586,13 +590,13 @@ PHASE PB-3u.1aで、tagged candidateの署名開始前read-only確認により�
 
 PHASE PB-3u.1〜PB-3u.7で、Human準備済みのDeveloper ID Application証明書・notary profileを用いて、[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)に沿ったtagged candidateのoffline build、3 binary署名、DMG作成・署名、Apple notary serviceへのnotarization submission（`Accepted`）、staple／stapler validateまでを実施しました。PHASE PB-3u.8で、このPB-3u.2〜7で生成・署名・notarize・stapleしたcandidateに対し本ADR「10」の2層Gatekeeper検証を実施したところ、DMG層（`spctl --assess --type open`）はPASSしましたが、内部3 CLI層（`spctl --assess --type exec`）は3 binaryすべてが`rejected (the code is valid but does not seem to be an app)`でrejectされ、この時点でGatekeeper rejectをknown limitationとして容認しない既存方針に従い、checksum生成・promotion・Human Acceptanceへ進まずcandidateのbytesを変更せずに停止しました（このrejectは今回の対象macOS環境とcandidateにおける実測結果であり、普遍的・構造的なmacOS仕様として断定していません）。PHASE PB-3u.8aで、このrejectが署名・notarizationの不備によるものか、bare Mach-O CLI（`.app`ではない単体実行ファイル）に対する`spctl --assess --type exec`自体の適用範囲の問題かを切り分けるため、同じ3 binaryへ、Apple DTSがproduct type別に案内するnotarization確認方法のうちbundle以外のcodeに対応する`codesign --verify --strict --check-notarization -R="notarized"`を実行したところ、3 binaryすべてが`valid on disk`／`satisfies its Designated Requirement`／`explicit requirement satisfied`でPASSし、mounted manifest（108 entries完全一致）、署名（canonical identifier、TeamIdentifier一致、Hardened Runtime、secure timestamp、entitlement空集合）、metadata（version／commit／build date一致）もすべてPASSしました。この実測結果とApple DTSのproduct-type別notarization案内に基づき、PHASE PB-3u.8bで、[ADR-0071](adr/ADR-0071-macos-developer-id-signing-and-notarization.md)（「PB-3u.8b addendum」新設）、[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)、[PublicBetaFirstRunAcceptance.md](PublicBetaFirstRunAcceptance.md)、[PublicReleaseChecklist.md](PublicReleaseChecklist.md)へfocused correctionを行い、bare CLIに対する`spctl --assess --type exec`要件を`codesign --check-notarization -R="notarized"`（Apple service evidence区分）へsupersedeし、DMG層のGatekeeper検証・Human Acceptanceにおける実際のquarantined Terminal起動確認（reject時はblocker、right-click override／`xattr`削除／Security設定緩和は不可）はいずれも要件を弱めずに維持しました。**PB-3u.2〜7で生成・署名・notarize・stapleし、PB-3u.8／8aで検証したcandidateのDMG／3 binary bytesは、この一連の診断・docs修正を通じて一切変更していません。** ただしこのDMGはdiagnostic evidence専用として保持するものであり、checksum生成、final promotion、Human Acceptanceのいずれへも使用せず、docs修正後のrelease candidateへも再利用しません。本addendum反映後は、[Manual macOS Signed Release Procedure](ManualMacOSReleaseProcedure.md)に従って新しいcandidateを生成します。**Public Betaは本Checkpoint終了時点でもNO-GOのままです。**
 
-Public Beta公開前に残る人間／実環境確認：
+Public Beta公開後の運用follow-up／将来candidate：
 
-- WorkCairnの正式商標clearance、GitHub Discussions有効化（support窓口として採用する場合）。GitHub repository slugは`WorkCairn`へ実rename済み（PHASE PB-2.1）、Private Vulnerability Reportingは有効化済み（PHASE PB-2.33）
-- Human Operator自身のMacでのpackaged binary（darwin/arm64）acceptance。checksum、native folder picker、Starter Organization、native Keychain経由のProvider接続までは実施済み（PB-3）。Plan品質問題（`junk`token、PB-3d修正済み）のため、新しいtest credentialでのPB-3再実施が未完了。iPhone実機、iCloud Drive、Obsidian連携はいずれもPublic Beta必須条件ではなく、確認する場合も任意項目として扱う
+- WorkCairnの正式商標clearanceは非blocking follow-upとして継続する。GitHub Discussionsはsupport窓口として有効、GitHub repository slugは`WorkCairn`へ実rename済み（PHASE PB-2.1）、Private Vulnerability Reportingも有効化済み（PHASE PB-2.33）
+- Human Operator自身のMacでのpackaged binary（darwin/arm64）Acceptanceは完了済み。iPhone実機、iCloud Drive、Obsidian連携はいずれもPublic Beta必須条件ではなく、確認する場合も任意項目として扱う
 - 配布対象を将来darwin/amd64、linux/amd64、linux/arm64へ拡張する場合のnative filesystem／daemon smoke（初期Public Betaでは不要）
-- PB-3dの修正を織り込んだ新しいtest credentialによる、temporary Vaultとpackaged binaryでの最小Provider smoke再実施
-- tag作成、Release title確定、push、GitHub Release公開のrelease owner承認
+- 次versionの新しいtest credentialと新candidateによるbounded Provider Acceptance。公開済みcandidateの結果を将来candidateへ流用しない
+- 次versionのtag、Release title、push、GitHub Release公開は、今回と同じくrelease ownerの段階別承認を必須とする
 - [完了] native folder picker、Application Supportの再起動参照、Mac native hidden-input＋Keychainによりterminal不要のmacOS First-runを実装。trusted LANへpath／secret値を受けるendpointは追加しない
 - [完了] ADR-0044でmacOS Keychain保存を不定な`security`対話PTYから、anonymous socketとbounded helperを使うSecurity.framework native Adapterへ置換。write後read-back、existing update、restart read、timeout時kill/reapを固定
 - [完了] ADR-0045でProvider request timeoutをRuntime compositionへ一本化し、Public Beta defaultをboundedな5分へ変更。CEO Intent、Task、Review、Revision Task／再Reviewは同じclient policyを使い、operator override、typed timeout、no retryを維持

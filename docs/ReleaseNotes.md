@@ -1,8 +1,10 @@
 # WorkCairn Release Notes
 
-このfileはrelease ownerがGitHub Releaseの本文へそのまま利用できる、tag付き版ごとの下書きです。過去versionをここへ蓄積せず、公開直前にrelease ownerが最終確認して使用します。
+このfileはrelease ownerがGitHub Releaseの本文へ利用する、tag付き版ごとの記録です。公開前に最終確認し、公開後はそのversionの内容を保持します。
 
-## v1.0.0-beta.1（準備中）
+## v1.0.0-beta.1
+
+`v1.0.0-beta.1`はmacOS／arm64向けPublic BetaのGitHub prereleaseとして公開済みです。公開assetは署名・notarization・staple・checksum検証を完了したDMGと、その`.sha256`です。
 
 ### WorkCairnとは
 
