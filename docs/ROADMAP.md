@@ -311,9 +311,11 @@ UIはGo binaryへembedし、iPhone 390×844相当で`依頼→質問→Plan承�
 
 ADR-0032に基づき、`interaction.*`だけが`Prefer: respond-async`でboundedに受理され、既存workspace Command Ledgerをstatus URLとして返すようになりました。UIは同じCommand IDをread-only pollingし、reload後も再実行せずstatus確認だけを再開します。graceful shutdownは受理済みcommandを待ち、猶予切れではcancelしてRecoveryへ止めます。
 
-## Next 1 — Guided Recovery Inspection
+## Next 1 — Guided Recovery Inspection（backend read-only slice実装済み・UI統合は別slice）
 
 Local Web UIのattention表示は現在outer／child Command IDとLedger stateまでです。次は既存ADR-0020のRecovery snapshot／finding／planをread-only HTTP projectionとして公開し、Web UIからも「何がcommit済みで、なぜ自動継続しないか」を理解できるようにします。
+
+M-RECOVERY-3A（ADR-0073、`Proposed`）で、`GET /v1/projects/{project_name}/recovery-inspection`と、`Finding.Detail`／`References`を公開しないsafe projectionをbackendへ実装しました。`app.js`統合、Browser test、`inspectCommands`のasync ownership修正は、Codex focused design reviewで指摘済みの未解決findingを閉じたうえで別Checkpointとして扱います。
 
 - 最初は診断だけとし、自動repair／retry／artifact adoptionを追加しない
 - canonical evidence certaintyと既存Recovery error型をそのまま表示する

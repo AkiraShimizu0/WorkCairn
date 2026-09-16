@@ -712,6 +712,10 @@ func (executor *ProcessExecutor) InspectTaskEvidence(ctx context.Context, projec
 	return workspaceprocess.InspectTaskEvidence(ctx, executor.vaultRoot, projectName, taskID)
 }
 
+func (executor *ProcessExecutor) InspectRecoveryView(ctx context.Context, projectName string) (workspaceprocess.RecoveryInspectionView, error) {
+	return workspaceprocess.InspectRecoveryView(ctx, workspaceprocess.RecoveryInput{VaultRoot: executor.vaultRoot, ProjectName: projectName})
+}
+
 func (executor *ProcessExecutor) InspectWorkReport(ctx context.Context, sessionID string) (workspaceprocess.WorkReport, error) {
 	return workspaceprocess.InspectWorkReport(ctx, executor.vaultRoot, sessionID)
 }

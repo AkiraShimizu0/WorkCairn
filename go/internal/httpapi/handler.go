@@ -35,6 +35,7 @@ type Handler struct {
 	interactionActionPlanner   InteractionActionPlanner
 	organizationInspector      OrganizationInspector
 	taskEvidenceInspector      TaskEvidenceInspector
+	recoveryInspector          RecoveryInspector
 	workReportInspector        WorkReportInspector
 	conversationInspector      ConversationInspector
 	companyActivityInspector   CompanyActivityInspector
@@ -85,6 +86,10 @@ type OrganizationInspector interface {
 
 type TaskEvidenceInspector interface {
 	InspectTaskEvidence(ctx context.Context, projectName, taskID string) (workspaceprocess.TaskEvidenceInspection, error)
+}
+
+type RecoveryInspector interface {
+	InspectRecoveryView(ctx context.Context, projectName string) (workspaceprocess.RecoveryInspectionView, error)
 }
 
 type WorkReportInspector interface {
@@ -174,6 +179,10 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 	if taskEvidenceInspector, ok := executor.(TaskEvidenceInspector); ok {
 		handler.taskEvidenceInspector = taskEvidenceInspector
 		handler.mux.HandleFunc("GET /v1/projects/{project_name}/tasks/{task_id}/evidence", handler.inspectTaskEvidence)
+	}
+	if recoveryInspector, ok := executor.(RecoveryInspector); ok {
+		handler.recoveryInspector = recoveryInspector
+		handler.mux.HandleFunc("GET /v1/projects/{project_name}/recovery-inspection", handler.inspectRecoveryInspection)
 	}
 	if workReportInspector, ok := executor.(WorkReportInspector); ok {
 		handler.workReportInspector = workReportInspector
@@ -369,6 +378,27 @@ func (handler *Handler) inspectTaskEvidence(response http.ResponseWriter, reques
 			status, code = http.StatusNotFound, "TASK_NOT_FOUND"
 		}
 		writeCommandResponse(response, status, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: code, RecoveryRequired: status != http.StatusNotFound}})
+		return
+	}
+	encoded, err := json.Marshal(inspection)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, OK: true, Result: encoded})
+}
+
+// inspectRecoveryInspection is read-only: on any failure -- an inspection
+// service error, a projection rejection, or a nonexistent Project -- it
+// collapses to the same safe 422, never distinguishing by reflecting the
+// underlying error, the raw requested ProjectName, or a Vault path back to
+// the client. RecoveryInspectionView never carries Detail/References/Problem
+// (see process.ProjectRecoveryInspectionView), so there is nothing to redact
+// here on the success path either.
+func (handler *Handler) inspectRecoveryInspection(response http.ResponseWriter, request *http.Request) {
+	inspection, err := handler.recoveryInspector.InspectRecoveryView(request.Context(), request.PathValue("project_name"))
+	if err != nil {
+		writeCommandResponse(response, http.StatusUnprocessableEntity, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RECOVERY_INSPECTION_FAILED"}})
 		return
 	}
 	encoded, err := json.Marshal(inspection)

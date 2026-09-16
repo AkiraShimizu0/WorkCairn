@@ -76,6 +76,12 @@ GET /v1/commands/CMD-20260808-002?scope=workspace
 
 statusはLedger recordをread-onlyで返します。`recovery_required: true`は自動retryの指示ではありません。`running`、outcome commit failure、partial failureは既存`recovery-inspect`でcanonical evidenceを確認し、新しいCommand IDでの再実行やartifact adoptionを推測で行わないでください。
 
+```text
+GET /v1/projects/ToDoアプリ/recovery-inspection
+```
+
+`GET /v1/projects/{project_name}/recovery-inspection`は、既存ADR-0020の`recovery-inspect`と同じcanonical Reportを、safe-projectionを通したread-only HTTP viewとして返します（ADR-0073）。成功時は`schema_version`（`recovery.SchemaVersion`）、`project_name`、`healthy`、`task_count`、`findings`（`id`／`kind`／`severity`／`certainty`／`related_id`／`recoverable`／`recommended_action`のみ）を返し、healthy時`findings`は常に`[]`です。`related_id`はoptionalです — 対象となるTask／aggregate IDが存在するFinding（例：`task_completion_pending`）だけに含まれ、`residual_temporary_state`のように対象IDを持たないFindingではkey自体が省略されます（`null`や空文字列としては出ません）。`Detail`、`Problem`、`References`、Vault pathはresponseへ一切含みません。inspection失敗（存在しないProjectを含む）はすべて`422 RECOVERY_INSPECTION_FAILED`へ閉じ、raw error／raw ProjectNameを公開しません。`recovery_required`は設定しません。`--local-network`モードでは他のGET同様pairing authorizationが必要です。Recovery Plan preview、Recovery apply、自動修復、retryはこのendpointのscope外です — 変更操作は引き続き`workcairn` CLIの`recovery-plan`／`recovery-apply`を使用してください。
+
 ## Lifecycle
 
 - `GET /healthz`: process liveness
