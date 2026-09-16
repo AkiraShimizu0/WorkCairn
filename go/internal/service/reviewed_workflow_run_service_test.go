@@ -1599,15 +1599,24 @@ func TestRunParallelProviderCallBudgetStopsBeforeExceedingLimit(t *testing.T) {
 
 	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-CALLS", "CMD-BUDGET-CALLS", 10, 3, 5, autonomy.PermissionDelegated, planner)
 
-	// With a BudgetPolicy configured, its own pure read (checked before the
-	// tracker's atomic reservation is even attempted) is what actually
-	// classifies this deterministic, non-racing stop as ErrBudgetExceeded;
-	// ErrProviderCallBudgetExceeded is reserved for the race-window case
-	// where the reservation itself loses a race the Policy's own read
-	// could not have foreseen (see budgetTracker's own concurrency test).
+	// reserveProviderCallBudget has two concurrent-safe stop paths for a
+	// Provider-call limit: the configured BudgetPolicy's own snapshot read
+	// (checked first within any one branch's call, but racing against
+	// every other branch's own concurrent atomic reservation) and the
+	// tracker's atomic reservation itself. Which one actually observes the
+	// limit reached is not deterministic across branches -- only the
+	// classification each path produces is stable. The Policy path's error
+	// wraps both ErrProviderCallBudgetExceeded and the generic
+	// ErrBudgetExceeded (budgetPolicyExceededError), but the
+	// atomic-reservation path's error wraps only
+	// ErrProviderCallBudgetExceeded, never the generic sentinel. So the one
+	// contract both paths guarantee, regardless of which wins the race, is
+	// stage=="budget" and errors.Is(err, ErrProviderCallBudgetExceeded) --
+	// asserting the generic ErrBudgetExceeded here would make this test
+	// flaky depending on goroutine scheduling.
 	var typed *ReviewedWorkflowRunError
-	if !errors.As(err, &typed) || typed.Stage != "budget" || !errors.Is(err, ErrBudgetExceeded) {
-		t.Fatalf("RunParallel() error = %v, want a budget-staged ErrBudgetExceeded", err)
+	if !errors.As(err, &typed) || typed.Stage != "budget" || !errors.Is(err, ErrProviderCallBudgetExceeded) {
+		t.Fatalf("RunParallel() error = %v, want a budget-staged ErrProviderCallBudgetExceeded", err)
 	}
 	if result.Status != "partial_failure" {
 		t.Fatalf("result.Status = %q, want partial_failure (some Tasks were produced before the budget stopped dispatch)", result.Status)
@@ -1641,8 +1650,15 @@ func TestRunParallelBudgetPartialFailurePreservesOtherBranches(t *testing.T) {
 
 	result, err := service.RunParallel(context.Background(), "CMD-BUDGET-PARTIAL", "CMD-BUDGET-PARTIAL", 10, 3, 5, autonomy.PermissionDelegated, planner)
 
-	if !errors.Is(err, ErrBudgetExceeded) {
-		t.Fatalf("RunParallel() error = %v, want ErrBudgetExceeded", err)
+	// See TestRunParallelProviderCallBudgetStopsBeforeExceedingLimit's
+	// comment: whichever of reserveProviderCallBudget's two concurrent-safe
+	// stop paths actually observes the Provider-call limit reached, only
+	// ErrProviderCallBudgetExceeded -- not the generic ErrBudgetExceeded,
+	// which the atomic-reservation path never wraps -- is guaranteed,
+	// alongside stage=="budget".
+	var typed *ReviewedWorkflowRunError
+	if !errors.As(err, &typed) || typed.Stage != "budget" || !errors.Is(err, ErrProviderCallBudgetExceeded) {
+		t.Fatalf("RunParallel() error = %v, want a budget-staged ErrProviderCallBudgetExceeded", err)
 	}
 	if result.Status != "partial_failure" {
 		t.Fatalf("result.Status = %q, want partial_failure -- a plain success/silent drop is never acceptable", result.Status)
