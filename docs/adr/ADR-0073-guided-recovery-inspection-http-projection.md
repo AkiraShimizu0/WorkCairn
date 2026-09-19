@@ -1,6 +1,6 @@
 # ADR-0073: Guided Recovery Inspection — read-only HTTP projection of ADR-0020's Recovery Report
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 
@@ -8,7 +8,7 @@ Status: Proposed
 
 ADR-0020は`go/internal/recovery`、`go/internal/service/recovery_service.go`、`go/internal/process/recovery.go`にcanonicalな`Snapshot`→`Report`／`Finding`モデルをすでに定義していますが、これまで`workcairn` CLI（`recovery-inspect`／`recovery-plan`／`recovery-apply`）からしか到達できず、`go/internal/httpapi`は一切importしていませんでした。
 
-M-RECOVERY-1a〜1eは複数回のCodex focused design reviewを経ましたが、review全体としては`app.js`側のasync ownership／invalidation（busy／loading所有権、navigation早期invalidation、explicit refreshとsilent pollingのcontext-version区別）が未解消のまま`NO-GO`で終了しています。一方、backend（safe read-only projectionの型境界、closed validation、raw ProjectNameのpre-I/O検証、HTTP contract）に関する設計論点はこのreview過程で解消済みでした。この状況を受け、WorkはbackendとUIの2つのvertical sliceへ分割する判断を行い、本Checkpoint（M-RECOVERY-3A）ではCodexが設計上妥当と判定済みのbackend read-only sliceだけを実装対象としました。UI（`app.js`、CSS／HTML、Browser test、`inspectCommands`、busy／loading、navigation／polling）は本Checkpointでは一切変更しておらず、M-RECOVERY-1a〜1eで指摘された未解決findingを閉じたうえで、別Checkpointとして改めて実装します。Codex implementation reviewがGOになるまで、本ADRのStatusは`Proposed`のままとします。
+M-RECOVERY-1a〜1eは複数回のCodex focused design reviewを経ましたが、review全体としては`app.js`側のasync ownership／invalidation（busy／loading所有権、navigation早期invalidation、explicit refreshとsilent pollingのcontext-version区別）が未解消のまま`NO-GO`で終了しています。一方、backend（safe read-only projectionの型境界、closed validation、raw ProjectNameのpre-I/O検証、HTTP contract）に関する設計論点はこのreview過程で解消済みでした。この状況を受け、WorkはbackendとUIの2つのvertical sliceへ分割する判断を行い、本Checkpoint（M-RECOVERY-3A）ではCodexが設計上妥当と判定済みのbackend read-only sliceだけを実装対象としました。UI（`app.js`、CSS／HTML、Browser test、`inspectCommands`、busy／loading、navigation／polling）は本Checkpointでは一切変更しておらず、M-RECOVERY-1a〜1eで指摘された未解決findingを閉じたうえで、別Checkpointとして改めて実装します。UI実装（M-RECOVERY-4C）とその後のfocused correction（M-RECOVERY-4D.1、4D.3）を経て、M-RECOVERY-4D.4のCodex final focused re-reviewがP0〜P3 0件・Open Questions 0件のGOで完了し、本ADRのStatusはM-RECOVERY-4D.5で`Accepted`へ昇格しました。
 
 ## Decision
 
@@ -59,13 +59,42 @@ GET /v1/projects/{project_name}/recovery-inspection
 
 既存`local-access`middleware（`authorizeLocalRequest`）を迂回しません。`--local-network`モードではpairing authorizationが引き続き必要です。
 
+### 7. UI integration and async ownership contract（M-RECOVERY-4C）
+
+`go/internal/httpapi/web/app.js`が、既存の per-Session Command診断（"詳細を確認"／"処理を再確認"）へRecovery Inspectionをread-onlyで追加しました。CSS／HTML／既存fixture／backend Go source／HTTP JSON Contractは変更していません。設計はM-RECOVERY-1a〜1e、M-RECOVERY-4A〜4B.5の複数回のCodex focused design reviewを経て閉じたものを、そのまま実装しています。
+
+- **Pure preflight**: `buildInspectionRequest(mode, {record, next, error})`はglobal stateを一切読まないpure functionで、eligible（`next.kind`が`inspect_workflow_recovery`／`inspect_action_recovery`、canonical `next.commands`／`next.project_name`を正本とする）とineligible（既存remembered-errorの単一workspace Command fallback、`error.command_id`のみを根拠とし、Recovery GETは一切行わない）の両modeを共通validationのうえで閉じたcontract objectへ検証します。malformedな入力はfetch 0件でcommon terminal rendererの固定errorへ落とします。
+- **Terminal renderer**: `renderInspectionTerminal(contentNode)`がsuccess／preflight rejection／Command failureの3経路を集約し、active card、"閉じる" quick reply、composer state、scroll stateを一括で設定します（`replaceChildren`のみ、loadingが残ることはありません）。
+- **Recovery response validator**: `validateRecoveryInspectionView(raw, expectedProjectName)`がbackendの`RecoveryInspectionView`契約と1対1で対応するpure closed validatorです。要求したProject名との完全一致も検証し、不一致はresponse全体を拒否します。malformed Findingが1件でもresponse全体を拒否し、部分表示はしません。
+- **Async ownership**: `state.refreshBarrier`が全refresh（silent／explicit）共通のsingle-flight guardです（`if (silent && state.refreshBarrier) return;`）。Inspection自身は`state.inspectionSequence`／`state.inspectionActive`／`state.inspectionMode`／`state.inspectionContext`で所有権を管理し、DOM commit直前に`awaitLatestRefreshBarrier()`で最新のrefreshが解決するのを待ってから所有権を再確認します。Silent refreshは、open inspectionのcontextが変化した場合だけ、`state.record`／`state.next`への代入より前にinvalidate＋surface clearします。Ineligible inspectionのcontext再比較は、`state.inspectionContext.commands[0].commandId`という既に検証済みの単一Command IDだけを根拠とし、この不変条件（array・要素数1・canonical文字列）が成立しない場合もcomparisonをskipせず、fail-closedでinvalidateします。
+- **Inspection never touches global busy**: `setBusy`／`showError`は一切使用せず、local error copyだけを`ui.activeCard`へ表示します。既存の他処理のglobal busyへ一切干渉しません。
+- **Scope外のまま**: Recovery Plan preview、Recovery apply、自動修復、retry、新しいProvider／Keychain経路は追加していません。新規endpointは追加していません（既存の`GET /v1/projects/{project_name}/recovery-inspection`だけを使用）。
+
+### 8. Focused correction（M-RECOVERY-4D.1）
+
+Codex implementation reviewのP1 2件／P2 6件を受け、以下をfocused correctionとして修正しました（4ファイルのみ、backend変更なし）。
+
+- **`restoreDurableFailure`のstrict preflight統合**: reload時の durable failure復元が、`next.commands`を直接loopしていた旧実装から、`inspectCommands`と同一の`buildInspectionRequest("eligible", {record, next})`を経由する実装へ変更されました。preflightがnullを返す場合はCommand GET 0件でreturnし、raw `next.commands`への直接アクセスは一切行いません。呼び出しは`restoreDurableFailure(record, next)`とrecordを明示的に渡す形へ変更しました。
+- **Post-unarchive refresh**: `confirmUnarchiveSession`のsuccess handlerが`refreshCurrent(true)`（silent）から`refreshCurrent()`（explicit）へ変更されました。silent refreshはbackground pollの single-flight guard（`if (silent && state.refreshBarrier) return;`）でskipされ得るため、unarchive直後の状態表示が古いarchived stateのまま残るraceがありました。explicit refreshはこのguardの対象外であり、常に新しいsequence／barrierを確立してpreceding pollをstale化します。
+- Browser test（`tests/browser/recovery-inspection.spec.mjs`）を、6秒／11秒の固定real-time waitを排したdeterministic pollingトリガー（capturedinterval callback）、global busy ownershipの実flow検証、restore経路のCommand GET 0件証明、post-unarchive foreground refresh non-regression test、silent context-change coverage、stale finally／same-Session reopenのrace testを追加してcloseしました。
+
+### 9. Completion-boundary focused correction（M-RECOVERY-4D.3）
+
+M-RECOVERY-4D.2のCodex reviewが残した最後のP2（stale response releaseとold `finally`／new ownerの順序を固定300ms観測窓で代用していた2 test）を、Browser test側だけのfocused correctionでcloseしました。backend／`app.js`は変更していません。
+
+- **Test-only click-handler completion capture**: `installClickHandlerCapture`が`page.addInitScript`で`EventTarget.prototype.addEventListener`をoverrideし、button要素自身が持つ最新の`"click"`listenerを`__wcLastClickHandler`へ追加的に記録します。実際の`addEventListener`自体の登録・発火挙動は一切変更せず、production sourceへのtest accessorも追加していません。
+- **Invocationごとのfifo completion Promise**: `wrapOnClickCompletion`が対象buttonの既存click handlerを、同じ`this`／eventで呼び出しreturn／throw semanticsを変えない薄いwrapperへ置き換え、呼び出しのたびに独立したcompletion Promiseを`window`上のtest固有keyへFIFOで積みます。同一buttonへの複数click（本来のclickとduplicate click試行）が1つのPromiseを共有・競合しないようにするためです。
+- **Stale handler／old `finally`の決定的完了境界**: `awaitOnClickCompletion`が該当click呼び出しの完了（`inspectCommands`自身の`finally`によるownership解放を含む）を直接awaitします。duplicate click検証だけは、guardが働けばmicrotask内で解決するという既知の同期特性を使い、`awaitOnClickCompletionExpectingNoFetch`が短い実時間boundとのraceで早期に明確失敗させます。
+- **Fixed wait排除**: 対象2 testから`page.waitForTimeout(300)`を除去し、network response eventだけでなくold async onclick handlerの`finally`完了までをawaitしてからnegative assertionへ進む構成へ変更しました。
+- **Production sourceへのtest hookなし**: `state`モジュールを公開せず、raw application stateへも書き込みません。instrumentationはpage/test scope限定で、test終了時に破棄されます。
+
 ## Consequences
 
 - Recovery診断のcanonical sourceは引き続きADR-0020の`recovery`パッケージのみです。HTTP層は新しい診断ロジックを一切持たない、純粋なprojectionです。
 - `Detail`／`Problem`／`References`が将来のいかなる`SnapshotReader`実装によっても、このHTTP endpoint経由で漏洩することは構造的にありません。
 - 既存`recovery-inspect`／`recovery-plan`／`recovery-apply` CLI operationの挙動・contractは一切変更していません。
 - Recovery Plan preview、Recovery apply、自動修復、retry、Provider／Keychain操作はこのADRのscope外です。追加する場合は別ADRで、明示的なdigest／Version承認を伴う別Checkpointとして設計します。
-- UI（`app.js`）統合は別sliceです。既存Local Web UIの`inspectCommands`／`renderAttention`等は本Checkpointでは変更していません。
+- UI（`app.js`）統合はM-RECOVERY-4Cで実装済みです。既存Local Web UIの`inspectCommands`（新シグネチャ`inspectCommands(mode, inputs)`へ変更）、`renderAttention`、`renderRememberedError`、`clearActionSurface`、`refreshCurrent`を、§7記載のasync ownership契約に従って拡張しました。M-RECOVERY-4D.1で、`restoreDurableFailure`のstrict preflight統合とpost-unarchive foreground refreshを§8記載のとおりfocused correctionしました。M-RECOVERY-4D.3で、§9記載のとおりBrowser test側のcompletion-boundary focused correctionを行い、M-RECOVERY-4D.4のCodex final focused re-reviewでP0〜P3 0件・Open Questions 0件のGOを得ました。
 
 ## Rejected alternatives
 
@@ -75,4 +104,4 @@ GET /v1/projects/{project_name}/recovery-inspection
 
 ## Scope note
 
-本ADRはM-RECOVERY-3A（backend read-only vertical slice）のみを記録します。UI側の未解決async ownership／invalidation（Codex focused design reviewで指摘されたbusy／loading所有権、navigation早期invalidation、explicit refreshとsilent pollingのcontext-version区別）は別Checkpoint・別ADR更新の対象です。Codex implementation reviewがGOになるまで、本ADRのStatusは`Proposed`のままとします。
+本ADRはbackend read-only vertical slice（M-RECOVERY-3A、3B系、Gate済み・commit済み・push済み）と、UI async ownership統合（M-RECOVERY-4A〜4B.5の複数回のCodex focused design reviewを経て閉じた設計をM-RECOVERY-4Cで実装、M-RECOVERY-4D.1とM-RECOVERY-4D.3でfocused correction）の両方を記録します。Recovery Plan preview、Recovery apply、自動修復、retryは引き続きscope外です。M-RECOVERY-4D.4のCodex final focused re-reviewがP0〜P3 0件・test false-positiveなし・Open Questions 0件のGOで完了したため、本ADRのStatusはM-RECOVERY-4D.5で`Accepted`へ昇格しました。実Provider成功や既存Public Beta releaseの完了状態の変更は主張しません — `v1.0.0-beta.1`の公開record自体はこのADRの対象外です。

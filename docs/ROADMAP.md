@@ -311,11 +311,11 @@ UIはGo binaryへembedし、iPhone 390×844相当で`依頼→質問→Plan承�
 
 ADR-0032に基づき、`interaction.*`だけが`Prefer: respond-async`でboundedに受理され、既存workspace Command Ledgerをstatus URLとして返すようになりました。UIは同じCommand IDをread-only pollingし、reload後も再実行せずstatus確認だけを再開します。graceful shutdownは受理済みcommandを待ち、猶予切れではcancelしてRecoveryへ止めます。
 
-## Next 1 — Guided Recovery Inspection（backend read-only slice実装済み・UI統合は別slice）
+## Next 1 — Guided Recovery Inspection（backend実装済み・UI実装済み、Codex review完了・commit済み）
 
-Local Web UIのattention表示は現在outer／child Command IDとLedger stateまでです。次は既存ADR-0020のRecovery snapshot／finding／planをread-only HTTP projectionとして公開し、Web UIからも「何がcommit済みで、なぜ自動継続しないか」を理解できるようにします。
+Local Web UIのattention表示は、既存ADR-0020のRecovery snapshot／finding／planをread-only HTTP projectionとして公開し、「何がcommit済みで、なぜ自動継続しないか」をper-Session Command診断の後ろへ表示できるようになりました。
 
-M-RECOVERY-3A（ADR-0073、`Proposed`）で、`GET /v1/projects/{project_name}/recovery-inspection`と、`Finding.Detail`／`References`を公開しないsafe projectionをbackendへ実装しました。`app.js`統合、Browser test、`inspectCommands`のasync ownership修正は、Codex focused design reviewで指摘済みの未解決findingを閉じたうえで別Checkpointとして扱います。
+M-RECOVERY-3A（backend、commit済み・Gate済み・push済み）で`GET /v1/projects/{project_name}/recovery-inspection`と、`Finding.Detail`／`References`を公開しないsafe projectionをbackendへ実装しました。M-RECOVERY-4A〜4B.5の複数回のCodex focused design reviewで、`app.js`側のasync ownership／invalidation（silent／explicit refreshの優先順位、pure strict preflight、fail-closedなineligible context不変条件、Project-boundなRecovery response validator）を閉じ、M-RECOVERY-4Cで実装しました。M-RECOVERY-4D.1のCodex implementation review（P1 2件／P2 6件）を受け、`restoreDurableFailure`のstrict preflight統合とpost-unarchive foreground refreshをfocused correctionし、Browser testをdeterministic化・拡充しました。M-RECOVERY-4D.3で、Browser test側に残っていた最後のP2（stale response releaseとold `finally`／new ownerの順序を固定300ms観測窓で代用していた2 test）を、test-only click-handler completion capture（production hookなし）によるdeterministic completion-boundary correctionでcloseしました。M-RECOVERY-4D.4のCodex final focused re-reviewはP0〜P3 0件・test false-positiveなし・Open Questions 0件のGOで完了し、M-RECOVERY-4D.5でADR-0073を`Accepted`へ昇格したうえで、Guided Recovery UI 4ファイル（`go/internal/httpapi/web/app.js`、`tests/browser/recovery-inspection.spec.mjs`、ADR-0073、本ROADMAP）を単一commitとして確定しました。ADR-0073（`Accepted`）を参照してください。実Providerでの成功実績やPublic Beta新versionのGOを主張するものではありません。次工程はM-RECOVERY-4E（post-commit Automated Gates）です。
 
 - 最初は診断だけとし、自動repair／retry／artifact adoptionを追加しない
 - canonical evidence certaintyと既存Recovery error型をそのまま表示する

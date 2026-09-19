@@ -198,6 +198,11 @@ const state = {
   sessionMenuSessionId: "",
   sessionConfirmSessionId: "",
   refreshSequence: 0,
+  inspectionSequence: 0,
+  inspectionActive: false,
+  inspectionMode: "",
+  inspectionContext: null,
+  refreshBarrier: null,
 };
 
 class APIError extends Error {
@@ -549,10 +554,36 @@ function setQuickReplies(buttons = []) {
   ui.quickReplies.replaceChildren(node("div", { class: "quick-replies-row" }, ...buttons));
 }
 
-function clearActionSurface() {
+// clearActionSurface clears the action surface (ui.activeCard + its quick
+// replies) and, as part of the same clear, releases inspection ownership of
+// it (generation bump, active flag, mode, context) -- any caller emptying
+// this surface is by definition invalidating whatever inspection might have
+// owned it. resetRenderKey additionally clears state.renderKey so the next
+// renderNext() cannot skip re-populating the surface via its own memoized
+// key. Defaults to false: clearActionSurface's pre-existing call sites each
+// already force their own real render immediately after clearing, or (for
+// selectSession) already reset state.renderKey a few lines later on their
+// own -- forcing it here would be an unrelated, out-of-scope behavior
+// change for those paths.
+function clearActionSurface({ resetRenderKey = false } = {}) {
+  state.inspectionSequence += 1;
+  state.inspectionActive = false;
+  state.inspectionMode = "";
+  state.inspectionContext = null;
+  if (resetRenderKey) state.renderKey = "";
   ui.activeCard.hidden = true;
   ui.activeCard.replaceChildren();
   setQuickReplies([]);
+}
+
+// invalidateInspection is a same-implementation alias used by call sites
+// that are not already calling clearActionSurface for an unrelated reason
+// (selectSession, showRequestList, showEmployeesHome, inspectCommands's own
+// start) -- named separately so each call site's intent stays legible. No
+// recursion: invalidateInspection calls clearActionSurface once; the
+// reverse never happens.
+function invalidateInspection(options = {}) {
+  clearActionSurface(options);
 }
 
 function resetClarificationDraft() {
@@ -1083,6 +1114,7 @@ function updateNavDrawerState() {
 }
 
 function showRequestList() {
+  invalidateInspection();
   closeNavDrawer();
   state.draftRequest = null;
   if (isDesktopLayout()) {
@@ -1115,6 +1147,7 @@ function showRequestDetail(sessionID = state.record?.session_id) {
 }
 
 function showEmployeesHome() {
+  invalidateInspection();
   closeNavDrawer();
   setNav("employees_home");
 }
@@ -1572,7 +1605,14 @@ async function confirmUnarchiveSession() {
     "削除済み一覧から依頼一覧へ戻します。",
     async () => {
       await setSessionListFilter("active", { userInitiated: false });
-      await refreshCurrent(true);
+      // Explicit (non-silent) refresh: a silent refreshCurrent(true) here
+      // could be skipped outright by the background-poll single-flight
+      // guard (`if (silent && state.refreshBarrier) return;`) if a poll
+      // tick happens to be in flight at this exact moment, leaving the
+      // just-unarchived view showing stale archived state. An explicit
+      // refresh is never gated by that guard -- it always starts its own
+      // barrier/sequence, which structurally supersedes any in-flight poll.
+      await refreshCurrent();
       showRequestDetail(sessionID);
     },
   );
@@ -1588,6 +1628,7 @@ async function syncSessionListFilterToRecord() {
 }
 
 async function selectSession(id, options = {}) {
+  invalidateInspection();
   closeSessionMenus();
   state.refreshSequence += 1;
   if (!id) {
@@ -1628,6 +1669,20 @@ async function refreshCurrent(silent = false) {
     renderEmpty();
     return;
   }
+  // Single-flight for silent (background poll) refreshes: if any refresh --
+  // silent or explicit -- is currently running, a new silent tick skips
+  // entirely rather than queueing or sharing the in-flight promise. This
+  // both bounds the number of distinct barriers awaitLatestRefreshBarrier()
+  // could ever have to chase through, and structurally prevents a silent
+  // refresh from ever superseding an explicit one (it never even starts
+  // while state.refreshBarrier is occupied). Explicit refreshes are never
+  // gated by this check and always proceed, governed only by the
+  // pre-existing refreshSequence superseding rule below.
+  if (silent && state.refreshBarrier) return;
+  let resolveBarrier;
+  const barrier = new Promise((resolve) => { resolveBarrier = resolve; });
+  state.refreshBarrier = barrier;
+  if (!silent) clearActionSurface({ resetRenderKey: true });
   const sequence = ++state.refreshSequence;
   try {
     const [record, next, reportResult, conversationResult] = await Promise.all([
@@ -1641,6 +1696,31 @@ async function refreshCurrent(silent = false) {
         .catch((error) => ({ error })),
     ]);
     if (sequence !== state.refreshSequence) return;
+    if (silent && state.inspectionContext) {
+      // Fail-closed invariant guard: an open ineligible inspection's fresh
+      // Command target must be re-derived only from the already-validated
+      // single reference captured in state.inspectionContext at inspection
+      // start -- never from state.lastError, which could have changed for
+      // an unrelated reason. If that captured context is not exactly one
+      // canonical Command reference (structurally impossible by
+      // construction, but never assumed), the comparison is not skipped --
+      // it is treated as an invalidating mismatch.
+      let freshRequest = null;
+      let invariantValid = true;
+      if (state.inspectionMode === "ineligible") {
+        const commands = state.inspectionContext?.commands;
+        invariantValid = Array.isArray(commands) && commands.length === 1 && isCanonicalNonEmptyString(commands[0]?.commandId);
+        if (invariantValid) {
+          freshRequest = buildInspectionRequest("ineligible", { record, next, error: { command_id: commands[0].commandId } });
+        }
+      } else {
+        freshRequest = buildInspectionRequest(state.inspectionMode, { record, next, error: state.lastError });
+      }
+      const freshContext = freshRequest ? contextFromRequest(freshRequest) : null;
+      if (!invariantValid || !inspectionContextsEqual(state.inspectionContext, freshContext)) {
+        clearActionSurface({ resetRenderKey: true });
+      }
+    }
     state.record = record;
     state.next = next;
     state.workReport = reportResult.report || null;
@@ -1648,7 +1728,7 @@ async function refreshCurrent(silent = false) {
     state.conversation = conversationResult.conversation || null;
     state.conversationError = conversationResult.error || null;
     restoreError(record);
-    if (!state.lastError) await restoreDurableFailure(next);
+    if (!state.lastError) await restoreDurableFailure(record, next);
     await loadTaskEvidenceDetails().catch(() => null);
     if (sequence !== state.refreshSequence) return;
     setConnected(true);
@@ -1663,7 +1743,28 @@ async function refreshCurrent(silent = false) {
   } catch (error) {
     if (sequence !== state.refreshSequence) return;
     setConnected(false);
+    if (silent) clearActionSurface({ resetRenderKey: true });
     showError(error, silent ? "接続を確認してください" : "依頼の状態を取得できませんでした");
+  } finally {
+    resolveBarrier();
+    if (state.refreshBarrier === barrier) state.refreshBarrier = null;
+  }
+}
+
+// awaitLatestRefreshBarrier waits for whatever refresh is currently in
+// flight (if any) to fully settle, re-checking after each wait in case a
+// newer refresh replaced state.refreshBarrier while this call was waiting.
+// Terminates because every refreshCurrent() call resolves its own barrier
+// in a finally block on every exit path (success, failure, or superseded),
+// and the number of distinct barriers that can appear while waiting is
+// bounded (silent refreshes cannot start new ones while any refresh is in
+// flight; only human-paced explicit refreshes can).
+async function awaitLatestRefreshBarrier() {
+  let barrier = state.refreshBarrier;
+  while (barrier) {
+    await barrier;
+    if (barrier === state.refreshBarrier) return;
+    barrier = state.refreshBarrier;
   }
 }
 
@@ -1803,7 +1904,7 @@ function renderNext(force = false) {
   // so the CEO sees the dedicated Recovery experience (latest Deliverable/
   // Review + optional additional instruction), not the generic "処理を完了
   // できませんでした" card.
-  if (state.lastError && !isRevisionRecoveryNext(next)) return renderRememberedError(state.lastError);
+  if (state.lastError && !isRevisionRecoveryNext(next)) return renderRememberedError(state.lastError, next);
   if (isRevisionRecoveryNext(next)) return renderRevisionRecovery(next);
   switch (next.kind) {
   case "approve_plan_generation": return renderPlanGeneration(next);
@@ -1840,11 +1941,17 @@ function composerAdjacentErrorActions(error) {
   });
 }
 
-function renderRememberedError(error) {
+function renderRememberedError(error, next) {
+  const eligible = next && RECOVERY_INSPECT_ELIGIBLE_KINDS.has(next.kind);
+  const hasFallbackCommand = isCanonicalNonEmptyString(error.command_id);
+  const label = eligible || hasFallbackCommand ? "処理を再確認" : "状態を更新";
+  const action = eligible
+    ? () => inspectCommands("eligible", { record: state.record, next, error })
+    : hasFallbackCommand
+      ? () => inspectCommands("ineligible", { record: state.record, next, error })
+      : () => refreshCurrent();
   setQuickReplies([
-    button(error.command_id ? "処理を再確認" : "状態を更新", "primary chip", () => error.command_id
-      ? inspectCommands([{ scope: "workspace", command_id: error.command_id }])
-      : refreshCurrent()),
+    button(label, "primary chip", action),
     button("再読み込み", "quiet chip", async () => { clearCurrentError(); state.renderKey = ""; await refreshCurrent(); }),
   ]);
   const actions = composerAdjacentErrorActions(error);
@@ -1864,22 +1971,28 @@ function renderRememberedError(error) {
 // references already persisted by an Interaction attention state. Browser
 // storage remains a UX cache only: a fresh browser can recover the same safe
 // FailureEnvelope projection from Ledger/server evidence after reload.
-async function restoreDurableFailure(next) {
-  if (!next || !["inspect_workflow_recovery", "inspect_action_recovery"].includes(next.kind) || !next.commands?.length) return;
-  for (const reference of next.commands) {
+// Routed through the same buildInspectionRequest("eligible", ...) strict
+// preflight inspectCommands uses (M-RECOVERY-4D.1) -- a malformed or
+// mismatched next.commands here must fail closed with zero Command GETs,
+// exactly like a CEO-initiated inspection would, never a raw next.commands
+// loop of its own.
+async function restoreDurableFailure(record, next) {
+  const request = buildInspectionRequest("eligible", { record, next });
+  if (request === null) return;
+  for (const reference of request.references) {
     try {
       const query = new URLSearchParams({ scope: reference.scope });
-      if (reference.project_name) query.set("project", reference.project_name);
-      const record = await requestJSON(`/v1/commands/${encodeURIComponent(reference.command_id)}?${query}`);
-      if (!record.failure || !["failed", "partial_failure"].includes(record.state)) continue;
-      const diagnostics = errorDiagnostics(record.failure.details, record.result);
-      rememberError(new APIError(record.failure.code, 422, {
-        code: record.failure.code,
-        stage: record.failure.stage,
-        command_id: reference.command_id,
-        recovery_required: recoveryRequiredFromRecord(record),
+      if (reference.projectName) query.set("project", reference.projectName);
+      const commandRecord = await requestJSON(`/v1/commands/${encodeURIComponent(reference.commandId)}?${query}`);
+      if (!commandRecord.failure || !["failed", "partial_failure"].includes(commandRecord.state)) continue;
+      const diagnostics = errorDiagnostics(commandRecord.failure.details, commandRecord.result);
+      rememberError(new APIError(commandRecord.failure.code, 422, {
+        code: commandRecord.failure.code,
+        stage: commandRecord.failure.stage,
+        command_id: reference.commandId,
+        recovery_required: recoveryRequiredFromRecord(commandRecord),
         ...diagnostics,
-      }), "前回のCommandを完了できませんでした", reference.command_id);
+      }), "前回のCommandを完了できませんでした", reference.commandId);
       return;
     } catch {
       // The existing attention screen still exposes an explicit read-only
@@ -2171,9 +2284,203 @@ async function renderRevisionRecovery(next) {
   }
 }
 
+// --- Guided Recovery Inspection: closed sets, pure validators, pure
+// preflight (M-RECOVERY-4C). Nothing in this block reads global state --
+// every function here is a pure function of its own arguments. ---
+
+const NEXT_ACTION_KINDS = new Set([
+  "approve_plan_generation", "answer_clarifications", "approve_plan_apply", "approve_workflow",
+  "inspect_workflow_recovery", "optional_external_action_or_done", "inspect_action_recovery", "done",
+]);
+const RECOVERY_INSPECT_ELIGIBLE_KINDS = new Set(["inspect_workflow_recovery", "inspect_action_recovery"]);
+const COMMAND_REFERENCE_SCOPES = new Set(["workspace", "project"]);
+
+function isCanonicalNonEmptyString(value) {
+  return typeof value === "string" && value.length > 0 && value === value.trim() && !/[\r\n]/.test(value);
+}
+function isPositiveSafeInteger(value) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 && Number.isSafeInteger(value);
+}
+function isSafeNonNegativeInteger(value) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && Number.isSafeInteger(value);
+}
+
+// validateCommandReferences validates an array of NextAction.Commands-shaped
+// entries in their existing order (never reordered -- Go's Next() already
+// decided the semantic order). Returns a validated, camelCase array, or
+// null on any empty/malformed input -- callers must not fetch on null.
+function validateCommandReferences(references) {
+  if (!Array.isArray(references) || references.length === 0) return null;
+  const validated = [];
+  for (const reference of references) {
+    if (!reference || typeof reference !== "object") return null;
+    if (!COMMAND_REFERENCE_SCOPES.has(reference.scope)) return null;
+    if (reference.scope === "project") {
+      if (!isCanonicalNonEmptyString(reference.project_name)) return null;
+    } else if ("project_name" in reference) {
+      return null; // workspace scope: the key itself must be entirely absent -- not merely falsy
+    }
+    if (!isCanonicalNonEmptyString(reference.command_id)) return null;
+    validated.push({ scope: reference.scope, projectName: reference.scope === "project" ? reference.project_name : "", commandId: reference.command_id });
+  }
+  return validated;
+}
+
+// buildInspectionRequest is the single pure preflight boundary between "the
+// CEO clicked something that might open an inspection" and starting any
+// fetch. It never reads global state -- everything comes from record/next
+// (both modes) and error (ineligible mode only). Returns one validated
+// request object, or null. Eligible mode never degrades to the ineligible
+// fallback shape on its own malformed input.
+function buildInspectionRequest(mode, { record, next, error } = {}) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  if (!next || typeof next !== "object" || Array.isArray(next)) return null;
+  if (!isCanonicalNonEmptyString(record.session_id) || !isCanonicalNonEmptyString(next.session_id)) return null;
+  if (record.session_id !== next.session_id) return null;
+  if (!isPositiveSafeInteger(record.version)) return null;
+  if (!isPositiveSafeInteger(next.expected_version)) return null;
+  if (!NEXT_ACTION_KINDS.has(next.kind)) return null;
+
+  if (mode === "eligible") {
+    if (!RECOVERY_INSPECT_ELIGIBLE_KINDS.has(next.kind)) return null;
+    if (!isCanonicalNonEmptyString(next.project_name)) return null;
+    if (!("commands" in next) || !Array.isArray(next.commands) || next.commands.length === 0) return null;
+    const references = validateCommandReferences(next.commands);
+    if (references === null) return null;
+    return { mode, sessionId: record.session_id, recordVersion: record.version, nextKind: next.kind, nextExpectedVersion: next.expected_version, projectName: next.project_name, references };
+  }
+  if (mode === "ineligible") {
+    if (RECOVERY_INSPECT_ELIGIBLE_KINDS.has(next.kind)) return null;
+    if (!error || typeof error !== "object" || Array.isArray(error)) return null;
+    if (!isCanonicalNonEmptyString(error.command_id)) return null;
+    return { mode, sessionId: record.session_id, recordVersion: record.version, nextKind: next.kind, nextExpectedVersion: next.expected_version, projectName: "", references: [{ scope: "workspace", projectName: "", commandId: error.command_id }] };
+  }
+  return null;
+}
+
+function contextFromRequest(request) {
+  return { sessionId: request.sessionId, recordVersion: request.recordVersion, nextKind: request.nextKind, nextExpectedVersion: request.nextExpectedVersion, projectName: request.projectName, commands: request.references };
+}
+
+function inspectionContextsEqual(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+const RECOVERY_SCHEMA_VERSION = 1; // pinned to recovery.SchemaVersion; bump only in lockstep with a backend contract change
+const RECOVERY_FINDING_KINDS = new Set([
+  "task_completion_pending", "task_execution_interrupted", "completed_task_deliverable_missing",
+  "deliverable_task_conflict", "artifact_invalid", "review_projection_missing",
+  "review_canonical_missing", "revision_task_missing", "audit_evidence_unverifiable",
+  "residual_temporary_state", "command_incomplete",
+]);
+const RECOVERY_SEVERITIES = new Set(["warning", "critical"]);
+const RECOVERY_CERTAINTIES = new Set(["confirmed", "unverifiable"]);
+const RECOVERY_ACTIONS = new Set(["none", "complete_task", "fail_and_hold_task"]);
+
+// validateRecoveryInspectionView is the single, pure, closed validator for
+// GET .../recovery-inspection's inner result. Returns the validated,
+// camelCase value on success or null on any violation -- never throws,
+// never partially accepts a Report with one invalid Finding (any single bad
+// Finding rejects the whole response), never reads or forwards any field
+// beyond the closed keys below. Unknown/extra fields anywhere in the
+// payload are ignored for additive compatibility but their values are
+// never read into the returned object, a log, or an error copy.
+function validateRecoveryInspectionView(raw, expectedProjectName) {
+  if (!isCanonicalNonEmptyString(expectedProjectName)) return null;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  if (raw.schema_version !== RECOVERY_SCHEMA_VERSION) return null;
+  if (!isCanonicalNonEmptyString(raw.project_name)) return null;
+  if (raw.project_name !== expectedProjectName) return null;
+  if (typeof raw.healthy !== "boolean") return null;
+  if (!isSafeNonNegativeInteger(raw.task_count)) return null;
+  if (!Array.isArray(raw.findings)) return null;
+  if (raw.healthy !== (raw.findings.length === 0)) return null;
+  const seenIds = new Set();
+  const findings = [];
+  for (const entry of raw.findings) {
+    const finding = validateRecoveryFindingView(entry);
+    if (finding === null || seenIds.has(finding.id)) return null;
+    seenIds.add(finding.id);
+    findings.push(finding);
+  }
+  return { schemaVersion: raw.schema_version, projectName: raw.project_name, healthy: raw.healthy, taskCount: raw.task_count, findings };
+}
+
+function validateRecoveryFindingView(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  if (!isCanonicalNonEmptyString(entry.id)) return null;
+  if (!RECOVERY_FINDING_KINDS.has(entry.kind)) return null;
+  if (!RECOVERY_SEVERITIES.has(entry.severity)) return null;
+  if (!RECOVERY_CERTAINTIES.has(entry.certainty)) return null;
+  if (typeof entry.recoverable !== "boolean") return null;
+  if (!RECOVERY_ACTIONS.has(entry.recommended_action)) return null;
+  let relatedId = "";
+  if ("related_id" in entry) {
+    if (!isCanonicalNonEmptyString(entry.related_id)) return null;
+    relatedId = entry.related_id;
+  }
+  const pairValid = entry.recoverable
+    ? (entry.recommended_action === "complete_task" || entry.recommended_action === "fail_and_hold_task")
+    : entry.recommended_action === "none";
+  if (!pairValid) return null;
+  return { id: entry.id, kind: entry.kind, severity: entry.severity, certainty: entry.certainty, relatedId, recoverable: entry.recoverable, recommendedAction: entry.recommended_action };
+}
+
+const RECOVERY_FINDING_KIND_LABELS = {
+  task_completion_pending: "Deliverableが確定済みでTask完了が未確定です",
+  task_execution_interrupted: "Deliverable未確定のままTaskが中断しています",
+  completed_task_deliverable_missing: "完了済みTaskにDeliverableがありません",
+  deliverable_task_conflict: "DeliverableとTaskの整合が取れていません",
+  artifact_invalid: "成果物の内容を確認できません",
+  review_projection_missing: "Reviewの人間向け表示が生成されていません",
+  review_canonical_missing: "Reviewの正本記録がありません",
+  revision_task_missing: "Revision Taskが未作成です",
+  audit_evidence_unverifiable: "監査記録を確認できません",
+  residual_temporary_state: "一時的な残留状態があります",
+  command_incomplete: "処理記録が未完了です",
+};
+const RECOVERY_ACTION_LABELS = {
+  none: "推奨される操作はありません",
+  complete_task: "Task完了として扱える可能性があります",
+  fail_and_hold_task: "Taskを失敗として保留できる可能性があります",
+};
+const RECOVERY_SEVERITY_LABELS = { warning: "警告", critical: "重大" };
+const RECOVERY_CERTAINTY_LABELS = { confirmed: "確認済み", unverifiable: "未確認" };
+
+// recoveryFindingKindLabel/recoveryActionLabel deliberately have no
+// raw-value fallback branch: validateRecoveryFindingView already guarantees
+// only closed-set values ever reach here, so an unrecognized value can only
+// mean a future backend added a Kind/Action this UI version doesn't know --
+// recoveryInspectionBlock renders an explicit "unsupported" notice for that
+// case rather than a generic or raw label.
+function recoveryFindingKindLabel(kind) { return RECOVERY_FINDING_KIND_LABELS[kind] || null; }
+function recoveryActionLabel(action) { return RECOVERY_ACTION_LABELS[action] || null; }
+
+function recoveryInspectionBlock(inspection) {
+  if (inspection.healthy || inspection.findings.length === 0) {
+    return node("div", {}, node("p", { class: "supporting" }, "現在、復旧が必要な項目はありません。"));
+  }
+  const items = inspection.findings.map((finding) => {
+    const kindLabel = recoveryFindingKindLabel(finding.kind);
+    const actionLabel = recoveryActionLabel(finding.recommendedAction);
+    const severityLabel = RECOVERY_SEVERITY_LABELS[finding.severity];
+    const certaintyLabel = RECOVERY_CERTAINTY_LABELS[finding.certainty];
+    if (!kindLabel || !actionLabel || !severityLabel || !certaintyLabel) {
+      return node("p", { class: "warning" }, "この診断種別はこの画面のバージョンでは表示できません");
+    }
+    return node("div", { class: "approval-box" },
+      node("p", {}, kindLabel),
+      node("p", { class: "supporting" }, `${severityLabel}・${certaintyLabel}`),
+      node("p", { class: "supporting" }, finding.recoverable ? actionLabel : "人間の判断が必要です"),
+      node("details", {}, node("summary", {}, "技術詳細"), approvalFacts([["ID", finding.id], ["対象ID", finding.relatedId || "—"]])),
+    );
+  });
+  return node("div", {}, node("p", {}, "復旧診断"), ...items);
+}
+
 function renderAttention(next, title) {
   setQuickReplies([
-    button("詳細を確認", "primary chip", () => inspectCommands(next.commands || [])),
+    button("詳細を確認", "primary chip", () => inspectCommands("eligible", { record: state.record, next })),
     button("状態を更新", "quiet chip", () => refreshCurrent()),
   ]);
   ui.activeCard.hidden = true;
@@ -2184,14 +2491,58 @@ function renderAttention(next, title) {
   renderTimeline();
 }
 
-async function inspectCommands(references) {
-  setBusy(true, "記録を確認しています", "Command Ledgerをread-onlyで取得しています。");
+// renderInspectionTerminal is the single place that sets every DOM aspect
+// of a Command-diagnostics terminal state (success, preflight rejection, or
+// Command failure): active card visibility/contents (replaceChildren, never
+// append -- so a loading node can never survive it), the close quick reply,
+// composer state, and scroll behavior.
+function renderInspectionTerminal(contentNode) {
+  setQuickReplies([button("閉じる", "quiet chip", () => renderNext(true))]);
+  state.pendingAttentionTitle = "処理記録を確認してください。";
+  renderComposerState(state.next);
+  state.forceScrollToBottom = true;
+  renderTimeline();
+  ui.activeCard.hidden = false;
+  ui.activeCard.replaceChildren(contentNode);
+}
+
+function inspectionOwnsSurface(inspectionSequence, sessionId) {
+  return inspectionSequence === state.inspectionSequence && state.record?.session_id === sessionId;
+}
+
+// inspectCommands is the single, structurally-unbypassable gate between "the
+// CEO clicked something that might open a Command/Recovery inspection" and
+// any fetch. mode is "eligible" (canonical next.commands/next.project_name,
+// from renderAttention or an eligible renderRememberedError) or "ineligible"
+// (the existing single workspace-Command fallback, from renderRememberedError
+// only). It never touches global setBusy/showError -- the loading/error
+// text inside ui.activeCard is the only indicator, so an inspection failure
+// can never clear an unrelated global-busy flow.
+async function inspectCommands(mode, inputs) {
+  if (state.inspectionActive) return;
+  const request = buildInspectionRequest(mode, inputs);
+  if (request === null) {
+    invalidateInspection();
+    renderInspectionTerminal(node("p", { class: "warning" }, "確認できる処理記録がありません"));
+    return;
+  }
+  invalidateInspection();
+  state.inspectionActive = true;
+  state.inspectionMode = request.mode;
+  state.inspectionContext = contextFromRequest(request);
+  const inspectionSequence = state.inspectionSequence;
+  const sessionId = request.sessionId;
+  ui.activeCard.hidden = false;
+  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, "記録を確認しています…"));
   try {
-    const results = await Promise.all(references.map((reference) => {
+    const results = await Promise.all(request.references.map((reference) => {
       const query = new URLSearchParams({ scope: reference.scope });
-      if (reference.project_name) query.set("project", reference.project_name);
-      return requestJSON(`/v1/commands/${encodeURIComponent(reference.command_id)}?${query}`);
+      if (reference.projectName) query.set("project", reference.projectName);
+      return requestJSON(`/v1/commands/${encodeURIComponent(reference.commandId)}?${query}`);
     }));
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    await awaitLatestRefreshBarrier();
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
     const failures = results.flatMap((result, index) => {
       if (!result.failure) return [];
       const details = result.failure.details;
@@ -2202,18 +2553,43 @@ async function inspectCommands(references) {
         ["Category", details?.category || details?.provider?.category || "—"],
         ["HTTP status", details?.provider?.http_status || "—"],
         ["Request ID", details?.provider?.request_id || "—"],
-        ["Command ID", references[index].command_id],
+        ["Command ID", request.references[index].commandId],
       ];
     });
-    setBusy(false);
-    setQuickReplies([button("閉じる", "quiet chip", () => renderNext(true))]);
-    ui.activeCard.hidden = true;
-    ui.activeCard.replaceChildren();
-    state.pendingAttentionTitle = "処理記録を確認してください。";
-    renderComposerState(state.next);
-    renderTimeline();
-  } catch (error) {
-    showError(error, "処理記録を取得できませんでした");
+    renderInspectionTerminal(failures.length ? approvalFacts(failures) : node("p", { class: "supporting" }, "記録を確認しました。"));
+    if (request.projectName) await appendRecoveryInspection(request.projectName, sessionId, inspectionSequence);
+  } catch {
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    await awaitLatestRefreshBarrier();
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    renderInspectionTerminal(node("p", { class: "warning" }, "処理記録を取得できませんでした"));
+  } finally {
+    if (inspectionSequence === state.inspectionSequence) state.inspectionActive = false;
+  }
+}
+
+// appendRecoveryInspection is Command-diagnostics-only-code's second,
+// optional phase: never started on a Command-fetch failure (see the catch
+// branch above, which never reaches this), and its own success/failure only
+// ever appends to the already-rendered Command diagnostics -- never
+// replaces them.
+async function appendRecoveryInspection(projectName, sessionId, inspectionSequence) {
+  try {
+    const raw = await requestJSON(`/v1/projects/${encodeURIComponent(projectName)}/recovery-inspection`);
+    const inspection = validateRecoveryInspectionView(raw, projectName);
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    await awaitLatestRefreshBarrier();
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    if (inspection === null) {
+      ui.activeCard.append(node("p", { class: "warning" }, "復旧診断の形式を確認できませんでした"));
+      return;
+    }
+    ui.activeCard.append(recoveryInspectionBlock(inspection));
+  } catch {
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    await awaitLatestRefreshBarrier();
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    ui.activeCard.append(node("p", { class: "warning" }, "復旧診断を取得できませんでした"));
   }
 }
 
