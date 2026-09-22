@@ -80,7 +80,16 @@ statusはLedger recordをread-onlyで返します。`recovery_required: true`は
 GET /v1/projects/ToDoアプリ/recovery-inspection
 ```
 
-`GET /v1/projects/{project_name}/recovery-inspection`は、既存ADR-0020の`recovery-inspect`と同じcanonical Reportを、safe-projectionを通したread-only HTTP viewとして返します（ADR-0073）。成功時は`schema_version`（`recovery.SchemaVersion`）、`project_name`、`healthy`、`task_count`、`findings`（`id`／`kind`／`severity`／`certainty`／`related_id`／`recoverable`／`recommended_action`のみ）を返し、healthy時`findings`は常に`[]`です。`related_id`はoptionalです — 対象となるTask／aggregate IDが存在するFinding（例：`task_completion_pending`）だけに含まれ、`residual_temporary_state`のように対象IDを持たないFindingではkey自体が省略されます（`null`や空文字列としては出ません）。`Detail`、`Problem`、`References`、Vault pathはresponseへ一切含みません。inspection失敗（存在しないProjectを含む）はすべて`422 RECOVERY_INSPECTION_FAILED`へ閉じ、raw error／raw ProjectNameを公開しません。`recovery_required`は設定しません。`--local-network`モードでは他のGET同様pairing authorizationが必要です。Recovery Plan preview、Recovery apply、自動修復、retryはこのendpointのscope外です — 変更操作は引き続き`workcairn` CLIの`recovery-plan`／`recovery-apply`を使用してください。
+`GET /v1/projects/{project_name}/recovery-inspection`は、既存ADR-0020の`recovery-inspect`と同じcanonical Reportを、safe-projectionを通したread-only HTTP viewとして返します（ADR-0073）。成功時は`schema_version`（`recovery.SchemaVersion`）、`project_name`、`healthy`、`task_count`、`findings`（`id`／`kind`／`severity`／`certainty`／`related_id`／`recoverable`／`recommended_action`のみ）を返し、healthy時`findings`は常に`[]`です。`related_id`はoptionalです — 対象となるTask／aggregate IDが存在するFinding（例：`task_completion_pending`）だけに含まれ、`residual_temporary_state`のように対象IDを持たないFindingではkey自体が省略されます（`null`や空文字列としては出ません）。`Detail`、`Problem`、`References`、Vault pathはresponseへ一切含みません。inspection失敗（存在しないProjectを含む）はすべて`422 RECOVERY_INSPECTION_FAILED`へ閉じ、raw error／raw ProjectNameを公開しません。`recovery_required`は設定しません。`--local-network`モードでは他のGET同様pairing authorizationが必要です。このGET endpointではRecovery Plan preview、Recovery apply、自動修復、retryを行いません。
+
+```text
+POST /v1/projects/ToDoアプリ/tasks/TASK-001/recovery-plan-preview
+Content-Type: application/json
+
+{"version":"workspace-command.v1","action":"complete_task"}
+```
+
+`POST /v1/projects/{project_name}/tasks/{task_id}/recovery-plan-preview`は、ADR-0020の既存plannerを1回だけ使い、変更を行わずPlanのsafe viewを返します（ADR-0074、Status: Proposed）。`action`は`complete_task`または`fail_and_hold_task`です。前者の`reason`は省略または空文字列だけ、後者はtrim済みnon-emptyかつ最大16 KiBのstringを必須とします。成功時の`result`は`schema_version`、`project_name`、`task_id`、`action`、`task_status`、`task_version`、`executable`、`blocking_reasons`だけです。Evidence reference／digest、reason、SourceRevision、approval stateは返しません。`blocking_reasons`はaction別のclosed listで、空でも`[]`です。意味的入力不正は`400 INVALID_RECOVERY_PLAN_PREVIEW`、Project／Task不存在を含むplanner／projection失敗は同一の`422 RECOVERY_PLAN_PREVIEW_FAILED`です。unsupported Content-Typeは415、body size超過は413という既存transport semanticsを維持します。`--local-network`ではpairing authorizationとsame-origin intentが必要です。Recovery apply、自動修復、retryは行わず、変更操作は引き続きoperator CLIの明示承認経路だけです。
 
 ## Lifecycle
 

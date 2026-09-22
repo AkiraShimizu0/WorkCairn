@@ -25,6 +25,7 @@ import (
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/organization"
 	workspaceprocess "github.com/AkiraShimizu0/WorkCairn/go/internal/process"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/project"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/recovery"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/routine"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/scheduler"
 )
@@ -714,6 +715,10 @@ func (executor *ProcessExecutor) InspectTaskEvidence(ctx context.Context, projec
 
 func (executor *ProcessExecutor) InspectRecoveryView(ctx context.Context, projectName string) (workspaceprocess.RecoveryInspectionView, error) {
 	return workspaceprocess.InspectRecoveryView(ctx, workspaceprocess.RecoveryInput{VaultRoot: executor.vaultRoot, ProjectName: projectName})
+}
+
+func (executor *ProcessExecutor) PlanRecoveryTaskPreview(ctx context.Context, projectName string, request recovery.PlanRequest) (workspaceprocess.RecoveryPlanPreviewView, error) {
+	return workspaceprocess.PlanTaskRecoveryView(ctx, workspaceprocess.RecoveryInput{VaultRoot: executor.vaultRoot, ProjectName: projectName}, request)
 }
 
 func (executor *ProcessExecutor) InspectWorkReport(ctx context.Context, sessionID string) (workspaceprocess.WorkReport, error) {

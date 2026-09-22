@@ -311,17 +311,27 @@ UIはGo binaryへembedし、iPhone 390×844相当で`依頼→質問→Plan承�
 
 ADR-0032に基づき、`interaction.*`だけが`Prefer: respond-async`でboundedに受理され、既存workspace Command Ledgerをstatus URLとして返すようになりました。UIは同じCommand IDをread-only pollingし、reload後も再実行せずstatus確認だけを再開します。graceful shutdownは受理済みcommandを待ち、猶予切れではcancelしてRecoveryへ止めます。
 
-## Next 1 — Guided Recovery Inspection（backend実装済み・UI実装済み、Codex review完了・commit済み）
+## Completed — Guided Recovery Inspection
 
 Local Web UIのattention表示は、既存ADR-0020のRecovery snapshot／finding／planをread-only HTTP projectionとして公開し、「何がcommit済みで、なぜ自動継続しないか」をper-Session Command診断の後ろへ表示できるようになりました。
 
-M-RECOVERY-3A（backend、commit済み・Gate済み・push済み）で`GET /v1/projects/{project_name}/recovery-inspection`と、`Finding.Detail`／`References`を公開しないsafe projectionをbackendへ実装しました。M-RECOVERY-4A〜4B.5の複数回のCodex focused design reviewで、`app.js`側のasync ownership／invalidation（silent／explicit refreshの優先順位、pure strict preflight、fail-closedなineligible context不変条件、Project-boundなRecovery response validator）を閉じ、M-RECOVERY-4Cで実装しました。M-RECOVERY-4D.1のCodex implementation review（P1 2件／P2 6件）を受け、`restoreDurableFailure`のstrict preflight統合とpost-unarchive foreground refreshをfocused correctionし、Browser testをdeterministic化・拡充しました。M-RECOVERY-4D.3で、Browser test側に残っていた最後のP2（stale response releaseとold `finally`／new ownerの順序を固定300ms観測窓で代用していた2 test）を、test-only click-handler completion capture（production hookなし）によるdeterministic completion-boundary correctionでcloseしました。M-RECOVERY-4D.4のCodex final focused re-reviewはP0〜P3 0件・test false-positiveなし・Open Questions 0件のGOで完了し、M-RECOVERY-4D.5でADR-0073を`Accepted`へ昇格したうえで、Guided Recovery UI 4ファイル（`go/internal/httpapi/web/app.js`、`tests/browser/recovery-inspection.spec.mjs`、ADR-0073、本ROADMAP）を単一commitとして確定しました。ADR-0073（`Accepted`）を参照してください。実Providerでの成功実績やPublic Beta新versionのGOを主張するものではありません。次工程はM-RECOVERY-4E（post-commit Automated Gates）です。
+M-RECOVERY-3A（backend）からM-RECOVERY-4D.5（UIとADR Accepted化）までを実装・review・commitし、M-RECOVERY-4EのAutomated Gates（`make public-beta-smoke`、Browser full Gate、`make v1-release-gate`）をGreenで完了後、M-RECOVERY-4FでGitHub mainへpushしました。`GET /v1/projects/{project_name}/recovery-inspection`と、`Finding.Detail`／`References`を公開しないsafe projection、Local Web UIのstrict preflight／async ownership／invalidationが確定しています。ADR-0073（`Accepted`）を参照してください。Recovery Plan preview、Apply、自動repair／retryはこの完了scopeへ含めません。
 
 - 最初は診断だけとし、自動repair／retry／artifact adoptionを追加しない
 - canonical evidence certaintyと既存Recovery error型をそのまま表示する
 - Recovery applyを追加する場合は別の明示digest／Version承認に分離する
 - Vault path、秘密情報、Prompt、Provider responseをclientへ出さない
 - normal Workflowのbusiness ruleやSession stateを変更しない
+
+## Next 1 — Recovery Plan Preview（backend実装中・review前）
+
+M-RECOVERY-5A系のdesign reviewを経て、既存ADR-0020 plannerを変更操作なしで呼び出す`POST /v1/projects/{project_name}/tasks/{task_id}/recovery-plan-preview`のbackend vertical sliceをM-RECOVERY-5Cで実装しています。新しいProcess境界はraw Project／Task／Action／ReasonをVault I/O前に検証し、client入力不正の400とinternal plan／projection failureの422をclosed sentinelで分離します。public viewはTask state、Version、Action、Executable、closed blockerだけを返し、Evidence reference／digest、Reason、SourceRevision、ApprovalRequiredを公開しません。ADR-0074（`Proposed`）を参照してください。
+
+- backendだけを対象とし、Local Web UIはまだ実装しない
+- previewはread-onlyで、Command Ledger、Task、Deliverable、Audit、Sessionを変更しない
+- Recovery apply、自動repair、retry、artifact adoptionへ進まない
+- Provider callとKeychain accessを追加しない
+- backend implementationのCodex focused review後も、UI sliceが完了するまでADR-0074を`Proposed`に保つ
 
 ## Next 2 — Bounded Provider Acceptance Profile（実装済み・Codex GO・ADR Accepted・commit済み。Public Betaは引き続きNO-GO）
 
@@ -535,7 +545,7 @@ ADR-0033に基づき、外部公開前に移行用compatibility distribution、t
 
 ## Completed — Public Beta Release
 
-`v1.0.0-beta.1`はmacOS／arm64向けGitHub prereleaseとして公開済みです。release commit、local／GitHub annotated tag、GitHub mainはいずれも`851de754838847d379bce43cefa7ad8813a9e75c`を指し、公開assetはDeveloper ID署名、notarization、staple、checksum検証を完了したDMGとそのchecksumです。Gatekeeper、New-user Keychain、Upgrade Keychain、bounded Provider AcceptanceはすべてCOMPLETE／PASSで、PB-3cmのpublic asset post-publish verificationとPB-3cnのSafari download／quarantine／Finder mount／Gatekeeper smokeもPASSしました。
+`v1.0.0-beta.1`はmacOS／arm64向けGitHub prereleaseとして公開済みです。release commitとlocal／GitHub annotated tagは`851de754838847d379bce43cefa7ad8813a9e75c`に固定され、その後のGitHub mainは公開後のdocumentation／feature commitへ進んでいます。公開assetはDeveloper ID署名、notarization、staple、checksum検証を完了したDMGとそのchecksumです。Gatekeeper、New-user Keychain、Upgrade Keychain、bounded Provider AcceptanceはすべてCOMPLETE／PASSで、PB-3cmのpublic asset post-publish verificationとPB-3cnのSafari download／quarantine／Finder mount／Gatekeeper smokeもPASSしました。
 
 tag対象sourceとcandidate内の旧NO-GO文言は、release前に凍結したhistorical snapshotです。公開後の完了状態はcredential非包含のrepository外sanitized evidenceと本PHASE PB-3coで追補し、`v1.0.0-beta.1`のtag、Release、assetはimmutableとして変更しません。今後の機能追加は次versionの新しいcandidateへ行い、既存candidateやAcceptance evidenceを新candidateへ再利用しません。Public Beta Preparationは完了し、以降は公開後の機能開発と運用follow-upへ移ります。
 

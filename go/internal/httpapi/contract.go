@@ -3,6 +3,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/commandledger"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/failure"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/interaction"
+	workspaceprocess "github.com/AkiraShimizu0/WorkCairn/go/internal/process"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/recovery"
 )
 
 const (
@@ -163,6 +166,44 @@ type InteractionActionPlanRequest struct {
 	TargetID        string    `json:"target_id"`
 	CurrentTime     time.Time `json:"current_time"`
 	CommandID       string    `json:"command_id"`
+}
+
+// RecoveryPlanPreviewRequest is decoded presence-aware: Reason remains raw
+// until validation so an absent key, an explicit empty string, JSON null, and
+// a non-string value cannot be conflated.
+type RecoveryPlanPreviewRequest struct {
+	Version string          `json:"version"`
+	Action  recovery.Action `json:"action"`
+	Reason  json.RawMessage `json:"reason"`
+}
+
+func (request RecoveryPlanPreviewRequest) planRequest(taskID string) (recovery.PlanRequest, error) {
+	if request.Version != ContractVersion ||
+		(request.Action != recovery.ActionCompleteTask && request.Action != recovery.ActionFailAndHold) {
+		return recovery.PlanRequest{}, ErrInvalidCommand
+	}
+	reason, _, err := decodeReasonField(request.Reason)
+	if err != nil {
+		return recovery.PlanRequest{}, err
+	}
+	return recovery.PlanRequest{TaskID: taskID, Action: request.Action, Reason: reason}, nil
+}
+
+func decodeReasonField(raw json.RawMessage) (string, bool, error) {
+	if len(raw) == 0 {
+		return "", false, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return "", true, ErrInvalidCommand
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", true, ErrInvalidCommand
+	}
+	if len(value) > workspaceprocess.MaxRecoveryPlanPreviewReasonBytes {
+		return "", true, ErrInvalidCommand
+	}
+	return value, true, nil
 }
 
 func (request InteractionPlanRequest) Validate() error {

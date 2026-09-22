@@ -17,6 +17,7 @@ import (
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/metrics"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/notification"
 	workspaceprocess "github.com/AkiraShimizu0/WorkCairn/go/internal/process"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/recovery"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/scheduler"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
 )
@@ -36,6 +37,7 @@ type Handler struct {
 	organizationInspector      OrganizationInspector
 	taskEvidenceInspector      TaskEvidenceInspector
 	recoveryInspector          RecoveryInspector
+	recoveryPlanPreviewer      RecoveryPlanPreviewer
 	workReportInspector        WorkReportInspector
 	conversationInspector      ConversationInspector
 	companyActivityInspector   CompanyActivityInspector
@@ -90,6 +92,10 @@ type TaskEvidenceInspector interface {
 
 type RecoveryInspector interface {
 	InspectRecoveryView(ctx context.Context, projectName string) (workspaceprocess.RecoveryInspectionView, error)
+}
+
+type RecoveryPlanPreviewer interface {
+	PlanRecoveryTaskPreview(ctx context.Context, projectName string, request recovery.PlanRequest) (workspaceprocess.RecoveryPlanPreviewView, error)
 }
 
 type WorkReportInspector interface {
@@ -183,6 +189,10 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 	if recoveryInspector, ok := executor.(RecoveryInspector); ok {
 		handler.recoveryInspector = recoveryInspector
 		handler.mux.HandleFunc("GET /v1/projects/{project_name}/recovery-inspection", handler.inspectRecoveryInspection)
+	}
+	if recoveryPlanPreviewer, ok := executor.(RecoveryPlanPreviewer); ok {
+		handler.recoveryPlanPreviewer = recoveryPlanPreviewer
+		handler.mux.HandleFunc("POST /v1/projects/{project_name}/tasks/{task_id}/recovery-plan-preview", handler.planRecoveryTaskPreview)
 	}
 	if workReportInspector, ok := executor.(WorkReportInspector); ok {
 		handler.workReportInspector = workReportInspector
@@ -402,6 +412,47 @@ func (handler *Handler) inspectRecoveryInspection(response http.ResponseWriter, 
 		return
 	}
 	encoded, err := json.Marshal(inspection)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, OK: true, Result: encoded})
+}
+
+// planRecoveryTaskPreview exposes the existing ADR-0020 Recovery planner as a
+// read-only preview. Transport and client-input failures are distinct from
+// internal planning/projection failures, but every response remains closed
+// and never includes a raw error, rejected value, or Vault path.
+func (handler *Handler) planRecoveryTaskPreview(response http.ResponseWriter, request *http.Request) {
+	if !strings.HasPrefix(strings.ToLower(request.Header.Get("Content-Type")), "application/json") {
+		writeCommandResponse(response, http.StatusUnsupportedMediaType, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "UNSUPPORTED_MEDIA_TYPE"}})
+		return
+	}
+	content, err := io.ReadAll(http.MaxBytesReader(response, request.Body, maxCommandRequestBytes))
+	if err != nil {
+		writeCommandResponse(response, http.StatusRequestEntityTooLarge, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "INVALID_RECOVERY_PLAN_PREVIEW"}})
+		return
+	}
+	var previewRequest RecoveryPlanPreviewRequest
+	if err := decodePayload(content, &previewRequest); err != nil {
+		writeCommandResponse(response, http.StatusBadRequest, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "INVALID_RECOVERY_PLAN_PREVIEW"}})
+		return
+	}
+	planRequest, err := previewRequest.planRequest(request.PathValue("task_id"))
+	if err != nil {
+		writeCommandResponse(response, http.StatusBadRequest, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "INVALID_RECOVERY_PLAN_PREVIEW"}})
+		return
+	}
+	preview, err := handler.recoveryPlanPreviewer.PlanRecoveryTaskPreview(request.Context(), request.PathValue("project_name"), planRequest)
+	if err != nil {
+		status, code := http.StatusUnprocessableEntity, "RECOVERY_PLAN_PREVIEW_FAILED"
+		if errors.Is(err, workspaceprocess.ErrInvalidRecoveryPlanPreviewInput) {
+			status, code = http.StatusBadRequest, "INVALID_RECOVERY_PLAN_PREVIEW"
+		}
+		writeCommandResponse(response, status, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: code}})
+		return
+	}
+	encoded, err := json.Marshal(preview)
 	if err != nil {
 		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
 		return
