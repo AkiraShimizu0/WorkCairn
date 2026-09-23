@@ -126,6 +126,12 @@ M-RECOVERY-6BのCodex focused reviewでは、Preview owner contextへProjectを�
 
 また、WebKit iPhoneを含むmobile testで、`fail_and_hold_task`のFinding／Reason入力／確認buttonと、成功Preview terminal／Close buttonがviewport内へ収まり、入力前後ともdocument横overflowを生じないことを実寸で確認します。focused reviewはP0〜P3なしでGOとなり、read-only ownership、Reason非永続化、Provider／Keychain非干渉、Apply／retry非実装の境界が閉じました。
 
+### 10. Post-implementation closure
+
+M-RECOVERY-6Cでは、backend／Local Web UIを含むfeature HEADに対し、`make public-beta-smoke`と`make v1-release-gate`がPASSし、`make check-ui-full`は160 passed／1 known skip／0 failed／0 retriesで完了しました。known flakeとtracked generated diffはありません。M-RECOVERY-6Dでは同HEADをGitHub mainへ通常のfast-forwardでpushし、backend、UI、Codex focused review、Automated Gates、main反映まで完了しました。
+
+このclosureはPreviewのread-only境界だけを確定します。Preview responseやbrowser stateはApply authorityではなく、Recovery apply、自動修復、retry、artifact adoptionは未実装です。将来の明示Applyは本ADRのscopeを拡張せず、canonical Plan再導出、domain-separated commitment／digest、Task Version CAS、Human承認、Command Ledger claim-before-effects／replay、stale rejectionを新しいADRで先に閉じます。
+
 ## Consequences
 
 - HumanはApply前にread-onlyなTask recovery intentとblockerを確認できるbackend contractを得ます。
@@ -133,7 +139,7 @@ M-RECOVERY-6BのCodex focused reviewでは、Preview owner contextへProjectを�
 - 内部evidence／reason／revision情報は構造的にpublic responseへ入りません。
 - 400はclientが送った意味的入力だけ、422は内部Plan／projection／existence failureだけを表します。
 - 新しいProvider call、credential経路、永続state、automatic repairは増えません。
-- Local Web UIはM-RECOVERY-6Aで実装し、M-RECOVERY-6BのCodex focused reviewをP0〜P3なしで完了しました。post-commit Automated Gatesはfeature HEADの検証として別Checkpointで実施します。
+- Local Web UIはM-RECOVERY-6Aで実装し、M-RECOVERY-6BのCodex focused reviewをP0〜P3なしで完了しました。M-RECOVERY-6Cのpost-commit Automated GatesとM-RECOVERY-6Dのmain pushも完了しています。
 
 ## Rejected alternatives
 
@@ -145,4 +151,4 @@ M-RECOVERY-6BのCodex focused reviewでは、Preview owner contextへProjectを�
 
 ## Scope note
 
-本ADRはM-RECOVERY-5Cのbackend vertical sliceとM-RECOVERY-6A／6Bのreview済みread-only Local Web UIを記録します。ADR-0073のscopeは変更しません。Recovery apply、自動修復、retry、Provider、Keychain、candidate／Releaseは対象外です。backendとUIのcontract review完了をもってStatusを`Accepted`とし、post-commit Automated Gatesとmain pushは後続Checkpointで管理します。
+本ADRはM-RECOVERY-5Cのbackend vertical sliceとM-RECOVERY-6A／6Bのreview済みread-only Local Web UI、およびM-RECOVERY-6C／6Dのpost-commit Automated Gatesとmain反映を記録します。ADR-0073のscopeは変更しません。Recovery apply、自動修復、retry、artifact adoption、Provider、Keychain、candidate／Releaseは対象外です。backendとUIのcontract review完了をもってStatusを`Accepted`とし、その後のGate／push完了も本ADRのread-only境界を変更しません。
