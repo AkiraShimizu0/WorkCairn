@@ -15,9 +15,9 @@ import {
 
 // Guided Recovery Inspection (M-RECOVERY-4C/4D.1): a read-only addition to
 // the existing per-Session Command diagnostics ("詳細を確認"/"処理を再確認").
-// No Recovery Plan/apply, no automatic repair, no retry, no new Provider/
-// Keychain path -- only GET /v1/projects/{project}/recovery-inspection,
-// appended after Command diagnostics, never replacing them.
+// M-RECOVERY-6A adds an explicit read-only Recovery Plan Preview POST from
+// recoverable Findings. There is still no Apply, automatic repair, retry,
+// or new Provider/Keychain path.
 
 const STORAGE_SESSION = "workcairn.active-session";
 
@@ -273,6 +273,17 @@ async function awaitOnClickCompletionExpectingNoFetch(page, key, index, timeoutM
   }
 }
 
+async function expectFullyWithinViewport(page, locator) {
+  const box = await locator.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(box.x).toBeGreaterThanOrEqual(-1);
+  expect(box.y).toBeGreaterThanOrEqual(-1);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
+}
+
 // mountAttentionSession pairs, then fully synthesizes one Interaction
 // Session (record + next + empty work-report/conversation) via route
 // mocking, sets it as the active Session in localStorage, and reloads so
@@ -283,9 +294,11 @@ async function awaitOnClickCompletionExpectingNoFetch(page, key, index, timeoutM
 // used by tests that must register a request listener (or reset counters)
 // exactly at that boundary, so unrelated first-run/setup traffic from
 // completeFirstRunFast is never counted.
-async function mountAttentionSession(page, daemon, { sessionId, record, next, beforeReload } = {}) {
-  await pairThroughUI(page, daemon);
-  await completeFirstRunFast(page);
+async function mountAttentionSession(page, daemon, { sessionId, record, next, beforeReload, alreadyPaired = false } = {}) {
+  if (!alreadyPaired) {
+    await pairThroughUI(page, daemon);
+    await completeFirstRunFast(page);
+  }
   await jsonRoute(page, `**/v1/interactions/${encodeURIComponent(sessionId)}`, { version: "workspace-interaction.v1", ok: true, result: record });
   await jsonRoute(page, `**/v1/interactions/${encodeURIComponent(sessionId)}/next`, { version: "workspace-interaction.v1", ok: true, result: next });
   await jsonRoute(page, `**/v1/interactions/${encodeURIComponent(sessionId)}/work-report`, { version: "workspace-interaction.v1", ok: false, error: { code: "WORK_REPORT_NOT_FOUND" } }, 404);
@@ -341,6 +354,7 @@ function eligibleNext(sessionId, overrides = {}) {
 }
 
 const RECOVERY_URL = (project) => `**/v1/projects/${encodeURIComponent(project)}/recovery-inspection`;
+const PREVIEW_URL = (project, taskId) => `**/v1/projects/${encodeURIComponent(project)}/tasks/${encodeURIComponent(taskId)}/recovery-plan-preview`;
 const COMMANDS_URL = "**/v1/commands/**";
 
 function commandRecord({ commandId = "CMD-WORKFLOW-001", failure = null } = {}) {
@@ -360,6 +374,534 @@ function unhealthyRecoveryView(project) {
     findings: [{ id: "RECOVERY-001", kind: "task_completion_pending", severity: "warning", certainty: "confirmed", related_id: "TASK-001", recoverable: true, recommended_action: "complete_task" }],
   };
 }
+
+function recoveryView(project, findings) {
+  return { schema_version: 1, project_name: project, healthy: findings.length === 0, task_count: findings.length, findings };
+}
+
+function recoveryFinding({ id, taskId, action, kind = "task_execution_interrupted" }) {
+  return { id, kind, severity: "warning", certainty: "confirmed", related_id: taskId, recoverable: true, recommended_action: action };
+}
+
+function planPreviewView({ project = "Recovery Inspection Test Project", taskId = "TASK-001", action = "complete_task", taskStatus = "進行中", taskVersion = 2, executable = true, blockers = [] } = {}) {
+  return { schema_version: 1, project_name: project, task_id: taskId, action, task_status: taskStatus, task_version: taskVersion, executable, blocking_reasons: blockers };
+}
+
+async function mountRecoveryPreviewSurface(page, daemon, findings, { sessionId = "SESSION-RECOVERY-PREVIEW-001", project = "Recovery Inspection Test Project", alreadyPaired = false } = {}) {
+  const record = baseRecord(sessionId, 3);
+  const next = eligibleNext(sessionId, { project_name: project, commands: [{ scope: "project", project_name: project, command_id: "CMD-WORKFLOW-001" }] });
+  await mountAttentionSession(page, daemon, { sessionId, record, next, alreadyPaired });
+  await jsonRoute(page, "**/v1/commands/CMD-WORKFLOW-001**", commandRecord());
+  await jsonRoute(page, RECOVERY_URL(project), { version: "workspace-command.v1", ok: true, result: recoveryView(project, findings) });
+  await page.getByRole("button", { name: "詳細を確認" }).click();
+  await expect(page.locator("#active-card")).toContainText("復旧診断");
+  return { project, record, next };
+}
+
+// ---------------------------------------------------------------------
+// Recovery Plan Preview (M-RECOVERY-6A): explicit, finding-scoped,
+// read-only POSTs layered onto Guided Recovery Inspection. The first test
+// reaches the real planner/projector in a temporary Vault; the remaining
+// tests control response bodies only where browser-side preflight,
+// validation, and async ownership are the behavior under test.
+// ---------------------------------------------------------------------
+
+test("Recovery Plan Preview: production POST reaches the real planner and safe projector with Provider calls unchanged @recovery", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRunFast(page);
+    await startRequest(page, "Recovery Plan Previewのproduction経路を確認してください");
+    const phase = await waitForPlanOrClarification(page);
+    if (phase === "clarification") await answerClarificationIfNeeded(page, "はい。初めて利用する人向けです。");
+    await approvePlanAndExecute(page);
+    await expect(page.getByRole("heading", { name: "すべての仕事とReviewが完了しています" })).toBeVisible({ timeout: 45_000 });
+    const callsBefore = JSON.stringify(environment.provider.calls);
+
+    // Only the attention/inspection shell is synthesized here so the UI
+    // exposes a recoverable Finding. The Preview POST itself is NOT routed:
+    // it reaches the real daemon, ProcessExecutor, planner, projector, and
+    // the completed TASK-001 already persisted in this temporary Vault.
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-PREVIEW-PRODUCTION", taskId: "TASK-001", action: "fail_and_hold_task" }),
+    ], {
+      sessionId: "SESSION-RECOVERY-PREVIEW-PRODUCTION",
+      project: "Browser Acceptance Project",
+      alreadyPaired: true,
+    });
+    const finding = page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-PRODUCTION"]');
+    await finding.getByRole("textbox").fill("完了済みTaskを変更せずにpreviewする確認理由");
+    await finding.getByRole("button", { name: "この提案を確認" }).click();
+
+    const preview = page.locator('[data-recovery-plan-preview]');
+    await expect(preview).toBeVisible({ timeout: 15_000 });
+    await expect(preview).toContainText("TASK-001");
+    await expect(preview).toContainText("Taskを失敗として保留する");
+    await expect(preview).toContainText("現在実行可能");
+    await expect(preview).toContainText("いいえ");
+    await expect(preview).toContainText("Taskが進行中ではありません");
+    await expect(preview).toContainText("成果物が存在するか、状態を確認できません");
+    expect(JSON.stringify(environment.provider.calls)).toBe(callsBefore);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("Recovery Plan Preview: complete action sends one minimal request and renders no Apply control @recovery", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    const requests = [];
+    const applyRequests = [];
+    page.on("request", (request) => {
+      if (/apply/i.test(new URL(request.url()).pathname)) applyRequests.push(request.url());
+    });
+    await page.route(PREVIEW_URL("Recovery Inspection Test Project", "TASK-001"), async (route) => {
+      requests.push({ method: route.request().method(), body: route.request().postDataJSON() });
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        version: "workspace-command.v1", ok: true,
+        result: planPreviewView(),
+      }) });
+    });
+    const callsBefore = JSON.stringify(environment.provider.calls);
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-PREVIEW-001", taskId: "TASK-001", action: "complete_task", kind: "task_completion_pending" }),
+    ]);
+
+    const finding = page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-001"]');
+    await expect(finding.locator("textarea")).toHaveCount(0);
+    await finding.getByRole("button", { name: "この提案を確認" }).click();
+
+    const preview = page.locator('[data-recovery-plan-preview]');
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("TASK-001");
+    await expect(preview).toContainText("進行中");
+    await expect(preview).toContainText("Version");
+    await expect(preview).toContainText("2");
+    await expect(preview).toContainText("Taskを完了として扱う");
+    await expect(preview).toContainText("現在実行可能");
+    await expect(preview).toContainText("はい");
+    await expect(preview).toContainText("この画面から変更は実行されません");
+    await expect(page.getByRole("button", { name: /適用|実行|続ける/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "閉じる" })).toBeVisible();
+
+    expect(requests).toEqual([{ method: "POST", body: { version: "workspace-command.v1", action: "complete_task" } }]);
+    expect(applyRequests).toHaveLength(0);
+    expect(JSON.stringify(environment.provider.calls)).toBe(callsBefore);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("Recovery Plan Preview: each hold reason is DOM-local and strict preflight makes zero request for whitespace @recovery", async ({ page }) => {
+  await installClickHandlerCapture(page);
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    const previewRequests = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/recovery-plan-preview")) previewRequests.push(request.url());
+    });
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-HOLD-001", taskId: "TASK-001", action: "fail_and_hold_task" }),
+      recoveryFinding({ id: "RECOVERY-HOLD-002", taskId: "TASK-002", action: "fail_and_hold_task" }),
+    ], { sessionId: "SESSION-RECOVERY-PREVIEW-REASONS" });
+
+    const first = page.locator('[data-recovery-preview-finding="RECOVERY-HOLD-001"]');
+    const second = page.locator('[data-recovery-preview-finding="RECOVERY-HOLD-002"]');
+    const firstReason = first.getByRole("textbox", { name: "RECOVERY-HOLD-001 の保留理由" });
+    const secondReason = second.getByRole("textbox", { name: "RECOVERY-HOLD-002 の保留理由" });
+    await firstReason.fill("最初のTaskだけを保留する理由");
+    await expect(secondReason).toHaveValue("");
+    await secondReason.fill("   ");
+    await secondReason.blur();
+    const secondButton = second.getByRole("button", { name: "この提案を確認" });
+    await expect(secondButton).toBeDisabled();
+    await expect(second.getByText("失敗として保留する理由を、前後に空白を入れずに入力してください。")).toBeVisible();
+
+    const rememberedErrorBefore = await page.evaluate(() => Object.fromEntries(
+      Object.keys(localStorage).filter((key) => key.startsWith("workcairn.last-error.")).sort().map((key) => [key, localStorage.getItem(key)]),
+    ));
+    const handle = await secondButton.elementHandle();
+    await wrapOnClickCompletion(page, handle, "wsRecoveryReasonPreflight");
+    await page.evaluate((el) => el.__wcLastClickHandler.call(el, new Event("click")), handle);
+    await awaitOnClickCompletionExpectingNoFetch(page, "wsRecoveryReasonPreflight", 0);
+    expect(previewRequests).toHaveLength(0);
+    await expect(page.locator("#busy-overlay")).toBeHidden();
+    await expect(page.locator("#toast")).toBeHidden();
+    const rememberedErrorAfter = await page.evaluate(() => Object.fromEntries(
+      Object.keys(localStorage).filter((key) => key.startsWith("workcairn.last-error.")).sort().map((key) => [key, localStorage.getItem(key)]),
+    ));
+    expect(rememberedErrorAfter).toEqual(rememberedErrorBefore);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("Recovery Plan Preview: hold action sends the exact reason but never renders it back @recovery", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    const marker = "PRIVATE-REASON-MUST-NOT-BE-REDISPLAYED";
+    const requests = [];
+    await page.route(PREVIEW_URL("Recovery Inspection Test Project", "TASK-001"), async (route) => {
+      requests.push(route.request().postDataJSON());
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        version: "workspace-command.v1", ok: true,
+        result: planPreviewView({ action: "fail_and_hold_task", taskStatus: "保留", executable: false, blockers: ["task_not_in_progress", "deliverable_present_or_invalid"] }),
+      }) });
+    });
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-HOLD-003", taskId: "TASK-001", action: "fail_and_hold_task" }),
+    ], { sessionId: "SESSION-RECOVERY-PREVIEW-HOLD" });
+
+    const finding = page.locator('[data-recovery-preview-finding="RECOVERY-HOLD-003"]');
+    await finding.getByRole("textbox").fill(marker);
+    await finding.getByRole("button", { name: "この提案を確認" }).click();
+
+    const preview = page.locator('[data-recovery-plan-preview]');
+    await expect(preview).toContainText("Taskを失敗として保留する");
+    await expect(preview).toContainText("現在実行可能");
+    await expect(preview).toContainText("いいえ");
+    await expect(preview).toContainText("Taskが進行中ではありません");
+    await expect(preview).toContainText("成果物が存在するか、状態を確認できません");
+    await expect(preview).not.toContainText(marker);
+    expect(requests).toEqual([{ version: "workspace-command.v1", action: "fail_and_hold_task", reason: marker }]);
+    const browserStorage = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }));
+    expect(browserStorage).not.toContain(marker);
+    expect(page.url()).not.toContain(marker);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("Recovery Plan Preview: blocked complete plan is a valid read-only result @recovery", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await page.route(PREVIEW_URL("Recovery Inspection Test Project", "TASK-001"), async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        version: "workspace-command.v1", ok: true,
+        result: planPreviewView({ taskStatus: "完了", executable: false, blockers: ["task_not_in_progress"] }),
+      }) });
+    });
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-PREVIEW-BLOCKED-COMPLETE", taskId: "TASK-001", action: "complete_task", kind: "task_completion_pending" }),
+    ], { sessionId: "SESSION-RECOVERY-PREVIEW-BLOCKED-COMPLETE" });
+    await page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-BLOCKED-COMPLETE"]').getByRole("button", { name: "この提案を確認" }).click();
+    const preview = page.locator('[data-recovery-plan-preview]');
+    await expect(preview).toContainText("Taskを完了として扱う");
+    await expect(preview).toContainText("現在実行可能");
+    await expect(preview).toContainText("いいえ");
+    await expect(preview).toContainText("Taskが進行中ではありません");
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("Recovery Plan Preview: malformed or extra response fields reject the whole terminal @recovery", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await page.route(PREVIEW_URL("Recovery Inspection Test Project", "TASK-001"), async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        version: "workspace-command.v1", ok: true,
+        result: { ...planPreviewView(), evidence_digest: "sha256:must-not-render" },
+      }) });
+    });
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-PREVIEW-MALFORMED", taskId: "TASK-001", action: "complete_task", kind: "task_completion_pending" }),
+    ], { sessionId: "SESSION-RECOVERY-PREVIEW-MALFORMED" });
+    await page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-MALFORMED"]').getByRole("button", { name: "この提案を確認" }).click();
+    await expect(page.locator("#active-card")).toContainText("復旧計画の形式を確認できませんでした");
+    await expect(page.locator("#active-card")).not.toContainText("must-not-render");
+    await expect(page.locator('[data-recovery-plan-preview]')).toHaveCount(0);
+  } finally {
+    await environment.stop();
+  }
+});
+
+const PREVIEW_INVALID_RESPONSE_CASES = [
+  ["wrong schema", (view) => { view.schema_version = 2; }],
+  ["Project mismatch", (view) => { view.project_name = "Different Project"; }],
+  ["Task mismatch", (view) => { view.task_id = "TASK-002"; }],
+  ["Action mismatch", (view) => { view.action = "fail_and_hold_task"; view.task_status = "保留"; }],
+  ["unknown Task status", (view) => { view.task_status = "unknown"; }],
+  ["zero Task version", (view) => { view.task_version = 0; }],
+  ["non-boolean executable", (view) => { view.executable = "yes"; }],
+  ["blocking reasons not array", (view) => { view.blocking_reasons = {}; }],
+  ["unknown blocker", (view) => { view.executable = false; view.blocking_reasons = ["raw_internal_blocker"]; }],
+  ["duplicate blocker", (view) => { view.executable = false; view.blocking_reasons = ["task_not_in_progress", "task_not_in_progress"]; }],
+  ["reversed blockers", (view) => { view.executable = false; view.blocking_reasons = ["matching_deliverable_not_confirmed", "task_not_in_progress"]; }],
+  ["executable/blocker mismatch", (view) => { view.blocking_reasons = ["task_not_in_progress"]; }],
+];
+
+for (const [label, corrupt] of PREVIEW_INVALID_RESPONSE_CASES) {
+  test(`Recovery Plan Preview: closed validator rejects ${label} without partial rendering @recovery`, async ({ page }) => {
+    const environment = await startBrowserEnvironment("happy_path");
+    try {
+      const view = planPreviewView();
+      corrupt(view);
+      await page.route(PREVIEW_URL("Recovery Inspection Test Project", "TASK-001"), async (route) => {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+          version: "workspace-command.v1", ok: true, result: view,
+        }) });
+      });
+      await mountRecoveryPreviewSurface(page, environment.daemon, [
+        recoveryFinding({ id: "RECOVERY-PREVIEW-CLOSED", taskId: "TASK-001", action: "complete_task", kind: "task_completion_pending" }),
+      ], { sessionId: `SESSION-RECOVERY-PREVIEW-${label.replace(/[^A-Za-z]+/g, "-").toUpperCase()}` });
+      await page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-CLOSED"]').getByRole("button", { name: "この提案を確認" }).click();
+      await expect(page.locator("#active-card")).toContainText("復旧計画の形式を確認できませんでした");
+      await expect(page.locator('[data-recovery-plan-preview]')).toHaveCount(0);
+      const body = await page.locator("#active-card").innerText();
+      expect(body).not.toContain("raw_internal_blocker");
+      expect(body).not.toContain("Different Project");
+    } finally {
+      await environment.stop();
+    }
+  });
+}
+
+const PREVIEW_INVALID_ENVELOPE_CASES = [
+  ["wrong outer version", { version: "workspace-command.v0", ok: true, result: planPreviewView() }],
+  ["extra outer field", { version: "workspace-command.v1", ok: true, result: planPreviewView(), internal_marker: "must-not-render" }],
+  ["missing ok", { version: "workspace-command.v1", result: planPreviewView() }],
+];
+
+for (const [label, envelope] of PREVIEW_INVALID_ENVELOPE_CASES) {
+  test(`Recovery Plan Preview: closed validator rejects ${label} without reading result @recovery`, async ({ page }) => {
+    const environment = await startBrowserEnvironment("happy_path");
+    try {
+      await page.route(PREVIEW_URL("Recovery Inspection Test Project", "TASK-001"), async (route) => {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(envelope) });
+      });
+      await mountRecoveryPreviewSurface(page, environment.daemon, [
+        recoveryFinding({ id: "RECOVERY-PREVIEW-ENVELOPE", taskId: "TASK-001", action: "complete_task", kind: "task_completion_pending" }),
+      ], { sessionId: `SESSION-RECOVERY-PREVIEW-ENVELOPE-${label.replace(/[^A-Za-z]+/g, "-").toUpperCase()}` });
+      await page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-ENVELOPE"]').getByRole("button", { name: "この提案を確認" }).click();
+      await expect(page.locator("#active-card")).toContainText("復旧計画の形式を確認できませんでした");
+      await expect(page.locator('[data-recovery-plan-preview]')).toHaveCount(0);
+      expect(await page.locator("#active-card").innerText()).not.toContain("must-not-render");
+    } finally {
+      await environment.stop();
+    }
+  });
+}
+
+test("Recovery Plan Preview: server rejection stays local and exposes no backend detail @recovery @mobile", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await page.route(PREVIEW_URL("Recovery Inspection Test Project", "TASK-001"), async (route) => {
+      await route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({
+        version: "workspace-command.v1", ok: false, error: { code: "RECOVERY_PLAN_PREVIEW_FAILED" },
+      }) });
+    });
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-PREVIEW-422", taskId: "TASK-001", action: "complete_task", kind: "task_completion_pending" }),
+    ], { sessionId: "SESSION-RECOVERY-PREVIEW-422" });
+    await page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-422"]').getByRole("button", { name: "この提案を確認" }).click();
+    await expect(page.locator("#active-card")).toContainText("復旧計画を取得できませんでした");
+    await expect(page.locator("#active-card")).not.toContainText("RECOVERY_PLAN_PREVIEW_FAILED");
+    await expect(page.locator("#busy-overlay")).toBeHidden();
+    await expect(page.locator("#active-card")).toBeInViewport();
+    const pageOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(pageOverflow).toBeLessThanOrEqual(1);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("Recovery Plan Preview: hold input and successful terminal fit the mobile viewport @recovery @mobile", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await page.route(PREVIEW_URL("Recovery Inspection Test Project", "TASK-001"), async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        version: "workspace-command.v1", ok: true,
+        result: planPreviewView({
+          action: "fail_and_hold_task",
+          taskStatus: "保留",
+          executable: false,
+          blockers: ["task_not_in_progress", "deliverable_present_or_invalid"],
+        }),
+      }) });
+    });
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-PREVIEW-MOBILE", taskId: "TASK-001", action: "fail_and_hold_task" }),
+    ], { sessionId: "SESSION-RECOVERY-PREVIEW-MOBILE" });
+
+    const finding = page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-MOBILE"]');
+    const reason = finding.getByRole("textbox", { name: "RECOVERY-PREVIEW-MOBILE の保留理由" });
+    const previewButton = finding.getByRole("button", { name: "この提案を確認" });
+    await expectFullyWithinViewport(page, finding);
+    await expectFullyWithinViewport(page, reason);
+    await expectFullyWithinViewport(page, previewButton);
+    let pageOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(pageOverflow).toBeLessThanOrEqual(1);
+
+    await reason.fill("モバイル表示で確認する保留理由");
+    await previewButton.click();
+
+    const preview = page.locator('[data-recovery-plan-preview]');
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("Taskを失敗として保留する");
+    await expect(preview).toContainText("Taskが進行中ではありません");
+    await expectFullyWithinViewport(page, preview);
+    await expectFullyWithinViewport(page, page.getByRole("button", { name: "閉じる" }));
+    pageOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(pageOverflow).toBeLessThanOrEqual(1);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("Recovery Plan Preview: semantic 400 remains a safe local terminal @recovery", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await page.route(PREVIEW_URL("Recovery Inspection Test Project", "TASK-001"), async (route) => {
+      await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({
+        version: "workspace-command.v1", ok: false, error: { code: "INVALID_RECOVERY_PLAN_PREVIEW" },
+      }) });
+    });
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-PREVIEW-400", taskId: "TASK-001", action: "complete_task", kind: "task_completion_pending" }),
+    ], { sessionId: "SESSION-RECOVERY-PREVIEW-400" });
+    await page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-400"]').getByRole("button", { name: "この提案を確認" }).click();
+    await expect(page.locator("#active-card")).toContainText("復旧計画を取得できませんでした");
+    await expect(page.locator("#active-card")).not.toContainText("INVALID_RECOVERY_PLAN_PREVIEW");
+    await expect(page.locator("#busy-overlay")).toBeHidden();
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("Recovery Plan Preview: duplicate click cannot start a second POST while the first owner is active @recovery", async ({ page }) => {
+  await installClickHandlerCapture(page);
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    const gate = queuedPausableRoute(page, PREVIEW_URL("Recovery Inspection Test Project", "TASK-001"));
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-PREVIEW-DUPLICATE", taskId: "TASK-001", action: "complete_task", kind: "task_completion_pending" }),
+    ], { sessionId: "SESSION-RECOVERY-PREVIEW-DUPLICATE" });
+    const previewButton = page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-DUPLICATE"]').getByRole("button", { name: "この提案を確認" });
+    const handle = await previewButton.elementHandle();
+    await wrapOnClickCompletion(page, handle, "wsRecoveryPreviewDuplicate");
+
+    await previewButton.click();
+    const first = await gate.next();
+    await page.evaluate((el) => el.__wcLastClickHandler.call(el, new Event("click")), handle);
+    await awaitOnClickCompletionExpectingNoFetch(page, "wsRecoveryPreviewDuplicate", 1);
+    expect(gate.receivedCount()).toBe(1);
+
+    first.release({ version: "workspace-command.v1", ok: true, result: planPreviewView() });
+    await awaitOnClickCompletion(page, "wsRecoveryPreviewDuplicate", 0);
+    await expect(page.locator('[data-recovery-plan-preview]')).toBeVisible();
+    expect(gate.receivedCount()).toBe(1);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("Recovery Plan Preview: delayed response after navigation never commits to the new surface @recovery", async ({ page }) => {
+  await installClickHandlerCapture(page);
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    const gate = queuedPausableRoute(page, PREVIEW_URL("Recovery Inspection Test Project", "TASK-001"));
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-PREVIEW-STALE", taskId: "TASK-001", action: "complete_task", kind: "task_completion_pending" }),
+    ], { sessionId: "SESSION-RECOVERY-PREVIEW-STALE" });
+    const previewButton = page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-STALE"]').getByRole("button", { name: "この提案を確認" });
+    const handle = await previewButton.elementHandle();
+    await wrapOnClickCompletion(page, handle, "wsRecoveryPreviewStale");
+    await previewButton.click();
+    const pending = await gate.next();
+
+    await page.locator("#back-to-list-button").click();
+    await expect(page.locator("#request-list-view")).toBeVisible();
+    pending.release({ version: "workspace-command.v1", ok: true, result: planPreviewView() });
+    await awaitOnClickCompletion(page, "wsRecoveryPreviewStale", 0);
+
+    await expect(page.locator('[data-recovery-plan-preview]')).toHaveCount(0);
+    expect(await page.locator("body").innerText()).not.toContain("復旧計画の確認結果");
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("Recovery Plan Preview: Project-only silent drift invalidates a paused old-Project response @recovery", async ({ page }) => {
+  await captureAppPollInterval(page);
+  await installClickHandlerCapture(page);
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    const sessionId = "SESSION-RECOVERY-PREVIEW-PROJECT-DRIFT";
+    const oldProject = "Recovery Inspection Test Project";
+    const freshProject = "Recovery Inspection Fresh Project";
+    const gate = queuedPausableRoute(page, PREVIEW_URL(oldProject, "TASK-001"));
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-PREVIEW-PROJECT-DRIFT", taskId: "TASK-001", action: "complete_task", kind: "task_completion_pending" }),
+    ], { sessionId, project: oldProject });
+
+    const previewButton = page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-PROJECT-DRIFT"]').getByRole("button", { name: "この提案を確認" });
+    const handle = await previewButton.elementHandle();
+    await wrapOnClickCompletion(page, handle, "wsRecoveryPreviewProjectDrift");
+    await previewButton.click();
+    const pending = await gate.next();
+
+    // Session, record version, expected version, and next kind stay exactly
+    // the same. Project ownership is the sole changing dimension.
+    await jsonRoute(page, `**/v1/interactions/${encodeURIComponent(sessionId)}`, {
+      version: "workspace-interaction.v1", ok: true, result: baseRecord(sessionId, 3),
+    });
+    await jsonRoute(page, `**/v1/interactions/${encodeURIComponent(sessionId)}/next`, {
+      version: "workspace-interaction.v1", ok: true,
+      result: eligibleNext(sessionId, {
+        project_name: freshProject,
+        expected_version: 3,
+        commands: [{ scope: "project", project_name: freshProject, command_id: "CMD-WORKFLOW-001" }],
+      }),
+    });
+    await firePollTick(page);
+    await expect(page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-PROJECT-DRIFT"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "詳細を確認" })).toBeVisible();
+
+    pending.release({ version: "workspace-command.v1", ok: true, result: planPreviewView({ project: oldProject }) });
+    await awaitOnClickCompletion(page, "wsRecoveryPreviewProjectDrift", 0);
+
+    await expect(page.locator('[data-recovery-plan-preview]')).toHaveCount(0);
+    expect(await page.locator("body").innerText()).not.toContain("復旧計画の確認結果");
+    expect(gate.receivedCount()).toBe(1);
+  } finally {
+    await environment.stop();
+  }
+});
+
+test("Recovery Plan Preview: silent context drift discards an unsubmitted reason without starting Preview @recovery", async ({ page }) => {
+  await captureAppPollInterval(page);
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    const sessionId = "SESSION-RECOVERY-PREVIEW-POLL-DRIFT";
+    const previewRequests = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/recovery-plan-preview")) previewRequests.push(request.url());
+    });
+    const callsBefore = JSON.stringify(environment.provider.calls);
+    await mountRecoveryPreviewSurface(page, environment.daemon, [
+      recoveryFinding({ id: "RECOVERY-PREVIEW-POLL", taskId: "TASK-001", action: "fail_and_hold_task" }),
+    ], { sessionId });
+    const reason = page.getByRole("textbox", { name: "RECOVERY-PREVIEW-POLL の保留理由" });
+    await reason.fill("保存されてはいけない入力途中の理由");
+
+    await jsonRoute(page, `**/v1/interactions/${encodeURIComponent(sessionId)}`, {
+      version: "workspace-interaction.v1", ok: true, result: baseRecord(sessionId, 4),
+    });
+    await jsonRoute(page, `**/v1/interactions/${encodeURIComponent(sessionId)}/next`, {
+      version: "workspace-interaction.v1", ok: true, result: eligibleNext(sessionId, { expected_version: 4 }),
+    });
+    await firePollTick(page);
+
+    await expect(page.locator('[data-recovery-preview-finding="RECOVERY-PREVIEW-POLL"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "詳細を確認" })).toBeVisible();
+    expect(await page.locator("body").innerText()).not.toContain("保存されてはいけない入力途中の理由");
+    expect(previewRequests).toHaveLength(0);
+    expect(JSON.stringify(environment.provider.calls)).toBe(callsBefore);
+  } finally {
+    await environment.stop();
+  }
+});
 
 // ---------------------------------------------------------------------
 // Production path -- no route mock, real daemon, real ProcessExecutor,

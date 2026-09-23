@@ -1,6 +1,6 @@
 # ADR-0074: Recovery Plan Preview — read-only, safe HTTP projection before explicit Apply
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 
@@ -94,7 +94,17 @@ Handlerは文字列比較ではなく`errors.Is`でclosed sentinelを分類し�
 
 preview responseやbrowser stateを、そのまま変更権限として再利用しません。
 
-### 7. Verification boundary
+### 7. Local Web UI and async ownership
+
+M-RECOVERY-6Aでは、Guided Recovery Inspectionのrecoverable Findingごとに、Humanが明示的に押した場合だけPlan Previewを取得するLocal Web UIを追加します。`complete_task`は確認buttonだけ、`fail_and_hold_task`はFindingごとに独立したDOM-local textareaと確認buttonを持ちます。ReasonはSession state、URL、Command Ledger、logへ保存せず、navigation、reload、context invalidationで破棄します。
+
+Browserのpure preflightはProject、Task ID、Action、ReasonをPOST前に検証します。不正入力ではPreview fetchを開始せず、global busy、toast、global errorを変更しません。Preview中のlocal loading／terminal表示はADR-0073で確定した`inspectionSequence`、single-flight、refresh barrier、context invalidationを再利用し、stale responseや古い`finally`が新しいownerへcommitしたりactive flagを解除したりしないようにします。
+
+Responseは8 fieldのexact shape、requested Project／Task／Actionとの一致、closed Task status、positive Version、boolean Executable、action別のclosed／重複なし／canonical orderのblockerを検証します。1 fieldでも不正ならresponse全体を拒否し、Evidence、Reason、SourceRevision、ApprovalRequired、raw backend errorをDOMへ伝播しません。
+
+表示はTask ID、現在状態、Version、予定Action、Executable、固定文言のblockerだけです。ExecutableでもApply／実行／retry buttonは表示せず、read-only previewである固定copyと「閉じる」だけを提供します。Preview取得はProvider callやKeychain accessを増やしません。
+
+### 8. Verification boundary
 
 Backend testは次を独立して証明します。
 
@@ -108,7 +118,13 @@ Backend testは次を独立して証明します。
 - local-network authorization／intent維持
 - temporary Vaultの全entry／bytesが複数preview前後で不変
 
-Browser UIは本ADRの現Checkpointでは実装しません。UI preflight、global busy非干渉、fetch ownershipは後続sliceで実装・reviewします。
+Browser testはreal app／daemon上で、明示clickだけがPOSTすること、ReasonのFinding単位ownershipと非再表示、malformed responseのwhole rejection、400／422のsafe terminal、duplicate click、navigation／silent refreshによるinvalidation、desktop／mobile overflow、Provider call不変、Apply-shaped request 0を検証します。production hookやfixed sleepを正しさの根拠にしません。
+
+### 9. UI focused review closure
+
+M-RECOVERY-6BのCodex focused reviewでは、Preview owner contextへProjectを含め、同じSession／Version／Next kindでもProjectが変化すれば進行中のPreviewをinvalidateする契約を確定しました。Project AのPOSTをpauseしたままsilent refreshでProject Bへ変更し、旧responseをreleaseしてもterminalへcommitされないことを、poll callbackとclick handlerの完了境界を直接待つBrowser testで固定しています。
+
+また、WebKit iPhoneを含むmobile testで、`fail_and_hold_task`のFinding／Reason入力／確認buttonと、成功Preview terminal／Close buttonがviewport内へ収まり、入力前後ともdocument横overflowを生じないことを実寸で確認します。focused reviewはP0〜P3なしでGOとなり、read-only ownership、Reason非永続化、Provider／Keychain非干渉、Apply／retry非実装の境界が閉じました。
 
 ## Consequences
 
@@ -117,7 +133,7 @@ Browser UIは本ADRの現Checkpointでは実装しません。UI preflight、glo
 - 内部evidence／reason／revision情報は構造的にpublic responseへ入りません。
 - 400はclientが送った意味的入力だけ、422は内部Plan／projection／existence failureだけを表します。
 - 新しいProvider call、credential経路、永続state、automatic repairは増えません。
-- UIが未実装でimplementation reviewも未完了のため、本ADRは`Proposed`を維持します。
+- Local Web UIはM-RECOVERY-6Aで実装し、M-RECOVERY-6BのCodex focused reviewをP0〜P3なしで完了しました。post-commit Automated Gatesはfeature HEADの検証として別Checkpointで実施します。
 
 ## Rejected alternatives
 
@@ -129,4 +145,4 @@ Browser UIは本ADRの現Checkpointでは実装しません。UI preflight、glo
 
 ## Scope note
 
-本ADRはM-RECOVERY-5Cのbackend vertical sliceだけを記録します。ADR-0073のscopeは変更しません。Local Web UI、Recovery apply、自動修復、retry、Provider、Keychain、candidate／Releaseは対象外です。Backend implementationとCodex focused review、および後続UI sliceが完了するまでStatusは`Proposed`です。
+本ADRはM-RECOVERY-5Cのbackend vertical sliceとM-RECOVERY-6A／6Bのreview済みread-only Local Web UIを記録します。ADR-0073のscopeは変更しません。Recovery apply、自動修復、retry、Provider、Keychain、candidate／Releaseは対象外です。backendとUIのcontract review完了をもってStatusを`Accepted`とし、post-commit Automated Gatesとmain pushは後続Checkpointで管理します。

@@ -323,15 +323,16 @@ M-RECOVERY-3A（backend）からM-RECOVERY-4D.5（UIとADR Accepted化）まで�
 - Vault path、秘密情報、Prompt、Provider responseをclientへ出さない
 - normal Workflowのbusiness ruleやSession stateを変更しない
 
-## Next 1 — Recovery Plan Preview（backend実装中・review前）
+## Completed — Recovery Plan Preview
 
-M-RECOVERY-5A系のdesign reviewを経て、既存ADR-0020 plannerを変更操作なしで呼び出す`POST /v1/projects/{project_name}/tasks/{task_id}/recovery-plan-preview`のbackend vertical sliceをM-RECOVERY-5Cで実装しています。新しいProcess境界はraw Project／Task／Action／ReasonをVault I/O前に検証し、client入力不正の400とinternal plan／projection failureの422をclosed sentinelで分離します。public viewはTask state、Version、Action、Executable、closed blockerだけを返し、Evidence reference／digest、Reason、SourceRevision、ApprovalRequiredを公開しません。ADR-0074（`Proposed`）を参照してください。
+M-RECOVERY-5A系のdesign reviewを経て、既存ADR-0020 plannerを変更操作なしで呼び出す`POST /v1/projects/{project_name}/tasks/{task_id}/recovery-plan-preview`のbackend vertical sliceをM-RECOVERY-5Cで実装しました。Codex focused review、Automated Gates、commit、GitHub mainへのfast-forward pushまで完了しています。新しいProcess境界はraw Project／Task／Action／ReasonをVault I/O前に検証し、client入力不正の400とinternal plan／projection failureの422をclosed sentinelで分離します。public viewはTask state、Version、Action、Executable、closed blockerだけを返し、Evidence reference／digest、Reason、SourceRevision、ApprovalRequiredを公開しません。
 
-- backendだけを対象とし、Local Web UIはまだ実装しない
+M-RECOVERY-6Aでは、Guided Recovery Inspectionのrecoverable FindingからHumanの明示clickでだけPreviewを取得するLocal Web UIを実装しました。Finding単位のReason入力、strict preflight、responseのclosed validation、ADR-0073由来のsingle-flight／stale-response ownership、read-only terminal表示を追加し、Apply／自動repair／retryは追加していません。M-RECOVERY-6BではProjectを含むPreview ownershipとmobile成功UIの実寸evidenceをfocused correctionし、Codex focused reviewをP0〜P3なしで完了しました。M-RECOVERY-6B.3でUIとADR-0074の`Accepted`化を単一commitにまとめ、post-commit Automated Gatesとmain pushは後続Checkpointで確認します。
+
 - previewはread-onlyで、Command Ledger、Task、Deliverable、Audit、Sessionを変更しない
 - Recovery apply、自動repair、retry、artifact adoptionへ進まない
 - Provider callとKeychain accessを追加しない
-- backend implementationのCodex focused review後も、UI sliceが完了するまでADR-0074を`Proposed`に保つ
+- ADR-0074はbackend／UIのcontract review完了により`Accepted`。post-commit Automated Gatesとmain pushを後続Checkpointで完了する
 
 ## Next 2 — Bounded Provider Acceptance Profile（実装済み・Codex GO・ADR Accepted・commit済み。Public Betaは引き続きNO-GO）
 

@@ -746,15 +746,16 @@ function shortDigest(value) {
 }
 
 async function requestJSON(path, options = {}) {
-  const headers = new Headers(options.headers || {});
+  const { rawEnvelope = false, ...fetchOptions } = options;
+  const headers = new Headers(fetchOptions.headers || {});
   headers.set("Accept", "application/json");
-  if (options.body != null) {
+  if (fetchOptions.body != null) {
     headers.set("Content-Type", "application/json");
     headers.set("X-Workspace-Intent", "local-network-ui.v1");
   }
   let response;
   try {
-    response = await fetch(path, { ...options, headers, credentials: "same-origin" });
+    response = await fetch(path, { ...fetchOptions, headers, credentials: "same-origin" });
   } catch (error) {
     throw new APIError("このデバイスとの通信が切れました。状態を確認してから再開してください。", 0, error);
   }
@@ -770,6 +771,7 @@ async function requestJSON(path, options = {}) {
       : payload;
     throw new APIError(String(code), response.status, detail);
   }
+  if (rawEnvelope) return payload;
   return payload && Object.hasOwn(payload, "result") ? payload.result : payload;
 }
 
@@ -1706,6 +1708,7 @@ async function refreshCurrent(silent = false) {
       // construction, but never assumed), the comparison is not skipped --
       // it is treated as an invalidating mismatch.
       let freshRequest = null;
+      let freshContext = null;
       let invariantValid = true;
       if (state.inspectionMode === "ineligible") {
         const commands = state.inspectionContext?.commands;
@@ -1713,10 +1716,12 @@ async function refreshCurrent(silent = false) {
         if (invariantValid) {
           freshRequest = buildInspectionRequest("ineligible", { record, next, error: { command_id: commands[0].commandId } });
         }
+      } else if (state.inspectionMode === "preview") {
+        freshContext = previewContextFromFreshState(record, next, state.inspectionContext);
       } else {
         freshRequest = buildInspectionRequest(state.inspectionMode, { record, next, error: state.lastError });
       }
-      const freshContext = freshRequest ? contextFromRequest(freshRequest) : null;
+      if (state.inspectionMode !== "preview") freshContext = freshRequest ? contextFromRequest(freshRequest) : null;
       if (!invariantValid || !inspectionContextsEqual(state.inspectionContext, freshContext)) {
         clearActionSurface({ resetRenderKey: true });
       }
@@ -2304,6 +2309,41 @@ function isPositiveSafeInteger(value) {
 function isSafeNonNegativeInteger(value) {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 && Number.isSafeInteger(value);
 }
+function isCanonicalTaskID(value) {
+  if (typeof value !== "string") return false;
+  const match = /^TASK-(\d{3,})$/.exec(value);
+  if (!match) return false;
+  const number = Number(match[1]);
+  return Number.isSafeInteger(number) && number >= 1 && `TASK-${String(number).padStart(3, "0")}` === value;
+}
+
+const MAX_RECOVERY_PLAN_PREVIEW_REASON_BYTES = 16 << 10;
+const RECOVERY_PLAN_PREVIEW_ACTIONS = new Set(["complete_task", "fail_and_hold_task"]);
+
+function validRecoveryPlanPreviewReason(action, reason) {
+  if (typeof reason !== "string") return false;
+  if (action === "complete_task") return reason === "";
+  if (action !== "fail_and_hold_task") return false;
+  return reason.length > 0
+    && reason === reason.trim()
+    && new TextEncoder().encode(reason).length <= MAX_RECOVERY_PLAN_PREVIEW_REASON_BYTES;
+}
+
+function inspectionBase(record, next) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  if (!next || typeof next !== "object" || Array.isArray(next)) return null;
+  if (!isCanonicalNonEmptyString(record.session_id) || !isCanonicalNonEmptyString(next.session_id)) return null;
+  if (record.session_id !== next.session_id) return null;
+  if (!isPositiveSafeInteger(record.version)) return null;
+  if (!isPositiveSafeInteger(next.expected_version)) return null;
+  if (!NEXT_ACTION_KINDS.has(next.kind)) return null;
+  return {
+    sessionId: record.session_id,
+    recordVersion: record.version,
+    nextKind: next.kind,
+    nextExpectedVersion: next.expected_version,
+  };
+}
 
 // validateCommandReferences validates an array of NextAction.Commands-shaped
 // entries in their existing order (never reordered -- Go's Next() already
@@ -2329,17 +2369,13 @@ function validateCommandReferences(references) {
 // buildInspectionRequest is the single pure preflight boundary between "the
 // CEO clicked something that might open an inspection" and starting any
 // fetch. It never reads global state -- everything comes from record/next
-// (both modes) and error (ineligible mode only). Returns one validated
+// (all modes), error (ineligible only), or the finding-scoped preview
+// inputs (preview only). Returns one validated
 // request object, or null. Eligible mode never degrades to the ineligible
 // fallback shape on its own malformed input.
-function buildInspectionRequest(mode, { record, next, error } = {}) {
-  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
-  if (!next || typeof next !== "object" || Array.isArray(next)) return null;
-  if (!isCanonicalNonEmptyString(record.session_id) || !isCanonicalNonEmptyString(next.session_id)) return null;
-  if (record.session_id !== next.session_id) return null;
-  if (!isPositiveSafeInteger(record.version)) return null;
-  if (!isPositiveSafeInteger(next.expected_version)) return null;
-  if (!NEXT_ACTION_KINDS.has(next.kind)) return null;
+function buildInspectionRequest(mode, { record, next, error, taskId, action, reason } = {}) {
+  const base = inspectionBase(record, next);
+  if (base === null) return null;
 
   if (mode === "eligible") {
     if (!RECOVERY_INSPECT_ELIGIBLE_KINDS.has(next.kind)) return null;
@@ -2347,19 +2383,37 @@ function buildInspectionRequest(mode, { record, next, error } = {}) {
     if (!("commands" in next) || !Array.isArray(next.commands) || next.commands.length === 0) return null;
     const references = validateCommandReferences(next.commands);
     if (references === null) return null;
-    return { mode, sessionId: record.session_id, recordVersion: record.version, nextKind: next.kind, nextExpectedVersion: next.expected_version, projectName: next.project_name, references };
+    return { mode, ...base, projectName: next.project_name, references };
   }
   if (mode === "ineligible") {
     if (RECOVERY_INSPECT_ELIGIBLE_KINDS.has(next.kind)) return null;
     if (!error || typeof error !== "object" || Array.isArray(error)) return null;
     if (!isCanonicalNonEmptyString(error.command_id)) return null;
-    return { mode, sessionId: record.session_id, recordVersion: record.version, nextKind: next.kind, nextExpectedVersion: next.expected_version, projectName: "", references: [{ scope: "workspace", projectName: "", commandId: error.command_id }] };
+    return { mode, ...base, projectName: "", references: [{ scope: "workspace", projectName: "", commandId: error.command_id }] };
+  }
+  if (mode === "preview") {
+    if (!RECOVERY_INSPECT_ELIGIBLE_KINDS.has(next.kind)) return null;
+    if (!isCanonicalNonEmptyString(next.project_name)) return null;
+    if (!isCanonicalTaskID(taskId)) return null;
+    if (!RECOVERY_PLAN_PREVIEW_ACTIONS.has(action)) return null;
+    if (!validRecoveryPlanPreviewReason(action, reason)) return null;
+    return { mode, ...base, projectName: next.project_name, taskId, action, reason };
   }
   return null;
 }
 
 function contextFromRequest(request) {
+  if (request.mode === "preview") {
+    return { sessionId: request.sessionId, recordVersion: request.recordVersion, nextKind: request.nextKind, nextExpectedVersion: request.nextExpectedVersion, projectName: request.projectName, taskId: request.taskId, action: request.action };
+  }
   return { sessionId: request.sessionId, recordVersion: request.recordVersion, nextKind: request.nextKind, nextExpectedVersion: request.nextExpectedVersion, projectName: request.projectName, commands: request.references };
+}
+
+function previewContextFromFreshState(record, next, currentContext) {
+  const base = inspectionBase(record, next);
+  if (base === null || !RECOVERY_INSPECT_ELIGIBLE_KINDS.has(next.kind) || !isCanonicalNonEmptyString(next.project_name)) return null;
+  if (!isCanonicalTaskID(currentContext?.taskId) || !RECOVERY_PLAN_PREVIEW_ACTIONS.has(currentContext?.action)) return null;
+  return { ...base, projectName: next.project_name, taskId: currentContext.taskId, action: currentContext.action };
 }
 
 function inspectionContextsEqual(a, b) {
@@ -2376,6 +2430,11 @@ const RECOVERY_FINDING_KINDS = new Set([
 const RECOVERY_SEVERITIES = new Set(["warning", "critical"]);
 const RECOVERY_CERTAINTIES = new Set(["confirmed", "unverifiable"]);
 const RECOVERY_ACTIONS = new Set(["none", "complete_task", "fail_and_hold_task"]);
+const RECOVERY_PLAN_TASK_STATUSES = new Set(["未着手", "進行中", "保留", "完了"]);
+const RECOVERY_PLAN_BLOCKING_ORDER = {
+  complete_task: ["task_not_in_progress", "matching_deliverable_not_confirmed"],
+  fail_and_hold_task: ["task_not_in_progress", "deliverable_present_or_invalid"],
+};
 
 // validateRecoveryInspectionView is the single, pure, closed validator for
 // GET .../recovery-inspection's inner result. Returns the validated,
@@ -2426,6 +2485,45 @@ function validateRecoveryFindingView(entry) {
   return { id: entry.id, kind: entry.kind, severity: entry.severity, certainty: entry.certainty, relatedId, recoverable: entry.recoverable, recommendedAction: entry.recommended_action };
 }
 
+function recoveryPlanPreviewResultFromEnvelope(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  if (JSON.stringify(Object.keys(payload).sort()) !== JSON.stringify(["ok", "result", "version"])) return null;
+  if (payload.version !== COMMAND_VERSION || payload.ok !== true) return null;
+  return payload.result;
+}
+
+function validateRecoveryPlanPreviewView(raw, expected) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const expectedKeys = ["action", "blocking_reasons", "executable", "project_name", "schema_version", "task_id", "task_status", "task_version"];
+  if (JSON.stringify(Object.keys(raw).sort()) !== JSON.stringify(expectedKeys)) return null;
+  if (raw.schema_version !== RECOVERY_SCHEMA_VERSION) return null;
+  if (raw.project_name !== expected.projectName || raw.task_id !== expected.taskId || raw.action !== expected.action) return null;
+  if (!isCanonicalNonEmptyString(raw.project_name) || !isCanonicalTaskID(raw.task_id)) return null;
+  if (!RECOVERY_PLAN_PREVIEW_ACTIONS.has(raw.action) || !RECOVERY_PLAN_TASK_STATUSES.has(raw.task_status)) return null;
+  if (!isPositiveSafeInteger(raw.task_version) || typeof raw.executable !== "boolean") return null;
+  if (!Array.isArray(raw.blocking_reasons)) return null;
+  const canonicalOrder = RECOVERY_PLAN_BLOCKING_ORDER[raw.action];
+  const seen = new Set();
+  let previousIndex = -1;
+  for (const blocker of raw.blocking_reasons) {
+    const index = canonicalOrder.indexOf(blocker);
+    if (index < 0 || seen.has(blocker) || index <= previousIndex) return null;
+    seen.add(blocker);
+    previousIndex = index;
+  }
+  if (raw.executable !== (raw.blocking_reasons.length === 0)) return null;
+  return {
+    schemaVersion: raw.schema_version,
+    projectName: raw.project_name,
+    taskId: raw.task_id,
+    action: raw.action,
+    taskStatus: raw.task_status,
+    taskVersion: raw.task_version,
+    executable: raw.executable,
+    blockingReasons: [...raw.blocking_reasons],
+  };
+}
+
 const RECOVERY_FINDING_KIND_LABELS = {
   task_completion_pending: "Deliverableが確定済みでTask完了が未確定です",
   task_execution_interrupted: "Deliverable未確定のままTaskが中断しています",
@@ -2446,6 +2544,15 @@ const RECOVERY_ACTION_LABELS = {
 };
 const RECOVERY_SEVERITY_LABELS = { warning: "警告", critical: "重大" };
 const RECOVERY_CERTAINTY_LABELS = { confirmed: "確認済み", unverifiable: "未確認" };
+const RECOVERY_PLAN_ACTION_LABELS = {
+  complete_task: "Taskを完了として扱う",
+  fail_and_hold_task: "Taskを失敗として保留する",
+};
+const RECOVERY_PLAN_BLOCKING_LABELS = {
+  task_not_in_progress: "Taskが進行中ではありません",
+  matching_deliverable_not_confirmed: "対応する成果物を確認できません",
+  deliverable_present_or_invalid: "成果物が存在するか、状態を確認できません",
+};
 
 // recoveryFindingKindLabel/recoveryActionLabel deliberately have no
 // raw-value fallback branch: validateRecoveryFindingView already guarantees
@@ -2455,6 +2562,45 @@ const RECOVERY_CERTAINTY_LABELS = { confirmed: "確認済み", unverifiable: "�
 // case rather than a generic or raw label.
 function recoveryFindingKindLabel(kind) { return RECOVERY_FINDING_KIND_LABELS[kind] || null; }
 function recoveryActionLabel(action) { return RECOVERY_ACTION_LABELS[action] || null; }
+
+function recoveryPlanPreviewControls(finding) {
+  if (!finding.recoverable || !RECOVERY_PLAN_PREVIEW_ACTIONS.has(finding.recommendedAction)) return null;
+  const action = finding.recommendedAction;
+  if (action === "complete_task") {
+    return node("div", { class: "button-row", dataset: { recoveryPreviewFinding: finding.id } },
+      button("この提案を確認", "primary", async () => {
+        await inspectCommands("preview", { record: state.record, next: state.next, taskId: finding.relatedId, action, reason: "" });
+      }),
+    );
+  }
+
+  const warning = node("p", { class: "warning", hidden: true }, "失敗として保留する理由を、前後に空白を入れずに入力してください。");
+  const textarea = node("textarea", {
+    rows: 3,
+    maxlength: MAX_RECOVERY_PLAN_PREVIEW_REASON_BYTES,
+    "aria-label": `${finding.id} の保留理由`,
+    placeholder: "保留する理由を入力…",
+  });
+  const previewButton = button("この提案を確認", "primary", async () => {
+    const reason = textarea.value;
+    if (!validRecoveryPlanPreviewReason(action, reason)) warning.hidden = false;
+    await inspectCommands("preview", { record: state.record, next: state.next, taskId: finding.relatedId, action, reason });
+  });
+  previewButton.disabled = true;
+  textarea.addEventListener("input", () => {
+    const valid = validRecoveryPlanPreviewReason(action, textarea.value);
+    previewButton.disabled = !valid;
+    if (valid) warning.hidden = true;
+  });
+  textarea.addEventListener("blur", () => {
+    if (!validRecoveryPlanPreviewReason(action, textarea.value)) warning.hidden = false;
+  });
+  return node("div", { class: "stack-form", dataset: { recoveryPreviewFinding: finding.id } },
+    node("label", {}, "保留する理由", textarea),
+    warning,
+    node("div", { class: "button-row" }, previewButton),
+  );
+}
 
 function recoveryInspectionBlock(inspection) {
   if (inspection.healthy || inspection.findings.length === 0) {
@@ -2473,9 +2619,28 @@ function recoveryInspectionBlock(inspection) {
       node("p", { class: "supporting" }, `${severityLabel}・${certaintyLabel}`),
       node("p", { class: "supporting" }, finding.recoverable ? actionLabel : "人間の判断が必要です"),
       node("details", {}, node("summary", {}, "技術詳細"), approvalFacts([["ID", finding.id], ["対象ID", finding.relatedId || "—"]])),
+      recoveryPlanPreviewControls(finding),
     );
   });
   return node("div", {}, node("p", {}, "復旧診断"), ...items);
+}
+
+function recoveryPlanPreviewBlock(view) {
+  const blockers = view.blockingReasons.length
+    ? node("ul", {}, ...view.blockingReasons.map((reason) => node("li", {}, RECOVERY_PLAN_BLOCKING_LABELS[reason])))
+    : node("p", { class: "supporting" }, "現在の確認範囲では妨げる条件はありません。");
+  return node("div", { dataset: { recoveryPlanPreview: "" } },
+    node("p", {}, "復旧計画の確認結果"),
+    approvalFacts([
+      ["Task", view.taskId],
+      ["現在の状態", view.taskStatus],
+      ["Version", String(view.taskVersion)],
+      ["予定する操作", RECOVERY_PLAN_ACTION_LABELS[view.action]],
+      ["現在実行可能", view.executable ? "はい" : "いいえ"],
+    ]),
+    node("p", { class: "supporting" }, "これは確認だけです。この画面から変更は実行されません。"),
+    node("div", { class: "approval-box" }, node("p", {}, "確認が必要な条件"), blockers),
+  );
 }
 
 function renderAttention(next, title) {
@@ -2515,7 +2680,8 @@ function inspectionOwnsSurface(inspectionSequence, sessionId) {
 // any fetch. mode is "eligible" (canonical next.commands/next.project_name,
 // from renderAttention or an eligible renderRememberedError) or "ineligible"
 // (the existing single workspace-Command fallback, from renderRememberedError
-// only). It never touches global setBusy/showError -- the loading/error
+// only), or "preview" (one explicit, finding-scoped Recovery Plan preview).
+// It never touches global setBusy/showError -- the loading/error
 // text inside ui.activeCard is the only indicator, so an inspection failure
 // can never clear an unrelated global-busy flow.
 async function inspectCommands(mode, inputs) {
@@ -2523,7 +2689,7 @@ async function inspectCommands(mode, inputs) {
   const request = buildInspectionRequest(mode, inputs);
   if (request === null) {
     invalidateInspection();
-    renderInspectionTerminal(node("p", { class: "warning" }, "確認できる処理記録がありません"));
+    renderInspectionTerminal(node("p", { class: "warning" }, mode === "preview" ? "復旧計画を確認できません" : "確認できる処理記録がありません"));
     return;
   }
   invalidateInspection();
@@ -2533,8 +2699,28 @@ async function inspectCommands(mode, inputs) {
   const inspectionSequence = state.inspectionSequence;
   const sessionId = request.sessionId;
   ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, "記録を確認しています…"));
+  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, mode === "preview" ? "復旧計画を確認しています…" : "記録を確認しています…"));
   try {
+    if (request.mode === "preview") {
+      const body = { version: COMMAND_VERSION, action: request.action };
+      if (request.action === "fail_and_hold_task") body.reason = request.reason;
+      const envelope = await requestJSON(`/v1/projects/${encodeURIComponent(request.projectName)}/tasks/${encodeURIComponent(request.taskId)}/recovery-plan-preview`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        rawEnvelope: true,
+      });
+      if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+      await awaitLatestRefreshBarrier();
+      if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+      const raw = recoveryPlanPreviewResultFromEnvelope(envelope);
+      const preview = raw === null ? null : validateRecoveryPlanPreviewView(raw, request);
+      if (preview === null) {
+        renderInspectionTerminal(node("p", { class: "warning" }, "復旧計画の形式を確認できませんでした"));
+        return;
+      }
+      renderInspectionTerminal(recoveryPlanPreviewBlock(preview));
+      return;
+    }
     const results = await Promise.all(request.references.map((reference) => {
       const query = new URLSearchParams({ scope: reference.scope });
       if (reference.projectName) query.set("project", reference.projectName);
@@ -2562,7 +2748,7 @@ async function inspectCommands(mode, inputs) {
     if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
     await awaitLatestRefreshBarrier();
     if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
-    renderInspectionTerminal(node("p", { class: "warning" }, "処理記録を取得できませんでした"));
+    renderInspectionTerminal(node("p", { class: "warning" }, mode === "preview" ? "復旧計画を取得できませんでした" : "処理記録を取得できませんでした"));
   } finally {
     if (inspectionSequence === state.inspectionSequence) state.inspectionActive = false;
   }
