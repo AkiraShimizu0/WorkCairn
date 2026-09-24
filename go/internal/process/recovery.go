@@ -47,6 +47,10 @@ func PlanTaskRecovery(ctx context.Context, input RecoveryInput, request recovery
 }
 
 func ExecuteTaskRecovery(ctx context.Context, input RecoveryInput, approvedPlan recovery.Plan, approved bool) (recovery.Result, error) {
+	return executeTaskRecovery(ctx, input, approvedPlan, approved, nil)
+}
+
+func executeTaskRecovery(ctx context.Context, input RecoveryInput, approvedPlan recovery.Plan, approved bool, observers []event.Observer) (recovery.Result, error) {
 	if !approved {
 		return recovery.Result{}, ErrRecoveryApprovalRequired
 	}
@@ -76,6 +80,14 @@ func ExecuteTaskRecovery(ctx context.Context, input RecoveryInput, approvedPlan 
 		if _, err := events.Subscribe(eventType, audit.Handler()); err != nil {
 			return recovery.Result{}, err
 		}
+		for _, observer := range observers {
+			if !observerHandles(observer, eventType) {
+				continue
+			}
+			if _, err := events.Subscribe(eventType, observer.Handler); err != nil {
+				return recovery.Result{}, err
+			}
+		}
 	}
 	tasks, err := service.NewTaskService(store, events)
 	if err != nil {
@@ -101,4 +113,16 @@ func ExecuteTaskRecovery(ctx context.Context, input RecoveryInput, approvedPlan 
 		return result, shutdownErr
 	}
 	return result, nil
+}
+
+func observerHandles(observer event.Observer, eventType event.Type) bool {
+	if observer.Handler == nil {
+		return false
+	}
+	for _, candidate := range observer.Types {
+		if candidate == eventType {
+			return true
+		}
+	}
+	return false
 }

@@ -117,13 +117,14 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0072: Bounded Provider Acceptance Profile — Optional, Closed, Session-scoped Execution Bound](adr/ADR-0072-bounded-provider-acceptance-profile.md)
 - [ADR-0073: Guided Recovery Inspection — read-only HTTP projection of ADR-0020's Recovery Report](adr/ADR-0073-guided-recovery-inspection-http-projection.md)
 - [ADR-0074: Recovery Plan Preview — read-only, safe HTTP projection before explicit Apply](adr/ADR-0074-recovery-plan-preview-http-projection.md)
+- [ADR-0075: Complete Task Recovery Apply Backend](adr/ADR-0075-complete-task-recovery-apply-backend.md)（Proposed）
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
 
 ### Public Beta exposure boundary
 
-一般利用者の正式経路は`First Run → Interaction → CEO Intent → Go Canonical Plan → Plan Approval → Project／Task commit → Reviewed Workflow Approval → Task／Deliverable → Typed Review → Revision／再Review → Completion → Timeline／Proof of Work`です。`workcairn-daemon`の`POST /v1/commands`はADR-0042により`workspace.setup`と5つの`interaction.*` operationだけをexact allow-listし、それ以外をExecutor前にdefault denyします。
+一般利用者の正式経路は`First Run → Interaction → CEO Intent → Go Canonical Plan → Plan Approval → Project／Task commit → Reviewed Workflow Approval → Task／Deliverable → Typed Review → Revision／再Review → Completion → Timeline／Proof of Work`です。`workcairn-daemon`の`POST /v1/commands`はproduct operationをexact allow-listし、それ以外をExecutor前にdefault denyします。ADR-0075はこの境界へ同期限定の`recovery.complete_task.apply`を1件だけ追加します。
 
 direct Task／Review／Revision、plain／direct Reviewed Workflow、CEO apply、Project／Task／Organization writer、Scheduler、External Actionは既存CLI／内部Process／Recovery用に維持しますが、一般daemonのside-effect surfaceとLocal Web UIからは到達不能です。JSON Contract v1、Command Ledger、Vault canonical evidenceは変更しません。
 
@@ -162,12 +163,12 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Vault Deliverable Adapter | 構造化WorkerResultを安定したimmutable Deliverableへ変換し、既存成果物を上書きせず原子的に作成する |
 | Go Vault Audit Subscriber | Task lifecycle Event全体をEvent Handlerとして受け、既存Audit本文を保持したまま原子的に追記する |
 | Go Execution Service | readiness、承認、Task lifecycle、Worker実行、失敗Policyを1タスク単位で調停する。ADR-0058により、Provider呼び出し自体は成功したがoutputがProvider自身のtoken ceilingで打ち切られた場合（`worker.StopReasonMaxTokens`）、Deliverable保存やTask completeへ進まず、既存のFail→Hold失敗経路（`ErrorOutputIncomplete`）へ分岐する——Provider呼び出しの成否とDeliverableの完全性は別の問いとして扱う |
-| Go Recovery Domain／Service | storage-neutralなSnapshot、finding、version付きplanと、期待Version付きTask recoveryを提供する。ADR-0073のsafe inspectionとADR-0074のread-only Plan previewは内部free-text／evidence pathをHTTPへ公開せず、previewはApply権限として扱わない。推測replayやartifact修復はしない |
+| Go Recovery Domain／Service | storage-neutralなSnapshot、finding、version付きplanと、期待Version付きTask recoveryを提供する。ADR-0073のsafe inspectionとADR-0074のread-only Plan previewは内部free-text／evidence pathをHTTPへ公開せず、previewはApply権限として扱わない。ADR-0075のcomplete-task Applyはtyped commitmentをfresh Planへ照合し、Command Ledger claimとTask CASの後だけ実行する。推測replayやartifact修復はしない |
 | Go Vault Recovery Snapshot Adapter | managed Task、artifact、Audit、既知temporary stateをread-only typed evidenceへ変換する |
 | Go Command Ledger Domain／Service | Command ID、request digest、running／terminal outcomeと一度だけのVersion遷移を管理する |
 | Go Vault Command Ledger Adapter | Project scopeまたはworkspace scopeのhidden machine metadataへclaimをatomic createし、terminal outcomeをCAS／atomic replacementで保存する |
 | Go Process／workcairn | Vault AdapterとRuntimeをprocess edgeでcompositionし、Task metadata migration、read-only execution／recovery plan、明示承認付きexecute／recoveryを提供する |
-| Go HTTP API／workcairn-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger／Organization／Task evidence inspection、Recovery Inspection、read-only Recovery Plan Preview、graceful shutdownを提供し、workcairnと同じprocess／Serviceを利用する。既定はloopback、明示`--local-network`（ADR-0069、旧`--mobile`）だけprivate／link-local IPとprocess-local pairingを許可する。Interaction commandだけadditiveなbounded acceptanceでclient接続から切り離せる |
+| Go HTTP API／workcairn-daemon | `workspace-command.v1`、必須Command ID、read-only Ledger／Organization／Task evidence inspection、Recovery Inspection、read-only Recovery Plan Preview、同期限定complete-task Recovery prepare／Apply、graceful shutdownを提供し、workcairnと同じprocess／Serviceを利用する。既定はloopback、明示`--local-network`（ADR-0069、旧`--mobile`）だけprivate／link-local IPとprocess-local pairingを許可する。Interaction commandだけadditiveなbounded acceptanceでclient接続から切り離せる |
 | Living Company Dashboard | daemon同一originからembed配信する薄いclient。iPhone等の別端末から到達した場合はMy ActionsがInteraction Next Actionを質問／承認／Recoveryへ投影し、Mac／iPadでは既定のCompany ViewがOrganization／Workflow／Task evidenceから社員、Maker、Reviewer、Revision、handoff、Timelineを表示する。iPhoneはavailableな任意機能であり、Public Beta必須の対応対象ではない（Public Beta初期対応環境はmacOS／arm64）。同一Session／Versionのpollingでは操作中DOMを再生成せず、Task／Review／Revision規則を持たない |
 | First-run Workspace Setup | macOS native picker／Application Support path reference、Mac-only Keychain Adapter、redacted Workspace Statusと、明示承認・workspace Command Ledger・既存Employee writerを使うStarter Organization bootstrap。選択済み専用rootだけを扱い、path／secretをHTTPへ渡さず、既存Vault変更やCoreへの既定社員追加を行わない。pickerの開始位置と一般向けcopyは通常のローカル保存場所を標準とし、iCloud Drive／Obsidianはいずれも任意（ADR-0070、ADR-0038の「iCloud推奨開始位置」記述を限定的にsupersede） |
 | Go Workflow Run Service | dependency readinessを各Task後に再planし、決定的child Command IDで既存Task executionを順次調停する。Task状態やEventは変更しない |

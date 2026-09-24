@@ -177,6 +177,7 @@ func TestPublicBetaCommandAllowListExecutesOnlyFormalProductPath(t *testing.T) {
 		"interaction.plan.apply",
 		"interaction.workflow.execute",
 		"interaction.plan.approve_and_execute",
+		"recovery.complete_task.apply",
 	}
 	backend := &fakeCommandBackend{result: map[string]string{"status": "ok"}}
 	handler, err := NewHandler(backend, backend)
@@ -689,7 +690,7 @@ func TestAsyncInteractionCommandSurvivesRequestCancellationAndUsesLedgerLocation
 }
 
 func TestAsyncInteractionCommandRejectsInvalidUnsupportedAndExcessWorkBeforeExecution(t *testing.T) {
-	if !supportsAsyncOperation("interaction.answer") || !supportsAsyncOperation("workspace.setup") || supportsAsyncOperation("task.execute") || supportsAsyncOperation("interaction.action.wordpress.publish") {
+	if !supportsAsyncOperation("interaction.answer") || !supportsAsyncOperation("workspace.setup") || supportsAsyncOperation("task.execute") || supportsAsyncOperation("interaction.action.wordpress.publish") || supportsAsyncOperation("recovery.complete_task.apply") {
 		t.Fatal("async operation allow-list changed")
 	}
 	invalid := &fakeAsyncBackend{validateErr: ErrInvalidCommand, started: make(chan struct{}), release: make(chan struct{}), completed: make(chan error, 1)}

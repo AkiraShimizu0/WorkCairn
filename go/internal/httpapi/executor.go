@@ -397,6 +397,12 @@ type workspaceSetupPayload struct {
 	CurrentTime time.Time `json:"current_time"`
 }
 
+type recoveryCompleteTaskApplyPayload struct {
+	ProjectName string                                          `json:"project_name"`
+	TaskID      string                                          `json:"task_id"`
+	Approval    workspaceprocess.CompleteTaskRecoveryApprovalV1 `json:"approval"`
+}
+
 func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (any, error) {
 	if err := executor.ValidateCommand(command); err != nil {
 		return nil, ErrInvalidCommand
@@ -411,6 +417,15 @@ func (executor *ProcessExecutor) Execute(ctx context.Context, command Command) (
 			VaultRoot: executor.vaultRoot, Candidates: append([]organization.EmployeeCandidate(nil), starterOrganization...),
 			CurrentTime: payload.CurrentTime, CommandID: command.CommandID,
 		}, true)
+	case workspaceprocess.CompleteTaskRecoveryOperation:
+		var payload recoveryCompleteTaskApplyPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return workspaceprocess.ExecuteCompleteTaskRecoveryApply(ctx, workspaceprocess.CompleteTaskRecoveryApplyInput{
+			VaultRoot: executor.vaultRoot, ProjectName: payload.ProjectName, TaskID: payload.TaskID,
+			CommandID: command.CommandID, Approval: payload.Approval, EventObservers: executor.observers,
+		}, command.Approved)
 	case "task.execute":
 		var payload taskExecutePayload
 		if err := decodePayload(command.Payload, &payload); err != nil {
@@ -719,6 +734,10 @@ func (executor *ProcessExecutor) InspectRecoveryView(ctx context.Context, projec
 
 func (executor *ProcessExecutor) PlanRecoveryTaskPreview(ctx context.Context, projectName string, request recovery.PlanRequest) (workspaceprocess.RecoveryPlanPreviewView, error) {
 	return workspaceprocess.PlanTaskRecoveryView(ctx, workspaceprocess.RecoveryInput{VaultRoot: executor.vaultRoot, ProjectName: projectName}, request)
+}
+
+func (executor *ProcessExecutor) PrepareCompleteTaskRecovery(ctx context.Context, projectName, taskID string) (workspaceprocess.CompleteTaskRecoveryPrepareView, error) {
+	return workspaceprocess.PrepareCompleteTaskRecovery(ctx, workspaceprocess.RecoveryInput{VaultRoot: executor.vaultRoot, ProjectName: projectName}, taskID)
 }
 
 func (executor *ProcessExecutor) InspectWorkReport(ctx context.Context, sessionID string) (workspaceprocess.WorkReport, error) {

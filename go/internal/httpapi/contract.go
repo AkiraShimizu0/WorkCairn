@@ -85,6 +85,7 @@ var publicBetaCommandOperations = map[string]struct{}{
 	// specifically REVISION_LIMIT_REACHED and a stalled Task genuinely
 	// exists -- never a caller-visible retry/parallel-style choice.
 	"interaction.workflow.recover_revision": {},
+	"recovery.complete_task.apply":          {},
 }
 
 func publicBetaCommandAllowed(operation string) bool {
@@ -175,6 +176,18 @@ type RecoveryPlanPreviewRequest struct {
 	Version string          `json:"version"`
 	Action  recovery.Action `json:"action"`
 	Reason  json.RawMessage `json:"reason"`
+}
+
+type RecoveryCompleteTaskPrepareRequest struct {
+	Version string          `json:"version"`
+	Action  recovery.Action `json:"action"`
+}
+
+func (request RecoveryCompleteTaskPrepareRequest) Validate() error {
+	if request.Version != ContractVersion || request.Action != recovery.ActionCompleteTask {
+		return ErrInvalidCommand
+	}
+	return nil
 }
 
 func (request RecoveryPlanPreviewRequest) planRequest(taskID string) (recovery.PlanRequest, error) {

@@ -89,7 +89,18 @@ Content-Type: application/json
 {"version":"workspace-command.v1","action":"complete_task"}
 ```
 
-`POST /v1/projects/{project_name}/tasks/{task_id}/recovery-plan-preview`は、ADR-0020の既存plannerを1回だけ使い、変更を行わずPlanのsafe viewを返します（ADR-0074、Status: Accepted）。`action`は`complete_task`または`fail_and_hold_task`です。前者の`reason`は省略または空文字列だけ、後者はtrim済みnon-emptyかつ最大16 KiBのstringを必須とします。成功時の`result`は`schema_version`、`project_name`、`task_id`、`action`、`task_status`、`task_version`、`executable`、`blocking_reasons`だけです。Evidence reference／digest、reason、SourceRevision、approval stateは返しません。`blocking_reasons`はaction別のclosed listで、空でも`[]`です。意味的入力不正は`400 INVALID_RECOVERY_PLAN_PREVIEW`、Project／Task不存在を含むplanner／projection失敗は同一の`422 RECOVERY_PLAN_PREVIEW_FAILED`です。unsupported Content-Typeは415、body size超過は413という既存transport semanticsを維持します。`--local-network`ではpairing authorizationとsame-origin intentが必要です。Recovery apply、自動修復、retryは行わず、Preview responseやbrowser stateを変更権限として再利用しません。変更操作は引き続きoperator CLIの明示承認経路だけです。
+`POST /v1/projects/{project_name}/tasks/{task_id}/recovery-plan-preview`は、ADR-0020の既存plannerを1回だけ使い、変更を行わずPlanのsafe viewを返します（ADR-0074、Status: Accepted）。`action`は`complete_task`または`fail_and_hold_task`です。前者の`reason`は省略または空文字列だけ、後者はtrim済みnon-emptyかつ最大16 KiBのstringを必須とします。成功時の`result`は`schema_version`、`project_name`、`task_id`、`action`、`task_status`、`task_version`、`executable`、`blocking_reasons`だけです。Evidence reference／digest、reason、SourceRevision、approval stateは返しません。`blocking_reasons`はaction別のclosed listで、空でも`[]`です。意味的入力不正は`400 INVALID_RECOVERY_PLAN_PREVIEW`、Project／Task不存在を含むplanner／projection失敗は同一の`422 RECOVERY_PLAN_PREVIEW_FAILED`です。unsupported Content-Typeは415、body size超過は413という既存transport semanticsを維持します。`--local-network`ではpairing authorizationとsame-origin intentが必要です。このPreview endpointはRecovery apply、自動修復、retryを行わず、Preview responseやbrowser stateを変更権限として再利用しません。
+
+```text
+POST /v1/projects/ToDoアプリ/tasks/TASK-001/recovery-complete-task-prepare
+Content-Type: application/json
+
+{"version":"workspace-command.v1","action":"complete_task"}
+```
+
+ADR-0075（Status: Proposed）のprepareはcanonical Planをfresh derivationし、全Plan fieldを`CompleteTaskPlanCommitmentV1`へ明示コピーして`workcairn.recovery.complete-task-plan.v1`でdomain separationしたapproval objectを返します。Evidence path／digest、reason、SourceRevisionは返しません。Humanはそのapproval objectを`recovery.complete_task.apply`のpayloadへ渡し、command envelopeの`approved:true`を明示します。ApplyはCommand Ledger claim後にcanonical Planを再導出し、commitment一致とTask Version CASを通した場合だけTaskServiceで`complete_task`を同期実行します。
+
+Apply resultは`schema_version`、`project_name`、`task_id`、`action`、`status`、`task_state_committed`、`task_version`のexact 7 fieldsです。同一Command IDのreplay／conflict／runningをLedgerで閉じ、別Command IDの競合はTask CASで最大1 effectにします。Event／Audit失敗は`partial_failure`、terminal Ledger保存失敗は`500 COMMAND_LEDGER_PARTIAL`で、いずれも成功へ隠しません。`Prefer: respond-async`、Scheduler、`fail_and_hold_task`、Provider／Keychain、retry／fallbackは対象外です。
 
 ## Lifecycle
 

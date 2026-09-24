@@ -38,6 +38,7 @@ type Handler struct {
 	taskEvidenceInspector      TaskEvidenceInspector
 	recoveryInspector          RecoveryInspector
 	recoveryPlanPreviewer      RecoveryPlanPreviewer
+	recoveryCompletePreparer   RecoveryCompleteTaskPreparer
 	workReportInspector        WorkReportInspector
 	conversationInspector      ConversationInspector
 	companyActivityInspector   CompanyActivityInspector
@@ -96,6 +97,10 @@ type RecoveryInspector interface {
 
 type RecoveryPlanPreviewer interface {
 	PlanRecoveryTaskPreview(ctx context.Context, projectName string, request recovery.PlanRequest) (workspaceprocess.RecoveryPlanPreviewView, error)
+}
+
+type RecoveryCompleteTaskPreparer interface {
+	PrepareCompleteTaskRecovery(ctx context.Context, projectName, taskID string) (workspaceprocess.CompleteTaskRecoveryPrepareView, error)
 }
 
 type WorkReportInspector interface {
@@ -193,6 +198,10 @@ func NewHandler(executor Executor, inspector Inspector) (*Handler, error) {
 	if recoveryPlanPreviewer, ok := executor.(RecoveryPlanPreviewer); ok {
 		handler.recoveryPlanPreviewer = recoveryPlanPreviewer
 		handler.mux.HandleFunc("POST /v1/projects/{project_name}/tasks/{task_id}/recovery-plan-preview", handler.planRecoveryTaskPreview)
+	}
+	if recoveryCompletePreparer, ok := executor.(RecoveryCompleteTaskPreparer); ok {
+		handler.recoveryCompletePreparer = recoveryCompletePreparer
+		handler.mux.HandleFunc("POST /v1/projects/{project_name}/tasks/{task_id}/recovery-complete-task-prepare", handler.prepareRecoveryCompleteTask)
 	}
 	if workReportInspector, ok := executor.(WorkReportInspector); ok {
 		handler.workReportInspector = workReportInspector
@@ -453,6 +462,38 @@ func (handler *Handler) planRecoveryTaskPreview(response http.ResponseWriter, re
 		return
 	}
 	encoded, err := json.Marshal(preview)
+	if err != nil {
+		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
+		return
+	}
+	writeCommandResponse(response, http.StatusOK, Response{Version: ContractVersion, OK: true, Result: encoded})
+}
+
+func (handler *Handler) prepareRecoveryCompleteTask(response http.ResponseWriter, request *http.Request) {
+	if !strings.HasPrefix(strings.ToLower(request.Header.Get("Content-Type")), "application/json") {
+		writeCommandResponse(response, http.StatusUnsupportedMediaType, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "UNSUPPORTED_MEDIA_TYPE"}})
+		return
+	}
+	content, err := io.ReadAll(http.MaxBytesReader(response, request.Body, maxCommandRequestBytes))
+	if err != nil {
+		writeCommandResponse(response, http.StatusRequestEntityTooLarge, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "INVALID_RECOVERY_COMPLETE_TASK_PREPARE"}})
+		return
+	}
+	var prepareRequest RecoveryCompleteTaskPrepareRequest
+	if decodePayload(content, &prepareRequest) != nil || prepareRequest.Validate() != nil {
+		writeCommandResponse(response, http.StatusBadRequest, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "INVALID_RECOVERY_COMPLETE_TASK_PREPARE"}})
+		return
+	}
+	prepared, err := handler.recoveryCompletePreparer.PrepareCompleteTaskRecovery(request.Context(), request.PathValue("project_name"), request.PathValue("task_id"))
+	if err != nil {
+		status, code := http.StatusUnprocessableEntity, "RECOVERY_COMPLETE_TASK_PREPARE_FAILED"
+		if errors.Is(err, workspaceprocess.ErrInvalidCompleteTaskRecoveryApply) {
+			status, code = http.StatusBadRequest, "INVALID_RECOVERY_COMPLETE_TASK_PREPARE"
+		}
+		writeCommandResponse(response, status, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: code}})
+		return
+	}
+	encoded, err := json.Marshal(prepared)
 	if err != nil {
 		writeCommandResponse(response, http.StatusInternalServerError, Response{Version: ContractVersion, OK: false, Error: &CommandError{Code: "RESULT_ENCODING_FAILED"}})
 		return
@@ -852,7 +893,7 @@ func (handler *Handler) execute(response http.ResponseWriter, request *http.Requ
 }
 
 func supportsAsyncOperation(operation string) bool {
-	return publicBetaCommandAllowed(operation)
+	return operation != workspaceprocess.CompleteTaskRecoveryOperation && publicBetaCommandAllowed(operation)
 }
 
 func (handler *Handler) inspect(response http.ResponseWriter, request *http.Request) {
@@ -909,12 +950,20 @@ func mapCommandError(err error) (int, *CommandError) {
 		return http.StatusBadRequest, &CommandError{Code: "INVALID_COMMAND"}
 	case errors.Is(err, ErrUnsupportedCommand):
 		return http.StatusBadRequest, &CommandError{Code: "UNSUPPORTED_COMMAND"}
+	case errors.Is(err, workspaceprocess.ErrRecoveryApprovalRequired):
+		return http.StatusForbidden, &CommandError{Code: "RECOVERY_APPROVAL_REQUIRED"}
+	case errors.Is(err, workspaceprocess.ErrInvalidCompleteTaskRecoveryApply):
+		return http.StatusBadRequest, &CommandError{Code: "INVALID_RECOVERY_COMPLETE_TASK_APPLY"}
 	case errors.Is(err, commandledger.ErrRequestConflict):
 		return http.StatusConflict, &CommandError{Code: "COMMAND_ID_CONFLICT", Stage: "command_claim"}
 	case errors.Is(err, commandledger.ErrInProgress):
 		return http.StatusConflict, &CommandError{Code: "COMMAND_IN_PROGRESS", Stage: "command_claim", RecoveryRequired: true}
 	case errors.Is(err, workspaceprocess.ErrCommandLedgerCommit):
 		return http.StatusInternalServerError, &CommandError{Code: "COMMAND_LEDGER_PARTIAL", Stage: "command_outcome_commit", RecoveryRequired: true}
+	case errors.As(err, &recorded) && recorded.Code == "RECOVERY_PLAN_STALE":
+		return http.StatusConflict, &CommandError{Code: recorded.Code, Stage: recorded.Stage, RecoveryRequired: recoveryRequiredFor(recorded), Details: recorded.Envelope}
+	case errors.Is(err, workspaceprocess.ErrRecoveryPlanStale), errors.Is(err, workspaceprocess.ErrRecoveryCommitmentMismatch), errors.Is(err, task.ErrVersionConflict):
+		return http.StatusConflict, &CommandError{Code: "RECOVERY_PLAN_STALE", Stage: "recovery_plan"}
 	case errors.Is(err, commandledger.ErrInvalidRecord):
 		return http.StatusInternalServerError, &CommandError{Code: "COMMAND_LEDGER_INVALID", Stage: "command_claim", RecoveryRequired: true}
 	case errors.As(err, &recorded):
