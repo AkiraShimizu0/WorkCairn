@@ -65,3 +65,9 @@ Classification reads `record.State` directly (not `NextAction.Kind` alone) speci
 - No existing Contract, Domain schema, Command Ledger behavior, or Approval semantics changed. `git diff` is additive-only across `internal/attention` (new), `internal/process/attention.go` (new), `internal/httpapi/handler.go`/`executor.go` (one new optional-capability interface + route), and `cmd/workcairn/main.go` (one new read-only operation).
 - `recovery_required`, `task_on_hold`, project-scope Routine attention, Responsibility/Goal-derived attention, cross-source compression, Attention Item persistence, and any notification delivery (push/Slack/email) all remain explicitly out of scope, deferred to future, separately-authorized Checkpoints.
 - Company View (a future UI) can be built as a thin renderer over `GET /v1/attention`'s already-typed, already-actionable result with no business logic of its own — this was a design goal, not an incidental property.
+
+## Post-acceptance implementation note: Company View renderer
+
+The thin Company View renderer described above was implemented later in commit `7e81e3947a766169f15d3577cb0baf5a62e0ede3`. The embedded Local Web UI reads `GET /v1/attention`, preserves the backend's deterministic ordering, maps only the closed v1 type/action vocabulary to presentation labels, and opens Interaction-backed items through the existing request-detail surface. Routine recovery remains an operator CLI action; the browser does not invent a new mutation endpoint for it.
+
+The renderer adds no client-side ranking, attention persistence, business-state inference, automatic command execution, or retry. Empty state and section-local API failure are explicit, unknown future type/action values degrade to their literal safe labels, and Browser tests cover empty, typed, unknown-value, failure, and live `human_input_required` cases. This follow-up changes none of this ADR's deferred source decisions.

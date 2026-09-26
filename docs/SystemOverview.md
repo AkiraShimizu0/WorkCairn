@@ -89,6 +89,8 @@ iPhone browser
 
 いずれもInteraction Next Action、Organization inventory、Workflow／Task evidenceを表示するだけで、Task遷移やReview判断をJavaScriptへ複製しません。対応不要なら対応が必要な項目がないことを明示し、承認済みCommandの実行中は小さなbackground indicatorへ退きます。clarification、approval、failure、partial failure、Recovery、connection lossだけを前面へ出します。一般画面ではPlanを「進め方」として自然文で表示し、内部IDやdigestは詳細へ分離します。Session turn、Workflow summary、canonical evidenceからTimelineを投影し、failureはsanitized detail付きでMy Actions、依頼一覧、Timelineから再確認できます。Prompt、Provider生response、API key、Vault pathは表示しません。External ActionはBeta後のoperator capabilityとして残し、Public Beta UIには表示しません。
 
+Company Viewの「対応が必要」は、ADR-0065のread-only `GET /v1/attention`をそのまま表示します。backendが決めた順序をbrowserで並べ替えず、Interaction由来の項目だけを既存の依頼詳細へ開きます。Routineの修復はoperator CLI境界のままで、画面から新しい書込みoperationを作りません。Attention Itemをbrowser storageやVaultへ複製せず、API failureはCompany View全体を壊さないsection-localな警告として表示します。
+
 同一Session、Version、Next Actionをpollするだけではaction form、Timeline、詳細DOMを再生成しません。入力中text、select、focus、開いている詳細はclient memoryに保ち、Sessionが本当に次Version／stageへ進んだ場合だけ古いUIを閉じます。未送信draftをVaultやbrowser storageへ永続化しません。
 
 First-run Wizardは、macOS native pickerで明示選択された専用rootのstorage種別、WorkCairn layout、Starter Organization、AI Connectionをredactedに確認します。明示承認された`workspace.setup`だけがCommand Ledgerへclaimし、layoutをatomic createした後、Product Manager、Content Writer、QA Engineerの不足分を既存Employee writerで作ります。Starter teamはRuntime bootstrap dataでありCoreの既定社員ではありません。absolute path、Employee ID／model、credentialはstatus APIへ出しません。iCloud Driveを使う場合は利用者が空の専用directoryを作成／選択し、同じVaultへのwriterは1 daemonに限定します。既存の個人Obsidian Vaultを自動探索・変更しません。
