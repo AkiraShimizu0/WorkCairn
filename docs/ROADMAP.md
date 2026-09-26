@@ -333,7 +333,18 @@ M-RECOVERY-6Aでは、Guided Recovery Inspectionのrecoverable FindingからHuma
 - Recovery apply、自動repair、retry、artifact adoptionへ進まない
 - Provider callとKeychain accessを追加しない
 - ADR-0074はbackend／UIのcontract review完了により`Accepted`。post-commit Automated Gatesとmain pushも完了済み
-- 次候補は`complete_task`だけに限定した明示Recovery Applyのdesign-only検討とする。Preview responseやbrowser stateを変更権限として再利用せず、新しいADRでcanonical Plan再導出、commitment／digest、Task Version CAS、Human承認、Command Ledger claim-before-effects／replay、stale rejectionを先に閉じる。Recovery Applyはまだ実装していない
+- このPreview完了時に候補だった`complete_task`限定Recovery Apply backendは、後続M-RECOVERY-7Bで実装・review・Gate・main反映まで完了した。Preview responseやbrowser stateを変更権限として再利用しない境界はADR-0075／0076へ分離して維持する
+
+## In Progress — Complete Task Recovery Apply
+
+M-RECOVERY-7Bで`complete_task`限定のbackend vertical sliceを実装し、focused reviewの修正、Automated Gates、commit、GitHub mainへのfast-forward pushまで完了しました。ADR-0075（Accepted）のprepare endpointはfresh canonical Planからtyped commitmentを作り、同期ApplyはHuman approval、claim-before-effects、same-ID replay／conflict／running、different-ID Task Version CAS、partial failure、terminal Ledger保存を閉じています。safe resultはexact 7 fieldsで、Provider／Keychain、Scheduler／async、`fail_and_hold_task`、retry／fallbackは含みません。
+
+M-RECOVERY-7CでADR-0076（Accepted）のLocal Web UIを実装し、M-RECOVERY-7C.1のfocused reviewをP0〜P2なし、P3の説明／test gapは同Checkpoint内で修正、最終P0〜P3・contract gap・test gap・Open Questionsなしで完了しました。executableな`complete_task` Previewだけがfresh prepareへ進め、prepare後の別Human clickだけが新Command IDの同期Applyを送ります。Preview responseはauthorityではなく、approval objectはbrowser storageへ保存しません。blocked planと`fail_and_hold_task`にはApply導線を出さず、strict response validation、single-flight、navigation／silent drift invalidation、safe local failureを既存Recovery inspection ownershipへ統合します。M-RECOVERY-7DのFinal Automated GatesはFull Browser Gate 169 passed／1 known skip／0 failed／0 retries、全package race test、Public Beta smoke、v1 Release GateのすべてがPASSしました。M-RECOVERY-7Eで実装、ADR status、Gate evidenceを単一commitとして記録し、pushは別Checkpointへ分離します。
+
+- ADR-0074のread-only Preview契約とADR-0075のbackend scopeは変更しない
+- Local Web UI以外の新operation、automatic repair、retry、fallback、resume、artifact adoptionを追加しない
+- 実Vault／実Provider／Keychainをテストへ使用しない
+- focused review GOに基づきADR-0075／ADR-0076を`Accepted`へ同期し、Final Automated Gates完了後に単一commitとして記録する。push、tag、Release、asset、candidate、Acceptance evidenceは別Checkpointまで変更しない
 
 ## Next 2 — Bounded Provider Acceptance Profile（実装済み・Codex GO・ADR Accepted・commit済み。Public Betaは引き続きNO-GO）
 

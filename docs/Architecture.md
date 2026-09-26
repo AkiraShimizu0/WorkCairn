@@ -117,14 +117,15 @@ Mermaidソース: [architecture.mmd](architecture.mmd)
 - [ADR-0072: Bounded Provider Acceptance Profile — Optional, Closed, Session-scoped Execution Bound](adr/ADR-0072-bounded-provider-acceptance-profile.md)
 - [ADR-0073: Guided Recovery Inspection — read-only HTTP projection of ADR-0020's Recovery Report](adr/ADR-0073-guided-recovery-inspection-http-projection.md)
 - [ADR-0074: Recovery Plan Preview — read-only, safe HTTP projection before explicit Apply](adr/ADR-0074-recovery-plan-preview-http-projection.md)
-- [ADR-0075: Complete Task Recovery Apply Backend](adr/ADR-0075-complete-task-recovery-apply-backend.md)（Proposed）
+- [ADR-0075: Complete Task Recovery Apply Backend](adr/ADR-0075-complete-task-recovery-apply-backend.md)（Accepted）
+- [ADR-0076: Complete Task Recovery Apply Local Web UI](adr/ADR-0076-complete-task-recovery-apply-local-web-ui.md)（Accepted）
 - [ADRテンプレート](adr/ADR-template.md)
 
 ## コンポーネント
 
 ### Public Beta exposure boundary
 
-一般利用者の正式経路は`First Run → Interaction → CEO Intent → Go Canonical Plan → Plan Approval → Project／Task commit → Reviewed Workflow Approval → Task／Deliverable → Typed Review → Revision／再Review → Completion → Timeline／Proof of Work`です。`workcairn-daemon`の`POST /v1/commands`はproduct operationをexact allow-listし、それ以外をExecutor前にdefault denyします。ADR-0075はこの境界へ同期限定の`recovery.complete_task.apply`を1件だけ追加します。
+一般利用者の正式経路は`First Run → Interaction → CEO Intent → Go Canonical Plan → Plan Approval → Project／Task commit → Reviewed Workflow Approval → Task／Deliverable → Typed Review → Revision／再Review → Completion → Timeline／Proof of Work`です。`workcairn-daemon`の`POST /v1/commands`はproduct operationをexact allow-listし、それ以外をExecutor前にdefault denyします。ADR-0075はこの境界へ同期限定の`recovery.complete_task.apply`を1件だけ追加し、ADR-0076のLocal Web UIはread-only Previewとは別のfresh prepareとHumanの最終clickを経た場合だけ、この1 operationを同期送信します。
 
 direct Task／Review／Revision、plain／direct Reviewed Workflow、CEO apply、Project／Task／Organization writer、Scheduler、External Actionは既存CLI／内部Process／Recovery用に維持しますが、一般daemonのside-effect surfaceとLocal Web UIからは到達不能です。JSON Contract v1、Command Ledger、Vault canonical evidenceは変更しません。
 
@@ -163,7 +164,7 @@ Browser Gateはpolling、DOM、pairing、reload、daemon restartを検証しま�
 | Go Vault Deliverable Adapter | 構造化WorkerResultを安定したimmutable Deliverableへ変換し、既存成果物を上書きせず原子的に作成する |
 | Go Vault Audit Subscriber | Task lifecycle Event全体をEvent Handlerとして受け、既存Audit本文を保持したまま原子的に追記する |
 | Go Execution Service | readiness、承認、Task lifecycle、Worker実行、失敗Policyを1タスク単位で調停する。ADR-0058により、Provider呼び出し自体は成功したがoutputがProvider自身のtoken ceilingで打ち切られた場合（`worker.StopReasonMaxTokens`）、Deliverable保存やTask completeへ進まず、既存のFail→Hold失敗経路（`ErrorOutputIncomplete`）へ分岐する——Provider呼び出しの成否とDeliverableの完全性は別の問いとして扱う |
-| Go Recovery Domain／Service | storage-neutralなSnapshot、finding、version付きplanと、期待Version付きTask recoveryを提供する。ADR-0073のsafe inspectionとADR-0074のread-only Plan previewは内部free-text／evidence pathをHTTPへ公開せず、previewはApply権限として扱わない。ADR-0075のcomplete-task Applyはtyped commitmentをfresh Planへ照合し、Command Ledger claimとTask CASの後だけ実行する。推測replayやartifact修復はしない |
+| Go Recovery Domain／Service | storage-neutralなSnapshot、finding、version付きplanと、期待Version付きTask recoveryを提供する。ADR-0073のsafe inspectionとADR-0074のread-only Plan previewは内部free-text／evidence pathをHTTPへ公開せず、previewはApply権限として扱わない。ADR-0075のcomplete-task Applyはtyped commitmentをfresh Planへ照合し、Command Ledger claimとTask CASの後だけ実行する。ADR-0076のUIはfresh prepareと別のHuman承認clickを要求し、approvalをbrowser storageへ保存せず同期Applyだけを送る。推測replayやartifact修復はしない |
 | Go Vault Recovery Snapshot Adapter | managed Task、artifact、Audit、既知temporary stateをread-only typed evidenceへ変換する |
 | Go Command Ledger Domain／Service | Command ID、request digest、running／terminal outcomeと一度だけのVersion遷移を管理する |
 | Go Vault Command Ledger Adapter | Project scopeまたはworkspace scopeのhidden machine metadataへclaimをatomic createし、terminal outcomeをCAS／atomic replacementで保存する |

@@ -98,9 +98,11 @@ Content-Type: application/json
 {"version":"workspace-command.v1","action":"complete_task"}
 ```
 
-ADR-0075（Status: Proposed）のprepareはcanonical Planをfresh derivationし、全Plan fieldを`CompleteTaskPlanCommitmentV1`へ明示コピーして`workcairn.recovery.complete-task-plan.v1`でdomain separationしたapproval objectを返します。Evidence path／digest、reason、SourceRevisionは返しません。Humanはそのapproval objectを`recovery.complete_task.apply`のpayloadへ渡し、command envelopeの`approved:true`を明示します。ApplyはCommand Ledger claim後にcanonical Planを再導出し、commitment一致とTask Version CASを通した場合だけTaskServiceで`complete_task`を同期実行します。
+ADR-0075（Status: Accepted）のprepareはcanonical Planをfresh derivationし、全Plan fieldを`CompleteTaskPlanCommitmentV1`へ明示コピーして`workcairn.recovery.complete-task-plan.v1`でdomain separationしたapproval objectを返します。Evidence path／digest、reason、SourceRevisionは返しません。Humanはそのapproval objectを`recovery.complete_task.apply`のpayloadへ渡し、command envelopeの`approved:true`を明示します。ApplyはCommand Ledger claim後にcanonical Planを再導出し、commitment一致とTask Version CASを通した場合だけTaskServiceで`complete_task`を同期実行します。
 
 Apply resultは`schema_version`、`project_name`、`task_id`、`action`、`status`、`task_state_committed`、`task_version`のexact 7 fieldsです。同一Command IDのreplay／conflict／runningをLedgerで閉じ、別Command IDの競合はTask CASで最大1 effectにします。Event／Audit失敗は`partial_failure`、terminal Ledger保存失敗は`500 COMMAND_LEDGER_PARTIAL`で、いずれも成功へ隠しません。`Prefer: respond-async`、Scheduler、`fail_and_hold_task`、Provider／Keychain、retry／fallbackは対象外です。
+
+ADR-0076（Status: Accepted）のLocal Web UIは、executableな`complete_task` Previewにだけfresh prepareへの導線を表示します。blocked Planと`fail_and_hold_task`にはApply導線を出しません。Previewのfieldを承認へ転用せず、prepare responseのexact field／domain／digestをclosed validationした後、別のHuman clickで初めて新しいCommand IDと`approved:true`を同期`POST /v1/commands`へ送ります。approval objectはlocalStorage／sessionStorageへ保存せず、`Prefer: respond-async`、自動retry／resume／fallbackを使いません。成功もexact 7-field resultと一致するCommand IDだけを受理し、失敗時はHTTP code、raw error、Evidence path、SourceRevisionを表示しません。
 
 ## Lifecycle
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -45,4 +45,4 @@ The public daemon allow-list gains exactly `recovery.complete_task.apply`. The o
 - Command Ledger identity closes same-ID replay, conflict, and running cases, while Task CAS closes different-ID races.
 - A committed Task with failed Event/Audit publication remains visible as a partial failure requiring recovery.
 - The first Apply surface cannot repair other Recovery findings and cannot call a Provider.
-- Local Web UI work and ADR acceptance remain separate checkpoints.
+- Local Web UI work and ADR acceptance were completed in later, separate checkpoints without widening this backend scope.

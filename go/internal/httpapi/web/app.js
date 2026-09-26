@@ -2,6 +2,8 @@ const BACKGROUND_CONTINUITY_COPY = "この画面を閉じても処理はバッ�
 
 const INTERACTION_VERSION = "workspace-interaction.v1";
 const COMMAND_VERSION = "workspace-command.v1";
+const RECOVERY_COMPLETE_TASK_OPERATION = "recovery.complete_task.apply";
+const RECOVERY_COMPLETE_TASK_DOMAIN = "workcairn.recovery.complete-task-plan.v1";
 const STORAGE_SESSION = "workcairn.active-session";
 const STORAGE_PENDING = "workcairn.pending-command";
 const STORAGE_NAV = "workcairn.active-nav";
@@ -1716,12 +1718,12 @@ async function refreshCurrent(silent = false) {
         if (invariantValid) {
           freshRequest = buildInspectionRequest("ineligible", { record, next, error: { command_id: commands[0].commandId } });
         }
-      } else if (state.inspectionMode === "preview") {
+      } else if (["preview", "prepare", "apply"].includes(state.inspectionMode)) {
         freshContext = previewContextFromFreshState(record, next, state.inspectionContext);
       } else {
         freshRequest = buildInspectionRequest(state.inspectionMode, { record, next, error: state.lastError });
       }
-      if (state.inspectionMode !== "preview") freshContext = freshRequest ? contextFromRequest(freshRequest) : null;
+      if (!["preview", "prepare", "apply"].includes(state.inspectionMode)) freshContext = freshRequest ? contextFromRequest(freshRequest) : null;
       if (!invariantValid || !inspectionContextsEqual(state.inspectionContext, freshContext)) {
         clearActionSurface({ resetRenderKey: true });
       }
@@ -2370,7 +2372,7 @@ function validateCommandReferences(references) {
 // CEO clicked something that might open an inspection" and starting any
 // fetch. It never reads global state -- everything comes from record/next
 // (all modes), error (ineligible only), or the finding-scoped preview
-// inputs (preview only). Returns one validated
+// inputs (preview/prepare/apply only). Returns one validated
 // request object, or null. Eligible mode never degrades to the ineligible
 // fallback shape on its own malformed input.
 function buildInspectionRequest(mode, { record, next, error, taskId, action, reason } = {}) {
@@ -2391,19 +2393,23 @@ function buildInspectionRequest(mode, { record, next, error, taskId, action, rea
     if (!isCanonicalNonEmptyString(error.command_id)) return null;
     return { mode, ...base, projectName: "", references: [{ scope: "workspace", projectName: "", commandId: error.command_id }] };
   }
-  if (mode === "preview") {
+  if (["preview", "prepare", "apply"].includes(mode)) {
     if (!RECOVERY_INSPECT_ELIGIBLE_KINDS.has(next.kind)) return null;
     if (!isCanonicalNonEmptyString(next.project_name)) return null;
     if (!isCanonicalTaskID(taskId)) return null;
-    if (!RECOVERY_PLAN_PREVIEW_ACTIONS.has(action)) return null;
-    if (!validRecoveryPlanPreviewReason(action, reason)) return null;
+    if (mode === "preview") {
+      if (!RECOVERY_PLAN_PREVIEW_ACTIONS.has(action)) return null;
+      if (!validRecoveryPlanPreviewReason(action, reason)) return null;
+    } else if (action !== "complete_task" || reason !== "") {
+      return null;
+    }
     return { mode, ...base, projectName: next.project_name, taskId, action, reason };
   }
   return null;
 }
 
 function contextFromRequest(request) {
-  if (request.mode === "preview") {
+  if (["preview", "prepare", "apply"].includes(request.mode)) {
     return { sessionId: request.sessionId, recordVersion: request.recordVersion, nextKind: request.nextKind, nextExpectedVersion: request.nextExpectedVersion, projectName: request.projectName, taskId: request.taskId, action: request.action };
   }
   return { sessionId: request.sessionId, recordVersion: request.recordVersion, nextKind: request.nextKind, nextExpectedVersion: request.nextExpectedVersion, projectName: request.projectName, commands: request.references };
@@ -2524,6 +2530,63 @@ function validateRecoveryPlanPreviewView(raw, expected) {
   };
 }
 
+function recoveryCompleteTaskPrepareResultFromEnvelope(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  if (JSON.stringify(Object.keys(payload).sort()) !== JSON.stringify(["ok", "result", "version"])) return null;
+  if (payload.version !== COMMAND_VERSION || payload.ok !== true) return null;
+  return payload.result;
+}
+
+function validateRecoveryCompleteTaskPrepareView(raw, expected) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const expectedKeys = ["action", "approval", "approval_required", "project_name", "schema_version", "task_id", "task_status", "task_version"];
+  if (JSON.stringify(Object.keys(raw).sort()) !== JSON.stringify(expectedKeys)) return null;
+  if (raw.schema_version !== RECOVERY_SCHEMA_VERSION || raw.action !== "complete_task" || raw.approval_required !== true) return null;
+  if (raw.project_name !== expected.projectName || raw.task_id !== expected.taskId) return null;
+  if (!isCanonicalNonEmptyString(raw.project_name) || !isCanonicalTaskID(raw.task_id)) return null;
+  if (!RECOVERY_PLAN_TASK_STATUSES.has(raw.task_status) || !isPositiveSafeInteger(raw.task_version)) return null;
+  const approval = raw.approval;
+  if (!approval || typeof approval !== "object" || Array.isArray(approval)) return null;
+  if (JSON.stringify(Object.keys(approval).sort()) !== JSON.stringify(["domain", "plan_commitment", "schema_version"])) return null;
+  if (approval.schema_version !== RECOVERY_SCHEMA_VERSION || approval.domain !== RECOVERY_COMPLETE_TASK_DOMAIN) return null;
+  if (typeof approval.plan_commitment !== "string" || !/^sha256:[0-9a-f]{64}$/.test(approval.plan_commitment)) return null;
+  return {
+    schemaVersion: raw.schema_version,
+    projectName: raw.project_name,
+    taskId: raw.task_id,
+    action: raw.action,
+    taskStatus: raw.task_status,
+    taskVersion: raw.task_version,
+    approval: {
+      schema_version: approval.schema_version,
+      domain: approval.domain,
+      plan_commitment: approval.plan_commitment,
+    },
+  };
+}
+
+function validateRecoveryCompleteTaskApplyEnvelope(payload, expected) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  if (JSON.stringify(Object.keys(payload).sort()) !== JSON.stringify(["command_id", "ok", "result", "version"])) return null;
+  if (payload.version !== COMMAND_VERSION || payload.ok !== true || payload.command_id !== expected.commandId) return null;
+  const raw = payload.result;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const expectedKeys = ["action", "project_name", "schema_version", "status", "task_id", "task_state_committed", "task_version"];
+  if (JSON.stringify(Object.keys(raw).sort()) !== JSON.stringify(expectedKeys)) return null;
+  if (raw.schema_version !== RECOVERY_SCHEMA_VERSION || raw.action !== "complete_task" || raw.status !== "completed" || raw.task_state_committed !== true) return null;
+  if (raw.project_name !== expected.projectName || raw.task_id !== expected.taskId) return null;
+  if (!isCanonicalNonEmptyString(raw.project_name) || !isCanonicalTaskID(raw.task_id) || !isPositiveSafeInteger(raw.task_version)) return null;
+  return {
+    schemaVersion: raw.schema_version,
+    projectName: raw.project_name,
+    taskId: raw.task_id,
+    action: raw.action,
+    status: raw.status,
+    taskStateCommitted: raw.task_state_committed,
+    taskVersion: raw.task_version,
+  };
+}
+
 const RECOVERY_FINDING_KIND_LABELS = {
   task_completion_pending: "Deliverableが確定済みでTask完了が未確定です",
   task_execution_interrupted: "Deliverable未確定のままTaskが中断しています",
@@ -2629,6 +2692,17 @@ function recoveryPlanPreviewBlock(view) {
   const blockers = view.blockingReasons.length
     ? node("ul", {}, ...view.blockingReasons.map((reason) => node("li", {}, RECOVERY_PLAN_BLOCKING_LABELS[reason])))
     : node("p", { class: "supporting" }, "現在の確認範囲では妨げる条件はありません。");
+  const prepareControl = view.action === "complete_task" && view.executable
+    ? node("div", { class: "button-row" }, button("最新状態で実行準備", "primary", async () => {
+      await prepareCompleteTaskRecoveryApply({
+        record: state.record,
+        next: state.next,
+        taskId: view.taskId,
+        action: "complete_task",
+        reason: "",
+      });
+    }))
+    : null;
   return node("div", { dataset: { recoveryPlanPreview: "" } },
     node("p", {}, "復旧計画の確認結果"),
     approvalFacts([
@@ -2638,9 +2712,152 @@ function recoveryPlanPreviewBlock(view) {
       ["予定する操作", RECOVERY_PLAN_ACTION_LABELS[view.action]],
       ["現在実行可能", view.executable ? "はい" : "いいえ"],
     ]),
-    node("p", { class: "supporting" }, "これは確認だけです。この画面から変更は実行されません。"),
+    node("p", { class: "supporting" }, "この確認結果は読み取り専用で、実行の承認には使われません。実行準備では最新状態から計画を作り直します。"),
     node("div", { class: "approval-box" }, node("p", {}, "確認が必要な条件"), blockers),
+    prepareControl,
   );
+}
+
+function recoveryCompleteTaskApprovalBlock(prepared) {
+  return node("div", { dataset: { recoveryCompleteTaskApproval: "" } },
+    node("p", {}, "Task完了の最終確認"),
+    approvalFacts([
+      ["Task", prepared.taskId],
+      ["現在の状態", prepared.taskStatus],
+      ["Version", String(prepared.taskVersion)],
+      ["予定する操作", RECOVERY_PLAN_ACTION_LABELS.complete_task],
+    ]),
+    node("p", { class: "warning" }, "この操作はTaskの状態を完了へ変更します。内容を確認し、実行する場合だけ承認してください。"),
+    node("details", {},
+      node("summary", {}, "技術詳細"),
+      approvalFacts([
+        ["承認契約", prepared.approval.domain],
+        ["計画commitment", shortDigest(prepared.approval.plan_commitment)],
+      ]),
+    ),
+    node("div", { class: "button-row" },
+      button("このTaskを完了する", "primary", async () => {
+        await applyCompleteTaskRecovery({
+          record: state.record,
+          next: state.next,
+          taskId: prepared.taskId,
+          action: "complete_task",
+          reason: "",
+        }, prepared);
+      }),
+    ),
+  );
+}
+
+function recoveryCompleteTaskResultBlock(result) {
+  return node("div", { dataset: { recoveryCompleteTaskResult: "" } },
+    node("p", {}, "Taskを完了しました"),
+    approvalFacts([
+      ["Project", result.projectName],
+      ["Task", result.taskId],
+      ["状態", "完了"],
+      ["Version", String(result.taskVersion)],
+    ]),
+    node("p", { class: "supporting" }, "Taskの状態変更が保存されました。"),
+  );
+}
+
+async function prepareCompleteTaskRecoveryApply(inputs) {
+  if (state.inspectionActive) return;
+  const request = buildInspectionRequest("prepare", inputs);
+  if (request === null) {
+    invalidateInspection();
+    renderInspectionTerminal(node("p", { class: "warning" }, "Task完了の実行準備を開始できません"));
+    return;
+  }
+  invalidateInspection();
+  state.inspectionActive = true;
+  state.inspectionMode = request.mode;
+  state.inspectionContext = contextFromRequest(request);
+  const inspectionSequence = state.inspectionSequence;
+  const sessionId = request.sessionId;
+  ui.activeCard.hidden = false;
+  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, "最新状態から実行準備を作成しています…"));
+  try {
+    const envelope = await requestJSON(`/v1/projects/${encodeURIComponent(request.projectName)}/tasks/${encodeURIComponent(request.taskId)}/recovery-complete-task-prepare`, {
+      method: "POST",
+      body: JSON.stringify({ version: COMMAND_VERSION, action: "complete_task" }),
+      rawEnvelope: true,
+    });
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    await awaitLatestRefreshBarrier();
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    const raw = recoveryCompleteTaskPrepareResultFromEnvelope(envelope);
+    const prepared = raw === null ? null : validateRecoveryCompleteTaskPrepareView(raw, request);
+    if (prepared === null) {
+      renderInspectionTerminal(node("p", { class: "warning" }, "Task完了の実行準備を確認できませんでした"));
+      return;
+    }
+    renderInspectionTerminal(recoveryCompleteTaskApprovalBlock(prepared));
+  } catch {
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    await awaitLatestRefreshBarrier();
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    renderInspectionTerminal(node("p", { class: "warning" }, "Task完了の実行準備を取得できませんでした"));
+  } finally {
+    if (inspectionSequence === state.inspectionSequence) state.inspectionActive = false;
+  }
+}
+
+async function applyCompleteTaskRecovery(inputs, prepared) {
+  if (state.inspectionActive) return;
+  const request = buildInspectionRequest("apply", inputs);
+  if (request === null || prepared?.projectName !== request.projectName || prepared?.taskId !== request.taskId || prepared?.action !== "complete_task") {
+    invalidateInspection();
+    renderInspectionTerminal(node("p", { class: "warning" }, "Task完了を実行できません"));
+    return;
+  }
+  invalidateInspection();
+  state.inspectionActive = true;
+  state.inspectionMode = request.mode;
+  state.inspectionContext = contextFromRequest(request);
+  const inspectionSequence = state.inspectionSequence;
+  const sessionId = request.sessionId;
+  ui.activeCard.hidden = false;
+  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, "Taskの完了を保存しています…"));
+  try {
+    const currentCommandID = commandID();
+    const envelope = await requestJSON("/v1/commands", {
+      method: "POST",
+      body: JSON.stringify({
+        version: COMMAND_VERSION,
+        command_id: currentCommandID,
+        operation: RECOVERY_COMPLETE_TASK_OPERATION,
+        approved: true,
+        payload: {
+          project_name: request.projectName,
+          task_id: request.taskId,
+          approval: {
+            schema_version: prepared.approval.schema_version,
+            domain: prepared.approval.domain,
+            plan_commitment: prepared.approval.plan_commitment,
+          },
+        },
+      }),
+      rawEnvelope: true,
+    });
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    await awaitLatestRefreshBarrier();
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    const result = validateRecoveryCompleteTaskApplyEnvelope(envelope, { ...request, commandId: currentCommandID });
+    if (result === null) {
+      renderInspectionTerminal(node("p", { class: "warning" }, "Task完了の保存結果を確認できませんでした"));
+      return;
+    }
+    renderInspectionTerminal(recoveryCompleteTaskResultBlock(result));
+  } catch {
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    await awaitLatestRefreshBarrier();
+    if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
+    renderInspectionTerminal(node("p", { class: "warning" }, "Task完了を保存できませんでした。状態を更新してから、もう一度確認してください。"));
+  } finally {
+    if (inspectionSequence === state.inspectionSequence) state.inspectionActive = false;
+  }
 }
 
 function renderAttention(next, title) {
