@@ -96,7 +96,11 @@ func (service *ReviewService) Execute(ctx context.Context, input review.PromptIn
 	// before parsing, exactly like CEOPlanService.Generate's identical
 	// check on the same worker.RunResult.StopReason field.
 	if runResult.StopReason == worker.StopReasonMaxTokens {
-		return review.ExecutionResult{}, newWorkerError(WorkerErrorOutputIncomplete, ErrProviderOutputIncomplete)
+		return review.ExecutionResult{}, newWorkerErrorWithStopReason(
+			WorkerErrorOutputIncomplete,
+			runResult.StopReason,
+			ErrProviderOutputIncomplete,
+		)
 	}
 
 	decision, err := review.ParseTypedDecision(runResult.Content)

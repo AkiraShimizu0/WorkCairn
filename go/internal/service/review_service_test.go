@@ -169,6 +169,23 @@ func TestReviewServiceClassifiesMaxTokensAsOutputIncompleteBeforeParsing(t *test
 	if fake.calls != 1 {
 		t.Fatalf("Provider calls = %d, want exactly 1 (no retry/fallback)", fake.calls)
 	}
+	var executionErr *WorkerExecutionError
+	if !errors.As(executeErr, &executionErr) || executionErr.SafeStopReason() != worker.StopReasonMaxTokens {
+		t.Fatalf("WorkerExecutionError = %#v, want stop reason %q", executionErr, worker.StopReasonMaxTokens)
+	}
+}
+
+func TestWorkerExecutionErrorSafeStopReasonFailsClosed(t *testing.T) {
+	tests := []WorkerExecutionError{
+		{Kind: WorkerErrorOutputIncomplete, stopReason: worker.StopReason("forged")},
+		{Kind: WorkerErrorRunnerFailed, stopReason: worker.StopReasonMaxTokens},
+		{Kind: WorkerErrorOutputIncomplete},
+	}
+	for _, test := range tests {
+		if got := test.SafeStopReason(); got != worker.StopReasonUnknown {
+			t.Fatalf("SafeStopReason() = %q for %#v, want unknown", got, test)
+		}
+	}
 }
 
 // TestReviewServiceAttachesRunnerPresenceOnlyToParseFailures proves the one

@@ -19,6 +19,7 @@ import (
 	workspaceruntime "github.com/AkiraShimizu0/WorkCairn/go/internal/runtime"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 var (
@@ -355,6 +356,15 @@ func reviewFailureEnvelope(reviewErr error, provider *ProviderFailure, artifact 
 			// failure, matching the classification CEO Plan generation
 			// already uses for the same StopReasonMaxTokens condition.
 			envelope = failure.New("OUTPUT_INCOMPLETE", "review_output_incomplete")
+			// PB-3bp / ADR-0077: retain the already-normalized stop reason
+			// that caused this classification. This is not a Provider
+			// diagnostic: Provider/Substage remain empty, and only the one
+			// closed value that can cause Review output-incomplete is
+			// persisted. Exported errors forged with any other value fail
+			// closed and leave Category empty.
+			if workerErr.SafeStopReason() == worker.StopReasonMaxTokens {
+				envelope.Category = string(worker.StopReasonMaxTokens)
+			}
 		case service.WorkerErrorInvalidReviewResult:
 			envelope = failure.New("REVIEW_RESULT_INVALID", "review_result_parser")
 			if reason := reviewParseFailureReason(reviewErr); reason != "" {

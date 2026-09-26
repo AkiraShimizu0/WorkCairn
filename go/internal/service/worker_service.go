@@ -47,8 +47,9 @@ const (
 // WorkerExecutionError exposes a stable error kind while retaining the cause
 // for internal diagnostics. Provider error text is not part of its public text.
 type WorkerExecutionError struct {
-	Kind WorkerErrorKind
-	Err  error
+	Kind       WorkerErrorKind
+	stopReason worker.StopReason
+	Err        error
 }
 
 func (executionError *WorkerExecutionError) Error() string {
@@ -57,6 +58,16 @@ func (executionError *WorkerExecutionError) Error() string {
 
 func (executionError *WorkerExecutionError) Unwrap() error {
 	return executionError.Err
+}
+
+// SafeStopReason returns the one Provider-neutral stop reason this error
+// taxonomy currently persists. The backing value is private so callers cannot
+// inject an arbitrary string into a durable failure Envelope.
+func (executionError *WorkerExecutionError) SafeStopReason() worker.StopReason {
+	if executionError != nil && executionError.Kind == WorkerErrorOutputIncomplete && executionError.stopReason == worker.StopReasonMaxTokens {
+		return worker.StopReasonMaxTokens
+	}
+	return worker.StopReasonUnknown
 }
 
 // WorkerService orchestrates prompt construction and Runner execution. It does
@@ -208,6 +219,10 @@ func classifyContextError(ctx context.Context, cause error) error {
 
 func newWorkerError(kind WorkerErrorKind, cause error) error {
 	return &WorkerExecutionError{Kind: kind, Err: cause}
+}
+
+func newWorkerErrorWithStopReason(kind WorkerErrorKind, stopReason worker.StopReason, cause error) error {
+	return &WorkerExecutionError{Kind: kind, stopReason: stopReason, Err: cause}
 }
 
 func cloneMetadata(metadata map[string]string) map[string]string {

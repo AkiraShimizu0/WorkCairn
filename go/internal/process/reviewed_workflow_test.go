@@ -26,6 +26,7 @@ import (
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/review"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 // TestPlanReviewedWorkflowRejectsReviewerThatIsALiveTaskMaker covers the
@@ -578,7 +579,8 @@ func TestReviewedWorkflowReviewOutputIncompleteClassifiesOuterCommandWithoutArti
 	current := result.Tasks[0]
 	if current.TaskID != "TASK-001" || current.Review == nil || current.Review.ProviderFailure != nil ||
 		current.Review.FailureCode != "OUTPUT_INCOMPLETE" || current.Review.FailureStage != "review_output_incomplete" ||
-		current.Review.Artifact != nil {
+		current.Review.Artifact != nil || current.Review.Failure == nil ||
+		current.Review.Failure.Category != string(worker.StopReasonMaxTokens) || current.Review.Failure.Provider != nil {
 		t.Fatalf("Review output-incomplete failure = %#v", current.Review)
 	}
 	if current.Review.FailureCode == "REVIEW_RESULT_INVALID" || current.Review.FailureCode == "REVIEWED_WORKFLOW_FAILED" {
@@ -590,8 +592,16 @@ func TestReviewedWorkflowReviewOutputIncompleteClassifiesOuterCommandWithoutArti
 	}
 	record, getErr := ledger.Get(context.Background(), input.CommandID)
 	if getErr != nil || record.State != commandledger.StatePartialFailure || record.Failure == nil ||
-		record.Failure.Code != "OUTPUT_INCOMPLETE" || record.Failure.Stage != "review_output_incomplete" {
+		record.Failure.Code != "OUTPUT_INCOMPLETE" || record.Failure.Stage != "review_output_incomplete" ||
+		record.Failure.Details == nil || record.Failure.Details.Category != string(worker.StopReasonMaxTokens) ||
+		record.Failure.Details.Provider != nil || record.Failure.Details.ChildCommandID != current.ReviewCommandID {
 		t.Fatalf("outer reviewed Workflow Ledger = %#v, %v", record, getErr)
+	}
+	childRecord, childErr := ledger.Get(context.Background(), current.ReviewCommandID)
+	if childErr != nil || childRecord.State != commandledger.StateFailed || childRecord.Failure == nil ||
+		childRecord.Failure.Details == nil || childRecord.Failure.Details.Category != string(worker.StopReasonMaxTokens) ||
+		childRecord.Failure.Details.Provider != nil || childRecord.Failure.Details.ChildCommandID != "" {
+		t.Fatalf("child Review Ledger = %#v, %v", childRecord, childErr)
 	}
 	project := filepath.Join(root, "プロジェクト", "ToDoアプリ")
 	if _, statErr := os.Stat(filepath.Join(project, "Reviews")); !errors.Is(statErr, os.ErrNotExist) {

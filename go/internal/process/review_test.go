@@ -25,6 +25,7 @@ import (
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/review"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/service"
 	"github.com/AkiraShimizu0/WorkCairn/go/internal/task"
+	"github.com/AkiraShimizu0/WorkCairn/go/internal/worker"
 )
 
 func TestPlanReviewIsReadOnlyForCompletedTask(t *testing.T) {
@@ -367,10 +368,11 @@ func TestExecuteReviewRecordsOutputIncompleteForMaxTokensWithoutArtifacts(t *tes
 		t.Fatalf("Envelope = %#v", result.Failure)
 	}
 	// OUTPUT_INCOMPLETE is never a Structured Output invalid reason
-	// (PB-3ah.7 canonical contract): no Provider diagnostic on the Envelope
-	// at all, so it can never be confused with one of the six canonical
+	// (PB-3ah.7 canonical contract): no Provider diagnostic is attached.
+	// PB-3bp persists only the separate Provider-neutral stop reason in
+	// Category, so it cannot be confused with one of the six canonical
 	// structured_output_invalid reasons.
-	if result.Failure.Provider != nil || result.Failure.Substage != "" || result.Failure.Category != "" {
+	if result.Failure.Provider != nil || result.Failure.Substage != "" || result.Failure.Category != string(worker.StopReasonMaxTokens) {
 		t.Fatalf("output-incomplete Envelope carries a Provider diagnostic: %#v", result.Failure)
 	}
 	ledger, ledgerErr := vault.NewCommandLedgerStore(root, input.ProjectName)
@@ -382,12 +384,15 @@ func TestExecuteReviewRecordsOutputIncompleteForMaxTokensWithoutArtifacts(t *tes
 		record.Failure.Code != "OUTPUT_INCOMPLETE" || record.Failure.Stage != "review_output_incomplete" {
 		t.Fatalf("output-incomplete Ledger=%#v err=%v", record, ledgerErr)
 	}
-	if record.Failure.Details != nil && record.Failure.Details.Provider != nil {
-		t.Fatalf("output-incomplete Ledger Details carries a Provider diagnostic: %#v", record.Failure.Details)
+	if record.Failure.Details == nil || record.Failure.Details.Category != string(worker.StopReasonMaxTokens) ||
+		record.Failure.Details.Provider != nil || record.Failure.Details.Substage != "" {
+		t.Fatalf("output-incomplete Ledger Details=%#v, want stop reason only", record.Failure.Details)
 	}
 	var storedResult ReviewExecutionResult
-	if decodeErr := json.Unmarshal(record.Result, &storedResult); decodeErr != nil || storedResult.ProviderFailure != nil {
-		t.Fatalf("output-incomplete Result JSON carries a ProviderFailure: %#v, decode=%v", storedResult.ProviderFailure, decodeErr)
+	if decodeErr := json.Unmarshal(record.Result, &storedResult); decodeErr != nil || storedResult.Failure == nil ||
+		storedResult.Failure.Category != string(worker.StopReasonMaxTokens) || storedResult.Failure.Provider != nil ||
+		storedResult.ProviderFailure != nil {
+		t.Fatalf("output-incomplete Ledger Result=%#v decode=%v, want stop reason only", storedResult, decodeErr)
 	}
 	project := filepath.Join(root, "プロジェクト", input.ProjectName)
 	if _, statErr := os.Stat(filepath.Join(project, "Reviews")); !errors.Is(statErr, os.ErrNotExist) {
@@ -458,7 +463,7 @@ func TestReviewFailureEnvelopeClassifiesEveryCase(t *testing.T) {
 		{"provider structured output invalid", errors.New("x"), &ProviderFailure{Category: "structured_output_invalid"}, nil, "PROVIDER_RESPONSE_INVALID", "review_provider", "structured_output_invalid", false},
 		{"provider rate limited with committed artifact", errors.New("x"), &ProviderFailure{Category: "rate_limited"}, committedArtifact, "PROVIDER_RATE_LIMITED", "review_provider", "rate_limited", true},
 		{
-			"provider output incomplete (max_tokens)",
+			"legacy output incomplete without retained stop reason",
 			&service.WorkerExecutionError{Kind: service.WorkerErrorOutputIncomplete, Err: service.ErrProviderOutputIncomplete},
 			nil, nil, "OUTPUT_INCOMPLETE", "review_output_incomplete", "", false,
 		},
