@@ -68,6 +68,8 @@ Local Web UIはこの順序を再実装しません。`interaction-next`が返�
 
 `workcairn-daemon --local-network`は、同じWi-Fi等のtrusted local network上の別デバイス（iPhone等、任意機能）へLocal Web UIを配信します。起動時にprivate IPv4を自動選択し、terminalへURLとprocess lifetimeだけ有効なpairing codeを表示します。codeはVault、`.env`、Interaction Session、browser storageへ保存されません。
 
+Local Web UIは日本語と英語を明示選択で切り替えます。既定は日本語で、OSやbrowserの言語から自動推測しません。選択はそのbrowser originの`workcairn.ui-locale`にだけ保存し、Vault、Application Support、Interaction、Command、Prompt、Provider設定へは流しません。UI言語はAI成果物の言語指定ではありません。
+
 通常の依頼ではModel名を選びません。新規Interactionは論理値`workcairn-auto`を使い、Claude Adapter edgeのversioned supported-model policyが具体modelを自動解決します。製品daemon／CLIはmodel環境変数を読みません。daemonはProviderへ通信せず、ADR-0066の選択済みcredential sourceをredacted statusとして検査し、未接続ならPlan承認の前に設定を案内します。既定`automatic`は既存互換としてenvironment→Keychainの順ですがheadless-localへは進みません。明示`environment`／`keychain`／`headless-local`は他sourceへfallbackしません。Local Web UIの`AI Connections`はClaudeの接続可否とAutomatic routingを表示しますが、credential、Provider model ID、Base URLをUIやSessionへ出しません。credential登録はMac本体のsame-origin操作からnative hidden-inputを開き、値をHTTPへ載せずKeychainへ保存します。trusted LAN上の別デバイスは接続状態だけを読みます。本格的なRole／Task別routingはADR-0036のtyped policyとして既存Runner Registryの手前へ追加し、未接続Providerへの暗黙fallbackは行いません。
 
 Claudeがerror responseを返した場合、Adapterは実HTTP statusと公式error typeだけから認証、請求、権限、request不正、rate limit、一時利用不可を分類します。Provider messageは保存せず、sanitized request IDとredacted分類だけをCommand Ledgerへ残すため、My Actionsは秘密情報を出さず次の確認先を案内できます。分類不能な旧evidenceや未知errorを推測せず、自動retryや別Providerへのfallbackを行いません。

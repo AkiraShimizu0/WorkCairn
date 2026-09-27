@@ -19,7 +19,7 @@ func (handler *Handler) webAsset(response http.ResponseWriter, request *http.Req
 	name := path.Base(request.PathValue("name"))
 	contentType := "application/octet-stream"
 	switch name {
-	case "app.js":
+	case "app.js", "i18n.js":
 		contentType = "text/javascript; charset=utf-8"
 	case "styles.css":
 		contentType = "text/css; charset=utf-8"

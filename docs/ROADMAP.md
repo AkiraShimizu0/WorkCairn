@@ -388,6 +388,18 @@ PHASE PB-3bpで、上記P2だけを対象にした未commit実装を追加しま
 
 PHASE PB-3bp.1 focused reviewでは、初稿が`WorkerExecutionError.StopReason`をexported fieldとして公開していた点をP2と判定し、private field＋read-only `SafeStopReason`へ修正しました。このaccessorは`WorkerErrorOutputIncomplete`と`StopReasonMaxTokens`の閉じた組合せだけを返し、それ以外はzero valueへfail closedします。子Review CommandのResult／Ledger Details、Reviewed Workflow外側への既存Envelope転送、Provider診断非生成、artifact非生成をproduction-path testで固定しました。修正後のP0〜P3 finding、contract gap、test gap、Open Questionsはいずれも0で、ADR-0077を`Accepted`としました。
 
+## Next 4 — Bilingual Product UI Architecture（M-UI-1設計）
+
+Public Beta公開後の独立Checkpoint候補だった日本語／英語UI切替について、現行実装をread-only監査しました。UI-owned copyは`go/internal/httpapi/web/index.html`と単一の`app.js`へ集中し、locale設定・translation catalog・`navigator.language`推測はいずれも存在しません。Settings dialogとbrowser-local presentation stateの既存precedentはありますが、Application Support／Vault／daemon側にUI preference保存契約はありません。
+
+M-UI-1では[ADR-0078](adr/ADR-0078-bilingual-product-ui-architecture.md)（Status: **Accepted**）として、closed locale `ja`／`en`、既定`ja`、明示selector、browser-local `workcairn.ui-locale`、catalog key／placeholder完全一致、暗黙翻訳fallback禁止、canonical JSON／user content／Provider output非翻訳、UI localeとAI成果物言語の完全分離を設計しました。初期画面とSettingsから変更可能にし、未送信draftがある切替は明示確認を要求します。実装は別Checkpointとし、UI redesign、backend preference API、Application Support／Vault書込み、JSON Contract変更、Provider／Keychain、AI出力言語設定を同時に持ち込みません。
+
+M-UI-1.1重点設計reviewでは、現行のpending Commandがdaemon受付後ではなくPOST前に`sessionStorage`へ保存されるため、その存在をreload-safeの証拠にできないcontract gapを検出しました。すべてのnon-GET requestをcentral request boundaryでin-memory countし、Command POSTのaccepted response後だけexisting pending monitorをreload-safeとする設計へ修正しています。また、exact static asset `i18n.js`の配信境界、closed `{name}` interpolation、unknown／missing／extra parameterのfail-closed、catalog適用前のinteractive root非表示を固定しました。修正後のP0〜P3 finding、contract gap、test gap、Open Questionsは0です。
+
+M-UI-2ではこの設計をembedded Local Web UIへ実装しました。`/assets/i18n.js`がexact-keyの日英catalog、placeholder parity、browser-local localeと`ja-JP`／`en-US`表示を所有します。初期画面とSettingsの選択は同じ`workcairn.ui-locale`だけを使い、未送信draftは明示確認、non-GET requestは切替無効化、accepted pending Commandは既存`sessionStorage`でreload継続します。catalog不整合は操作のない固定日英errorへfail closedします。Attentionの日本語backend Summaryは英語UIで解析・機械翻訳せず、typed fieldsから英語説明を決定的に構築します。HTTP／JSON／Prompt／Provider／Vault／Application Supportの契約は変更していません。
+
+M-UI-2.1 focused reviewでは、translation key付きのstatic HTMLに日本語fallback文字列が重複していた点をP2とし、catalog適用まで空のinteractive rootとする修正を行いました。bootstrap allow-listは自己説明的な`日本語 / English`と固定日英fatal／no-script copyだけです。修正後のP0〜P3 finding、contract gap、test gap、Open Questionsは0。Final Automated GatesはFull Browser Gate **178 passed／1 known skip／0 failed**、全Go package race test、`go vet ./...`、`gofmt -l`、release matrix、`git diff --check`を含む`make v1-release-gate`がすべてPASSしました。
+
 ## Completed — Leverage Engine Foundation and Production Wiring
 
 ADR-0051（Accepted）により、CEOの1回の依頼から複数Taskが安全に自動並列実行され、Synthesisで統合されるところまでを、Public Betaの実際のCommand経路（`interaction.plan.approve_and_execute`）へ配線しました。

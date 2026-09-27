@@ -65,6 +65,7 @@ public-beta-browser-gate: go-build
 # smallest set that still covers the core product path end to end.
 check-ui-fast: go-build
 	node --check go/internal/httpapi/web/app.js
+	node --check go/internal/httpapi/web/i18n.js
 	test -x node_modules/.bin/playwright
 	npx playwright test --project=chromium-desktop --grep '@critical'
 

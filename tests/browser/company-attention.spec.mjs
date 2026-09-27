@@ -129,6 +129,24 @@ test("company attention renders backend ordering and typed labels without client
   }
 });
 
+test("English company attention uses typed facts instead of Japanese backend summary @office", async ({ page }) => {
+  const environment = await startBrowserEnvironment("happy_path");
+  try {
+    await pairThroughUI(page, environment.daemon);
+    await completeFirstRunFast(page);
+    await mockAttentionFeed(page, ATTENTION_FIXTURE.slice(0, 1));
+    await page.evaluate(() => localStorage.setItem("workcairn.ui-locale", "en"));
+    await page.reload();
+    const item = page.locator("#company-attention .attention-item").first();
+    await expect(item).toBeVisible();
+    await expect(item.locator(".attention-item-summary")).toContainText("Recommended action");
+    await expect(item.locator(".attention-item-summary")).toContainText("interaction.plan.generate");
+    await expect(item.locator(".attention-item-summary")).not.toContainText(ATTENTION_FIXTURE[0].summary);
+  } finally {
+    await environment.stop();
+  }
+});
+
 test("company attention API failure stays section-local @office", async ({ page }) => {
   const environment = await startBrowserEnvironment("happy_path");
   try {

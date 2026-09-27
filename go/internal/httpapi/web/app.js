@@ -1,4 +1,8 @@
-const BACKGROUND_CONTINUITY_COPY = "この画面を閉じても処理はバックグラウンドで続きます。次に判断が必要になったら依頼詳細へ表示します。";
+import { applyStaticTranslations, locale, localeStorageWarning, localeTag, persistLocale, t } from "./i18n.js";
+
+applyStaticTranslations();
+
+const BACKGROUND_CONTINUITY_COPY = t("copy.0090");
 
 const INTERACTION_VERSION = "workspace-interaction.v1";
 const COMMAND_VERSION = "workspace-command.v1";
@@ -150,6 +154,8 @@ const ui = {
   busyTitle: document.querySelector("#busy-title"),
   busyMessage: document.querySelector("#busy-message"),
   toast: document.querySelector("#toast"),
+  localeSelect: document.querySelector("#locale-select"),
+  settingsLocaleSelect: document.querySelector("#settings-locale-select"),
 };
 
 // setDetailsPanelHidden is the single place that toggles #details-panel's
@@ -205,6 +211,7 @@ const state = {
   inspectionMode: "",
   inspectionContext: null,
   refreshBarrier: null,
+  reloadUnsafeRequests: 0,
 };
 
 class APIError extends Error {
@@ -241,7 +248,7 @@ function now() { return new Date().toISOString(); }
 function secureRandomUUID() {
   const cryptoAPI = window.crypto;
   if (!cryptoAPI || typeof cryptoAPI.getRandomValues !== "function") {
-    throw new APIError("このブラウザでは安全な依頼IDを作成できません。ブラウザを更新して再度お試しください。", 0, {
+    throw new APIError(t("copy.0087"), 0, {
       code: "BROWSER_SECURE_RANDOM_UNAVAILABLE",
     });
   }
@@ -259,19 +266,19 @@ function projectID() { return `PROJECT-${Date.now()}-${secureRandomUUID().slice(
 
 function stateLabel(value) {
   const labels = {
-    plan_generation_approval_required: "進め方の作成待ち",
-    clarification_required: "回答待ち",
-    plan_approval_required: "進め方の承認待ち",
-    ready_to_execute: "実行承認待ち",
-    workflow_attention_required: "確認が必要",
-    completed: "完了",
-    action_completed: "完了",
-    action_attention_required: "確認が必要",
-    waiting: "待機中",
-    standby: "必要時に参加",
-    blocked: "確認が必要",
+    plan_generation_approval_required: t("copy.0259"),
+    clarification_required: t("copy.0151"),
+    plan_approval_required: t("copy.0261"),
+    ready_to_execute: t("copy.0219"),
+    workflow_attention_required: t("copy.0156"),
+    completed: t("copy.0164"),
+    action_completed: t("copy.0164"),
+    action_attention_required: t("copy.0156"),
+    waiting: t("copy.0297"),
+    standby: t("copy.0320"),
+    blocked: t("copy.0156"),
   };
-  return labels[value] || value || "確認中";
+  return labels[value] || value || t("copy.0163");
 }
 
 function sameCalendarDay(left, right) {
@@ -285,13 +292,13 @@ function sessionDateGroupLabel(value) {
   const today = new Date();
   const yesterday = new Date();
   yesterday.setDate(today.getDate() - 1);
-  if (sameCalendarDay(date, today)) return "今日";
-  if (sameCalendarDay(date, yesterday)) return "昨日";
-  return date.toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" });
+  if (sameCalendarDay(date, today)) return t("copy.0191");
+  if (sameCalendarDay(date, yesterday)) return t("copy.0205");
+  return date.toLocaleDateString(localeTag(), { year: "numeric", month: "long", day: "numeric" });
 }
 
 function sessionTimeLabel(value) {
-  return new Date(value).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+  return new Date(value).toLocaleTimeString(localeTag(), { hour: "2-digit", minute: "2-digit" });
 }
 
 function liaisonIdentity() {
@@ -304,8 +311,8 @@ function liaisonMessage(text, at, extras = {}) {
 
 function liaisonRequestLabel() {
   const liaison = liaisonIdentity();
-  if (liaison.name && liaison.name !== "AI社員") return `${liaison.name}に依頼する`;
-  return "窓口社員に依頼する";
+  if (liaison.name && liaison.name !== t("copy.0019")) return t("template.assign.liaison", { name: liaison.name });
+  return t("copy.0289");
 }
 
 function workcairnEvent(text, at, extras = {}) {
@@ -314,7 +321,7 @@ function workcairnEvent(text, at, extras = {}) {
 
 function requestTitleText(value, max = 48) {
   const text = String(value || "").trim();
-  if (!text) return "新しい依頼";
+  if (!text) return t("copy.0253");
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1)}…`;
 }
@@ -377,8 +384,8 @@ async function setSessionListFilter(filter, { userInitiated = true } = {}) {
 
 function sessionListEmptyMessage() {
   return state.sessionListFilter === "archived"
-    ? "削除済みの依頼はありません。"
-    : "まだ依頼はありません。";
+    ? t("copy.0203")
+    : t("copy.0108");
 }
 
 async function clearSelectedSessionPresentation() {
@@ -414,20 +421,20 @@ function sessionListPresentation(record) {
   const isActive = activeID === record.session_id;
   let hasError = false;
   try { hasError = Boolean(JSON.parse(localStorage.getItem(errorStorageKey(record.session_id)) || "null")); } catch {}
-  if (hasError) return { icon: "warning", label: "確認が必要です" };
+  if (hasError) return { icon: "warning", label: t("copy.0157") };
   if (isActive && state.next && !state.lastError) {
     switch (state.next.kind) {
     case "answer_clarifications":
     case "approve_plan_generation":
     case "approve_plan_apply":
     case "approve_workflow":
-      return { icon: "attention", label: "確認が必要です" };
+      return { icon: "attention", label: t("copy.0157") };
     case "inspect_workflow_recovery":
     case "inspect_action_recovery":
-      return { icon: "warning", label: "確認が必要です" };
+      return { icon: "warning", label: t("copy.0157") };
     case "done":
     case "optional_external_action_or_done":
-      return { icon: "complete", label: "完了" };
+      return { icon: "complete", label: t("copy.0164") };
     default:
       break;
     }
@@ -435,21 +442,21 @@ function sessionListPresentation(record) {
   switch (record.state) {
   case "completed":
   case "action_completed":
-    return { icon: "complete", label: "完了" };
+    return { icon: "complete", label: t("copy.0164") };
   case "workflow_attention_required":
   case "action_attention_required":
-    return { icon: "warning", label: "確認が必要です" };
+    return { icon: "warning", label: t("copy.0157") };
   case "clarification_required":
   case "plan_approval_required":
   case "ready_to_execute":
   case "plan_generation_approval_required":
-    return { icon: "attention", label: "確認が必要です" };
+    return { icon: "attention", label: t("copy.0157") };
   default: {
     const lastTurn = record.turns?.at(-1);
     if (lastTurn?.workflow?.status === "completed" || lastTurn?.kind === "plan_generated") {
-      return { icon: "working", label: "新しい進捗があります" };
+      return { icon: "working", label: t("copy.0254") };
     }
-    return { icon: "working", label: "作業中" };
+    return { icon: "working", label: t("copy.0199") };
   }
   }
 }
@@ -461,25 +468,10 @@ function sessionListMeta(record, presentation) {
 }
 
 function sessionIconNode(icon) {
-  const labels = { attention: "対応待ち", working: "作業中", complete: "完了", warning: "失敗" };
+  const labels = { attention: t("copy.0293"), working: t("copy.0199"), complete: t("copy.0164"), warning: t("copy.0214") };
   return node("span", { class: `session-icon session-icon-${icon}`, "aria-label": labels[icon] || icon },
     icon === "complete" ? "✓" : "",
   );
-}
-
-function timelineStageLabel(stage) {
-  const labels = {
-    依頼: "依頼",
-    clarification: "確認",
-    plan: "進め方",
-    approval: "承認",
-    execution: "作業",
-    review: "レビュー",
-    revision: "修正",
-    completion: "完了",
-    failure: "停止",
-  };
-  return labels[stage] || stage || "";
 }
 
 function groupSessionsByDate(sessions) {
@@ -535,14 +527,14 @@ function inlineMessageActions(message) {
   if (facts.length) panel.append(approvalFacts(facts));
   if (message.onCopy) {
     panel.append(node("div", { class: "msg-technical-panel-actions" },
-      button("診断情報をコピー", "quiet chip", message.onCopy),
+      button(t("copy.0255"), "quiet chip", message.onCopy),
     ));
   }
   const toggle = node("button", {
     class: "icon-button msg-info-toggle msg-info-toggle-labeled",
     type: "button",
     onclick: () => { panel.hidden = !panel.hidden; },
-  }, "ⓘ エラーの詳細");
+  }, t("copy.0040"));
   return node("div", { class: "msg-actions" }, toggle, panel);
 }
 
@@ -612,7 +604,7 @@ function isBudgetRecoveryNext(next) {
 }
 
 function composerFieldText(next) {
-  if (isArchivedRecord()) return "削除済みの依頼です。元に戻すと再び操作できます。";
+  if (isArchivedRecord()) return t("copy.0202");
   if (state.pendingAttentionTitle) return state.pendingAttentionTitle;
   // Explicit Revision Recovery takes priority over the generic lastError
   // branch below: Go's own Next() already decided a stalled Task is
@@ -622,9 +614,9 @@ function composerFieldText(next) {
   // exists for the same stop.
   if (isRevisionRecoveryNext(next)) return "";
   if (state.lastError) {
-    if (conversationHasFailureEntry()) return "判断が必要です";
+    if (conversationHasFailureEntry()) return t("copy.0316");
     const guidance = interactionErrorGuidance(state.lastError.code, state.lastError.stage);
-    return `${state.lastError.title || "処理を完了できませんでした。"} ${guidance}`.trim();
+    return t("template.error.guidance", { title: state.lastError.title || t("copy.0237"), guidance }).trim();
   }
   // While a Command is pending, the composer shows no processing text at
   // all -- only a disabled/idle field (composerCapabilities' "running"
@@ -633,15 +625,15 @@ function composerFieldText(next) {
   // is not a second place for the same or an equivalent "考え中" copy.
   if (storedPendingCommand()) return "";
   if (isDraftRequestActive()) return "";
-  if (!next) return "依頼を選択してください";
+  if (!next) return t("copy.0122");
   if (next.kind === "answer_clarifications") return "";
   if (next.kind === "approve_plan_generation") {
-    return state.providerStatus?.configured ? "" : "AIサービスへ接続してください。";
+    return state.providerStatus?.configured ? "" : t("copy.0015");
   }
   if (next.kind === "approve_plan_apply" || next.kind === "approve_workflow") return "";
-  if (next.kind === "done" || next.kind === "optional_external_action_or_done") return "完了しました";
+  if (next.kind === "done" || next.kind === "optional_external_action_or_done") return t("copy.0165");
   if (isRevisionRecoveryNext(next)) return "";
-  if (next.kind === "inspect_workflow_recovery" || next.kind === "inspect_action_recovery") return "判断が必要です";
+  if (next.kind === "inspect_workflow_recovery" || next.kind === "inspect_action_recovery") return t("copy.0316");
   return "";
 }
 
@@ -656,13 +648,13 @@ function composerCapabilities(next) {
   // of the disabled "running" state (blank field, no processing text --
   // see composerFieldText).
   if (storedPendingCommand()) {
-    return { enabled: false, placeholder: "メッセージを入力...", mode: "running" };
+    return { enabled: false, placeholder: t("copy.0109"), mode: "running" };
   }
   if (isDraftRequestActive()) {
-    return { enabled: true, placeholder: "依頼内容を入力...", mode: "draft" };
+    return { enabled: true, placeholder: t("copy.0132"), mode: "draft" };
   }
   if (isArchivedRecord()) {
-    return { enabled: false, placeholder: "削除済みの依頼です", mode: "archived" };
+    return { enabled: false, placeholder: t("copy.0201"), mode: "archived" };
   }
   // Explicit Revision Recovery: the composer accepts input only in this one
   // specific state (an additional CEO instruction is genuinely optional
@@ -673,15 +665,15 @@ function composerCapabilities(next) {
   // exists for this same stop -- Go's own Next() already decided it is
   // safely recoverable.
   if (isRevisionRecoveryNext(next)) {
-    return { enabled: true, placeholder: "追加の指示（任意）。空欄のまま送信できます...", mode: "recovery" };
+    return { enabled: true, placeholder: t("copy.0303"), mode: "recovery" };
   }
   if (!next || state.lastError) {
-    return { enabled: false, placeholder: "メッセージを入力...", mode: "idle" };
+    return { enabled: false, placeholder: t("copy.0109"), mode: "idle" };
   }
   if (next.kind === "answer_clarifications") {
-    return { enabled: true, placeholder: "回答を入力...", mode: "clarification" };
+    return { enabled: true, placeholder: t("copy.0147"), mode: "clarification" };
   }
-  return { enabled: false, placeholder: "メッセージを入力...", mode: "idle" };
+  return { enabled: false, placeholder: t("copy.0109"), mode: "idle" };
 }
 
 function renderComposerState(next) {
@@ -714,7 +706,7 @@ function renderComposerState(next) {
   ui.composerInput.setAttribute("aria-readonly", capabilities.enabled ? "false" : "true");
   ui.composerInput.setAttribute(
     "aria-label",
-    capabilities.enabled ? capabilities.placeholder : (fieldText || capabilities.placeholder || "現在の状態"),
+    capabilities.enabled ? capabilities.placeholder : (fieldText || capabilities.placeholder || t("copy.0183")),
   );
   ui.composerSend.disabled = !capabilities.enabled;
   ui.threadComposer.dataset.mode = capabilities.mode;
@@ -749,40 +741,82 @@ function shortDigest(value) {
 
 async function requestJSON(path, options = {}) {
   const { rawEnvelope = false, ...fetchOptions } = options;
+  const method = String(fetchOptions.method || "GET").toUpperCase();
+  const reloadUnsafe = method !== "GET" && method !== "HEAD";
   const headers = new Headers(fetchOptions.headers || {});
   headers.set("Accept", "application/json");
   if (fetchOptions.body != null) {
     headers.set("Content-Type", "application/json");
     headers.set("X-Workspace-Intent", "local-network-ui.v1");
   }
-  let response;
+  if (reloadUnsafe) {
+    state.reloadUnsafeRequests += 1;
+    syncLocaleControls();
+  }
   try {
-    response = await fetch(path, { ...fetchOptions, headers, credentials: "same-origin" });
-  } catch (error) {
-    throw new APIError("このデバイスとの通信が切れました。状態を確認してから再開してください。", 0, error);
+    let response;
+    try {
+      response = await fetch(path, { ...fetchOptions, headers, credentials: "same-origin" });
+    } catch (error) {
+      throw new APIError(t("copy.0085"), 0, error);
+    }
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || payload?.ok === false) {
+      const code = payload?.error?.code || payload?.error || `HTTP_${response.status}`;
+      // Synchronous commands (e.g. interaction.plan.generate) return their full
+      // typed result alongside the minimal error envelope on failure. Merge the
+      // Provider/parse diagnostics from that result into detail so showError()
+      // sees the same fields it already reads from polled async Command status.
+      const detail = payload?.error
+        ? { ...payload.error, ...errorDiagnostics(payload.error.details, payload.result) }
+        : payload;
+      throw new APIError(String(code), response.status, detail);
+    }
+    if (rawEnvelope) return payload;
+    return payload && Object.hasOwn(payload, "result") ? payload.result : payload;
+  } finally {
+    if (reloadUnsafe) {
+      state.reloadUnsafeRequests -= 1;
+      syncLocaleControls();
+    }
   }
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || payload?.ok === false) {
-    const code = payload?.error?.code || payload?.error || `HTTP_${response.status}`;
-    // Synchronous commands (e.g. interaction.plan.generate) return their full
-    // typed result alongside the minimal error envelope on failure. Merge the
-    // Provider/parse diagnostics from that result into detail so showError()
-    // sees the same fields it already reads from polled async Command status.
-    const detail = payload?.error
-      ? { ...payload.error, ...errorDiagnostics(payload.error.details, payload.result) }
-      : payload;
-    throw new APIError(String(code), response.status, detail);
-  }
-  if (rawEnvelope) return payload;
-  return payload && Object.hasOwn(payload, "result") ? payload.result : payload;
 }
 
 function setConnected(connected) {
-  ui.status.textContent = connected ? "接続中" : "接続を確認してください";
+  ui.status.textContent = connected ? t("copy.0282") : t("copy.0281");
   ui.status.classList.toggle("online", connected);
 }
 
-function setBusy(active, title = "処理しています", message = "この画面を開いたままお待ちください。") {
+function syncLocaleControls() {
+  const disabled = state.reloadUnsafeRequests > 0;
+  for (const control of [ui.localeSelect, ui.settingsLocaleSelect]) {
+    if (!control) continue;
+    control.value = locale();
+    control.disabled = disabled;
+  }
+}
+
+function changeLocale(event) {
+  const nextLocale = event.currentTarget.value;
+  if (nextLocale === locale()) return;
+  if (state.reloadUnsafeRequests > 0) {
+    syncLocaleControls();
+    toast(t("locale.busy"));
+    return;
+  }
+  if (ui.composerInput?.value.trim() && !window.confirm(t("locale.discard"))) {
+    syncLocaleControls();
+    return;
+  }
+  if (!persistLocale(nextLocale)) {
+    syncLocaleControls();
+    toast(t("locale.storage.error"));
+    return;
+  }
+  window.location.reload();
+}
+
+function setBusy(active, title = t("copy.0235"), message = t("copy.0089")) {
   state.busy = active;
   ui.busy.hidden = !active;
   ui.busyTitle.textContent = title;
@@ -791,7 +825,7 @@ function setBusy(active, title = "処理しています", message = "この画�
 
 function setBackgroundWorking(active) {
   ui.backgroundStatus.hidden = !active;
-  ui.backgroundStatus.setAttribute("aria-label", active ? "バックグラウンドで実行中" : "");
+  ui.backgroundStatus.setAttribute("aria-label", active ? t("copy.0104") : "");
 }
 
 // inFlightCopy is the single source for the timeline's ephemeral
@@ -804,16 +838,16 @@ function inFlightCopy(operation) {
   switch (operation) {
   case "interaction.start":
   case "interaction.plan.generate":
-    return { message: "依頼内容を確認して、進め方を整理しています…" };
+    return { message: t("copy.0129") };
   case "interaction.answer":
-    return { message: "回答を確認して、続きの進め方を整理しています…" };
+    return { message: t("copy.0146") };
   case "interaction.plan.approve_and_execute":
   case "interaction.workflow.execute":
-    return { message: "Makerの成果物作成、QA担当のReview、必要なRevisionを順番に進めます。" };
+    return { message: t("copy.0044") };
   case "interaction.workflow.recover_revision":
-    return { message: "停止した作業だけ続けています。完了済みの成果はそのまま保持します。" };
+    return { message: t("copy.0308") };
   default:
-    return { message: "承認済みの処理をバックグラウンドで安全に続けています。" };
+    return { message: t("copy.0248") };
   }
 }
 
@@ -990,14 +1024,14 @@ async function copySanitizedError(error) {
   }
   if (!copied) copied = copyTextWithSelection(detail);
   if (copied) {
-    toast("エラー詳細をコピーしました。");
+    toast(t("copy.0082"));
     return;
   }
   showManualCopy(detail);
 }
 
 function copyTextWithSelection(detail) {
-  const textarea = node("textarea", { readonly: true, "aria-label": "コピーするエラー詳細" }, detail);
+  const textarea = node("textarea", { readonly: true, "aria-label": t("copy.0098") }, detail);
   textarea.value = detail;
   textarea.style.position = "fixed";
   textarea.style.opacity = "0";
@@ -1013,7 +1047,7 @@ function copyTextWithSelection(detail) {
 }
 
 function showManualCopy(detail) {
-  const textarea = node("textarea", { class: "copy-detail", readonly: true, "aria-label": "コピーするエラー詳細" }, detail);
+  const textarea = node("textarea", { class: "copy-detail", readonly: true, "aria-label": t("copy.0098") }, detail);
   textarea.value = detail;
   const retryCopy = () => {
     textarea.focus();
@@ -1022,30 +1056,30 @@ function showManualCopy(detail) {
     let copied = false;
     try { copied = typeof document.execCommand === "function" && document.execCommand("copy"); } catch {}
     if (copied) {
-      toast("エラー詳細をコピーしました。");
+      toast(t("copy.0082"));
       closeActionDialog();
       return;
     }
-    toast("コピーできませんでした。詳細を長押ししてコピーしてください。");
+    toast(t("copy.0100"));
   };
   ui.actionForm.onsubmit = null;
   ui.actionForm.replaceChildren(
     node("div", { class: "sheet-handle" }),
     node("div", { class: "sheet-heading" },
-      node("div", {}, node("p", { class: "eyebrow" }, "ERROR DETAILS"), node("h2", {}, "詳細を選択してコピー")),
-      node("button", { class: "icon-button", type: "button", "aria-label": "閉じる", onclick: closeActionDialog }, "×"),
+      node("div", {}, node("p", { class: "eyebrow" }, "ERROR DETAILS"), node("h2", {}, t("copy.0250"))),
+      node("button", { class: "icon-button", type: "button", "aria-label": t("copy.0333"), onclick: closeActionDialog }, "×"),
     ),
-    node("p", { class: "supporting" }, "自動コピーを利用できませんでした。下の診断情報を長押ししてコピーしてください。"),
+    node("p", { class: "supporting" }, t("copy.0213")),
     textarea,
     node("div", { class: "sheet-actions" },
-      button("選択内容をコピー", "primary", retryCopy),
-      button("閉じる", "quiet", closeActionDialog),
+      button(t("copy.0286"), "primary", retryCopy),
+      button(t("copy.0333"), "quiet", closeActionDialog),
     ),
   );
   if (!ui.actionDialog.open) ui.actionDialog.showModal();
   textarea.focus();
   textarea.select();
-  toast("コピーできませんでした。詳細を選択してコピーしてください。");
+  toast(t("copy.0099"));
 }
 
 function isDesktopLayout() {
@@ -1166,62 +1200,62 @@ function toast(message) {
 
 function interactionErrorGuidance(code, stage = "") {
   const providerFailures = {
-    PROVIDER_AUTHENTICATION_REQUIRED: "Claudeの接続を確認してください。credentialが無効・失効している可能性があります。",
-    PROVIDER_BILLING_REQUIRED: "Claude側の請求・支払い設定を確認してください。WorkCairnは自動retryしません。",
-    PROVIDER_PERMISSION_DENIED: "Claude側で、この接続に必要な利用権限を確認してください。",
-    PROVIDER_REQUEST_INVALID: "WorkCairnからClaudeへ送ったrequestが拒否されました。自動retryせず、問い合わせIDを確認してください。",
-    PROVIDER_RATE_LIMITED: "Claudeの利用上限に達しました。時間を置き、状態を確認してから新しいCommandとして再開してください。",
-    PROVIDER_UNAVAILABLE: "Claudeへ接続できないか、Claude側が一時的に利用できません。自動fallbackやretryは行っていません。",
-    PROVIDER_RESPONSE_INVALID: "Claudeから正常に読み取れる応答を受け取れませんでした。自動retryせず、問い合わせIDを確認してください。",
+    PROVIDER_AUTHENTICATION_REQUIRED: t("copy.0023"),
+    PROVIDER_BILLING_REQUIRED: t("copy.0032"),
+    PROVIDER_PERMISSION_DENIED: t("copy.0031"),
+    PROVIDER_REQUEST_INVALID: t("copy.0074"),
+    PROVIDER_RATE_LIMITED: t("copy.0025"),
+    PROVIDER_UNAVAILABLE: t("copy.0028"),
+    PROVIDER_RESPONSE_INVALID: t("copy.0022"),
   };
   const reviewContractFailures = {
-    REVIEW_PROMPT_FAILED: "レビュー用の指示を組み立てられませんでした。成果物は保持されています。",
-    REVIEW_ROUTE_FAILED: "レビュー担当のAIモデルを解決できませんでした。成果物は保持されています。",
-    REVIEW_RESULT_INVALID: "AIのレビュー結果を正しく解釈できませんでした。成果物は保持されています。",
+    REVIEW_PROMPT_FAILED: t("copy.0112"),
+    REVIEW_ROUTE_FAILED: t("copy.0111"),
+    REVIEW_RESULT_INVALID: t("copy.0018"),
   };
   if (code === "PROVIDER_CONFIGURATION_REQUIRED") {
-    return "AIサービスの接続設定が不足しています。Providerへ依頼は送信されていません。AI Connectionsから接続してください。";
+    return t("copy.0014");
   }
   if (providerFailures[code]) return providerFailures[code];
   if (reviewContractFailures[code]) return reviewContractFailures[code];
-  if (code === "PROJECT_NAME_COLLISION") return "同じ名前の仕事がすでにあります。新しい仕事として作成できませんでした。少し時間を置くか、依頼の表現を変えて改めて送ってください。";
+  if (code === "PROJECT_NAME_COLLISION") return t("copy.0314");
   if (code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_commit_cas") {
-    return "同じ依頼の状態が先に更新されたため、この進め方は保存していません。新しい状態を確認してください。";
+    return t("copy.0311");
   }
   if (code === "INTERACTION_PLAN_FAILED" &&
     (stage === "ceo_plan_intent" || stage === "ceo_plan_normalization" || stage === "ceo_plan_parser")) {
-    return "AIサービスから応答を受信しましたが、安全な進め方として確認できる形式ではありませんでした。進め方は保存・適用されていません。";
+    return t("copy.0011");
   }
   if (code === "INTERACTION_PLAN_FAILED" && stage === "interaction_plan_generation") {
-    return "AIサービスで進め方を生成できませんでした。自動retryや別サービスへの切替は行っていません。接続状態を確認してください。";
+    return t("copy.0012");
   }
   if (code === "WORKFLOW_TASK_ASSIGNMENT_REQUIRED") {
-    return "担当AIを決められない仕事があるため、実行を開始していません。Organizationを確認してから、改めて実行内容を確認してください。";
+    return t("copy.0300");
   }
   if (code === "WORKFLOW_REVIEWER_ASSIGNMENT_REQUIRED") {
-    return "Makerと異なるReviewerを一意に決められなかったため、Workflowを開始していません。OrganizationのQA Engineerを確認してください。";
+    return t("copy.0043");
   }
   if (code === "REVISION_LIMIT_REACHED") {
-    return "品質確認で修正上限に達しました。直前の成果物と指摘内容はそのまま保存されています。自動で修正は再開しません。";
+    return t("copy.0321");
   }
   if (code === "NO_PROGRESS_DETECTED") {
-    return "修正を続けていますが、成果に十分な変化がなく、同じ品質上の指摘が続いています。自動修正を停止しました。直前の成果物と指摘内容はそのまま保存されています。";
+    return t("copy.0230");
   }
   if (code === "BUDGET_EXCEEDED") {
-    return "この依頼は設定された実行上限に達したため、自動処理を停止しました。完了済みの成果は保存されています。";
+    return t("copy.0088");
   }
   if (code === "REVIEWED_WORKFLOW_BOUNDED_STOP") {
     // ADR-0072: bounded_acceptance Sessionでの意図的な停止。技術障害でも
     // 成功完了でもなく、Revision／Recoveryは提示しない。
-    return "Reviewで修正要求が出たため、限定確認を終了しました。成果物とレビュー内容はそのまま保存されています。この確認方法ではRevisionや自動修正は行いません。";
+    return t("copy.0048");
   }
   if (code === "DEPENDENCY_EVIDENCE_MISSING") {
-    return "統合に必要な前段の成果物を確認できなかったため、作業を開始していません。完了済みの成果物を確認してください。";
+    return t("copy.0309");
   }
-  return "成立済みの記録を推測で変更せず、現在の状態を確認してください。";
+  return t("copy.0278");
 }
 
-function showError(error, title = "処理を完了できませんでした") {
+function showError(error, title = t("copy.0236")) {
   setBusy(false);
   setBackgroundWorking(false);
   const detail = error instanceof APIError ? error.detail : null;
@@ -1230,8 +1264,8 @@ function showError(error, title = "処理を完了できませんでした") {
   // ADR-0072: a bounded_acceptance stop is neither a technical failure nor
   // a successful completion -- never label it with the generic failure
   // title used for every other error code here.
-  if (code === "REVIEWED_WORKFLOW_BOUNDED_STOP" && title === "処理を完了できませんでした") {
-    title = "限定確認を終了しました";
+  if (code === "REVIEWED_WORKFLOW_BOUNDED_STOP" && title === t("copy.0236")) {
+    title = t("copy.0186");
   }
   const remembered = rememberError(error, title);
   const providerSetupRequired = code === "PROVIDER_CONFIGURATION_REQUIRED";
@@ -1256,15 +1290,15 @@ function showError(error, title = "処理を完了できませんでした") {
   if (state.renderKey === errorRenderKey) return;
   state.renderKey = errorRenderKey;
   const recoveryAction = providerSettingsAction
-    ? button("AI Connectionsを開く", "primary chip", () => openSettingsDialog())
+    ? button(t("copy.0007"), "primary chip", () => openSettingsDialog())
     : providerIssue
-      ? button("進め方の作成待ちへ戻る", "primary chip", () => refreshCurrent())
+      ? button(t("copy.0260"), "primary chip", () => refreshCurrent())
       : pending
-        ? button("処理を再確認", "primary chip", () => resumePendingCommand(pending))
-        : button("状態を更新", "primary chip", () => refreshCurrent());
+        ? button(t("copy.0238"), "primary chip", () => resumePendingCommand(pending))
+        : button(t("copy.0252"), "primary chip", () => refreshCurrent());
   setQuickReplies([
     recoveryAction,
-    button("依頼一覧へ", "quiet chip", () => { selectSession(null); showRequestList(); }),
+    button(t("copy.0127"), "quiet chip", () => { selectSession(null); showRequestList(); }),
   ]);
   const actions = remembered ? composerAdjacentErrorActions(remembered) : null;
   if (actions) {
@@ -1285,14 +1319,14 @@ async function pair(event) {
   event.preventDefault();
   const code = new FormData(ui.pairingForm).get("code")?.toString().trim();
   if (!code) return;
-  setBusy(true, "接続しています", "ペアリングコードを確認しています。今回の起動中だけ有効です。");
+  setBusy(true, t("copy.0280"), t("copy.0106"));
   try {
     await requestJSON("/v1/local-access/pair", { method: "POST", body: JSON.stringify({ code }) });
     ui.pairingForm.reset();
     await startWorkspace();
   } catch (error) {
     setBusy(false);
-    toast(error.status === 401 ? "ペアリングコードが一致しません。" : error.message);
+    toast(error.status === 401 ? t("copy.0105") : error.message);
   }
 }
 
@@ -1360,13 +1394,13 @@ async function loadProviderStatus() {
 }
 
 async function refreshProviderStatus() {
-  setBusy(true, "AIサービスを確認しています", "credentialの値やProviderへの通信は行わず、起動時設定だけを確認します。");
+  setBusy(true, t("copy.0016"), t("copy.0033"));
   await loadProviderStatus();
   setBusy(false);
   if (state.record) renderNext(true);
   renderProviderSettings();
   renderStorageSettings();
-  toast(state.providerStatus?.configured ? "AIサービスを利用できます。" : "AI ConnectionsからClaudeを接続してください。");
+  toast(state.providerStatus?.configured ? t("copy.0017") : t("copy.0006"));
 }
 
 async function connectClaudeOnMac() {
@@ -1376,7 +1410,7 @@ async function connectClaudeOnMac() {
 		clientTimedOut = true;
 		controller.abort();
 	}, LOCAL_PROVIDER_SETUP_TIMEOUT_MS);
-	setBusy(true, "Claudeへ接続しています", "このデバイスに表示される安全な入力画面を確認してください。secretはbrowserへ送信しません。");
+	setBusy(true, t("copy.0026"), t("copy.0086"));
 	try {
 		state.providerStatus = await requestJSON("/v1/local-setup/claude", { method: "POST", body: "{}", signal: controller.signal });
 		state.providerSetupError = null;
@@ -1385,7 +1419,7 @@ async function connectClaudeOnMac() {
 			if (ui.settingsDialog.open) ui.settingsDialog.close();
 			openSetupWizard();
 		} else if (ui.setupDialog.open) renderSetupWizard();
-		toast("Claudeへ接続しました。RoutingはAutomaticです。");
+		toast(t("copy.0027"));
 	} catch (error) {
 		state.providerSetupError = {
 			code: error.detail?.code || error.message || "PROVIDER_CONNECTION_SETUP_FAILED",
@@ -1395,7 +1429,7 @@ async function connectClaudeOnMac() {
 		};
 		renderProviderSettings();
 		if (ui.setupDialog.open) renderSetupWizard();
-		toast(error.status === 403 ? "AI Connectionはこのデバイスの画面から設定してください。" : providerSetupFailureCopy().title);
+		toast(error.status === 403 ? t("copy.0010") : providerSetupFailureCopy().title);
 	} finally {
 		window.clearTimeout(timeout);
 		setBusy(false);
@@ -1405,9 +1439,9 @@ async function connectClaudeOnMac() {
 async function revealWorkspaceOnMac() {
 	try {
 		await requestJSON("/v1/local-setup/reveal-workspace", { method: "POST", body: "{}" });
-		toast("Finderに会社データを表示しました。Obsidianを使う場合は「Open folder as vault」を選べます。");
+		toast(t("copy.0039"));
 	} catch (error) {
-		toast(error.status === 403 ? "会社データを開く操作はこのデバイスで行ってください。" : "会社データをFinderに表示できませんでした。");
+		toast(error.status === 403 ? t("copy.0139") : t("copy.0138"));
 	}
 }
 
@@ -1415,17 +1449,17 @@ function providerStatusCopy() {
   if (state.providerStatus?.configured) return {
     state: "Connected",
     className: "connected",
-    description: "Claudeを利用できます。credentialやModel IDの値は画面へ表示しません。",
+    description: t("copy.0030"),
   };
   if (state.providerStatus?.invalid?.includes("status_unavailable")) return {
-    state: "確認できません",
+    state: t("copy.0159"),
     className: "attention",
-    description: "daemonとの接続を確認してから、状態を再確認してください。",
+    description: t("copy.0034"),
   };
   return {
     state: "Setup required",
     className: "attention",
-    description: "AIサービスの接続が必要です。現在のPublic Betaでは起動設定を確認してください。",
+    description: t("copy.0013"),
   };
 }
 
@@ -1444,9 +1478,9 @@ function renderProviderSettings() {
           node("span", { class: `connection-state ${copy.className}` }, copy.state),
         ),
         node("p", {}, copy.description),
-        !state.providerStatus?.configured ? node("p", { class: "connection-safety" }, "秘密情報はiPhoneやbrowser storageへ保存しません。接続設定はこのデバイスで行います。") : null,
-        !state.providerStatus?.configured && state.localSetupAvailable ? button("Claudeを接続", "primary", connectClaudeOnMac) : null,
-        !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "connection-safety" }, "WorkCairn画面でAI Connectionsを開いて接続してください。") : null,
+        !state.providerStatus?.configured ? node("p", { class: "connection-safety" }, t("copy.0317")) : null,
+        !state.providerStatus?.configured && state.localSetupAvailable ? button(t("copy.0029"), "primary", connectClaudeOnMac) : null,
+        !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "connection-safety" }, t("copy.0075")) : null,
       ),
       providerSetupFailureNode(),
     ].filter(Boolean),
@@ -1459,7 +1493,7 @@ function providerSetupFailureNode() {
   return node("section", { class: "error-box" },
 	node("strong", {}, copy.title),
 	node("p", {}, copy.message),
-	node("details", {}, node("summary", {}, "技術的な詳細を見る"), approvalFacts([
+	node("details", {}, node("summary", {}, t("copy.0176")), approvalFacts([
 	  ["Error code", state.providerSetupError.code], ["Stage", state.providerSetupError.stage],
 	  ["Substage", state.providerSetupError.substage || "—"], ["Category", state.providerSetupError.category || "—"],
 	])),
@@ -1468,27 +1502,27 @@ function providerSetupFailureNode() {
 
 function providerSetupFailureCopy() {
   if (state.providerSetupError?.category === "keychain_setup_timeout") return {
-	title: "Claudeの接続設定を完了できませんでした",
-	message: "安全な待機時間を超えたため処理を終了しました。入力画面を閉じてから、もう一度お試しください。",
+	title: t("copy.0024"),
+	message: t("copy.0113"),
   };
   return {
-	title: "Claude APIキーをmacOS Keychainへ保存できませんでした",
-	message: "自動retryや別の保存先へのfallbackは行っていません。macOS Keychain設定を確認してください。",
+	title: t("copy.0021"),
+	message: t("copy.0212"),
   };
 }
 
 function storageStatusCopy() {
   const kind = state.workspaceStatus?.storage_kind;
-  if (kind === "icloud_drive") return ["WorkCairn専用データフォルダ", "iCloud Drive上の任意の保存先です。Obsidianは不要で、同じデータフォルダへ書き込むdaemonは1台だけにしてください。"];
-  if (kind === "temporary") return ["一時的なWorkCairnデータフォルダ", "Acceptance／test専用です。通常利用では新しい専用データフォルダを選んでください。iCloud DriveもObsidianも任意です。"];
-  return ["WorkCairn専用のローカルデータフォルダ", "Mac上の通常のローカル保存先です。iCloud DriveもObsidianも不要です。"];
+  if (kind === "icloud_drive") return [t("copy.0076"), t("copy.0041")];
+  if (kind === "temporary") return [t("copy.0134"), t("copy.0005")];
+  return [t("copy.0077"), t("copy.0042")];
 }
 
 function renderStorageSettings() {
   const [title, description] = storageStatusCopy();
   ui.storageSettings.replaceChildren(node("section", { class: "storage-card" },
 	node("strong", {}, title), node("small", {}, description),
-	state.localSetupAvailable ? button("会社データを見る", "quiet", revealWorkspaceOnMac) : node("small", {}, "この端末では保存先フォルダを直接開けません。"),
+	state.localSetupAvailable ? button(t("copy.0140"), "quiet", revealWorkspaceOnMac) : node("small", {}, t("copy.0095")),
   ));
 }
 
@@ -1521,7 +1555,7 @@ async function resolveSessionExpectedVersion(sessionID, fallbackVersion = null) 
 async function executeArchiveToggleCommand(operation, payload, busyTitle, busyMessage, onSuccess) {
   const sessionId = payload.session_id;
   if (hasPendingForSession(sessionId)) {
-    toast("同じ処理を実行中です。完了するまでお待ちください。");
+    toast(t("copy.0313"));
     return false;
   }
   let accepted = false;
@@ -1571,14 +1605,14 @@ async function confirmArchiveSession(record) {
   try {
     expectedVersion = await resolveSessionExpectedVersion(sessionID, record.version);
   } catch (error) {
-    showError(error, "依頼の状態を取得できませんでした");
+    showError(error, t("copy.0118"));
     return;
   }
   const success = await executeArchiveToggleCommand(
     "interaction.archive",
     { session_id: sessionID, expected_version: expectedVersion, current_time: now() },
-    "一覧から非表示にしています",
-    "成果物や実行記録は保持したまま、依頼一覧から外します。",
+    t("copy.0136"),
+    t("copy.0272"),
     async () => {
       if (wasSelected) await clearSelectedSessionPresentation();
       await setSessionListFilter("active", { userInitiated: false });
@@ -1588,7 +1622,7 @@ async function confirmArchiveSession(record) {
       updateNavDrawerState();
     },
   );
-  if (success) toast("依頼一覧から非表示にしました。");
+  if (success) toast(t("copy.0125"));
 }
 
 async function confirmUnarchiveSession() {
@@ -1599,14 +1633,14 @@ async function confirmUnarchiveSession() {
   try {
     expectedVersion = await resolveSessionExpectedVersion(sessionID, record.version);
   } catch (error) {
-    showError(error, "依頼の状態を取得できませんでした");
+    showError(error, t("copy.0118"));
     return;
   }
   const success = await executeArchiveToggleCommand(
     "interaction.unarchive",
     { session_id: sessionID, expected_version: expectedVersion, current_time: now() },
-    "依頼を復元しています",
-    "削除済み一覧から依頼一覧へ戻します。",
+    t("copy.0123"),
+    t("copy.0204"),
     async () => {
       await setSessionListFilter("active", { userInitiated: false });
       // Explicit (non-silent) refresh: a silent refreshCurrent(true) here
@@ -1620,7 +1654,7 @@ async function confirmUnarchiveSession() {
       showRequestDetail(sessionID);
     },
   );
-  if (success) toast("依頼を一覧に戻しました。");
+  if (success) toast(t("copy.0120"));
 }
 
 async function syncSessionListFilterToRecord() {
@@ -1751,7 +1785,7 @@ async function refreshCurrent(silent = false) {
     if (sequence !== state.refreshSequence) return;
     setConnected(false);
     if (silent) clearActionSurface({ resetRenderKey: true });
-    showError(error, silent ? "接続を確認してください" : "依頼の状態を取得できませんでした");
+    showError(error, silent ? t("copy.0281") : t("copy.0118"));
   } finally {
     resolveBarrier();
     if (state.refreshBarrier === barrier) state.refreshBarrier = null;
@@ -1785,9 +1819,9 @@ function renderEmpty() {
   }
   ui.activeCard.hidden = false;
   ui.activeCard.replaceChildren(
-    node("p", { class: "composer-note" }, "依頼した後はAI社員が計画・実行・レビューを進め、必要な質問と承認だけをここに表示します。"),
+    node("p", { class: "composer-note" }, t("copy.0116")),
   );
-  setQuickReplies([button("＋ 新規作成", "primary chip", openNewRequestDraft)]);
+  setQuickReplies([button(t("copy.0002"), "primary chip", openNewRequestDraft)]);
   renderTimeline();
 }
 
@@ -1833,7 +1867,7 @@ function renderSessionRow(record, activeID) {
     rowChildren.push(node("button", {
       class: "session-menu-button",
       type: "button",
-      "aria-label": `${title}の操作`,
+      "aria-label": t("template.action.label", { title }),
       "aria-expanded": menuOpen || confirmOpen ? "true" : "false",
       "aria-haspopup": "menu",
       onclick: (event) => {
@@ -1855,13 +1889,13 @@ function renderSessionRow(record, activeID) {
       "aria-labelledby": `archive-confirm-${record.session_id}`,
     },
     node("p", { id: `archive-confirm-${record.session_id}`, class: "session-archive-confirm-copy" },
-      "依頼一覧から非表示にします。成果物や会社の実行記録は保持されます。"),
+      t("copy.0126")),
     node("div", { class: "session-archive-confirm-actions" },
-      button("キャンセル", "quiet chip", () => {
+      button(t("copy.0083"), "quiet chip", () => {
         closeSessionMenus();
         renderSessions();
       }),
-      button("履歴から削除", "primary chip", () => confirmArchiveSession(record)),
+      button(t("copy.0346"), "primary chip", () => confirmArchiveSession(record)),
     ),
     ));
   } else if (menuOpen && state.sessionListFilter === "active") {
@@ -1876,7 +1910,7 @@ function renderSessionRow(record, activeID) {
           state.sessionConfirmSessionId = record.session_id;
           renderSessions();
         },
-      }, "履歴から削除"),
+      }, t("copy.0346")),
     ));
   }
   return row;
@@ -1918,9 +1952,9 @@ function renderNext(force = false) {
   case "answer_clarifications": return renderQuestions(next);
   case "approve_plan_apply": return renderPlanApproval(next);
   case "approve_workflow": return renderWorkflowApproval(next);
-  case "inspect_workflow_recovery": return renderAttention(next, "Workflowの確認が必要です");
+  case "inspect_workflow_recovery": return renderAttention(next, t("copy.0078"));
   case "optional_external_action_or_done": return renderCompletion(next);
-  case "inspect_action_recovery": return renderAttention(next, "外部公開の確認が必要です");
+  case "inspect_action_recovery": return renderAttention(next, t("copy.0153"));
   case "done": return renderDone();
   default: return showError(new Error(`Unsupported next action: ${next.kind}`));
   }
@@ -1935,7 +1969,7 @@ function renderArchivedSessionView(force = false) {
   renderComposerState(state.next);
   ui.activeCard.hidden = true;
   ui.activeCard.replaceChildren();
-  setQuickReplies([button("元に戻す", "primary chip", confirmUnarchiveSession)]);
+  setQuickReplies([button(t("copy.0179"), "primary chip", confirmUnarchiveSession)]);
   state.forceScrollToBottom = true;
   renderTimeline();
 }
@@ -1951,7 +1985,7 @@ function composerAdjacentErrorActions(error) {
 function renderRememberedError(error, next) {
   const eligible = next && RECOVERY_INSPECT_ELIGIBLE_KINDS.has(next.kind);
   const hasFallbackCommand = isCanonicalNonEmptyString(error.command_id);
-  const label = eligible || hasFallbackCommand ? "処理を再確認" : "状態を更新";
+  const label = eligible || hasFallbackCommand ? t("copy.0238") : t("copy.0252");
   const action = eligible
     ? () => inspectCommands("eligible", { record: state.record, next, error })
     : hasFallbackCommand
@@ -1959,7 +1993,7 @@ function renderRememberedError(error, next) {
       : () => refreshCurrent();
   setQuickReplies([
     button(label, "primary chip", action),
-    button("再読み込み", "quiet chip", async () => { clearCurrentError(); state.renderKey = ""; await refreshCurrent(); }),
+    button(t("copy.0193"), "quiet chip", async () => { clearCurrentError(); state.renderKey = ""; await refreshCurrent(); }),
   ]);
   const actions = composerAdjacentErrorActions(error);
   if (actions) {
@@ -1999,7 +2033,7 @@ async function restoreDurableFailure(record, next) {
         command_id: reference.commandId,
         recovery_required: recoveryRequiredFromRecord(commandRecord),
         ...diagnostics,
-      }), "前回のCommandを完了できませんでした", reference.commandId);
+      }), t("copy.0287"), reference.commandId);
       return;
     } catch {
       // The existing attention screen still exposes an explicit read-only
@@ -2011,12 +2045,12 @@ async function restoreDurableFailure(record, next) {
 function renderPlanGeneration(next) {
   if (!state.providerStatus?.configured) return renderProviderSetup();
   setQuickReplies([
-    button("進め方の作成を承認", "primary chip", () => executeNextCommand(next, {
+    button(t("copy.0258"), "primary chip", () => executeNextCommand(next, {
       session_id: next.session_id,
       expected_version: next.expected_version,
       current_time: now(),
-    }, "進め方を作成しています", "質問または仕事の進め方ができるまでお待ちください。")),
-    button("今は承認しない", "quiet chip", () => toast("変更せず、承認待ちのまま保存されています。")),
+    }, t("copy.0262"), t("copy.0216"))),
+    button(t("copy.0189"), "quiet chip", () => toast(t("copy.0334"))),
   ]);
   ui.activeCard.hidden = true;
   ui.activeCard.replaceChildren();
@@ -2026,8 +2060,8 @@ function renderPlanGeneration(next) {
 
 function renderProviderSetup() {
   setQuickReplies([
-    button("AI Connectionsを開く", "primary chip", openSettingsDialog),
-    button("今は設定しない", "quiet chip", () => toast("依頼は進め方の作成待ちのまま保存されています。")),
+    button(t("copy.0007"), "primary chip", openSettingsDialog),
+    button(t("copy.0190"), "quiet chip", () => toast(t("copy.0119"))),
   ]);
   ui.activeCard.hidden = true;
   ui.activeCard.replaceChildren();
@@ -2055,7 +2089,7 @@ function renderQuestions(next) {
 // runs, chained server-side).
 function submitClarificationAnswers(next) {
   const answer = ui.composerInput.value.trim();
-  if (!answer) return toast("回答を入力してください。");
+  if (!answer) return toast(t("copy.0148"));
   const currentQuestion = next.questions[0];
   ui.composerInput.value = "";
   state.composerDraft = "";
@@ -2064,7 +2098,7 @@ function submitClarificationAnswers(next) {
     expected_version: next.expected_version,
     answers: [{ question: currentQuestion, answer }],
     current_time: now(),
-  }, "回答を保存しています", "回答後に進め方を準備します。");
+  }, t("copy.0149"), t("copy.0150"));
 }
 
 // submitRevisionRecovery is the shared explicit CEO Recovery action
@@ -2080,7 +2114,7 @@ function submitClarificationAnswers(next) {
 function submitRevisionRecovery(next) {
   const guidance = ui.composerInput.value.trim();
   const taskId = next.eligible_task_ids?.[0];
-  if (!taskId) return toast("対象のTaskを確認できませんでした。状態を更新してください。");
+  if (!taskId) return toast(t("copy.0296"));
   ui.composerInput.value = "";
   state.composerDraft = "";
   const budgetContinuation = isBudgetRecoveryNext(next);
@@ -2090,8 +2124,8 @@ function submitRevisionRecovery(next) {
     task_id: taskId,
     additional_guidance: guidance,
     current_time: now(),
-  }, budgetContinuation ? "停止した作業だけ続けています" : "追加の指示を反映して修正を続けています",
-  budgetContinuation ? "完了済みの作業はそのままに、停止したRevisionを担当AIが続けます。" : "AI社員がRevisionを作成し、QA担当がレビューします。");
+  }, budgetContinuation ? t("copy.0307") : t("copy.0305"),
+  budgetContinuation ? t("copy.0168") : t("copy.0020"));
 }
 
 function currentPlan() {
@@ -2104,8 +2138,8 @@ function currentPlan() {
 }
 
 function roleLabel(role) {
-  const labels = { "Product Manager": "企画担当", "Content Writer": "コンテンツ担当", "QA Engineer": "品質確認担当" };
-  return labels[role] || "担当AI";
+  const labels = { "Product Manager": t("copy.0172"), "Content Writer": t("copy.0101"), "QA Engineer": t("copy.0322") };
+  return labels[role] || t("copy.0299");
 }
 
 function planTaskDisplayTitle(task) {
@@ -2122,7 +2156,7 @@ function planTaskAssigneeIdentity(task) {
 }
 
 function planStepCopy(task, index) {
-  return `${index + 1}. ${roleLabel(task.required_role)}が${planTaskDisplayTitle(task)}`;
+  return t("template.plan.task", { number: index + 1, role: roleLabel(task.required_role), title: planTaskDisplayTitle(task) });
 }
 
 // planTaskDependencyHint gives the CEO a plain-language read of the
@@ -2134,10 +2168,10 @@ function planStepCopy(task, index) {
 // sequential choice offered to the CEO.
 function planTaskDependencyHint(task, allTasks) {
   const dependencyCount = task?.dependency_ids?.length || 0;
-  if (dependencyCount >= 2) return `${dependencyCount}件の作業結果をまとめます`;
+  if (dependencyCount >= 2) return t("template.dependencies", { count: dependencyCount });
   if (dependencyCount === 0) {
     const hasParallelSibling = allTasks.some((other) => other !== task && (other?.dependency_ids?.length || 0) === 0);
-    if (hasParallelSibling) return "他の作業と並行して進められます";
+    if (hasParallelSibling) return t("copy.0290");
   }
   return "";
 }
@@ -2148,11 +2182,11 @@ function renderPlanApproval(next) {
   const identifier = localStorage.getItem(`workcairn.project.${state.record.session_id}`) || projectID();
   localStorage.setItem(`workcairn.project.${state.record.session_id}`, identifier);
   setQuickReplies([
-    button("この内容で進める", "primary chip", () => {
+    button(t("copy.0097"), "primary chip", () => {
       executeNextCommand(next, {
         session_id: next.session_id, expected_version: next.expected_version,
         project_id: identifier, plan_digest: current.digest, current_time: now(),
-      }, "仕事を開始しています", "Planの適用とReviewed Workflowを進めています。");
+      }, t("copy.0210"), t("copy.0046"));
     }),
   ]);
   // ADR-0072: the Session's profile was fixed at interaction.start and
@@ -2162,8 +2196,8 @@ function renderPlanApproval(next) {
     ui.activeCard.hidden = false;
     ui.activeCard.replaceChildren(
       node("div", { class: "bounded-acceptance-notice" },
-        node("strong", {}, "限定確認モード（変更不可）"),
-        node("p", {}, "Plan 1回、Task 1件、Review 1回、Provider呼び出し最大3回。clarification／failure／timeout／Request Changesで停止します。retry、Revision、Recovery、fallbackはいずれも行いません。"),
+        node("strong", {}, t("copy.0185")),
+        node("p", {}, t("copy.0045")),
       ),
     );
   } else {
@@ -2182,8 +2216,8 @@ async function loadOrganization(force = false) {
 async function renderWorkflowApproval(next) {
   state.workflowPlanPreview = null;
   setQuickReplies([
-    button("実行内容を確認", "primary chip", () => prepareWorkflowApproval(next, 20)),
-    button("今は実行しない", "quiet chip", () => toast("仕事は開始されていません。")),
+    button(t("copy.0220"), "primary chip", () => prepareWorkflowApproval(next, 20)),
+    button(t("copy.0188"), "quiet chip", () => toast(t("copy.0209"))),
   ]);
   ui.activeCard.hidden = true;
   ui.activeCard.replaceChildren();
@@ -2193,7 +2227,7 @@ async function renderWorkflowApproval(next) {
 
 async function prepareWorkflowApproval(next, maxTasks) {
   const currentTime = now();
-  setBusy(true, "実行内容を確認しています", "TaskとReviewerの現在状態をread-onlyで検証しています。");
+  setBusy(true, t("copy.0221"), t("copy.0059"));
   try {
     const plan = await requestJSON("/v1/interaction-workflow-plans", {
       method: "POST",
@@ -2202,21 +2236,21 @@ async function prepareWorkflowApproval(next, maxTasks) {
     setBusy(false);
     state.workflowPlanPreview = plan;
     setQuickReplies([
-      button("承認して実行", "primary chip", () => executeNextCommand(next, {
+      button(t("copy.0245"), "primary chip", () => executeNextCommand(next, {
         session_id: next.session_id, expected_version: next.expected_version,
         reviewer_id: plan.reviewer_id, current_time: currentTime, max_tasks: maxTasks,
         autonomy_contract: plan.autonomy_contract,
         workflow_plan_digest: plan.workflow_plan_digest,
         approval_reference: `local-network-ui:${next.session_id}:v${next.expected_version}`,
-      }, "Workflowを実行しています", "Task、Review、必要なRevisionを順番に進めています。")),
-      button("今は実行しない", "quiet chip", () => toast("仕事は開始されていません。")),
+      }, t("copy.0079"), t("copy.0057"))),
+      button(t("copy.0188"), "quiet chip", () => toast(t("copy.0209"))),
     ]);
     ui.activeCard.hidden = true;
     ui.activeCard.replaceChildren();
     state.forceScrollToBottom = true;
     renderTimeline();
   } catch (error) {
-    showError(error, "実行内容を確認できませんでした");
+    showError(error, t("copy.0222"));
   }
 }
 
@@ -2261,16 +2295,16 @@ async function renderRevisionRecovery(next) {
   const evidenceTaskId = next.evidence_task_id || taskId;
   const budgetContinuation = isBudgetRecoveryNext(next);
   setQuickReplies([
-    button(budgetContinuation ? "必要な部分だけ続ける" : "この指摘を踏まえて修正を続ける", "primary chip", () => submitRevisionRecovery(next)),
-    button("状態を更新", "quiet chip", () => refreshCurrent()),
+    button(budgetContinuation ? t("copy.0319") : t("copy.0092"), "primary chip", () => submitRevisionRecovery(next)),
+    button(t("copy.0252"), "quiet chip", () => refreshCurrent()),
   ]);
   ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, "直前の成果物とレビュー結果を確認しています…"));
+  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, t("copy.0301")));
   renderComposerState(next);
   state.forceScrollToBottom = true;
   renderTimeline();
   if (!taskId || !evidenceTaskId || !next.project_name) {
-    ui.activeCard.replaceChildren(node("p", { class: "warning" }, "対象のTaskを確認できませんでした。状態を更新してください。"));
+    ui.activeCard.replaceChildren(node("p", { class: "warning" }, t("copy.0296")));
     return;
   }
   try {
@@ -2279,7 +2313,7 @@ async function renderRevisionRecovery(next) {
     const evidenceBlock = taskEvidenceBlock(evidence, next.project_name);
     if (budgetContinuation) {
       ui.activeCard.replaceChildren(
-        node("p", { class: "supporting" }, "追加の指示を送ると、完了済みの成果を保ったまま停止した作業だけ続けます。"),
+        node("p", { class: "supporting" }, t("copy.0304")),
         evidenceBlock,
       );
     } else {
@@ -2287,7 +2321,7 @@ async function renderRevisionRecovery(next) {
     }
   } catch (error) {
     if (state.record?.session_id !== sessionId || !isRevisionRecoveryNext(state.next)) return;
-    ui.activeCard.replaceChildren(node("p", { class: "warning" }, `直前の成果物を取得できませんでした: ${error.message}`));
+    ui.activeCard.replaceChildren(node("p", { class: "warning" }, t("template.deliverable.previous_error", { error: error.message })));
   }
 }
 
@@ -2436,7 +2470,7 @@ const RECOVERY_FINDING_KINDS = new Set([
 const RECOVERY_SEVERITIES = new Set(["warning", "critical"]);
 const RECOVERY_CERTAINTIES = new Set(["confirmed", "unverifiable"]);
 const RECOVERY_ACTIONS = new Set(["none", "complete_task", "fail_and_hold_task"]);
-const RECOVERY_PLAN_TASK_STATUSES = new Set(["未着手", "進行中", "保留", "完了"]);
+const RECOVERY_PLAN_TASK_STATUSES = new Set([t("copy.0343"), t("copy.0263"), t("copy.0337"), t("copy.0164")]);
 const RECOVERY_PLAN_BLOCKING_ORDER = {
   complete_task: ["task_not_in_progress", "matching_deliverable_not_confirmed"],
   fail_and_hold_task: ["task_not_in_progress", "deliverable_present_or_invalid"],
@@ -2588,33 +2622,33 @@ function validateRecoveryCompleteTaskApplyEnvelope(payload, expected) {
 }
 
 const RECOVERY_FINDING_KIND_LABELS = {
-  task_completion_pending: "Deliverableが確定済みでTask完了が未確定です",
-  task_execution_interrupted: "Deliverable未確定のままTaskが中断しています",
-  completed_task_deliverable_missing: "完了済みTaskにDeliverableがありません",
-  deliverable_task_conflict: "DeliverableとTaskの整合が取れていません",
-  artifact_invalid: "成果物の内容を確認できません",
-  review_projection_missing: "Reviewの人間向け表示が生成されていません",
-  review_canonical_missing: "Reviewの正本記録がありません",
-  revision_task_missing: "Revision Taskが未作成です",
-  audit_evidence_unverifiable: "監査記録を確認できません",
-  residual_temporary_state: "一時的な残留状態があります",
-  command_incomplete: "処理記録が未完了です",
+  task_completion_pending: t("copy.0035"),
+  task_execution_interrupted: t("copy.0038"),
+  completed_task_deliverable_missing: t("copy.0167"),
+  deliverable_task_conflict: t("copy.0036"),
+  artifact_invalid: t("copy.0268"),
+  review_projection_missing: t("copy.0049"),
+  review_canonical_missing: t("copy.0050"),
+  revision_task_missing: t("copy.0052"),
+  audit_evidence_unverifiable: t("copy.0170"),
+  residual_temporary_state: t("copy.0135"),
+  command_incomplete: t("copy.0239"),
 };
 const RECOVERY_ACTION_LABELS = {
-  none: "推奨される操作はありません",
-  complete_task: "Task完了として扱える可能性があります",
-  fail_and_hold_task: "Taskを失敗として保留できる可能性があります",
+  none: t("copy.0265"),
+  complete_task: t("copy.0066"),
+  fail_and_hold_task: t("copy.0065"),
 };
-const RECOVERY_SEVERITY_LABELS = { warning: "警告", critical: "重大" };
-const RECOVERY_CERTAINTY_LABELS = { confirmed: "確認済み", unverifiable: "未確認" };
+const RECOVERY_SEVERITY_LABELS = { warning: t("copy.0178"), critical: t("copy.0232") };
+const RECOVERY_CERTAINTY_LABELS = { confirmed: t("copy.0161"), unverifiable: t("copy.0340") };
 const RECOVERY_PLAN_ACTION_LABELS = {
-  complete_task: "Taskを完了として扱う",
-  fail_and_hold_task: "Taskを失敗として保留する",
+  complete_task: t("copy.0063"),
+  fail_and_hold_task: t("copy.0064"),
 };
 const RECOVERY_PLAN_BLOCKING_LABELS = {
-  task_not_in_progress: "Taskが進行中ではありません",
-  matching_deliverable_not_confirmed: "対応する成果物を確認できません",
-  deliverable_present_or_invalid: "成果物が存在するか、状態を確認できません",
+  task_not_in_progress: t("copy.0058"),
+  matching_deliverable_not_confirmed: t("copy.0292"),
+  deliverable_present_or_invalid: t("copy.0266"),
 };
 
 // recoveryFindingKindLabel/recoveryActionLabel deliberately have no
@@ -2631,20 +2665,20 @@ function recoveryPlanPreviewControls(finding) {
   const action = finding.recommendedAction;
   if (action === "complete_task") {
     return node("div", { class: "button-row", dataset: { recoveryPreviewFinding: finding.id } },
-      button("この提案を確認", "primary", async () => {
+      button(t("copy.0096"), "primary", async () => {
         await inspectCommands("preview", { record: state.record, next: state.next, taskId: finding.relatedId, action, reason: "" });
       }),
     );
   }
 
-  const warning = node("p", { class: "warning", hidden: true }, "失敗として保留する理由を、前後に空白を入れずに入力してください。");
+  const warning = node("p", { class: "warning", hidden: true }, t("copy.0215"));
   const textarea = node("textarea", {
     rows: 3,
     maxlength: MAX_RECOVERY_PLAN_PREVIEW_REASON_BYTES,
-    "aria-label": `${finding.id} の保留理由`,
-    placeholder: "保留する理由を入力…",
+    "aria-label": t("template.finding.reason", { id: finding.id }),
+    placeholder: t("copy.0339"),
   });
-  const previewButton = button("この提案を確認", "primary", async () => {
+  const previewButton = button(t("copy.0096"), "primary", async () => {
     const reason = textarea.value;
     if (!validRecoveryPlanPreviewReason(action, reason)) warning.hidden = false;
     await inspectCommands("preview", { record: state.record, next: state.next, taskId: finding.relatedId, action, reason });
@@ -2659,7 +2693,7 @@ function recoveryPlanPreviewControls(finding) {
     if (!validRecoveryPlanPreviewReason(action, textarea.value)) warning.hidden = false;
   });
   return node("div", { class: "stack-form", dataset: { recoveryPreviewFinding: finding.id } },
-    node("label", {}, "保留する理由", textarea),
+    node("label", {}, t("copy.0338"), textarea),
     warning,
     node("div", { class: "button-row" }, previewButton),
   );
@@ -2667,7 +2701,7 @@ function recoveryPlanPreviewControls(finding) {
 
 function recoveryInspectionBlock(inspection) {
   if (inspection.healthy || inspection.findings.length === 0) {
-    return node("div", {}, node("p", { class: "supporting" }, "現在、復旧が必要な項目はありません。"));
+    return node("div", {}, node("p", { class: "supporting" }, t("copy.0181")));
   }
   const items = inspection.findings.map((finding) => {
     const kindLabel = recoveryFindingKindLabel(finding.kind);
@@ -2675,25 +2709,25 @@ function recoveryInspectionBlock(inspection) {
     const severityLabel = RECOVERY_SEVERITY_LABELS[finding.severity];
     const certaintyLabel = RECOVERY_CERTAINTY_LABELS[finding.certainty];
     if (!kindLabel || !actionLabel || !severityLabel || !certaintyLabel) {
-      return node("p", { class: "warning" }, "この診断種別はこの画面のバージョンでは表示できません");
+      return node("p", { class: "warning" }, t("copy.0093"));
     }
     return node("div", { class: "approval-box" },
       node("p", {}, kindLabel),
-      node("p", { class: "supporting" }, `${severityLabel}・${certaintyLabel}`),
-      node("p", { class: "supporting" }, finding.recoverable ? actionLabel : "人間の判断が必要です"),
-      node("details", {}, node("summary", {}, "技術詳細"), approvalFacts([["ID", finding.id], ["対象ID", finding.relatedId || "—"]])),
+      node("p", { class: "supporting" }, t("template.severity", { severity: severityLabel, certainty: certaintyLabel })),
+      node("p", { class: "supporting" }, finding.recoverable ? actionLabel : t("copy.0264")),
+      node("details", {}, node("summary", {}, t("copy.0175")), approvalFacts([["ID", finding.id], [t("copy.0295"), finding.relatedId || "—"]])),
       recoveryPlanPreviewControls(finding),
     );
   });
-  return node("div", {}, node("p", {}, "復旧診断"), ...items);
+  return node("div", {}, node("p", {}, t("copy.0330")), ...items);
 }
 
 function recoveryPlanPreviewBlock(view) {
   const blockers = view.blockingReasons.length
     ? node("ul", {}, ...view.blockingReasons.map((reason) => node("li", {}, RECOVERY_PLAN_BLOCKING_LABELS[reason])))
-    : node("p", { class: "supporting" }, "現在の確認範囲では妨げる条件はありません。");
+    : node("p", { class: "supporting" }, t("copy.0182"));
   const prepareControl = view.action === "complete_task" && view.executable
-    ? node("div", { class: "button-row" }, button("最新状態で実行準備", "primary", async () => {
+    ? node("div", { class: "button-row" }, button(t("copy.0197"), "primary", async () => {
       await prepareCompleteTaskRecoveryApply({
         record: state.record,
         next: state.next,
@@ -2704,39 +2738,39 @@ function recoveryPlanPreviewBlock(view) {
     }))
     : null;
   return node("div", { dataset: { recoveryPlanPreview: "" } },
-    node("p", {}, "復旧計画の確認結果"),
+    node("p", {}, t("copy.0325")),
     approvalFacts([
       ["Task", view.taskId],
-      ["現在の状態", view.taskStatus],
+      [t("copy.0183"), view.taskStatus],
       ["Version", String(view.taskVersion)],
-      ["予定する操作", RECOVERY_PLAN_ACTION_LABELS[view.action]],
-      ["現在実行可能", view.executable ? "はい" : "いいえ"],
+      [t("copy.0345"), RECOVERY_PLAN_ACTION_LABELS[view.action]],
+      [t("copy.0184"), view.executable ? t("copy.0102") : t("copy.0081")],
     ]),
-    node("p", { class: "supporting" }, "この確認結果は読み取り専用で、実行の承認には使われません。実行準備では最新状態から計画を作り直します。"),
-    node("div", { class: "approval-box" }, node("p", {}, "確認が必要な条件"), blockers),
+    node("p", { class: "supporting" }, t("copy.0091")),
+    node("div", { class: "approval-box" }, node("p", {}, t("copy.0158")), blockers),
     prepareControl,
   );
 }
 
 function recoveryCompleteTaskApprovalBlock(prepared) {
   return node("div", { dataset: { recoveryCompleteTaskApproval: "" } },
-    node("p", {}, "Task完了の最終確認"),
+    node("p", {}, t("copy.0067")),
     approvalFacts([
       ["Task", prepared.taskId],
-      ["現在の状態", prepared.taskStatus],
+      [t("copy.0183"), prepared.taskStatus],
       ["Version", String(prepared.taskVersion)],
-      ["予定する操作", RECOVERY_PLAN_ACTION_LABELS.complete_task],
+      [t("copy.0345"), RECOVERY_PLAN_ACTION_LABELS.complete_task],
     ]),
-    node("p", { class: "warning" }, "この操作はTaskの状態を完了へ変更します。内容を確認し、実行する場合だけ承認してください。"),
+    node("p", { class: "warning" }, t("copy.0094")),
     node("details", {},
-      node("summary", {}, "技術詳細"),
+      node("summary", {}, t("copy.0175")),
       approvalFacts([
-        ["承認契約", prepared.approval.domain],
-        ["計画commitment", shortDigest(prepared.approval.plan_commitment)],
+        [t("copy.0247"), prepared.approval.domain],
+        [t("copy.0177"), shortDigest(prepared.approval.plan_commitment)],
       ]),
     ),
     node("div", { class: "button-row" },
-      button("このTaskを完了する", "primary", async () => {
+      button(t("copy.0084"), "primary", async () => {
         await applyCompleteTaskRecovery({
           record: state.record,
           next: state.next,
@@ -2751,14 +2785,14 @@ function recoveryCompleteTaskApprovalBlock(prepared) {
 
 function recoveryCompleteTaskResultBlock(result) {
   return node("div", { dataset: { recoveryCompleteTaskResult: "" } },
-    node("p", {}, "Taskを完了しました"),
+    node("p", {}, t("copy.0062")),
     approvalFacts([
       ["Project", result.projectName],
       ["Task", result.taskId],
-      ["状態", "完了"],
+      [t("copy.0251"), t("copy.0164")],
       ["Version", String(result.taskVersion)],
     ]),
-    node("p", { class: "supporting" }, "Taskの状態変更が保存されました。"),
+    node("p", { class: "supporting" }, t("copy.0061")),
   );
 }
 
@@ -2767,7 +2801,7 @@ async function prepareCompleteTaskRecoveryApply(inputs) {
   const request = buildInspectionRequest("prepare", inputs);
   if (request === null) {
     invalidateInspection();
-    renderInspectionTerminal(node("p", { class: "warning" }, "Task完了の実行準備を開始できません"));
+    renderInspectionTerminal(node("p", { class: "warning" }, t("copy.0068")));
     return;
   }
   invalidateInspection();
@@ -2777,7 +2811,7 @@ async function prepareCompleteTaskRecoveryApply(inputs) {
   const inspectionSequence = state.inspectionSequence;
   const sessionId = request.sessionId;
   ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, "最新状態から実行準備を作成しています…"));
+  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, t("copy.0196")));
   try {
     const envelope = await requestJSON(`/v1/projects/${encodeURIComponent(request.projectName)}/tasks/${encodeURIComponent(request.taskId)}/recovery-complete-task-prepare`, {
       method: "POST",
@@ -2790,7 +2824,7 @@ async function prepareCompleteTaskRecoveryApply(inputs) {
     const raw = recoveryCompleteTaskPrepareResultFromEnvelope(envelope);
     const prepared = raw === null ? null : validateRecoveryCompleteTaskPrepareView(raw, request);
     if (prepared === null) {
-      renderInspectionTerminal(node("p", { class: "warning" }, "Task完了の実行準備を確認できませんでした"));
+      renderInspectionTerminal(node("p", { class: "warning" }, t("copy.0069")));
       return;
     }
     renderInspectionTerminal(recoveryCompleteTaskApprovalBlock(prepared));
@@ -2798,7 +2832,7 @@ async function prepareCompleteTaskRecoveryApply(inputs) {
     if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
     await awaitLatestRefreshBarrier();
     if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
-    renderInspectionTerminal(node("p", { class: "warning" }, "Task完了の実行準備を取得できませんでした"));
+    renderInspectionTerminal(node("p", { class: "warning" }, t("copy.0070")));
   } finally {
     if (inspectionSequence === state.inspectionSequence) state.inspectionActive = false;
   }
@@ -2809,7 +2843,7 @@ async function applyCompleteTaskRecovery(inputs, prepared) {
   const request = buildInspectionRequest("apply", inputs);
   if (request === null || prepared?.projectName !== request.projectName || prepared?.taskId !== request.taskId || prepared?.action !== "complete_task") {
     invalidateInspection();
-    renderInspectionTerminal(node("p", { class: "warning" }, "Task完了を実行できません"));
+    renderInspectionTerminal(node("p", { class: "warning" }, t("copy.0072")));
     return;
   }
   invalidateInspection();
@@ -2819,7 +2853,7 @@ async function applyCompleteTaskRecovery(inputs, prepared) {
   const inspectionSequence = state.inspectionSequence;
   const sessionId = request.sessionId;
   ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, "Taskの完了を保存しています…"));
+  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, t("copy.0060")));
   try {
     const currentCommandID = commandID();
     const envelope = await requestJSON("/v1/commands", {
@@ -2846,7 +2880,7 @@ async function applyCompleteTaskRecovery(inputs, prepared) {
     if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
     const result = validateRecoveryCompleteTaskApplyEnvelope(envelope, { ...request, commandId: currentCommandID });
     if (result === null) {
-      renderInspectionTerminal(node("p", { class: "warning" }, "Task完了の保存結果を確認できませんでした"));
+      renderInspectionTerminal(node("p", { class: "warning" }, t("copy.0071")));
       return;
     }
     renderInspectionTerminal(recoveryCompleteTaskResultBlock(result));
@@ -2854,7 +2888,7 @@ async function applyCompleteTaskRecovery(inputs, prepared) {
     if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
     await awaitLatestRefreshBarrier();
     if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
-    renderInspectionTerminal(node("p", { class: "warning" }, "Task完了を保存できませんでした。状態を更新してから、もう一度確認してください。"));
+    renderInspectionTerminal(node("p", { class: "warning" }, t("copy.0073")));
   } finally {
     if (inspectionSequence === state.inspectionSequence) state.inspectionActive = false;
   }
@@ -2862,8 +2896,8 @@ async function applyCompleteTaskRecovery(inputs, prepared) {
 
 function renderAttention(next, title) {
   setQuickReplies([
-    button("詳細を確認", "primary chip", () => inspectCommands("eligible", { record: state.record, next })),
-    button("状態を更新", "quiet chip", () => refreshCurrent()),
+    button(t("copy.0249"), "primary chip", () => inspectCommands("eligible", { record: state.record, next })),
+    button(t("copy.0252"), "quiet chip", () => refreshCurrent()),
   ]);
   ui.activeCard.hidden = true;
   ui.activeCard.replaceChildren();
@@ -2879,8 +2913,8 @@ function renderAttention(next, title) {
 // append -- so a loading node can never survive it), the close quick reply,
 // composer state, and scroll behavior.
 function renderInspectionTerminal(contentNode) {
-  setQuickReplies([button("閉じる", "quiet chip", () => renderNext(true))]);
-  state.pendingAttentionTitle = "処理記録を確認してください。";
+  setQuickReplies([button(t("copy.0333"), "quiet chip", () => renderNext(true))]);
+  state.pendingAttentionTitle = t("copy.0240");
   renderComposerState(state.next);
   state.forceScrollToBottom = true;
   renderTimeline();
@@ -2906,7 +2940,7 @@ async function inspectCommands(mode, inputs) {
   const request = buildInspectionRequest(mode, inputs);
   if (request === null) {
     invalidateInspection();
-    renderInspectionTerminal(node("p", { class: "warning" }, mode === "preview" ? "復旧計画を確認できません" : "確認できる処理記録がありません"));
+    renderInspectionTerminal(node("p", { class: "warning" }, mode === "preview" ? t("copy.0328") : t("copy.0160")));
     return;
   }
   invalidateInspection();
@@ -2916,7 +2950,7 @@ async function inspectCommands(mode, inputs) {
   const inspectionSequence = state.inspectionSequence;
   const sessionId = request.sessionId;
   ui.activeCard.hidden = false;
-  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, mode === "preview" ? "復旧計画を確認しています…" : "記録を確認しています…"));
+  ui.activeCard.replaceChildren(node("p", { class: "supporting" }, mode === "preview" ? t("copy.0327") : t("copy.0173")));
   try {
     if (request.mode === "preview") {
       const body = { version: COMMAND_VERSION, action: request.action };
@@ -2932,7 +2966,7 @@ async function inspectCommands(mode, inputs) {
       const raw = recoveryPlanPreviewResultFromEnvelope(envelope);
       const preview = raw === null ? null : validateRecoveryPlanPreviewView(raw, request);
       if (preview === null) {
-        renderInspectionTerminal(node("p", { class: "warning" }, "復旧計画の形式を確認できませんでした"));
+        renderInspectionTerminal(node("p", { class: "warning" }, t("copy.0326")));
         return;
       }
       renderInspectionTerminal(recoveryPlanPreviewBlock(preview));
@@ -2959,13 +2993,13 @@ async function inspectCommands(mode, inputs) {
         ["Command ID", request.references[index].commandId],
       ];
     });
-    renderInspectionTerminal(failures.length ? approvalFacts(failures) : node("p", { class: "supporting" }, "記録を確認しました。"));
+    renderInspectionTerminal(failures.length ? approvalFacts(failures) : node("p", { class: "supporting" }, t("copy.0174")));
     if (request.projectName) await appendRecoveryInspection(request.projectName, sessionId, inspectionSequence);
   } catch {
     if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
     await awaitLatestRefreshBarrier();
     if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
-    renderInspectionTerminal(node("p", { class: "warning" }, mode === "preview" ? "復旧計画を取得できませんでした" : "処理記録を取得できませんでした"));
+    renderInspectionTerminal(node("p", { class: "warning" }, mode === "preview" ? t("copy.0329") : t("copy.0241")));
   } finally {
     if (inspectionSequence === state.inspectionSequence) state.inspectionActive = false;
   }
@@ -2984,7 +3018,7 @@ async function appendRecoveryInspection(projectName, sessionId, inspectionSequen
     await awaitLatestRefreshBarrier();
     if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
     if (inspection === null) {
-      ui.activeCard.append(node("p", { class: "warning" }, "復旧診断の形式を確認できませんでした"));
+      ui.activeCard.append(node("p", { class: "warning" }, t("copy.0331")));
       return;
     }
     ui.activeCard.append(recoveryInspectionBlock(inspection));
@@ -2992,7 +3026,7 @@ async function appendRecoveryInspection(projectName, sessionId, inspectionSequen
     if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
     await awaitLatestRefreshBarrier();
     if (!inspectionOwnsSurface(inspectionSequence, sessionId)) return;
-    ui.activeCard.append(node("p", { class: "warning" }, "復旧診断を取得できませんでした"));
+    ui.activeCard.append(node("p", { class: "warning" }, t("copy.0332")));
   }
 }
 
@@ -3007,7 +3041,7 @@ function approvalFacts(facts) {
 async function executeNextCommand(next, payload, busyTitle, busyMessage, fixedCommandID = null) {
   const sessionId = payload.session_id;
   if (hasPendingForSession(sessionId)) {
-    toast("同じ処理を実行中です。完了するまでお待ちください。");
+    toast(t("copy.0313"));
     return false;
   }
   let accepted = false;
@@ -3170,11 +3204,11 @@ async function resumePendingCommand(command) {
     await monitorAcceptedCommand(command);
     if (command.payload?.session_id === state.record?.session_id) await refreshCurrent();
     setBusy(false);
-    toast("バックグラウンドで完了した処理を反映しました。");
+    toast(t("copy.0103"));
   } catch (error) {
     updateBackgroundWorkingState();
     if (command.payload?.session_id === state.record?.session_id) {
-      showError(error, "前回のCommand状態を確認できませんでした");
+      showError(error, t("copy.0288"));
     }
   }
 }
@@ -3196,7 +3230,7 @@ function employeeIdentityByRole(role) {
 
 function employeeIdentityByID(id) {
   const employee = (state.organization?.inventory?.employees || []).find((candidate) => candidate.id === id);
-  const label = employee?.role ? roleLabel(employee.role) : "AI社員";
+  const label = employee?.role ? roleLabel(employee.role) : t("copy.0019");
   return { name: label, role: label };
 }
 
@@ -3241,39 +3275,41 @@ function reviewIssueLines(issues) {
   for (const issue of issues || []) {
     if (!issue.description) continue;
     lines.push("");
-    lines.push(`・${issue.description}`);
-    if (issue.suggested_action) lines.push(`  対応案: ${issue.suggested_action}`);
+    lines.push(t("template.issue", { description: issue.description }));
+    if (issue.suggested_action) lines.push(t("template.issue.action", { action: issue.suggested_action }));
   }
   return lines;
 }
 
 function companyFactText(entry) {
   // Role label, never the Employee's proper name (Public Beta UI policy).
-  const subjectName = entry.subject?.employee_id ? (actorRoleLabel(entry.subject) || "担当AI") : "";
+  const subjectName = entry.subject?.employee_id ? (actorRoleLabel(entry.subject) || t("copy.0299")) : "";
   switch (entry.kind) {
   case "task_assigned":
-    return entry.task_title ? `${subjectName}に${entry.task_title}を割り当てました。` : `${subjectName}に仕事を割り当てました。`;
+    return entry.task_title
+      ? t("template.conversation.assigned", { subject: subjectName, task: entry.task_title })
+      : t("template.conversation.assigned_generic", { subject: subjectName });
   case "deliverable_ready":
-    return `${subjectName}が成果物を作成しました。`;
+    return t("template.conversation.deliverable", { subject: subjectName });
   case "review_approved":
     // canonical review_summary only -- never an internal status/verdict/error
     // value, and never guessed when the canonical summary is absent.
     return entry.review_summary
-      ? `${subjectName}のレビューが完了しました。\n\n${entry.review_summary}`
-      : `${subjectName}のレビューが完了しました。`;
+      ? t("template.conversation.review_summary", { subject: subjectName, summary: entry.review_summary })
+      : t("template.conversation.review", { subject: subjectName });
   case "review_request_changes": {
     // Reached only when Reviewer/Maker are not both canonically confirmed
     // (Directed Communication is not possible) -- still shows the real
     // canonical review_issues content, never a bare fallback.
-    const lines = [`${subjectName}から修正を依頼されました。`, ...reviewIssueLines(entry.review_issues)];
+    const lines = [t("template.conversation.revision_requested", { subject: subjectName }), ...reviewIssueLines(entry.review_issues)];
     return lines.join("\n");
   }
   case "revision_completed":
-    return `${subjectName}が修正しました。`;
+    return t("template.conversation.revised", { subject: subjectName });
   case "task_completed":
-    return entry.task_title ? `${entry.task_title}が完了しました。` : "仕事が完了しました。";
+    return entry.task_title ? t("template.conversation.completed", { task: entry.task_title }) : t("copy.0206");
   case "request_completed":
-    return "依頼が完了しました。";
+    return t("copy.0115");
   default:
     return entry.task_title || "";
   }
@@ -3281,9 +3317,9 @@ function companyFactText(entry) {
 
 function directedCommunicationText(entry) {
   if (entry.kind === "review_request_changes") {
-    return ["修正をお願いします。", ...reviewIssueLines(entry.review_issues)].join("\n");
+    return [t("copy.0229"), ...reviewIssueLines(entry.review_issues)].join("\n");
   }
-  if (entry.kind === "revision_completed") return "修正が完了しました。";
+  if (entry.kind === "revision_completed") return t("copy.0226");
   return "";
 }
 
@@ -3291,7 +3327,7 @@ function conversationEntryNode(entry) {
   if (entry.category === "ceo_message") {
     return node("article", { class: "msg msg-user" },
       node("div", { class: "msg-header" },
-        node("span", { class: "msg-name" }, "あなた"),
+        node("span", { class: "msg-name" }, t("copy.0080")),
         entry.at ? node("time", { class: "msg-time-inline" }, sessionTimeLabel(entry.at)) : null,
       ),
       node("div", { class: "msg-body msg-body-user" },
@@ -3301,7 +3337,7 @@ function conversationEntryNode(entry) {
   }
   if (entry.category === "directed_communication") {
     // Role label, never the Employee's proper name (Public Beta UI policy).
-    const speakerName = actorRoleLabel(entry.speaker) || "担当AI";
+    const speakerName = actorRoleLabel(entry.speaker) || t("copy.0299");
     const recipientLabel = entry.recipient?.employee_id ? actorRoleLabel(entry.recipient) : "";
     const mention = entry.mention_allowed && recipientLabel
       ? node("p", { class: "msg-mention" }, `@${recipientLabel}`)
@@ -3357,7 +3393,7 @@ function conversationEntryNode(entry) {
       : null;
     return node("article", { class: "msg msg-system msg-failure attention" },
       node("div", { class: "msg-system-rule", "aria-hidden": "true" }),
-      node("p", { class: "msg-system-copy" }, `処理を完了できませんでした。\n\n${guidance} 自動retryせず、次の判断を待っています。`),
+      node("p", { class: "msg-system-copy" }, t("template.failure.guidance", { guidance })),
       actions,
       node("div", { class: "msg-system-rule", "aria-hidden": "true" }),
     );
@@ -3551,7 +3587,7 @@ function renderMarkdownBlock(block) {
 
 function renderMarkdown(text) {
   const blocks = parseMarkdownBlocks(text);
-  return blocks.length ? blocks.map(renderMarkdownBlock) : [node("p", { class: "md-paragraph" }, "（本文なし）")];
+  return blocks.length ? blocks.map(renderMarkdownBlock) : [node("p", { class: "md-paragraph" }, t("copy.0001"))];
 }
 
 // deliverableViewerNode reuses the existing read-only
@@ -3576,10 +3612,10 @@ function deliverableViewerNode(projectName, taskId) {
       const opening = panel.hidden;
       panel.hidden = !panel.hidden;
       event.currentTarget.setAttribute("aria-expanded", String(opening));
-      event.currentTarget.textContent = opening ? "成果物を閉じる" : "成果物を見る";
+      event.currentTarget.textContent = opening ? t("copy.0275") : t("copy.0274");
       if (opening) await fillDeliverableViewer(panel, projectName, taskId);
     },
-  }, "成果物を見る");
+  }, t("copy.0274"));
   return node("div", { class: "deliverable-viewer-wrap" }, toggle, panel);
 }
 
@@ -3593,20 +3629,20 @@ function deliverableViewerNode(projectName, taskId) {
 // request text are never substituted as a fallback body.
 async function fillDeliverableViewer(panel, projectName, taskId) {
   const key = `${projectName}/${taskId}`;
-  panel.replaceChildren(node("p", { class: "supporting" }, "成果物を確認しています…"));
+  panel.replaceChildren(node("p", { class: "supporting" }, t("copy.0273")));
   let evidence;
   try {
     evidence = await requestJSON(`/v1/projects/${encodeURIComponent(projectName)}/tasks/${encodeURIComponent(taskId)}/evidence`);
     state.evidence.set(key, evidence);
   } catch (error) {
-    panel.replaceChildren(node("p", { class: "warning" }, `成果物を取得できませんでした: ${error.message}`));
+    panel.replaceChildren(node("p", { class: "warning" }, t("template.deliverable.error", { error: error.message })));
     return;
   }
   const deliverable = evidence.deliverable;
   panel.replaceChildren(
     deliverable
       ? node("div", { class: "deliverable-body" }, ...renderMarkdown(deliverable.content))
-      : node("p", { class: "supporting" }, "成果物はまだcommitされていません。"),
+      : node("p", { class: "supporting" }, t("copy.0270")),
   );
 }
 
@@ -3685,7 +3721,7 @@ function planEmbedNode(plan) {
   if (!plan?.proposed_tasks?.length) return null;
   return node("div", { class: "msg-embed msg-embed-plan" },
     node("div", { class: "msg-attach" },
-      node("p", { class: "msg-attach-label" }, "進め方"),
+      node("p", { class: "msg-attach-label" }, t("copy.0256")),
       node("ul", { class: "msg-attach-list" }, ...plan.proposed_tasks.map((task) => {
         const identity = planTaskAssigneeIdentity(task);
         const title = planTaskDisplayTitle(task);
@@ -3711,7 +3747,7 @@ function renderTimeline() {
     const key = "draft-empty";
     if (state.timelineRenderKey === key) return;
     state.timelineRenderKey = key;
-    ui.timeline.replaceChildren(node("p", { class: "empty" }, "依頼内容を入力してください。"));
+    ui.timeline.replaceChildren(node("p", { class: "empty" }, t("copy.0133")));
     return;
   }
   const nodes = conversationTimelineNodes();
@@ -3725,7 +3761,7 @@ function renderTimeline() {
     return;
   }
   state.timelineRenderKey = key;
-  ui.timeline.replaceChildren(...(nodes.length ? nodes : [node("p", { class: "empty" }, "依頼すると、会社の動きがここに残ります。")]));
+  ui.timeline.replaceChildren(...(nodes.length ? nodes : [node("p", { class: "empty" }, t("copy.0117"))]));
   if (shouldFollow) {
     requestAnimationFrame(() => {
       scrollThreadToBottom();
@@ -3752,11 +3788,11 @@ function renderDetails() {
   state.detailRenderKey = key;
   setDetailsPanelHidden(false);
   const blocks = [
-    detailBlock("依頼", [record.request, `Session: ${record.session_id}`, `Version: ${record.version} / ${stateLabel(record.state)}`]),
+    detailBlock(t("copy.0114"), [record.request, `Session: ${record.session_id}`, `Version: ${record.version} / ${stateLabel(record.state)}`]),
   ];
   const current = currentPlan();
   if (current) {
-    blocks.push(detailBlock("進め方（詳細）", [
+    blocks.push(detailBlock(t("copy.0257"), [
       current.plan.objective,
       current.plan.summary,
       ...current.plan.proposed_tasks.map((task) => `${task.proposal_id}: ${task.title}${task.assignee_id ? ` — ${task.assignee_id}` : ""}`),
@@ -3766,10 +3802,10 @@ function renderDetails() {
   if (applied) blocks.push(detailBlock("Project", [`${applied.project_name} (${applied.project_id})`]));
   const workflow = [...record.turns].reverse().find((turn) => turn.workflow)?.workflow;
   if (workflow) {
-    blocks.push(detailBlock("Task・Review・Revision", [
-      `状態: ${workflow.status}`,
-      ...workflow.tasks.map((task) => `${task.task_id}: Review ${task.verdict || "未完了"}${task.revision_task_id ? ` / Revision ${task.revision_task_id}` : ""}`),
-      workflow.failure ? `要確認: ${workflow.failure.code} / ${workflow.failure.stage}` : null,
+    blocks.push(detailBlock(t("copy.0056"), [
+      t("template.status", { status: workflow.status }),
+      ...workflow.tasks.map((task) => `${task.task_id}: Review ${task.verdict || t("copy.0342")}${task.revision_task_id ? ` / Revision ${task.revision_task_id}` : ""}`),
+      workflow.failure ? t("template.failure.line", { code: workflow.failure.code, stage: workflow.failure.stage }) : null,
     ].filter(Boolean)));
     for (const task of workflow.tasks) {
       const key = `${workflow.project_name}/${task.task_id}`;
@@ -3780,9 +3816,9 @@ function renderDetails() {
   const action = [...record.turns].reverse().find((turn) => turn.action)?.action;
   if (action) {
     blocks.push(detailBlock("External Action", [
-      `状態: ${action.status}`, `Task: ${action.task_id}`, `公開先: ${action.target_id}`,
+      t("template.status", { status: action.status }), `Task: ${action.task_id}`, t("template.publish.target", { target: action.target_id }),
       action.publication?.url ? `URL: ${action.publication.url}` : null,
-      action.failure ? `要確認: ${action.failure.code} / ${action.failure.stage}` : null,
+      action.failure ? t("template.failure.line", { code: action.failure.code, stage: action.failure.stage }) : null,
     ].filter(Boolean)));
   }
   ui.details.replaceChildren(...blocks);
@@ -3790,16 +3826,16 @@ function renderDetails() {
 
 function taskEvidenceBlock(evidence, projectName) {
   const children = [
-    node("h3", {}, `成果物・Review — ${evidence.task.id}`),
-    node("p", { class: "supporting" }, `Task状態: ${evidence.task.status} / Version ${evidence.task.version}`),
+    node("h3", {}, t("template.evidence.heading", { task: evidence.task.id })),
+    node("p", { class: "supporting" }, t("template.task.state", { status: evidence.task.status, version: evidence.task.version })),
   ];
   if (evidence.deliverable) {
     children.push(node("details", { class: "artifact-detail" },
       node("summary", {}, evidence.deliverable.title || evidence.deliverable.relative_path),
       node("dl", { class: "fact-grid" },
-        node("div", {}, node("dt", {}, "担当"), node("dd", {}, evidence.deliverable.assignee_id)),
-        node("div", {}, node("dt", {}, "実行時刻"), node("dd", {}, evidence.deliverable.executed_at)),
-        node("div", {}, node("dt", {}, "保存先"), node("dd", {}, evidence.deliverable.relative_path)),
+        node("div", {}, node("dt", {}, t("copy.0298")), node("dd", {}, evidence.deliverable.assignee_id)),
+        node("div", {}, node("dt", {}, t("copy.0217")), node("dd", {}, evidence.deliverable.executed_at)),
+        node("div", {}, node("dt", {}, t("copy.0335")), node("dd", {}, evidence.deliverable.relative_path)),
       ),
       // Same wide, Markdown-rendered viewer as the timeline's "成果物を
       // 作成しました" message (deliverableViewerNode) -- one presentation
@@ -3807,7 +3843,7 @@ function taskEvidenceBlock(evidence, projectName) {
       deliverableViewerNode(projectName, evidence.task.id),
     ));
   } else {
-    children.push(node("p", { class: "warning" }, "Deliverableはまだcommitされていません。"));
+    children.push(node("p", { class: "warning" }, t("copy.0037")));
   }
   for (const review of evidence.reviews || []) {
     children.push(node("div", { class: "review-summary" },
@@ -3834,7 +3870,7 @@ async function loadTaskEvidenceDetails() {
     renderRequestDetail();
   } catch (error) {
     if (state.record?.session_id === sessionID && !isDraftRequestActive()) {
-      toast(`成果物の詳細を取得できませんでした: ${error.message}`);
+      toast(t("template.deliverable.detail_error", { error: error.message }));
     }
   }
 }
@@ -3871,12 +3907,12 @@ function renderRequestDetail() {
 
 function renderDraftRequestDetail() {
   ui.requestSummary.replaceChildren(
-    node("h1", { class: "thread-title" }, "新しい依頼"),
+    node("h1", { class: "thread-title" }, t("copy.0253")),
   );
   clearActionSurface();
   ui.activeCard.hidden = true;
   ui.activeCard.replaceChildren();
-  ui.timeline.replaceChildren(node("p", { class: "empty" }, "依頼内容を入力してください。"));
+  ui.timeline.replaceChildren(node("p", { class: "empty" }, t("copy.0133")));
   state.timelineRenderKey = "draft-empty";
   setDetailsPanelHidden(true);
   ui.details.replaceChildren();
@@ -3899,12 +3935,12 @@ function renderRequestSummary() {
   const children = [
     node("div", { class: "thread-summary-head" },
       node("h1", { class: "thread-title" }, requestTitleText(record.request)),
-      isArchivedRecord(record) ? node("span", { class: "archived-badge" }, "削除済み") : null,
+      isArchivedRecord(record) ? node("span", { class: "archived-badge" }, t("copy.0200")) : null,
     ),
   ];
   if (isArchivedRecord(record)) {
     children.push(node("div", { class: "archived-actions" },
-      button("元に戻す", "quiet chip", confirmUnarchiveSession),
+      button(t("copy.0179"), "quiet chip", confirmUnarchiveSession),
     ));
   }
   ui.requestSummary.replaceChildren(...children.filter(Boolean));
@@ -3941,7 +3977,7 @@ async function refreshEmployeesPane() {
     await loadTaskEvidenceDetails();
     renderEmployeesPane();
   } catch {
-    ui.companyAttention.replaceChildren(node("p", { class: "warning" }, "社員情報を読み込めませんでした。仕事の状態は推測せず、Organizationを確認してください。"));
+    ui.companyAttention.replaceChildren(node("p", { class: "warning" }, t("copy.0224")));
   }
 }
 
@@ -3955,35 +3991,47 @@ function renderEmployeesPane() {
 }
 
 const ATTENTION_TYPE_LABELS = {
-  approval_required: "承認が必要",
-  human_input_required: "回答が必要",
-  interaction_attention_required: "確認が必要",
-  routine_recovery_required: "Routineの修復が必要",
+  approval_required: t("copy.0243"),
+  human_input_required: t("copy.0145"),
+  interaction_attention_required: t("copy.0156"),
+  routine_recovery_required: t("copy.0053"),
 };
 
 const ATTENTION_ACTION_LABELS = {
-  approve: "承認",
-  answer: "回答",
-  inspect: "確認",
-  resume: "再開",
-  reconcile: "修復",
+  approve: t("copy.0242"),
+  answer: t("copy.0144"),
+  inspect: t("copy.0155"),
+  resume: t("copy.0192"),
+  reconcile: t("copy.0231"),
 };
 
 const ATTENTION_ENTITY_LABELS = {
-  interaction: "依頼",
+  interaction: t("copy.0114"),
   routine: "Routine",
 };
 
 function attentionTypeLabel(type) {
-  return ATTENTION_TYPE_LABELS[type] || type || "不明";
+  return ATTENTION_TYPE_LABELS[type] || type || t("copy.0323");
 }
 
 function attentionActionLabel(kind) {
-  return ATTENTION_ACTION_LABELS[kind] || kind || "不明";
+  return ATTENTION_ACTION_LABELS[kind] || kind || t("copy.0323");
 }
 
 function attentionEntityLabel(entityType) {
-  return ATTENTION_ENTITY_LABELS[entityType] || entityType || "不明";
+  return ATTENTION_ENTITY_LABELS[entityType] || entityType || t("copy.0323");
+}
+
+function attentionSummary(item) {
+  if (locale() === "ja") return item.summary || "";
+  const parameters = {
+    type: attentionTypeLabel(item.type),
+    entity: attentionEntityLabel(item.entity_type),
+    action: attentionActionLabel(item.action?.kind),
+  };
+  return item.action?.operation
+    ? t("attention.typed_operation", { ...parameters, operation: item.action.operation })
+    : t("attention.typed", parameters);
 }
 
 function attentionItemOpenButton(item) {
@@ -3993,7 +4041,7 @@ function attentionItemOpenButton(item) {
   case "answer":
   case "inspect":
   case "resume":
-    return button("依頼を開く", "quiet chip", async () => {
+    return button(t("copy.0121"), "quiet chip", async () => {
       await selectSession(item.entity_id);
       showRequestDetail(item.entity_id);
     });
@@ -4005,8 +4053,8 @@ function attentionItemOpenButton(item) {
 function renderCompanyAttentionItem(item, index) {
   const contextRows = [
     node("div", { class: "attention-context-row" },
-      node("dt", {}, "対象"),
-      node("dd", {}, `${attentionEntityLabel(item.entity_type)} · ${item.entity_id || "—"}`),
+      node("dt", {}, t("copy.0294")),
+      node("dd", {}, t("template.attention.entity", { entity: attentionEntityLabel(item.entity_type), id: item.entity_id || "—" })),
     ),
     item.project_name
       ? node("div", { class: "attention-context-row" },
@@ -4022,7 +4070,7 @@ function renderCompanyAttentionItem(item, index) {
       : null,
     item.observed_at
       ? node("div", { class: "attention-context-row" },
-        node("dt", {}, "確認時刻"),
+        node("dt", {}, t("copy.0162")),
         node("dd", {}, node("time", { datetime: item.observed_at }, sessionTimeLabel(item.observed_at))),
       )
       : null,
@@ -4034,7 +4082,7 @@ function renderCompanyAttentionItem(item, index) {
     "data-attention-type": item.type || "",
     "data-attention-action": item.action?.kind || "",
   },
-  node("p", { class: "attention-item-summary" }, item.summary || ""),
+  node("p", { class: "attention-item-summary" }, attentionSummary(item)),
   node("div", { class: "attention-item-meta" },
     node("span", { class: "attention-type-chip" }, attentionTypeLabel(item.type)),
     node("span", { class: "attention-action-chip" }, attentionActionLabel(item.action?.kind)),
@@ -4046,17 +4094,17 @@ function renderCompanyAttentionItem(item, index) {
 
 function renderCompanyAttention() {
   if (state.companyAttentionLoading && state.companyAttention === null) {
-    ui.companyAttention.replaceChildren(node("p", { class: "empty" }, "読み込み中..."));
+    ui.companyAttention.replaceChildren(node("p", { class: "empty" }, t("copy.0315")));
     return;
   }
   const fragments = [];
   if (state.companyAttentionError) {
-    fragments.push(node("p", { class: "warning attention-section-warning" }, "対応が必要な項目を読み込めませんでした。"));
+    fragments.push(node("p", { class: "warning attention-section-warning" }, t("copy.0291")));
   }
   const items = state.companyAttention || [];
   if (!items.length) {
     if (!state.companyAttentionError) {
-      ui.companyAttention.replaceChildren(node("p", { class: "empty" }, "現在、対応が必要な項目はありません"));
+      ui.companyAttention.replaceChildren(node("p", { class: "empty" }, t("copy.0180")));
       return;
     }
     ui.companyAttention.replaceChildren(...fragments);
@@ -4074,7 +4122,7 @@ function openSetupWizard() {
 function renderSetupWizard() {
   const workspace = state.workspaceStatus;
   if (!workspace) {
-    ui.setupContent.replaceChildren(node("p", { class: "warning" }, "会社データ状態を確認できません。daemonの接続を確認してください。"));
+    ui.setupContent.replaceChildren(node("p", { class: "warning" }, t("copy.0141")));
     return;
   }
   const storage = storageStatusCopy();
@@ -4086,7 +4134,7 @@ function renderSetupWizard() {
     // required from the CEO here. The same presentation label used
     // everywhere else applies; missing.has() still compares the
     // *canonical* candidate.role, so localization never affects matching.
-    node("div", { class: "setup-person" }, node("span", {}, roleLabel(candidate.role)), node("strong", {}, missing.has(candidate.role) ? "追加が必要" : "準備済み")),
+    node("div", { class: "setup-person" }, node("span", {}, roleLabel(candidate.role)), node("strong", {}, missing.has(candidate.role) ? t("copy.0302") : t("copy.0234"))),
   );
   // Same replaceChildren()-stringifies-null hazard as renderProviderSettings()
   // (see the comment there) -- providerSetupFailureNode() returns null
@@ -4094,30 +4142,30 @@ function renderSetupWizard() {
   ui.setupContent.replaceChildren(
     ...[
       node("article", { class: `setup-step ${workspace.layout_ready ? "ready" : "attention"}` },
-        node("div", { class: "setup-step-heading" }, node("h3", {}, "1. 会社データの保存場所"), node("span", { class: "state-chip" }, workspace.layout_ready ? "準備済み" : "選択済み")),
+        node("div", { class: "setup-step-heading" }, node("h3", {}, t("copy.0003")), node("span", { class: "state-chip" }, workspace.layout_ready ? t("copy.0234") : t("copy.0285"))),
         node("p", {}, storage[0]), node("p", {}, storage[1]),
-        !workspace.layout_ready ? node("p", { class: "warning" }, "保存先は選択済みです。Starter Organizationの承認後、この専用directoryの中だけに会社データを準備します。") : null,
-        workspace.storage_kind === "icloud_drive" ? node("p", { class: "warning" }, "同じデータフォルダへ書き込むWorkCairn daemonは1台だけにしてください。iCloud同期を複数writerの調停には使いません。") : null,
+        !workspace.layout_ready ? node("p", { class: "warning" }, t("copy.0336")) : null,
+        workspace.storage_kind === "icloud_drive" ? node("p", { class: "warning" }, t("copy.0310")) : null,
       ),
       node("article", { class: `setup-step ${workspace.organization_ready ? "ready" : "attention"}` },
-        node("div", { class: "setup-step-heading" }, node("h3", {}, "2. 最初のAIチーム"), node("span", { class: "state-chip" }, workspace.organization_ready ? "準備済み" : "承認が必要")),
-        node("p", {}, "企画・作成・独立Reviewができる最小チームです。既存社員は変更しません。"),
+        node("div", { class: "setup-step-heading" }, node("h3", {}, t("copy.0004")), node("span", { class: "state-chip" }, workspace.organization_ready ? t("copy.0234") : t("copy.0243"))),
+        node("p", {}, t("copy.0171")),
         node("div", { class: "setup-people" }, ...people),
-        !workspace.organization_ready ? node("p", { class: "warning" }, "社員の追加は会社データへの変更です。下の確認画面で明示承認した場合だけ、この専用データフォルダへ追加します。秘密情報はbrowserへ保存しません。") : null,
+        !workspace.organization_ready ? node("p", { class: "warning" }, t("copy.0223")) : null,
       ),
       node("article", { class: `setup-step ${state.providerStatus?.configured ? "ready" : "attention"}` },
         node("div", { class: "setup-step-heading" }, node("h3", {}, "3. AI Connection"), node("span", { class: "state-chip" }, state.providerStatus?.configured ? "Connected" : "Setup required")),
-        node("p", {}, "RoutingはAutomaticです。Model IDを選ぶ必要はありません。credentialはbrowserへ保存しません。"),
-        !state.providerStatus?.configured && state.localSetupAvailable ? button("Claudeを接続", "quiet", connectClaudeOnMac) : null,
-        !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "warning" }, "AI ConnectionはこのデバイスのWorkCairn画面から設定してください。") : null,
+        node("p", {}, t("copy.0054")),
+        !state.providerStatus?.configured && state.localSetupAvailable ? button(t("copy.0029"), "quiet", connectClaudeOnMac) : null,
+        !state.providerStatus?.configured && !state.localSetupAvailable ? node("p", { class: "warning" }, t("copy.0009")) : null,
       ),
       providerSetupFailureNode(),
       node("div", { class: "setup-actions" },
-        !workspace.organization_ready ? button("最初のAIチームを確認", "primary", () => renderSetupTeamApproval(workspace)) : null,
-        !state.providerStatus?.configured ? button("AI Connectionsを確認", "primary", () => { ui.setupDialog.close(); openSettingsDialog(); }) : null,
-        workspace.organization_ready && state.providerStatus?.configured ? button("会社を始める", "primary", () => { ui.setupDialog.close(); openNewRequestDraft(); }) : null,
-        workspace.layout_ready && state.localSetupAvailable ? button("会社データを見る", "quiet", revealWorkspaceOnMac) : null,
-        button("設定してから再確認", "quiet", async () => { await Promise.all([loadWorkspaceStatus(), loadProviderStatus(), loadOrganization().catch(() => null)]); renderSetupWizard(); }),
+        !workspace.organization_ready ? button(t("copy.0194"), "primary", () => renderSetupTeamApproval(workspace)) : null,
+        !state.providerStatus?.configured ? button(t("copy.0008"), "primary", () => { ui.setupDialog.close(); openSettingsDialog(); }) : null,
+        workspace.organization_ready && state.providerStatus?.configured ? button(t("copy.0142"), "primary", () => { ui.setupDialog.close(); openNewRequestDraft(); }) : null,
+        workspace.layout_ready && state.localSetupAvailable ? button(t("copy.0140"), "quiet", revealWorkspaceOnMac) : null,
+        button(t("copy.0283"), "quiet", async () => { await Promise.all([loadWorkspaceStatus(), loadProviderStatus(), loadOrganization().catch(() => null)]); renderSetupWizard(); }),
       ),
     ].filter(Boolean),
   );
@@ -4126,16 +4174,16 @@ function renderSetupWizard() {
 function renderCEOAttention() {
   const attention = state.workReport?.ceo_attention;
   if (!attention) {
-    ui.attentionGrid.replaceChildren(node("p", { class: "empty" }, state.record ? "仕事が進むと、任せられたstepをここに表示します。" : "依頼後に表示されます。"));
+    ui.attentionGrid.replaceChildren(node("p", { class: "empty" }, state.record ? t("copy.0207") : t("copy.0128")));
     return;
   }
   const metrics = [
-    [attention.company_steps, "会社が進めたstep"],
-    [attention.delegated_steps, "呼ばずに進めたstep"],
-    [attention.clarification_questions, "必要だった質問"],
-    [attention.approval_moments, "重要な承認"],
+    [attention.company_steps, t("copy.0137")],
+    [attention.delegated_steps, t("copy.0187")],
+    [attention.clarification_questions, t("copy.0318")],
+    [attention.approval_moments, t("copy.0233")],
   ];
-  if (attention.recovery_attention_required) metrics.push([attention.recovery_attention_required, "復旧の確認"]);
+  if (attention.recovery_attention_required) metrics.push([attention.recovery_attention_required, t("copy.0324")]);
   ui.attentionGrid.replaceChildren(...metrics.map(([value, label]) =>
     node("div", { class: "attention-stat" }, node("strong", {}, String(value)), node("span", {}, label)),
   ));
@@ -4144,16 +4192,16 @@ function renderCEOAttention() {
 function renderAutonomy() {
   const contract = state.workReport?.autonomy_contract;
   if (!contract) {
-    ui.autonomySummary.replaceChildren(node("p", { class: "empty" }, "実行承認時に、今回任せる範囲を固定します。"));
+    ui.autonomySummary.replaceChildren(node("p", { class: "empty" }, t("copy.0218")));
     return;
   }
   ui.autonomySummary.replaceChildren(
-    node("p", { class: "insight-lead" }, `最大${contract.execution_limit}件の仕事ステップを、${contract.allowed_employee_ids.length}人のAI社員に任せています。`),
+    node("p", { class: "insight-lead" }, t("template.autonomy", { limit: contract.execution_limit, employees: contract.allowed_employee_ids.length })),
     node("ul", { class: "trust-list" },
-      node("li", {}, "成果物は必ず別のReviewerが確認"),
-      node("li", {}, "修正は同じ範囲で自動継続"),
-      node("li", {}, "外部公開は毎回あなたの承認が必要"),
-      node("li", {}, "支出は許可していません"),
+      node("li", {}, t("copy.0271")),
+      node("li", {}, t("copy.0228")),
+      node("li", {}, t("copy.0154")),
+      node("li", {}, t("copy.0211")),
     ),
   );
 }
@@ -4161,46 +4209,46 @@ function renderAutonomy() {
 function renderProofOfWork() {
   const report = state.workReport;
   if (state.workReportError) {
-    ui.proofOfWork.replaceChildren(node("p", { class: "warning" }, "仕事の記録を確認できません。完了を推測せず、状態を確認してください。"));
+    ui.proofOfWork.replaceChildren(node("p", { class: "warning" }, t("copy.0208")));
     return;
   }
   const proof = report?.proof_of_work;
   if (!proof?.tasks?.length) {
-    ui.proofOfWork.replaceChildren(node("p", { class: "empty" }, "成果物とReviewが成立すると、ここから辿れます。"));
+    ui.proofOfWork.replaceChildren(node("p", { class: "empty" }, t("copy.0267")));
     return;
   }
   const tasks = proof.tasks.map((task) => node("article", { class: `proof-card${task.verified ? " verified" : " attention"}` },
     node("div", { class: "proof-heading" },
       node("strong", {}, task.title || task.task_id),
-      node("span", { class: "proof-state" }, task.verified ? "確認済み" : "確認が必要"),
+      node("span", { class: "proof-state" }, task.verified ? t("copy.0161") : t("copy.0156")),
     ),
-    node("p", {}, `${employeeLabel(task.maker_id)} が作成 · ${employeeLabel(task.review.reviewer_id)} がReview`),
+    node("p", {}, t("template.maker.reviewer", { maker: employeeLabel(task.maker_id), reviewer: employeeLabel(task.review.reviewer_id) })),
     node("ul", { class: "proof-facts" },
-      node("li", {}, task.deliverable.committed ? "成果物を保存済み" : "成果物の保存を未確認"),
-      node("li", {}, task.review.canonical_committed ? `Review: ${task.review.verdict}` : "Review記録を未確認"),
-      task.revision.occurred ? node("li", {}, task.revision.intent_committed ? "Request Changesを受け、修正を記録済み" : "修正の記録を要確認") : null,
+      node("li", {}, task.deliverable.committed ? t("copy.0276") : t("copy.0269")),
+      node("li", {}, task.review.canonical_committed ? `Review: ${task.review.verdict}` : t("copy.0051")),
+      task.revision.occurred ? node("li", {}, task.revision.intent_committed ? t("copy.0047") : t("copy.0227")) : null,
     ),
   ));
   if (proof.external_action.requested) {
     tasks.push(node("article", { class: `proof-card${proof.external_action.verified ? " verified" : " attention"}` },
-      node("div", { class: "proof-heading" }, node("strong", {}, "外部Action"), node("span", { class: "proof-state" }, proof.external_action.verified ? "成立済み" : "確認が必要")),
-      node("p", {}, proof.external_action.verified ? `公開先 ${proof.external_action.target_id} への反映を確認しました。` : "成立済み記録を保持したまま、自動継続を停止しています。"),
+      node("div", { class: "proof-heading" }, node("strong", {}, t("copy.0152")), node("span", { class: "proof-state" }, proof.external_action.verified ? t("copy.0277") : t("copy.0156"))),
+      node("p", {}, proof.external_action.verified ? t("template.external.verified", { target: proof.external_action.target_id }) : t("copy.0279")),
     ));
   }
   ui.proofOfWork.replaceChildren(
-    node("p", { class: "insight-lead" }, proof.fully_verified ? `${proof.verified_tasks}件の仕事を保存済みの確定記録で確認しました。` : "完了を推測せず、成立済みの記録だけを表示しています。"),
+    node("p", { class: "insight-lead" }, proof.fully_verified ? t("template.proof", { count: proof.verified_tasks }) : t("copy.0166")),
     proof.audit?.readable && proof.audit.recorded_events > 0
-      ? node("p", { class: "audit-note" }, `監査記録 ${proof.audit.recorded_events}件を確認`)
-      : node("p", { class: "warning" }, "監査記録を確認できないため、完了として断定しません。"),
+      ? node("p", { class: "audit-note" }, t("template.audit", { count: proof.audit.recorded_events }))
+      : node("p", { class: "warning" }, t("copy.0169")),
     ...tasks,
   );
 }
 
 // Role label, never the Employee's proper name (Public Beta UI policy).
 function employeeLabel(id) {
-  if (!id) return "未割当";
+  if (!id) return t("copy.0341");
   const employee = (state.organization?.inventory?.employees || []).find((candidate) => candidate.id === id);
-  return employee?.role ? roleLabel(employee.role) : "担当AI";
+  return employee?.role ? roleLabel(employee.role) : t("copy.0299");
 }
 
 function detailBlock(title, rows) {
@@ -4210,22 +4258,22 @@ function detailBlock(title, rows) {
 function renderSetupTeamApproval(workspace) {
   ui.setupContent.replaceChildren(
     node("article", { class: "setup-step attention" },
-      node("h3", {}, "最小のAIチームを作成しますか？"),
-      node("p", {}, "承認すると、このWorkCairn専用データフォルダだけに企画・コンテンツ・QA担当を追加します。既存社員や個人Vaultは変更しません。"),
+      node("h3", {}, t("copy.0195")),
+      node("p", {}, t("copy.0246")),
       node("div", { class: "setup-people" }, ...(workspace.starter_organization || []).map((candidate) =>
         // Same presentation reasoning as renderSetupWizard above.
         node("div", { class: "setup-person" }, node("span", {}, roleLabel(candidate.role)), node("strong", {}, candidate.name)),
       )),
       node("div", { class: "setup-actions" },
-        button("承認してセットアップ", "primary", async () => {
-          const completed = await executeNextCommand({ operation: "workspace.setup" }, { current_time: now() }, "会社を準備しています", "専用データフォルダへStarter Organizationを安全に作成しています。", commandID());
+        button(t("copy.0244"), "primary", async () => {
+          const completed = await executeNextCommand({ operation: "workspace.setup" }, { current_time: now() }, t("copy.0143"), t("copy.0284"), commandID());
           if (!completed) return;
           await Promise.all([loadWorkspaceStatus(), loadOrganization(true), loadCompanyActivity(true)]);
           renderEmployeesPane();
           if (!state.providerStatus?.configured) openSettingsDialog();
           else openSetupWizard();
         }),
-        button("戻る", "quiet", () => renderSetupWizard()),
+        button(t("copy.0344"), "quiet", () => renderSetupWizard()),
       ),
     ),
   );
@@ -4252,11 +4300,11 @@ function openNewRequestDraft() {
 
 async function submitDraftRequest() {
   if (!isDraftRequestActive() || submitDraftRequest.inFlight) {
-    if (submitDraftRequest.inFlight) toast("同じ処理を実行中です");
+    if (submitDraftRequest.inFlight) toast(t("copy.0312"));
     return;
   }
   const request = ui.composerInput.value.trim();
-  if (!request) return toast("依頼内容を入力してください。");
+  if (!request) return toast(t("copy.0133"));
   submitDraftRequest.inFlight = true;
   const input = { version: INTERACTION_VERSION, session_id: state.draftRequest.sessionID, request, current_time: now() };
   // ADR-0072: read the toggle once, at submit time -- never carried over
@@ -4265,7 +4313,7 @@ async function submitDraftRequest() {
   // standard interaction.start payload is byte-for-byte unchanged.
   const executionProfile = ui.boundedAcceptanceToggle?.checked ? "bounded_acceptance" : "";
   try {
-    setBusy(true, "依頼内容を確認しています", "まだWorkspaceやProviderは変更しません。");
+    setBusy(true, t("copy.0130"), t("copy.0107"));
     const plan = await requestJSON("/v1/interaction-plans", { method: "POST", body: JSON.stringify(input) });
     setBusy(false);
     localStorage.setItem(STORAGE_SESSION, input.session_id);
@@ -4278,7 +4326,7 @@ async function submitDraftRequest() {
     };
     if (executionProfile) startPayload.execution_profile = executionProfile;
     const completed = await executeNextCommand({ operation: "interaction.start" }, startPayload,
-      "依頼を保存しています", "Sessionを作成しています。", commandID());
+      t("copy.0124"), t("copy.0055"), commandID());
     state.draftRequest = null;
     ui.composerInput.value = "";
     if (completed) {
@@ -4292,7 +4340,7 @@ async function submitDraftRequest() {
       }
     }
   } catch (error) {
-    showError(error, "依頼内容を確認できませんでした");
+    showError(error, t("copy.0131"));
   } finally {
     submitDraftRequest.inFlight = false;
   }
@@ -4325,6 +4373,8 @@ document.addEventListener("keydown", (event) => {
   renderSessions();
 });
 ui.settingsButton.addEventListener("click", openSettingsDialog);
+ui.localeSelect?.addEventListener("change", changeLocale);
+ui.settingsLocaleSelect?.addEventListener("change", changeLocale);
 document.querySelector("#provider-status-refresh").addEventListener("click", refreshProviderStatus);
 ui.menuButton.addEventListener("click", openNavDrawer);
 ui.navBackdrop.addEventListener("click", closeNavDrawer);
@@ -4403,6 +4453,9 @@ async function initialize() {
     toast(error.message);
   }
 }
+
+syncLocaleControls();
+if (localeStorageWarning()) window.setTimeout(() => toast(t("locale.storage.warning")), 0);
 
 setInterval(async () => {
   if (!shouldBlockPollingRefresh() &&

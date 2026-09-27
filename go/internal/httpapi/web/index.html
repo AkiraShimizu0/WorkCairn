@@ -12,48 +12,50 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
-<body>
+<body data-i18n-pending>
+  <noscript><p class="i18n-fatal">表示にはJavaScriptが必要です。 / JavaScript is required to display WorkCairn.</p></noscript>
   <div class="page-shell">
     <header class="topbar">
       <div class="topbar-start">
-        <button id="menu-button" class="menu-button" type="button" hidden aria-label="メニューを開く" aria-controls="nav-drawer" aria-expanded="false">☰</button>
-        <a class="brand" href="/" aria-label="WorkCairn ホーム">
+        <button id="menu-button" class="menu-button" type="button" hidden aria-label="" data-i18n-aria-label="static.menu.open" aria-controls="nav-drawer" aria-expanded="false">☰</button>
+        <a class="brand" href="/" aria-label="" data-i18n-aria-label="static.home">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
           <span><strong>WorkCairn</strong></span>
         </a>
       </div>
       <div class="topbar-actions">
-        <span id="background-status" class="background-status" hidden><i aria-hidden="true"></i><span>会社が働いています</span></span>
-        <span id="connection-status" class="status-dot">接続確認中</span>
-        <button id="settings-button" class="settings-button icon-button" type="button" hidden aria-label="設定" title="設定"><span aria-hidden="true">⚙</span></button>
+        <span id="background-status" class="background-status" hidden><i aria-hidden="true"></i><span data-i18n="static.company.working"></span></span>
+        <span id="connection-status" class="status-dot" data-i18n="static.connection.checking"></span>
+        <label class="locale-control"><span class="visually-hidden" data-i18n="locale.label"></span><select id="locale-select" aria-label="日本語 / English"><option value="ja">日本語</option><option value="en">English</option></select></label>
+        <button id="settings-button" class="settings-button icon-button" type="button" hidden aria-label="" data-i18n-aria-label="static.settings" title="" data-i18n-title="static.settings"><span aria-hidden="true">⚙</span></button>
       </div>
     </header>
 
     <main>
       <section id="pairing-view" class="center-card" hidden>
         <p class="eyebrow">LOCAL PAIRING</p>
-        <h1>WorkCairnと接続</h1>
-        <p class="supporting">daemonを起動したデバイスに表示されたペアリングコードを入力してください。コードはこの端末に保存されません。</p>
+        <h1 data-i18n="static.pair.heading"></h1>
+        <p class="supporting" data-i18n="static.pair.support"></p>
         <form id="pairing-form" class="stack-form">
-          <label for="pairing-code">ペアリングコード</label>
+          <label for="pairing-code" data-i18n="static.pair.code"></label>
           <input id="pairing-code" name="code" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required>
-          <button class="button primary" type="submit">接続する</button>
+          <button class="button primary" type="submit" data-i18n="static.pair.submit"></button>
         </form>
       </section>
 
       <section id="workspace-view" hidden>
         <div id="nav-backdrop" class="nav-backdrop" hidden></div>
-        <nav id="nav-drawer" class="nav-drawer" hidden aria-label="メインメニュー">
+        <nav id="nav-drawer" class="nav-drawer" hidden aria-label="" data-i18n-aria-label="static.nav.main">
           <div class="nav-drawer-heading">
             <p class="eyebrow">MENU</p>
             <h2>WorkCairn</h2>
           </div>
           <div class="nav-drawer-links">
-            <button id="nav-employees-home" class="nav-link" type="button">AI社員一覧へ戻る</button>
-            <button id="nav-request-list" class="nav-link" type="button">依頼一覧</button>
-            <button id="nav-new-request" class="nav-link" type="button">＋ 新規作成</button>
-            <button id="nav-current-request" class="nav-link" type="button" hidden>選択中の依頼</button>
-            <button id="nav-settings" class="nav-link" type="button">設定</button>
+            <button id="nav-employees-home" class="nav-link" type="button" data-i18n="static.nav.employees"></button>
+            <button id="nav-request-list" class="nav-link" type="button" data-i18n="static.nav.requests"></button>
+            <button id="nav-new-request" class="nav-link" type="button" data-i18n="static.nav.new"></button>
+            <button id="nav-current-request" class="nav-link" type="button" hidden data-i18n="static.nav.current"></button>
+            <button id="nav-settings" class="nav-link" type="button" data-i18n="static.settings"></button>
           </div>
         </nav>
 
@@ -61,14 +63,14 @@
           <aside id="requests-pane" class="requests-pane">
             <section id="request-list-view" class="request-pane-view request-list-view">
               <header class="list-header">
-                <h1 class="pane-title">依頼</h1>
+                <h1 class="pane-title" data-i18n="static.requests"></h1>
                 <div class="list-actions">
-                  <button id="new-request-button" class="button primary icon-action-button new-request-button" type="button" aria-label="新規作成" title="新規作成">
+                  <button id="new-request-button" class="button primary icon-action-button new-request-button" type="button" aria-label="" data-i18n-aria-label="static.new" title="" data-i18n-title="static.new">
                     <svg class="icon-action-svg" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
                       <path d="M12 5v14M5 12h14"/>
                     </svg>
                   </button>
-                  <button id="refresh-button" class="icon-action-button" type="button" aria-label="更新" title="更新">
+                  <button id="refresh-button" class="icon-action-button" type="button" aria-label="" data-i18n-aria-label="static.refresh" title="" data-i18n-title="static.refresh">
                     <svg class="icon-action-svg" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
                       <path d="M21 3v6h-6"/>
@@ -76,47 +78,47 @@
                   </button>
                 </div>
               </header>
-              <div id="session-list-filter" class="session-list-filter" role="tablist" aria-label="依頼一覧の表示">
-                <button id="session-filter-active" class="session-filter-tab" type="button" role="tab" aria-selected="true" aria-controls="session-list">依頼</button>
-                <button id="session-filter-archived" class="session-filter-tab" type="button" role="tab" aria-selected="false" aria-controls="session-list">削除済み</button>
+              <div id="session-list-filter" class="session-list-filter" role="tablist" aria-label="" data-i18n-aria-label="static.request.filter">
+                <button id="session-filter-active" class="session-filter-tab" type="button" role="tab" aria-selected="true" aria-controls="session-list" data-i18n="static.requests"></button>
+                <button id="session-filter-archived" class="session-filter-tab" type="button" role="tab" aria-selected="false" aria-controls="session-list" data-i18n="static.archived"></button>
               </div>
               <div id="session-list" class="session-list" role="tabpanel"></div>
             </section>
 
             <section id="request-detail-view" class="request-pane-view request-detail-view request-thread" hidden>
               <header class="thread-header thread-header-sticky">
-                <button id="back-to-list-button" class="text-link back-button" type="button">← 依頼一覧へ戻る</button>
+                <button id="back-to-list-button" class="text-link back-button" type="button" data-i18n="static.back.requests"></button>
                 <div id="request-summary" class="request-summary" aria-live="polite"></div>
-                <h2 id="completion-heading" class="visually-hidden" hidden>すべての仕事とReviewが完了しています</h2>
+                <h2 id="completion-heading" class="visually-hidden" hidden data-i18n="static.complete.heading"></h2>
               </header>
 
               <div id="thread-scroll" class="thread-scroll">
-                <h2 id="timeline-heading" class="visually-hidden">この依頼の歩み</h2>
+                <h2 id="timeline-heading" class="visually-hidden" data-i18n="static.timeline.heading"></h2>
                 <div id="activity-timeline" class="conversation-thread" aria-labelledby="timeline-heading"></div>
                 <details id="details-panel" class="detail-panel" hidden>
-                  <summary aria-controls="details-content">詳細を見る</summary>
+                  <summary aria-controls="details-content" data-i18n="static.details"></summary>
                   <div id="details-content" class="detail-content"></div>
                 </details>
-                <button id="thread-jump-latest" class="thread-jump-latest" type="button" hidden>新しい更新</button>
+                <button id="thread-jump-latest" class="thread-jump-latest" type="button" hidden data-i18n="static.new.update"></button>
               </div>
 
               <footer class="thread-footer">
                 <div id="quick-replies" class="quick-replies" aria-live="polite"></div>
                 <section id="active-card" class="action-card" aria-live="polite" hidden></section>
-                <form id="thread-composer" class="thread-composer" aria-label="メッセージ入力">
+                <form id="thread-composer" class="thread-composer" aria-label="" data-i18n-aria-label="static.composer">
                     <div class="composer-shell">
-                    <p class="visually-hidden">この画面を閉じても処理はバックグラウンドで続きます。次に判断が必要になったら依頼詳細へ表示します。</p>
+                    <p class="visually-hidden" data-i18n="static.background.help"></p>
                     <p id="composer-status" class="composer-status visually-hidden" aria-hidden="true"></p>
                     <div id="bounded-acceptance-row" class="bounded-acceptance-row" hidden>
                       <label class="bounded-acceptance-label">
                         <input type="checkbox" id="bounded-acceptance-toggle" />
-                        限定確認モード（Plan1回・Task1件・Review1回・最大3回で停止）
+                        <span data-i18n="static.bounded.label"></span>
                       </label>
-                      <p id="bounded-acceptance-constraints" class="bounded-acceptance-constraints" hidden>Plan 1回、Task 1件、Review 1回、Provider呼び出し最大3回。clarification／failure／timeout／Request Changesで停止します。retry、Revision、Recovery、fallbackはいずれも行いません。</p>
+                      <p id="bounded-acceptance-constraints" class="bounded-acceptance-constraints" hidden data-i18n="static.bounded.help"></p>
                     </div>
                     <div class="composer-input-row">
-                      <textarea id="composer-input" name="message" rows="2" placeholder="メッセージを入力..." aria-label="メッセージを入力"></textarea>
-                      <button id="composer-send" class="button primary composer-send" type="submit" aria-label="送信" title="送信"><span class="composer-send-icon" aria-hidden="true">↑</span></button>
+                      <textarea id="composer-input" name="message" rows="2" placeholder="" data-i18n-placeholder="static.message.placeholder" aria-label="" data-i18n-aria-label="static.message.label"></textarea>
+                      <button id="composer-send" class="button primary composer-send" type="submit" aria-label="" data-i18n-aria-label="static.send" title="" data-i18n-title="static.send"><span class="composer-send-icon" aria-hidden="true">↑</span></button>
                     </div>
                   </div>
                 </form>
@@ -137,18 +139,18 @@
             <section class="employee-status-section" aria-labelledby="employee-status-heading" hidden>
               <header class="pane-heading employee-status-heading">
                 <div>
-                  <h1 id="employee-status-heading">AI会社の様子</h1>
+                  <h1 id="employee-status-heading" data-i18n="static.company.heading"></h1>
                 </div>
                 <span id="team-count" class="count-chip"></span>
               </header>
               <div id="employee-grid" class="employee-grid employee-office-visual"></div>
             </section>
             <section class="company-attention-section" aria-labelledby="company-attention-heading">
-              <h2 id="company-attention-heading" class="feed-heading">対応が必要</h2>
+              <h2 id="company-attention-heading" class="feed-heading" data-i18n="static.attention.heading"></h2>
               <div id="company-attention" class="company-attention" aria-live="polite"></div>
             </section>
             <section class="company-feed-section" aria-labelledby="company-feed-heading" hidden>
-              <h2 id="company-feed-heading" class="feed-heading">社内の動き</h2>
+              <h2 id="company-feed-heading" class="feed-heading" data-i18n="static.feed.heading"></h2>
               <div id="company-feed" class="company-feed" aria-live="polite"></div>
             </section>
           </aside>
@@ -171,25 +173,26 @@
           <p class="eyebrow">SETTINGS</p>
           <h2 id="settings-heading">AI Connections</h2>
         </div>
-        <button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button>
+        <button class="icon-button" type="button" data-close-dialog aria-label="" data-i18n-aria-label="static.close">×</button>
       </div>
-      <p class="supporting">AIサービスを接続すると、WorkCairnが社員の役割と仕事に合う実行先を選びます。</p>
+      <p class="supporting" data-i18n="static.settings.support"></p>
+      <label class="settings-locale"><span data-i18n="locale.label"></span><select id="settings-locale-select" aria-label="日本語 / English"><option value="ja">日本語</option><option value="en">English</option></select></label>
       <div id="provider-settings" aria-live="polite"></div>
       <div id="storage-settings" aria-live="polite"></div>
       <section class="routing-settings" aria-labelledby="routing-heading">
         <div class="settings-section-heading">
           <div><p class="eyebrow">ROUTING</p><h3 id="routing-heading">Automatic</h3></div>
-          <span class="state-chip">推奨</span>
+          <span class="state-chip" data-i18n="static.recommended"></span>
         </div>
-        <p>通常はModel IDを選ぶ必要はありません。接続済みAIサービスから、WorkCairnが実行先を選びます。</p>
+        <p data-i18n="static.routing.help"></p>
         <details class="advanced-settings">
           <summary>Advanced</summary>
-          <p>EmployeeごとのProvider・Model固定やMaker／Reviewerの分離は将来のoverrideとして追加予定です。</p>
+          <p data-i18n="static.routing.advanced"></p>
         </details>
       </section>
       <div class="sheet-actions settings-actions">
-        <button id="provider-status-refresh" class="button quiet" type="button">状態を再確認</button>
-        <button class="button primary" type="button" data-close-dialog>閉じる</button>
+        <button id="provider-status-refresh" class="button quiet" type="button" data-i18n="static.status.refresh"></button>
+        <button class="button primary" type="button" data-close-dialog data-i18n="static.close"></button>
       </div>
     </section>
   </dialog>
@@ -198,10 +201,10 @@
     <section class="sheet" aria-labelledby="setup-heading">
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-heading">
-        <div><p class="eyebrow">FIRST-RUN SETUP</p><h2 id="setup-heading">WorkCairnへようこそ</h2></div>
-        <button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button>
+        <div><p class="eyebrow">FIRST-RUN SETUP</p><h2 id="setup-heading" data-i18n="static.welcome"></h2></div>
+        <button class="icon-button" type="button" data-close-dialog aria-label="" data-i18n-aria-label="static.close">×</button>
       </div>
-      <p class="supporting">専用の会社データ、最小のAIチーム、AI Connectionを順番に確認します。既存のObsidian Vaultは変更しません。</p>
+      <p class="supporting" data-i18n="static.setup.support"></p>
       <div id="setup-content" class="setup-content" aria-live="polite"></div>
     </section>
   </dialog>
@@ -209,8 +212,8 @@
   <div id="busy-overlay" class="busy-overlay" hidden>
     <div class="busy-card" role="status">
       <span class="spinner" aria-hidden="true"></span>
-      <strong id="busy-title">処理しています</strong>
-      <p id="busy-message">この画面を開いたままお待ちください。</p>
+      <strong id="busy-title" data-i18n="static.busy.title"></strong>
+      <p id="busy-message" data-i18n="static.busy.message"></p>
     </div>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

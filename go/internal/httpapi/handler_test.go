@@ -276,6 +276,7 @@ func TestEmbeddedUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules(t *te
 		{"/", "text/html", "WorkCairn"},
 		{"/assets/styles.css", "text/css", "safe-area-inset-bottom"},
 		{"/assets/app.js", "text/javascript", "/v1/interactions"},
+		{"/assets/i18n.js", "text/javascript", "workcairn.ui-locale"},
 		{"/manifest.webmanifest", "application/manifest+json", "WorkCairn"},
 	} {
 		response := httptest.NewRecorder()
@@ -288,13 +289,16 @@ func TestEmbeddedUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules(t *te
 	}
 	asset := httptest.NewRecorder()
 	handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	catalogAsset := httptest.NewRecorder()
+	handler.ServeHTTP(catalogAsset, httptest.NewRequest(http.MethodGet, "/assets/i18n.js", nil))
+	uiSource := asset.Body.String() + catalogAsset.Body.String()
 	for _, forbidden := range []string{
 		"TaskStarted", "TaskCompleted", "request_changes →", "ANTHROPIC_API_KEY", "innerHTML", "crypto.randomUUID", "Math.random",
 		`case "task.execute"`, `case "review.execute"`, `case "revision.execute"`, `case "workflow.execute"`,
 		`case "workflow.reviewed.execute"`, `interaction.action.wordpress.publish`, `action.wordpress.publish`,
 		`/v1/interaction-action-plans`, `id: "project-id"`, `for: "project-id"`,
 	} {
-		if strings.Contains(asset.Body.String(), forbidden) {
+		if strings.Contains(uiSource, forbidden) {
 			t.Fatalf("embedded UI contains forbidden rule or secret surface %q", forbidden)
 		}
 	}
@@ -306,7 +310,7 @@ func TestEmbeddedUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules(t *te
 		"cryptoAPI.getRandomValues", "BROWSER_SECURE_RANDOM_UNAVAILABLE",
 		`submitDraftRequest`, `openNewRequestDraft`, `isDraftRequestActive`, `state.draftRequest`,
 		`requestJSON("/v1/interaction-plans"`,
-		`showError(error, "依頼内容を確認できませんでした")`,
+		`showError(error, t("copy.0131"))`,
 		`prepareWorkflowApproval(next, 20)`,
 		"resetClarificationDraft", "answers: [{ question: currentQuestion, answer }]",
 		`requestJSON("/v1/provider-status")`, "PROVIDER_CONFIGURATION_REQUIRED", "AIサービスへ接続してください",
@@ -339,13 +343,13 @@ func TestEmbeddedUIAndSecurityHeadersAreServedWithoutFrontendBusinessRules(t *te
 		"structured_output_field_shape", "structuredFieldShapeSummary",
 		"parse?.structured_output_presence",
 	} {
-		if !strings.Contains(asset.Body.String(), required) {
+		if !strings.Contains(uiSource, required) {
 			t.Fatalf("embedded UI is missing command continuity boundary %q", required)
 		}
 	}
 	index := httptest.NewRecorder()
 	handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/", nil))
-	for _, required := range []string{"AI会社", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION", "AI Connections", "Automatic", "接続済みAIサービスから、WorkCairnが実行先を選びます", "この依頼の歩み", "依頼一覧へ戻る", "FIRST-RUN SETUP"} {
+	for _, required := range []string{"static.company.heading", "AUTONOMY CONTRACT", "PROOF OF WORK", "CEO ATTENTION", "AI Connections", "Automatic", "static.routing.help", "static.timeline.heading", "static.back.requests", "FIRST-RUN SETUP"} {
 		if !strings.Contains(index.Body.String(), required) {
 			t.Fatalf("embedded UI is missing Living Company Dashboard surface %q", required)
 		}
@@ -386,12 +390,61 @@ func TestEmbeddedWebUIProjectsAcceptedCommandAsInFlightUntilTerminal(t *testing.
 	}
 }
 
+func TestEmbeddedWebUILocaleBoundaryIsBrowserLocalAndFailClosed(t *testing.T) {
+	appContent, err := webUI.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogContent, err := webUI.ReadFile("web/i18n.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexContent, err := webUI.ReadFile("web/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := string(appContent)
+	catalog := string(catalogContent)
+	index := string(indexContent)
+	for _, required := range []string{
+		`from "./i18n.js"`, "applyStaticTranslations()", "state.reloadUnsafeRequests", `method !== "GET" && method !== "HEAD"`,
+		"persistLocale(nextLocale)", `window.confirm(t("locale.discard"))`, "localeTag()", "attentionSummary(item)",
+	} {
+		if !strings.Contains(app, required) {
+			t.Fatalf("embedded UI locale boundary is missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		`const STORAGE_LOCALE = "workcairn.ui-locale"`, `const DEFAULT_LOCALE = "ja"`, `ja: "ja-JP"`, `en: "en-US"`,
+		"validateCatalogs()", "placeholderNames", "fatalTranslationError", "I18N_CONTRACT_INVALID", "localStorage.setItem(STORAGE_LOCALE",
+	} {
+		if !strings.Contains(catalog, required) {
+			t.Fatalf("embedded UI catalog contract is missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		`<body data-i18n-pending>`, `id="locale-select"`, `id="settings-locale-select"`, `data-i18n="static.pair.heading"`,
+	} {
+		if !strings.Contains(index, required) {
+			t.Fatalf("embedded UI locale surface is missing %q", required)
+		}
+	}
+	if strings.Contains(app+catalog+index, "navigator.language") {
+		t.Fatal("embedded UI must not infer locale from the browser or operating system")
+	}
+}
+
 func TestEmbeddedWebUIProjectsCompanyAttentionFeed(t *testing.T) {
 	content, err := webUI.ReadFile("web/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
+	catalog, err := webUI.ReadFile("web/i18n.js")
+	if err != nil {
+		t.Fatal(err)
+	}
 	script := string(content)
+	uiSource := script + string(catalog)
 	for _, required := range []string{
 		`requestJSON("/v1/attention")`,
 		"renderCompanyAttention",
@@ -405,7 +458,7 @@ func TestEmbeddedWebUIProjectsCompanyAttentionFeed(t *testing.T) {
 		"ATTENTION_ACTION_LABELS",
 		"attentionItemOpenButton",
 	} {
-		if !strings.Contains(script, required) {
+		if !strings.Contains(uiSource, required) {
 			t.Fatalf("embedded UI missing company attention projection marker %q", required)
 		}
 	}
